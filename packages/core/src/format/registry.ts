@@ -8,8 +8,13 @@ export class FormatRegistry {
   private readonly compiled = new Map<PackageFormat, CompiledRoute[]>();
 
   register(adapter: FormatAdapter): void {
-    this.adapters.set(adapter.format, adapter);
-    this.compiled.set(adapter.format, compileRoutes(adapter.routes()));
+    this.registerAs(adapter.format, adapter);
+  }
+
+  /** Register an adapter under a different format key (e.g. Helm reuses the OCI adapter). */
+  registerAs(format: PackageFormat, adapter: FormatAdapter): void {
+    this.adapters.set(format, adapter);
+    this.compiled.set(format, compileRoutes(adapter.routes()));
   }
 
   lookup(format: PackageFormat): FormatAdapter | undefined {

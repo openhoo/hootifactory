@@ -242,6 +242,63 @@ export class NpmAdapter implements FormatAdapter {
     return Response.json({ ok: true });
   }
 
+  /** Pull-through: mirror an upstream package (all versions) into this proxy repo. */
+  async proxyIngest(pkgName: string, upstreamBase: string, ctx: RepoContext): Promise<boolean> {
+    const url = `${upstreamBase.replace(/\/$/, "")}/${pkgName.replace("/", "%2f")}`;
+    const res = await fetch(url, { headers: { accept: "application/json" } });
+    if (!res.ok) return false;
+    const packument = (await res.json()) as {
+      versions?: Record<string, Record<string, unknown>>;
+      "dist-tags"?: Record<string, string>;
+    };
+    const scope = pkgName.startsWith("@") ? (pkgName.split("/")[0] ?? null) : null;
+    const pkg = await findOrCreatePackage({
+      orgId: ctx.repo.orgId,
+      repositoryId: ctx.repo.id,
+      name: pkgName,
+      namespace: scope,
+    });
+    const base = basename(pkgName);
+    for (const [ver, manifestRaw] of Object.entries(packument.versions ?? {})) {
+      const manifest = { ...manifestRaw } as Record<string, unknown>;
+      const dist0 = manifest.dist as { tarball?: string } | undefined;
+      const tarballUrl = dist0?.tarball;
+      if (!tarballUrl) continue;
+      const tRes = await fetch(tarballUrl);
+      if (!tRes.ok) continue;
+      const tarball = new Uint8Array(await tRes.arrayBuffer());
+      const shasum = sha1hex(tarball);
+      const integrity = `sha512-${sha512b64(tarball)}`;
+      const filename = `${base}-${ver}.tgz`;
+      const stored = await storeBlobWithRef(ctx, {
+        data: tarball,
+        kind: "npm_tarball",
+        scope: `${pkgName}@${ver}`,
+        mediaType: "application/octet-stream",
+      });
+      manifest.dist = {
+        ...(dist0 ?? {}),
+        tarball: `${ctx.baseUrl}/${ctx.repo.mountPath}/${pkgName}/-/${filename}`,
+        shasum,
+        integrity,
+      };
+      await upsertPackageVersion(ctx, {
+        packageId: pkg.id,
+        version: ver,
+        metadata: {
+          manifest,
+          dist: { filename, blobDigest: stored.digest, shasum, integrity, size: tarball.length },
+        },
+        sizeBytes: tarball.length,
+      });
+    }
+    for (const [tag, ver] of Object.entries(packument["dist-tags"] ?? {})) {
+      const vid = await this.versionId(ctx, pkg.id, ver);
+      if (vid) await setDistTag(ctx, pkg.id, tag, vid);
+    }
+    return true;
+  }
+
   private async searchHandler(req: Request, ctx: RepoContext): Promise<Response> {
     const url = new URL(req.url);
     const text = url.searchParams.get("text") ?? "";

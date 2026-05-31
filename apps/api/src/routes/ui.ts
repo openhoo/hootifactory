@@ -5,7 +5,12 @@ import {
   resolveUserRole,
   revokeToken,
 } from "@hootifactory/auth";
-import { createRepository, isUniqueViolation } from "@hootifactory/core";
+import {
+  addUpstream,
+  addVirtualMember,
+  createRepository,
+  isUniqueViolation,
+} from "@hootifactory/core";
 import {
   and,
   apiTokens,
@@ -20,7 +25,7 @@ import {
   repositories,
 } from "@hootifactory/db";
 import type { PackageFormat, Visibility } from "@hootifactory/types";
-import { Hono } from "hono";
+import { type Context, Hono } from "hono";
 import type { AppEnv } from "../types";
 
 export const uiRouter = new Hono<AppEnv>();
@@ -158,6 +163,40 @@ uiRouter.get("/packages/:packageId/versions", async (c) => {
     .where(eq(packageVersions.packageId, pkg.id))
     .orderBy(desc(packageVersions.createdAt));
   return c.json({ package: { id: pkg.id, name: pkg.name }, versions: rows });
+});
+
+// ── proxy/virtual configuration ──────────────────────────────────────────
+async function repoAdminGuard(c: Context<AppEnv>, repoId: string) {
+  const [repo] = await db.select().from(repositories).where(eq(repositories.id, repoId)).limit(1);
+  if (!repo) return { error: c.json({ error: "repository not found" }, 404) };
+  const decision = await authorize(c.get("principal"), "admin", { type: "org", orgId: repo.orgId });
+  if (!decision.allowed) {
+    return {
+      error: c.json({ error: decision.reason }, decision.code === "unauthenticated" ? 401 : 403),
+    };
+  }
+  return { repo };
+}
+
+uiRouter.post("/repositories/:repoId/members", async (c) => {
+  const guard = await repoAdminGuard(c, c.req.param("repoId"));
+  if ("error" in guard) return guard.error;
+  const body = (await c.req.json().catch(() => null)) as {
+    memberRepoId?: string;
+    position?: number;
+  } | null;
+  if (!body?.memberRepoId) return c.json({ error: "memberRepoId required" }, 400);
+  await addVirtualMember(guard.repo.id, body.memberRepoId, body.position ?? 0);
+  return c.json({ ok: true }, 201);
+});
+
+uiRouter.post("/repositories/:repoId/upstreams", async (c) => {
+  const guard = await repoAdminGuard(c, c.req.param("repoId"));
+  if ("error" in guard) return guard.error;
+  const body = (await c.req.json().catch(() => null)) as { url?: string; priority?: number } | null;
+  if (!body?.url) return c.json({ error: "url required" }, 400);
+  await addUpstream(guard.repo.id, body.url, body.priority ?? 0);
+  return c.json({ ok: true }, 201);
 });
 
 uiRouter.post("/orgs/:orgId/repositories", async (c) => {

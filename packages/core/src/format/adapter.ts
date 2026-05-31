@@ -114,4 +114,8 @@ export interface FormatAdapter {
   generateMetadata?(pkg: string, ctx: RepoContext): Promise<FormatMetadata | null>;
   mergeMetadata?(parts: FormatMetadata[], ctx: RepoContext): Promise<FormatMetadata>;
   search?(query: SearchQuery, ctx: RepoContext): Promise<SearchResult>;
+
+  // ── optional, for proxy repos (Phase 2) ──────────────────────────────────
+  /** Mirror an item from an upstream into this repo's CAS. Returns true on success. */
+  proxyIngest?(name: string, upstreamBase: string, ctx: RepoContext): Promise<boolean>;
 }

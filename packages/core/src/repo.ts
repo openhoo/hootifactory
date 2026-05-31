@@ -1,4 +1,14 @@
-import { and, db, eq, packages, packageVersions, repositories } from "@hootifactory/db";
+import {
+  and,
+  asc,
+  db,
+  eq,
+  packages,
+  packageVersions,
+  repositories,
+  repositoryUpstreams,
+  virtualRepoMembers,
+} from "@hootifactory/db";
 import type { PackageFormat, Visibility } from "@hootifactory/types";
 import type { ResolvedRepo } from "./format/adapter";
 
@@ -87,4 +97,42 @@ export async function findVersion(
     .where(and(eq(packageVersions.packageId, packageId), eq(packageVersions.version, version)))
     .limit(1);
   return row ?? null;
+}
+
+/** Member repos of a virtual repo, in resolution order. */
+export async function loadVirtualMembers(virtualRepoId: string): Promise<ResolvedRepo[]> {
+  const rows = await db
+    .select({ repo: repositories })
+    .from(virtualRepoMembers)
+    .innerJoin(repositories, eq(virtualRepoMembers.memberRepoId, repositories.id))
+    .where(eq(virtualRepoMembers.virtualRepoId, virtualRepoId))
+    .orderBy(asc(virtualRepoMembers.position));
+  return rows.map((r) => r.repo);
+}
+
+export interface Upstream {
+  url: string;
+  credentials: Record<string, unknown> | null;
+}
+
+/** Highest-priority upstream for a proxy repo. */
+export async function loadUpstream(repoId: string): Promise<Upstream | null> {
+  const [row] = await db
+    .select({ url: repositoryUpstreams.url, credentials: repositoryUpstreams.credentials })
+    .from(repositoryUpstreams)
+    .where(eq(repositoryUpstreams.repositoryId, repoId))
+    .orderBy(asc(repositoryUpstreams.priority))
+    .limit(1);
+  return row ?? null;
+}
+
+export async function addVirtualMember(virtualRepoId: string, memberRepoId: string, position = 0) {
+  await db
+    .insert(virtualRepoMembers)
+    .values({ virtualRepoId, memberRepoId, position })
+    .onConflictDoNothing();
+}
+
+export async function addUpstream(repositoryId: string, url: string, priority = 0) {
+  await db.insert(repositoryUpstreams).values({ repositoryId, url, priority });
 }
