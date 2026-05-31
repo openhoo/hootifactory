@@ -1,0 +1,19 @@
+{
+  "name": "@hootifactory/scan-worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --watch src/worker.ts",
+    "start": "bun src/worker.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@hootifactory/config": "workspace:*",
+    "@hootifactory/db": "workspace:*",
+    "@hootifactory/queue": "workspace:*",
+    "@hootifactory/scan-core": "workspace:*",
+    "@hootifactory/scanning": "workspace:*",
+    "@hootifactory/storage": "workspace:*"
+  }
+}

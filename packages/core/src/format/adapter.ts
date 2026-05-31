@@ -54,13 +54,20 @@ export interface RepoContext {
   baseUrl: string;
   /** Authorize an action against this repo (org boundary + RBAC + scopes). */
   authorize(action: Action, resource?: Partial<ResourceRef>): Promise<Decision>;
-  /** Enqueue a scan for a stored artifact (no-op stub until Phase 3). */
-  enqueueScan(artifactId: string): Promise<void>;
+  /** Register a published artifact and enqueue a scan (no-op when scanning is disabled). */
+  enqueueScan(input: EnqueueScanInput): Promise<void>;
   /** Present only for proxy repos. */
   upstream?: UpstreamClient;
   /** Present only for virtual repos, in resolution order. */
   members?: ResolvedRepo[];
   log: Logger;
+}
+
+export interface EnqueueScanInput {
+  digest: string;
+  name?: string;
+  version?: string;
+  mediaType?: string;
 }
 
 export interface FormatMetadata {

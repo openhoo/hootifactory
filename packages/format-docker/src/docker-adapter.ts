@@ -3,6 +3,7 @@ import {
   type FormatAdapter,
   findOrCreatePackage,
   type HttpMethod,
+  isArtifactBlocked,
   type Permission,
   REGISTRY_TOKEN_SERVICE,
   type RepoContext,
@@ -184,6 +185,13 @@ export class DockerAdapter implements FormatAdapter {
       });
     }
 
+    await ctx.enqueueScan({
+      digest,
+      name: image,
+      version: reference.startsWith("sha256:") ? undefined : reference,
+      mediaType,
+    });
+
     return new Response(null, {
       status: 201,
       headers: {
@@ -230,6 +238,8 @@ export class DockerAdapter implements FormatAdapter {
   ): Promise<Response> {
     const m = await this.resolveManifest(image, reference, ctx);
     if (!m) throw Errors.manifestUnknown({ reference });
+    if (await isArtifactBlocked(ctx, m.digest))
+      throw Errors.denied({ reason: "blocked by scan policy" });
     const headers = {
       "content-type": m.mediaType,
       "docker-content-digest": m.digest,

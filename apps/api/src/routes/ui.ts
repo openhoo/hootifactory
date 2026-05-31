@@ -14,15 +14,18 @@ import {
 import {
   and,
   apiTokens,
+  artifacts,
   count,
   db,
   desc,
   eq,
+  findings,
   memberships,
   organizations,
   packages,
   packageVersions,
   repositories,
+  scanPolicies,
 } from "@hootifactory/db";
 import type { PackageFormat, Visibility } from "@hootifactory/types";
 import { type Context, Hono } from "hono";
@@ -197,6 +200,83 @@ uiRouter.post("/repositories/:repoId/upstreams", async (c) => {
   if (!body?.url) return c.json({ error: "url required" }, 400);
   await addUpstream(guard.repo.id, body.url, body.priority ?? 0);
   return c.json({ ok: true }, 201);
+});
+
+// ── scanning ─────────────────────────────────────────────────────────────
+uiRouter.post("/orgs/:orgId/scan-policies", async (c) => {
+  const orgId = c.req.param("orgId");
+  const decision = await authorize(c.get("principal"), "admin", { type: "org", orgId });
+  if (!decision.allowed) {
+    return c.json({ error: decision.reason }, decision.code === "unauthenticated" ? 401 : 403);
+  }
+  const body = (await c.req.json().catch(() => null)) as {
+    repositoryPattern?: string;
+    mode?: "audit" | "enforce";
+    blockOnSeverity?: "critical" | "high" | "medium" | "low" | "negligible" | "unknown";
+  } | null;
+  if (!body?.mode) return c.json({ error: "mode required" }, 400);
+  const [row] = await db
+    .insert(scanPolicies)
+    .values({
+      orgId,
+      repositoryPattern: body.repositoryPattern ?? "*",
+      mode: body.mode,
+      blockOnSeverity: body.blockOnSeverity ?? null,
+    })
+    .returning();
+  return c.json({ policy: row }, 201);
+});
+
+uiRouter.get("/repositories/:repoId/artifacts", async (c) => {
+  const [repo] = await db
+    .select()
+    .from(repositories)
+    .where(eq(repositories.id, c.req.param("repoId")))
+    .limit(1);
+  if (!repo) return c.json({ error: "repository not found" }, 404);
+  const decision = await authorize(c.get("principal"), "read", { type: "org", orgId: repo.orgId });
+  if (!decision.allowed) {
+    return c.json({ error: decision.reason }, decision.code === "unauthenticated" ? 401 : 403);
+  }
+  const rows = await db
+    .select({
+      id: artifacts.id,
+      digest: artifacts.digest,
+      name: artifacts.name,
+      version: artifacts.version,
+      state: artifacts.state,
+      policyDecision: artifacts.policyDecision,
+    })
+    .from(artifacts)
+    .where(eq(artifacts.repositoryId, repo.id))
+    .orderBy(desc(artifacts.createdAt));
+  return c.json({ artifacts: rows });
+});
+
+uiRouter.get("/artifacts/:artifactId/findings", async (c) => {
+  const [art] = await db
+    .select()
+    .from(artifacts)
+    .where(eq(artifacts.id, c.req.param("artifactId")))
+    .limit(1);
+  if (!art) return c.json({ error: "artifact not found" }, 404);
+  const decision = await authorize(c.get("principal"), "read", { type: "org", orgId: art.orgId });
+  if (!decision.allowed) {
+    return c.json({ error: decision.reason }, decision.code === "unauthenticated" ? 401 : 403);
+  }
+  const rows = await db
+    .select({
+      vulnId: findings.vulnId,
+      type: findings.type,
+      severity: findings.severity,
+      packageName: findings.packageName,
+      packageVersion: findings.packageVersion,
+      fixedVersion: findings.fixedVersion,
+      title: findings.title,
+    })
+    .from(findings)
+    .where(eq(findings.artifactId, art.id));
+  return c.json({ findings: rows });
 });
 
 uiRouter.post("/orgs/:orgId/repositories", async (c) => {

@@ -36,6 +36,18 @@
         "hono": "^4.12.23",
       },
     },
+    "apps/scan-worker": {
+      "name": "@hootifactory/scan-worker",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/config": "workspace:*",
+        "@hootifactory/db": "workspace:*",
+        "@hootifactory/queue": "workspace:*",
+        "@hootifactory/scan-core": "workspace:*",
+        "@hootifactory/scanning": "workspace:*",
+        "@hootifactory/storage": "workspace:*",
+      },
+    },
     "apps/web": {
       "name": "@hootifactory/web",
       "version": "0.0.0",
@@ -134,6 +146,13 @@
       "dependencies": {
         "@hootifactory/types": "workspace:*",
         "zod": "^4.4.3",
+      },
+    },
+    "packages/scanning": {
+      "name": "@hootifactory/scanning",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/scan-core": "workspace:*",
       },
     },
     "packages/storage": {
@@ -254,6 +273,10 @@
     "@hootifactory/queue": ["@hootifactory/queue@workspace:packages/queue"],
 
     "@hootifactory/scan-core": ["@hootifactory/scan-core@workspace:packages/scan-core"],
+
+    "@hootifactory/scan-worker": ["@hootifactory/scan-worker@workspace:apps/scan-worker"],
+
+    "@hootifactory/scanning": ["@hootifactory/scanning@workspace:packages/scanning"],
 
     "@hootifactory/storage": ["@hootifactory/storage@workspace:packages/storage"],
 

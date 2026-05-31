@@ -3,6 +3,7 @@ import {
   type FormatAdapter,
   findOrCreatePackage,
   type HttpMethod,
+  isArtifactBlocked,
   type Permission,
   type RepoContext,
   type RouteEntry,
@@ -133,6 +134,9 @@ export class NpmAdapter implements FormatAdapter {
     if (!dist || !(await ctx.blobs.exists(dist.blobDigest))) {
       return Response.json({ error: "Not found" }, { status: 404 });
     }
+    if (await isArtifactBlocked(ctx, dist.blobDigest)) {
+      return Response.json({ error: "artifact blocked by scan policy" }, { status: 403 });
+    }
     return new Response(ctx.blobs.get(dist.blobDigest), {
       headers: { "content-type": "application/octet-stream", etag: `"${dist.shasum}"` },
     });
@@ -195,6 +199,12 @@ export class NpmAdapter implements FormatAdapter {
         sizeBytes: tarball.length,
       });
       versionIds.set(ver, versionId);
+      await ctx.enqueueScan({
+        digest: stored.digest,
+        name,
+        version: ver,
+        mediaType: "application/octet-stream",
+      });
     }
 
     const distTags = body["dist-tags"] ?? {};

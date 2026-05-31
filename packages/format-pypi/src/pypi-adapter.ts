@@ -4,6 +4,7 @@ import {
   findOrCreatePackage,
   findVersion,
   type HttpMethod,
+  isArtifactBlocked,
   type Permission,
   type RepoContext,
   type RouteEntry,
@@ -125,6 +126,9 @@ export class PypiAdapter implements FormatAdapter {
     if (!ref || !(await ctx.blobs.exists(ref.digest))) {
       return new Response("Not Found", { status: 404 });
     }
+    if (await isArtifactBlocked(ctx, ref.digest)) {
+      return new Response("artifact blocked by scan policy", { status: 403 });
+    }
     return new Response(ctx.blobs.get(ref.digest), {
       headers: { "content-type": "application/octet-stream" },
     });
@@ -179,6 +183,13 @@ export class PypiAdapter implements FormatAdapter {
       version,
       metadata: { name: rawName, requiresPython, files },
       sizeBytes: bytes.length,
+    });
+
+    await ctx.enqueueScan({
+      digest: stored.digest,
+      name,
+      version,
+      mediaType: filetype === "bdist_wheel" ? "application/zip" : "application/x-tar",
     });
 
     return new Response(null, { status: 200 });

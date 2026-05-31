@@ -1,7 +1,8 @@
 import { type Action, authorize, type Principal, type ResourceRef } from "@hootifactory/auth";
 import { env } from "@hootifactory/config";
-import type { RepoContext, ResolvedRepo } from "@hootifactory/core";
-import { db } from "@hootifactory/db";
+import type { EnqueueScanInput, RepoContext, ResolvedRepo } from "@hootifactory/core";
+import { artifacts, db } from "@hootifactory/db";
+import { enqueue, QUEUES } from "@hootifactory/queue";
 import { blobStore } from "@hootifactory/storage";
 import { logger } from "./lib/logger";
 
@@ -23,8 +24,27 @@ export function buildRepoContext(repo: ResolvedRepo, principal: Principal): Repo
         visibility: repo.visibility,
         ...resource,
       }),
-    enqueueScan: async () => {
-      /* stub until Phase 3 */
+    enqueueScan: async (input: EnqueueScanInput) => {
+      if (!env.SCANNER_ENABLED) return;
+      const [artifact] = await db
+        .insert(artifacts)
+        .values({
+          orgId: repo.orgId,
+          repositoryId: repo.id,
+          digest: input.digest,
+          mediaType: input.mediaType,
+          name: input.name,
+          version: input.version,
+          state: "pending",
+        })
+        .onConflictDoUpdate({
+          target: [artifacts.orgId, artifacts.repositoryId, artifacts.digest],
+          set: { name: input.name, version: input.version, state: "pending" },
+        })
+        .returning({ id: artifacts.id });
+      if (artifact) {
+        await enqueue(QUEUES.scanArtifact, { artifactId: artifact.id });
+      }
     },
   };
 }

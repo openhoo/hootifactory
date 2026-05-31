@@ -1,5 +1,30 @@
-import { blobRefs, blobs, eq, packageVersions, sql, versionTags } from "@hootifactory/db";
+import {
+  and,
+  artifacts,
+  blobRefs,
+  blobs,
+  eq,
+  packageVersions,
+  sql,
+  versionTags,
+} from "@hootifactory/db";
 import type { RepoContext } from "./format/adapter";
+
+/** True if a published artifact (by digest, in this repo) is policy-blocked. */
+export async function isArtifactBlocked(ctx: RepoContext, digest: string): Promise<boolean> {
+  const [row] = await ctx.db
+    .select({ state: artifacts.state })
+    .from(artifacts)
+    .where(
+      and(
+        eq(artifacts.orgId, ctx.repo.orgId),
+        eq(artifacts.repositoryId, ctx.repo.id),
+        eq(artifacts.digest, digest),
+      ),
+    )
+    .limit(1);
+  return row?.state === "blocked";
+}
 
 /** Audience/service name for OCI Bearer tokens (used by /token + verify + challenge). */
 export const REGISTRY_TOKEN_SERVICE = "hootifactory";
