@@ -4,7 +4,9 @@ import {
   resolveToken,
   TOKEN_PREFIX,
   verifyPassword,
+  verifyRegistryToken,
 } from "@hootifactory/auth";
+import { REGISTRY_TOKEN_SERVICE } from "@hootifactory/core";
 import { db, eq, users } from "@hootifactory/db";
 import type { Context } from "hono";
 import { getCookie } from "hono/cookie";
@@ -46,6 +48,18 @@ export async function authenticate(c: Context<AppEnv>): Promise<Principal> {
       if (tok.startsWith(TOKEN_PREFIX)) {
         const p = await resolveToken(tok);
         if (p) return p;
+      } else {
+        // OCI registry Bearer JWT (issued by /token).
+        try {
+          const verified = await verifyRegistryToken(tok, REGISTRY_TOKEN_SERVICE);
+          return {
+            kind: "registryToken",
+            subject: verified.subject ?? "anonymous",
+            access: verified.access,
+          };
+        } catch {
+          // not a valid registry token — fall through
+        }
       }
     } else if (authz.startsWith("Basic ")) {
       let decoded = "";

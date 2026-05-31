@@ -5,6 +5,7 @@ import { authenticate } from "./middleware/authenticate";
 import { handleRegistryRequest } from "./registry";
 import { authRouter } from "./routes/auth";
 import { healthRouter } from "./routes/health";
+import { tokenRouter } from "./routes/token";
 import { uiRouter } from "./routes/ui";
 import { v2VersionCheck } from "./routes/v2";
 import type { AppEnv } from "./types";
@@ -27,6 +28,7 @@ app.onError((err, c) => {
 app.route("/", healthRouter);
 app.route("/api/auth", authRouter);
 app.route("/api", uiRouter);
+app.route("/token", tokenRouter);
 
 // OCI version check — exact paths only; deeper /v2/<name>/... falls through.
 app.get("/v2", v2VersionCheck);

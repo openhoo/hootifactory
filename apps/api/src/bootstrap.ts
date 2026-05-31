@@ -1,12 +1,13 @@
 import { formatRegistry } from "@hootifactory/core";
+import { DockerAdapter } from "@hootifactory/format-docker";
+import { NpmAdapter } from "@hootifactory/format-npm";
+import { PypiAdapter } from "@hootifactory/format-pypi";
 import { logger } from "./lib/logger";
 
-/**
- * Register all format adapters. Phase 1 adds npm, docker/oci, and pypi here.
- */
+/** Register all format adapters (Phase 1: npm, docker/oci, pypi). */
 export function registerAdapters(): void {
-  // (Phase 1) formatRegistry.register(new NpmAdapter());
-  // (Phase 1) formatRegistry.register(new DockerAdapter());
-  // (Phase 1) formatRegistry.register(new PypiAdapter());
+  formatRegistry.register(new NpmAdapter());
+  formatRegistry.register(new DockerAdapter());
+  formatRegistry.register(new PypiAdapter());
   logger.info("adapters registered", { formats: formatRegistry.all().map((a) => a.format) });
 }

@@ -9,12 +9,9 @@ import {
   SignJWT,
 } from "jose";
 
-/** OCI Bearer token "access" scope claim. */
-export interface RegistryAccess {
-  type: string; // "repository"
-  name: string; // "<org>/<repo>"
-  actions: string[]; // ["pull","push"]
-}
+import type { RegistryAccess } from "./principal";
+
+export type { RegistryAccess };
 
 interface Keys {
   privateKey: CryptoKey;

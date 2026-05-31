@@ -1,6 +1,13 @@
 import type { TokenScope } from "@hootifactory/db";
 import type { RoleName } from "./permissions";
 
+/** An OCI Bearer-token access claim (already authorized at /token issue time). */
+export interface RegistryAccess {
+  type: string; // "repository"
+  name: string; // full docker name, e.g. "acme/containers/myimg"
+  actions: string[]; // ["pull","push","delete"] (or ["*"])
+}
+
 /** Normalized identity after authentication; every adapter converges on this. */
 export type Principal =
   | { kind: "anonymous" }
@@ -13,6 +20,12 @@ export type Principal =
       scopes: TokenScope[];
       role: RoleName | null;
       isRobot: boolean;
+    }
+  | {
+      // Short-lived OCI Bearer JWT — its access claims were authorized by /token.
+      kind: "registryToken";
+      subject: string;
+      access: RegistryAccess[];
     };
 
 export type ResourceType = "repository" | "org" | "system";

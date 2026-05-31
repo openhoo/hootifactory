@@ -51,6 +51,27 @@ export function can({ principal, action, resource, effectiveRole }: CanInput): D
     return { allowed: false, code: "insufficient_role", reason: `role does not grant '${action}'` };
   }
 
+  // ── registry token (OCI Bearer JWT) ───────────────────────────────────────
+  if (principal.kind === "registryToken") {
+    const want = action === "read" ? "pull" : action === "write" ? "push" : "delete";
+    const name = resource.repositoryName;
+    const granted =
+      !!name &&
+      principal.access.some(
+        (a) =>
+          a.type === "repository" &&
+          a.name === name &&
+          (a.actions.includes(want) || a.actions.includes("*")),
+      );
+    return granted
+      ? { allowed: true }
+      : {
+          allowed: false,
+          code: "insufficient_scope",
+          reason: `token does not grant '${action}' on ${name ?? "?"}`,
+        };
+  }
+
   // ── user (session) ─────────────────────────────────────────────────────────
   if (!effectiveRole) {
     return { allowed: false, code: "not_member", reason: "no role in this organization" };
