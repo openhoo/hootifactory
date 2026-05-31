@@ -1,0 +1,77 @@
+# Local dev infrastructure for Hootifactory.
+# Brings up Postgres + MinIO (S3) and creates the artifact bucket.
+# Run the api/web/scan-worker locally with `bun run dev` against these.
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: hootifactory
+      POSTGRES_PASSWORD: hootifactory
+      POSTGRES_DB: hootifactory
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hootifactory -d hootifactory"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: hootifactory
+      MINIO_ROOT_PASSWORD: hootifactory
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  # One-shot: wait for MinIO, then create the bucket (idempotent).
+  minio-setup:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_started
+    entrypoint: >
+      /bin/sh -c "
+      until mc alias set local http://minio:9000 hootifactory hootifactory; do
+        echo 'waiting for minio...'; sleep 1;
+      done &&
+      mc mb --ignore-existing local/hootifactory &&
+      mc anonymous set none local/hootifactory &&
+      echo 'hootifactory bucket ready'
+      "
+
+  # ── optional scanner services (Phase 3) ──────────────────────────────────
+  clamav:
+    image: clamav/clamav:latest
+    profiles: ["scan"]
+    restart: unless-stopped
+    ports:
+      - "3310:3310"
+
+  trivy:
+    image: aquasec/trivy:latest
+    profiles: ["scan"]
+    command: server --listen 0.0.0.0:4954
+    restart: unless-stopped
+    ports:
+      - "4954:4954"
+    volumes:
+      - trivycache:/root/.cache/trivy
+
+volumes:
+  pgdata:
+  miniodata:
+  trivycache:

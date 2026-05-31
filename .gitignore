@@ -1,0 +1,33 @@
+node_modules/
+dist/
+build/
+out/
+coverage/
+test-results/
+playwright-report/
+blob-report/
+.playwright/
+*.log
+*.tsbuildinfo
+
+# env
+.env
+.env.local
+.env.*.local
+
+# local data / volumes
+data/
+.minio/
+pgdata/
+scanner-dbs/
+tmp/
+scratch/
+
+# editor / os
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# generated
+apps/web/src/routeTree.gen.ts

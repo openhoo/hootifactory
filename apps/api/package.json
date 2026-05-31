@@ -1,0 +1,21 @@
+{
+  "name": "@hootifactory/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --watch src/server.ts",
+    "start": "bun src/server.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@hootifactory/auth": "workspace:*",
+    "@hootifactory/config": "workspace:*",
+    "@hootifactory/core": "workspace:*",
+    "@hootifactory/db": "workspace:*",
+    "@hootifactory/queue": "workspace:*",
+    "@hootifactory/storage": "workspace:*",
+    "@hootifactory/types": "workspace:*",
+    "hono": "^4.12.23"
+  }
+}

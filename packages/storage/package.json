@@ -1,0 +1,16 @@
+{
+  "name": "@hootifactory/storage",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@hootifactory/config": "workspace:*",
+    "@hootifactory/types": "workspace:*"
+  }
+}

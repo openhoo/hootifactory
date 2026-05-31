@@ -1,0 +1,46 @@
+{
+  "name": "hootifactory",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "bun run --filter '@hootifactory/api' dev",
+    "dev:web": "bun run --filter '@hootifactory/web' dev",
+    "dev:worker": "bun run --filter '@hootifactory/scan-worker' dev",
+    "build": "bun run --filter '@hootifactory/web' build",
+    "test": "bun test ./packages",
+    "test:e2e": "playwright test",
+    "e2e:install": "playwright install chromium",
+    "typecheck": "bun run --filter '*' typecheck",
+    "lint": "biome check .",
+    "format": "biome check --write .",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "bun run packages/db/src/migrate.ts",
+    "db:push": "drizzle-kit push",
+    "db:studio": "drizzle-kit studio",
+    "db:seed": "bun run scripts/seed.ts",
+    "compose:up": "docker compose up -d",
+    "compose:down": "docker compose down"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.16",
+    "@hootifactory/auth": "workspace:*",
+    "@hootifactory/config": "workspace:*",
+    "@hootifactory/core": "workspace:*",
+    "@hootifactory/db": "workspace:*",
+    "@hootifactory/queue": "workspace:*",
+    "@hootifactory/storage": "workspace:*",
+    "@hootifactory/types": "workspace:*",
+    "@playwright/test": "^1.60.0",
+    "@types/bun": "^1.3.14",
+    "drizzle-kit": "^0.31.10",
+    "typescript": "^6.0.3"
+  },
+  "engines": {
+    "bun": ">=1.3.0"
+  }
+}
