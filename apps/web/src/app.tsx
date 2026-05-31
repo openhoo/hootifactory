@@ -15,6 +15,7 @@ import {
   useNavigate,
 } from "@tanstack/react-router";
 import { createContext, type ReactNode, useContext, useEffect, useState } from "react";
+import { ThemeToggle } from "./components/theme";
 import {
   Badge,
   Button,
@@ -63,12 +64,15 @@ function LoginPage() {
   });
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-neutral-50">
+    <div className="relative flex min-h-screen items-center justify-center bg-neutral-50 dark:bg-neutral-950">
+      <div className="absolute right-4 top-4">
+        <ThemeToggle />
+      </div>
       <Card className="w-full max-w-sm">
         <div className="mb-6 text-center">
           <div className="text-3xl">🦉</div>
           <h1 className="text-xl font-semibold">Hootifactory</h1>
-          <p className="text-sm text-neutral-500">
+          <p className="text-sm text-neutral-500 dark:text-neutral-400">
             {mode === "login" ? "Sign in" : "Create account"}
           </p>
         </div>
@@ -100,14 +104,14 @@ function LoginPage() {
               autoComplete="current-password"
             />
           </Field>
-          {error && <p className="text-sm text-red-600">{error}</p>}
+          {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
           <Button type="submit" className="w-full" disabled={submit.isPending}>
             {submit.isPending ? "…" : mode === "login" ? "Sign in" : "Register"}
           </Button>
         </form>
         <button
           type="button"
-          className="mt-4 w-full text-center text-xs text-neutral-500 hover:text-amber-600"
+          className="mt-4 w-full text-center text-xs text-neutral-500 hover:text-amber-600 dark:text-neutral-400 dark:hover:text-amber-400"
           onClick={() => setMode(mode === "login" ? "register" : "login")}
         >
           {mode === "login" ? "Need an account? Register" : "Have an account? Sign in"}
@@ -148,7 +152,7 @@ function AppShell() {
   return (
     <OrgContext.Provider value={{ orgs, selected, setOrgId }}>
       <div className="flex min-h-screen">
-        <aside className="w-56 shrink-0 border-r border-neutral-200 bg-white p-4">
+        <aside className="w-56 shrink-0 border-r border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
           <div className="mb-6 flex items-center gap-2 px-2 text-lg font-semibold">
             <span>🦉</span> Hootifactory
           </div>
@@ -159,9 +163,9 @@ function AppShell() {
           </nav>
         </aside>
         <div className="flex flex-1 flex-col">
-          <header className="flex items-center justify-between border-b border-neutral-200 bg-white px-6 py-3">
+          <header className="flex items-center justify-between border-b border-neutral-200 bg-white px-6 py-3 dark:border-neutral-800 dark:bg-neutral-900">
             <div className="flex items-center gap-2">
-              <span className="text-xs text-neutral-500">Organization</span>
+              <span className="text-xs text-neutral-500 dark:text-neutral-400">Organization</span>
               <Select
                 value={orgId}
                 onChange={(e) => setOrgId(e.target.value)}
@@ -174,16 +178,19 @@ function AppShell() {
                 ))}
               </Select>
             </div>
-            <Button
-              variant="ghost"
-              onClick={async () => {
-                await api.logout();
-                await qc.invalidateQueries();
-                navigate({ to: "/login" });
-              }}
-            >
-              Sign out
-            </Button>
+            <div className="flex items-center gap-3">
+              <ThemeToggle />
+              <Button
+                variant="ghost"
+                onClick={async () => {
+                  await api.logout();
+                  await qc.invalidateQueries();
+                  navigate({ to: "/login" });
+                }}
+              >
+                Sign out
+              </Button>
+            </div>
           </header>
           <main className="flex-1 overflow-auto p-6">
             <Outlet />
@@ -208,7 +215,9 @@ function CreateFirstOrg() {
     <div className="flex min-h-screen items-center justify-center">
       <Card className="w-full max-w-sm">
         <h1 className="mb-1 text-lg font-semibold">Create your organization</h1>
-        <p className="mb-4 text-sm text-neutral-500">Organizations own your repositories.</p>
+        <p className="mb-4 text-sm text-neutral-500 dark:text-neutral-400">
+          Organizations own your repositories.
+        </p>
         <form
           className="space-y-3"
           onSubmit={(e) => {
@@ -223,7 +232,7 @@ function CreateFirstOrg() {
           <Field label="Display name">
             <Input value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
           </Field>
-          {error && <p className="text-sm text-red-600">{error}</p>}
+          {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
           <Button
             type="submit"
             className="w-full"
@@ -242,7 +251,7 @@ function NavLink({ to, children }: { to: string; children: ReactNode }) {
   return (
     <Link
       to={to}
-      className="block rounded-md px-3 py-2 text-neutral-700 hover:bg-neutral-100 [&.active]:bg-amber-50 [&.active]:font-medium [&.active]:text-amber-700"
+      className="block rounded-md px-3 py-2 text-neutral-700 hover:bg-neutral-100 [&.active]:bg-amber-50 [&.active]:font-medium [&.active]:text-amber-700 dark:text-neutral-300 dark:hover:bg-neutral-800 dark:[&.active]:bg-amber-500/10 dark:[&.active]:text-amber-300"
       activeOptions={{ exact: to === "/" }}
     >
       {children}
@@ -268,24 +277,28 @@ function DashboardPage() {
       <PageTitle>Dashboard</PageTitle>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <Card>
-          <div className="text-sm text-neutral-500">Repositories</div>
+          <div className="text-sm text-neutral-500 dark:text-neutral-400">Repositories</div>
           <div className="text-3xl font-semibold">{list.length}</div>
         </Card>
         <Card>
-          <div className="text-sm text-neutral-500">Formats</div>
+          <div className="text-sm text-neutral-500 dark:text-neutral-400">Formats</div>
           <div className="mt-2 flex flex-wrap gap-2">
             {Object.entries(byFormat).map(([f, n]) => (
               <Badge key={f} tone="amber">
                 {f}: {n}
               </Badge>
             ))}
-            {!list.length && <span className="text-sm text-neutral-400">none yet</span>}
+            {!list.length && (
+              <span className="text-sm text-neutral-400 dark:text-neutral-400">none yet</span>
+            )}
           </div>
         </Card>
         <Card>
-          <div className="text-sm text-neutral-500">Organization</div>
+          <div className="text-sm text-neutral-500 dark:text-neutral-400">Organization</div>
           <div className="text-lg font-medium">{selected?.displayName ?? "—"}</div>
-          <div className="text-xs text-neutral-400">role: {selected?.role}</div>
+          <div className="text-xs text-neutral-400 dark:text-neutral-400">
+            role: {selected?.role}
+          </div>
         </Card>
       </div>
     </div>
@@ -368,7 +381,7 @@ function ReposPage() {
             <Button type="submit" disabled={create.isPending} data-testid="repo-create">
               Create
             </Button>
-            {error && <span className="text-sm text-red-600">{error}</span>}
+            {error && <span className="text-sm text-red-600 dark:text-red-400">{error}</span>}
           </form>
         </Card>
       )}
@@ -376,9 +389,9 @@ function ReposPage() {
       {repos.isLoading ? (
         <Spinner />
       ) : (
-        <div className="overflow-hidden rounded-lg border border-neutral-200 bg-white">
+        <div className="overflow-hidden rounded-lg border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900">
           <table className="w-full text-sm">
-            <thead className="bg-neutral-50 text-left text-xs uppercase text-neutral-500">
+            <thead className="bg-neutral-50 text-left text-xs uppercase text-neutral-500 dark:bg-neutral-800/50 dark:text-neutral-400">
               <tr>
                 <th className="px-4 py-2">Name</th>
                 <th className="px-4 py-2">Format</th>
@@ -388,12 +401,15 @@ function ReposPage() {
             </thead>
             <tbody>
               {(repos.data?.repositories ?? []).map((r) => (
-                <tr key={r.id} className="border-t border-neutral-100 hover:bg-neutral-50">
+                <tr
+                  key={r.id}
+                  className="border-t border-neutral-100 hover:bg-neutral-50 dark:border-neutral-800 dark:hover:bg-neutral-800/50"
+                >
                   <td className="px-4 py-2">
                     <Link
                       to="/repositories/$repoId"
                       params={{ repoId: r.id }}
-                      className="font-medium text-amber-700 hover:underline"
+                      className="font-medium text-amber-700 hover:underline dark:text-amber-400"
                     >
                       {r.name}
                     </Link>
@@ -401,7 +417,7 @@ function ReposPage() {
                   <td className="px-4 py-2">
                     <Badge tone="amber">{r.format}</Badge>
                   </td>
-                  <td className="px-4 py-2 text-neutral-600">{r.kind}</td>
+                  <td className="px-4 py-2 text-neutral-600 dark:text-neutral-400">{r.kind}</td>
                   <td className="px-4 py-2">
                     <Badge tone={r.visibility === "public" ? "green" : "neutral"}>
                       {r.visibility}
@@ -411,7 +427,10 @@ function ReposPage() {
               ))}
               {!repos.data?.repositories.length && (
                 <tr>
-                  <td colSpan={4} className="px-4 py-8 text-center text-neutral-400">
+                  <td
+                    colSpan={4}
+                    className="px-4 py-8 text-center text-neutral-400 dark:text-neutral-400"
+                  >
                     No repositories yet.
                   </td>
                 </tr>
@@ -431,7 +450,8 @@ function RepoDetailPage() {
   const pkgsQ = useQuery({ queryKey: ["packages", repoId], queryFn: () => api.packages(repoId) });
 
   if (repoQ.isLoading) return <Spinner />;
-  if (repoQ.isError || !repoQ.data) return <p className="text-red-600">Repository not found.</p>;
+  if (repoQ.isError || !repoQ.data)
+    return <p className="text-red-600 dark:text-red-400">Repository not found.</p>;
   const repo = repoQ.data.repository;
   const snippets = snippetsFor(repo, window.location.origin);
 
@@ -444,11 +464,13 @@ function RepoDetailPage() {
       </PageTitle>
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2">
-          <h2 className="mb-3 text-sm font-semibold text-neutral-700">Packages</h2>
+          <h2 className="mb-3 text-sm font-semibold text-neutral-700 dark:text-neutral-300">
+            Packages
+          </h2>
           {pkgsQ.isLoading ? (
             <Spinner />
           ) : (
-            <ul className="divide-y divide-neutral-100">
+            <ul className="divide-y divide-neutral-100 dark:divide-neutral-800">
               {(pkgsQ.data?.packages ?? []).map((p) => (
                 <li key={p.id} className="flex items-center justify-between py-2">
                   <span className="font-mono text-sm">{p.name}</span>
@@ -456,17 +478,23 @@ function RepoDetailPage() {
                 </li>
               ))}
               {!pkgsQ.data?.packages.length && (
-                <li className="py-8 text-center text-neutral-400">No packages published yet.</li>
+                <li className="py-8 text-center text-neutral-400 dark:text-neutral-400">
+                  No packages published yet.
+                </li>
               )}
             </ul>
           )}
         </Card>
         <Card>
-          <h2 className="mb-3 text-sm font-semibold text-neutral-700">How to use</h2>
+          <h2 className="mb-3 text-sm font-semibold text-neutral-700 dark:text-neutral-300">
+            How to use
+          </h2>
           <div className="space-y-3">
             {snippets.map((s) => (
               <div key={s.title}>
-                <div className="mb-1 text-xs font-medium text-neutral-500">{s.title}</div>
+                <div className="mb-1 text-xs font-medium text-neutral-500 dark:text-neutral-400">
+                  {s.title}
+                </div>
                 <Code>{s.code}</Code>
               </div>
             ))}
@@ -528,15 +556,17 @@ function TokensPage() {
         </form>
         {secret && (
           <div className="mt-3" data-testid="token-secret">
-            <p className="mb-1 text-xs text-amber-700">Copy this now — it won't be shown again:</p>
+            <p className="mb-1 text-xs text-amber-700 dark:text-amber-400">
+              Copy this now — it won't be shown again:
+            </p>
             <Code>{secret}</Code>
           </div>
         )}
       </Card>
 
-      <div className="overflow-hidden rounded-lg border border-neutral-200 bg-white">
+      <div className="overflow-hidden rounded-lg border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900">
         <table className="w-full text-sm">
-          <thead className="bg-neutral-50 text-left text-xs uppercase text-neutral-500">
+          <thead className="bg-neutral-50 text-left text-xs uppercase text-neutral-500 dark:bg-neutral-800/50 dark:text-neutral-400">
             <tr>
               <th className="px-4 py-2">Name</th>
               <th className="px-4 py-2">Prefix</th>
@@ -547,7 +577,7 @@ function TokensPage() {
           </thead>
           <tbody>
             {(tokensQ.data?.tokens ?? []).map((t) => (
-              <tr key={t.id} className="border-t border-neutral-100">
+              <tr key={t.id} className="border-t border-neutral-100 dark:border-neutral-800">
                 <td className="px-4 py-2">{t.name}</td>
                 <td className="px-4 py-2 font-mono text-xs">{t.prefix}…</td>
                 <td className="px-4 py-2">{t.type}</td>
