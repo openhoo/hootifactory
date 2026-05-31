@@ -12,7 +12,10 @@
       "!**/node_modules",
       "!**/*.gen.ts",
       "!apps/web/src/routeTree.gen.ts",
-      "!packages/db/migrations"
+      "!packages/db/migrations",
+      "!apps/web/src/components/ui",
+      "!apps/web/src/hooks",
+      "!apps/web/src/lib/utils.ts"
     ]
   },
   "formatter": {

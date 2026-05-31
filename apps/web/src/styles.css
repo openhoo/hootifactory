@@ -1,30 +1,165 @@
 @import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+/* Self-hosted variable fonts — no FOUT, works offline.
+   Display: Bricolage Grotesque · Body: Hanken Grotesk · Mono: JetBrains Mono. */
+@import "@fontsource-variable/bricolage-grotesque";
+@import "@fontsource-variable/hanken-grotesk";
+@import "@fontsource-variable/jetbrains-mono";
 
 /* Manual (class-based) dark mode: the `dark` variant matches when the
-   `.dark` class is present on <html> (or any ancestor). */
+   `.dark` class is present on <html> (set before first paint by index.html). */
 @custom-variant dark (&:where(.dark, .dark *));
 
+/*
+ * Hootifactory theme — "warm artifact foundry".
+ * Warm stone neutrals + a single confident amber accent (owl / honey).
+ * Colors are authored in sRGB so the body background resolves to the exact
+ * values the theme e2e test pins (stone-50 #fafaf9 light, stone-950 #0c0a09 dark).
+ */
 :root {
   color-scheme: light;
+  --radius: 0.7rem;
+
+  --background: #fafaf9; /* stone-50  */
+  --foreground: #1c1917; /* stone-900 */
+  --card: #ffffff;
+  --card-foreground: #1c1917;
+  --popover: #ffffff;
+  --popover-foreground: #1c1917;
+  --primary: #b45309; /* amber-700 — darker for WCAG AA text/button contrast on light surfaces */
+  --primary-foreground: #fffdf7;
+  --secondary: #f5f5f4; /* stone-100 */
+  --secondary-foreground: #292524; /* stone-800 */
+  --muted: #f5f5f4;
+  --muted-foreground: #78716c; /* stone-500 */
+  --accent: #f5f5f4;
+  --accent-foreground: #1c1917;
+  --destructive: #dc2626; /* red-600  */
+  --destructive-foreground: #fffdf7;
+  --border: #e7e5e4; /* stone-200 */
+  --input: #e7e5e4;
+  --ring: #b45309; /* amber-700 */
+
+  --chart-1: #f59e0b; /* amber-500 */
+  --chart-2: #b45309; /* amber-700 */
+  --chart-3: #a8a29e; /* stone-400 */
+  --chart-4: #fcd34d; /* amber-300 */
+  --chart-5: #57534e; /* stone-600 */
+
+  --sidebar: #ffffff;
+  --sidebar-foreground: #44403c; /* stone-700 */
+  --sidebar-primary: #b45309;
+  --sidebar-primary-foreground: #fffdf7;
+  --sidebar-accent: #f5f5f4;
+  --sidebar-accent-foreground: #1c1917;
+  --sidebar-border: #e7e5e4;
+  --sidebar-ring: #b45309;
 }
 
-html.dark {
+.dark {
   color-scheme: dark;
+
+  --background: #0c0a09; /* stone-950 */
+  --foreground: #e7e5e4; /* stone-200 */
+  --card: #1c1917; /* stone-900 */
+  --card-foreground: #e7e5e4;
+  --popover: #1c1917;
+  --popover-foreground: #e7e5e4;
+  --primary: #f59e0b; /* amber-500 */
+  --primary-foreground: #1c1917;
+  --secondary: #292524; /* stone-800 */
+  --secondary-foreground: #e7e5e4;
+  --muted: #292524;
+  --muted-foreground: #a8a29e; /* stone-400 */
+  --accent: #292524;
+  --accent-foreground: #fafaf9;
+  --destructive: #ef4444; /* red-500  */
+  --destructive-foreground: #1c1917;
+  --border: #292524; /* stone-800 */
+  --input: #44403c; /* stone-700 */
+  --ring: #f59e0b; /* amber-500 */
+
+  --chart-1: #fbbf24; /* amber-400 */
+  --chart-2: #d97706; /* amber-600 */
+  --chart-3: #78716c; /* stone-500 */
+  --chart-4: #fde68a; /* amber-200 */
+  --chart-5: #a8a29e; /* stone-400 */
+
+  --sidebar: #1c1917;
+  --sidebar-foreground: #d6d3d1; /* stone-300 */
+  --sidebar-primary: #f59e0b;
+  --sidebar-primary-foreground: #1c1917;
+  --sidebar-accent: #292524;
+  --sidebar-accent-foreground: #fafaf9;
+  --sidebar-border: #292524;
+  --sidebar-ring: #f59e0b;
 }
 
-body {
-  margin: 0;
-  font-family:
-    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  background: #fafaf9;
-  color: #1c1917;
+@theme inline {
+  --font-sans: "Hanken Grotesk Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-heading:
+    "Bricolage Grotesque Variable", "Hanken Grotesk Variable", ui-sans-serif, sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, "SFMono-Regular", Menlo, monospace;
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
 }
 
-html.dark body {
-  background: #0c0a09;
-  color: #e7e5e4;
-}
-
-* {
-  box-sizing: border-box;
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    margin: 0;
+    font-synthesis-weight: none;
+    text-rendering: optimizeLegibility;
+  }
+  /* A warm amber selection — a small, consistent brand signature. */
+  ::selection {
+    background-color: color-mix(in oklab, var(--primary) 28%, transparent);
+    color: var(--foreground);
+  }
 }

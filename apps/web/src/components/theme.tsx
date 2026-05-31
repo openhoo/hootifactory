@@ -1,4 +1,13 @@
-import { createContext, type ReactNode, useContext, useEffect, useState } from "react";
+import { Monitor, Moon, Sun } from "lucide-react";
+import {
+  type ComponentType,
+  createContext,
+  type ReactNode,
+  useContext,
+  useEffect,
+  useState,
+} from "react";
+import { cn } from "@/lib/utils";
 
 export type Theme = "light" | "dark" | "system";
 
@@ -63,10 +72,10 @@ export function useTheme(): ThemeContextValue {
   return ctx;
 }
 
-const OPTIONS: { value: Theme; label: string; icon: string }[] = [
-  { value: "light", label: "Light", icon: "☀" },
-  { value: "system", label: "System", icon: "🖥" },
-  { value: "dark", label: "Dark", icon: "🌙" },
+const OPTIONS: { value: Theme; label: string; Icon: ComponentType<{ className?: string }> }[] = [
+  { value: "light", label: "Light", Icon: Sun },
+  { value: "system", label: "System", Icon: Monitor },
+  { value: "dark", label: "Dark", Icon: Moon },
 ];
 
 /** Three-way segmented control: light / system / dark. */
@@ -76,26 +85,27 @@ export function ThemeToggle() {
     <div
       role="toolbar"
       aria-label="Theme"
-      className="inline-flex items-center rounded-md border border-neutral-300 bg-white p-0.5 dark:border-neutral-700 dark:bg-neutral-900"
+      className="inline-flex items-center gap-0.5 rounded-lg border border-border bg-muted/60 p-0.5"
     >
-      {OPTIONS.map((o) => {
-        const active = theme === o.value;
+      {OPTIONS.map(({ value, label, Icon }) => {
+        const active = theme === value;
         return (
           <button
-            key={o.value}
+            key={value}
             type="button"
-            title={o.label}
-            aria-label={o.label}
+            title={label}
+            aria-label={label}
             aria-pressed={active}
-            data-testid={`theme-${o.value}`}
-            onClick={() => setTheme(o.value)}
-            className={`rounded px-2 py-1 text-sm leading-none transition focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 dark:focus-visible:ring-amber-400 ${
+            data-testid={`theme-${value}`}
+            onClick={() => setTheme(value)}
+            className={cn(
+              "inline-flex size-7 items-center justify-center rounded-md outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/60",
               active
-                ? "bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300"
-                : "text-neutral-500 hover:text-neutral-800 dark:text-neutral-400 dark:hover:text-neutral-100"
-            }`}
+                ? "bg-card text-primary shadow-sm ring-1 ring-border"
+                : "text-muted-foreground hover:text-foreground",
+            )}
           >
-            <span aria-hidden="true">{o.icon}</span>
+            <Icon className="size-4" />
           </button>
         );
       })}
