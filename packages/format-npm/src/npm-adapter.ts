@@ -12,7 +12,16 @@ import {
   storeBlobWithRef,
   upsertPackageVersion,
 } from "@hootifactory/core";
-import { and, eq, like, packages, packageVersions, sql, versionTags } from "@hootifactory/db";
+import {
+  and,
+  eq,
+  isNull,
+  like,
+  packages,
+  packageVersions,
+  sql,
+  versionTags,
+} from "@hootifactory/db";
 import { buildPackument } from "./packument";
 
 function sha1hex(data: Uint8Array): string {
@@ -101,7 +110,10 @@ export class NpmAdapter implements FormatAdapter {
   }
 
   private async liveVersions(ctx: RepoContext, packageId: string) {
-    return ctx.db.select().from(packageVersions).where(eq(packageVersions.packageId, packageId));
+    return ctx.db
+      .select()
+      .from(packageVersions)
+      .where(and(eq(packageVersions.packageId, packageId), isNull(packageVersions.deletedAt)));
   }
 
   private async distTags(ctx: RepoContext, packageId: string): Promise<Record<string, string>> {

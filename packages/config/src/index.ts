@@ -18,6 +18,8 @@ const EnvSchema = z.object({
   API_PORT: z.coerce.number().int().positive().default(3000),
   API_HOST: z.string().default("0.0.0.0"),
   REGISTRY_PUBLIC_URL: z.string().default("http://localhost:3000"),
+  /** When set, the API serves the built web UI (single-container deploys). */
+  WEB_DIST: z.string().optional(),
 
   // Postgres
   DATABASE_URL: z

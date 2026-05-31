@@ -64,6 +64,8 @@ export const Errors = {
   unsupported: (detail?: unknown) =>
     new RegistryError(400, "UNSUPPORTED", "the operation is unsupported", detail),
   notFound: (detail?: unknown) => new RegistryError(404, "NOT_FOUND", "not found", detail),
+  quotaExceeded: (detail?: unknown) =>
+    new RegistryError(413, "DENIED", "storage quota exceeded", detail),
 } as const;
 
 /**

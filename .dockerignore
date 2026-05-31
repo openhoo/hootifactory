@@ -1,0 +1,15 @@
+node_modules
+**/node_modules
+**/dist
+.git
+.github
+test-results
+playwright-report
+data
+pgdata
+.minio
+scratch
+tmp
+*.log
+.env
+.env.*

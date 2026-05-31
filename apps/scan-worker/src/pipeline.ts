@@ -109,6 +109,7 @@ export async function processScan(artifactId: string): Promise<void> {
       finishedAt: new Date(),
       sbomNativeJson: { scanners: detectScanners() },
     })
+    .onConflictDoNothing()
     .returning({ id: scans.id });
 
   if (scan && results.length) {

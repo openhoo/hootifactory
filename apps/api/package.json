@@ -14,6 +14,7 @@
     "@hootifactory/core": "workspace:*",
     "@hootifactory/db": "workspace:*",
     "@hootifactory/format-docker": "workspace:*",
+    "@hootifactory/format-go": "workspace:*",
     "@hootifactory/format-npm": "workspace:*",
     "@hootifactory/format-pypi": "workspace:*",
     "@hootifactory/queue": "workspace:*",

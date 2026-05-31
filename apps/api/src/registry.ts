@@ -1,4 +1,6 @@
+import { join } from "node:path";
 import { httpStatusForDenial } from "@hootifactory/auth";
+import { env } from "@hootifactory/config";
 import {
   Errors,
   type FormatAdapter,
@@ -14,6 +16,21 @@ import {
 import type { Context } from "hono";
 import { buildRepoContext } from "./context";
 import type { AppEnv } from "./types";
+
+/** Serve the built SPA (assets + index.html fallback) for single-container deploys. */
+async function serveWeb(pathname: string): Promise<Response | null> {
+  if (!env.WEB_DIST) return null;
+  const clean = pathname.replace(/^\/+/, "");
+  if (clean && !clean.includes("..")) {
+    const file = Bun.file(join(env.WEB_DIST, clean));
+    if (await file.exists()) return new Response(file);
+  }
+  const index = Bun.file(join(env.WEB_DIST, "index.html"));
+  if (await index.exists()) {
+    return new Response(index, { headers: { "content-type": "text/html; charset=utf-8" } });
+  }
+  return null;
+}
 
 const isRead = (m: string) => m === "GET" || m === "HEAD";
 
@@ -83,7 +100,13 @@ async function dispatchProxy(
 export async function handleRegistryRequest(c: Context<AppEnv>): Promise<Response> {
   const url = new URL(c.req.url);
   const resolution = await resolveRepository(url.pathname);
-  if (!resolution) throw Errors.nameUnknown({ path: url.pathname });
+  if (!resolution) {
+    if (c.req.method === "GET") {
+      const web = await serveWeb(url.pathname);
+      if (web) return web;
+    }
+    throw Errors.nameUnknown({ path: url.pathname });
+  }
 
   const { repo, rest } = resolution;
   const adapter = formatRegistry.lookup(repo.format);

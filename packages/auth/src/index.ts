@@ -1,6 +1,7 @@
 export * from "./audit";
 export * from "./authorize";
 export * from "./can";
+export * from "./oidc";
 export * from "./password";
 export * from "./permissions";
 export * from "./principal";

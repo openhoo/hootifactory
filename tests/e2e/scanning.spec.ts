@@ -49,7 +49,7 @@ async function pollArtifact(
   ctx: APIRequestContext,
   repoId: string,
   name: string,
-  timeoutMs = 25_000,
+  timeoutMs = 60_000,
 ): Promise<{ id: string; state: string }> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {

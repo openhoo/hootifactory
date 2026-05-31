@@ -8,6 +8,7 @@ import {
 import {
   addUpstream,
   addVirtualMember,
+  applyRetention,
   createRepository,
   isUniqueViolation,
 } from "@hootifactory/core";
@@ -20,10 +21,12 @@ import {
   desc,
   eq,
   findings,
+  isNull,
   memberships,
   organizations,
   packages,
   packageVersions,
+  quotas,
   repositories,
   scanPolicies,
 } from "@hootifactory/db";
@@ -277,6 +280,55 @@ uiRouter.get("/artifacts/:artifactId/findings", async (c) => {
     .from(findings)
     .where(eq(findings.artifactId, art.id));
   return c.json({ findings: rows });
+});
+
+// ── governance: quotas + retention ───────────────────────────────────────
+uiRouter.get("/orgs/:orgId/quota", async (c) => {
+  const orgId = c.req.param("orgId");
+  const decision = await authorize(c.get("principal"), "read", { type: "org", orgId });
+  if (!decision.allowed) {
+    return c.json({ error: decision.reason }, decision.code === "unauthenticated" ? 401 : 403);
+  }
+  const [q] = await db
+    .select()
+    .from(quotas)
+    .where(and(eq(quotas.orgId, orgId), isNull(quotas.repositoryId)))
+    .limit(1);
+  return c.json({
+    maxStorageBytes: q?.maxStorageBytes ?? null,
+    usedStorageBytes: q?.usedStorageBytes ?? 0,
+  });
+});
+
+uiRouter.post("/orgs/:orgId/quota", async (c) => {
+  const orgId = c.req.param("orgId");
+  const decision = await authorize(c.get("principal"), "admin", { type: "org", orgId });
+  if (!decision.allowed) {
+    return c.json({ error: decision.reason }, decision.code === "unauthenticated" ? 401 : 403);
+  }
+  const body = (await c.req.json().catch(() => null)) as { maxStorageBytes?: number } | null;
+  const [existing] = await db
+    .select({ id: quotas.id })
+    .from(quotas)
+    .where(and(eq(quotas.orgId, orgId), isNull(quotas.repositoryId)))
+    .limit(1);
+  if (existing) {
+    await db
+      .update(quotas)
+      .set({ maxStorageBytes: body?.maxStorageBytes ?? null })
+      .where(eq(quotas.id, existing.id));
+  } else {
+    await db.insert(quotas).values({ orgId, maxStorageBytes: body?.maxStorageBytes ?? null });
+  }
+  return c.json({ ok: true });
+});
+
+uiRouter.post("/repositories/:repoId/retention/apply", async (c) => {
+  const guard = await repoAdminGuard(c, c.req.param("repoId"));
+  if ("error" in guard) return guard.error;
+  const body = (await c.req.json().catch(() => null)) as { keepLastN?: number } | null;
+  const pruned = await applyRetention(guard.repo.id, body?.keepLastN ?? 10);
+  return c.json({ pruned });
 });
 
 uiRouter.post("/orgs/:orgId/repositories", async (c) => {

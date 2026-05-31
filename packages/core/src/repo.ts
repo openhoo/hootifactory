@@ -2,7 +2,9 @@ import {
   and,
   asc,
   db,
+  desc,
   eq,
+  isNull,
   packages,
   packageVersions,
   repositories,
@@ -135,4 +137,28 @@ export async function addVirtualMember(virtualRepoId: string, memberRepoId: stri
 
 export async function addUpstream(repositoryId: string, url: string, priority = 0) {
   await db.insert(repositoryUpstreams).values({ repositoryId, url, priority });
+}
+
+/** Soft-delete versions beyond the newest `keepLastN` per package. Returns count pruned. */
+export async function applyRetention(repositoryId: string, keepLastN: number): Promise<number> {
+  const pkgs = await db
+    .select({ id: packages.id })
+    .from(packages)
+    .where(eq(packages.repositoryId, repositoryId));
+  let pruned = 0;
+  for (const p of pkgs) {
+    const vers = await db
+      .select({ id: packageVersions.id })
+      .from(packageVersions)
+      .where(and(eq(packageVersions.packageId, p.id), isNull(packageVersions.deletedAt)))
+      .orderBy(desc(packageVersions.createdAt));
+    for (const v of vers.slice(keepLastN)) {
+      await db
+        .update(packageVersions)
+        .set({ deletedAt: new Date() })
+        .where(eq(packageVersions.id, v.id));
+      pruned++;
+    }
+  }
+  return pruned;
 }

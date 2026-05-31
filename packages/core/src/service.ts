@@ -4,11 +4,34 @@ import {
   blobRefs,
   blobs,
   eq,
+  isNull,
   packageVersions,
+  quotas,
   sql,
   versionTags,
 } from "@hootifactory/db";
+import { computeDigest } from "@hootifactory/storage";
+import { Errors } from "./errors";
 import type { RepoContext } from "./format/adapter";
+
+/** Enforce an org storage quota (opt-in: only when a quota row with a max is set). */
+async function assertStorageQuota(ctx: RepoContext, addBytes: number): Promise<void> {
+  const [q] = await ctx.db
+    .select({ used: quotas.usedStorageBytes, max: quotas.maxStorageBytes })
+    .from(quotas)
+    .where(and(eq(quotas.orgId, ctx.repo.orgId), isNull(quotas.repositoryId)))
+    .limit(1);
+  if (q?.max != null && q.used + addBytes > q.max) {
+    throw Errors.quotaExceeded({ max: q.max, used: q.used, requested: addBytes });
+  }
+}
+
+async function bumpStorageUsed(ctx: RepoContext, addBytes: number): Promise<void> {
+  await ctx.db
+    .update(quotas)
+    .set({ usedStorageBytes: sql`${quotas.usedStorageBytes} + ${addBytes}` })
+    .where(and(eq(quotas.orgId, ctx.repo.orgId), isNull(quotas.repositoryId)));
+}
 
 /** True if a published artifact (by digest, in this repo) is policy-blocked. */
 export async function isArtifactBlocked(ctx: RepoContext, digest: string): Promise<boolean> {
@@ -51,6 +74,9 @@ export async function storeBlobWithRef(
   ctx: RepoContext,
   opts: { data: Uint8Array; mediaType?: string; kind: BlobRefKind; scope: string },
 ): Promise<StoredBlob> {
+  const digest = computeDigest(opts.data);
+  const isNew = !(await ctx.blobs.exists(digest));
+  if (isNew) await assertStorageQuota(ctx, opts.data.byteLength);
   const put = await ctx.blobs.put(opts.data);
   await ctx.db.transaction(async (tx) => {
     await tx
@@ -81,6 +107,7 @@ export async function storeBlobWithRef(
         .where(eq(blobs.digest, put.digest));
     }
   });
+  if (isNew) await bumpStorageUsed(ctx, put.size);
   return put;
 }
 

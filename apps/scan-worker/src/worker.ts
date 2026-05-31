@@ -18,8 +18,8 @@ async function main(): Promise<void> {
       try {
         await processScan(job.data.artifactId);
       } catch (err) {
+        // Log and swallow: a poisoned job must not retry-storm the queue.
         console.error("[scan-worker] scan failed", job.data.artifactId, err);
-        throw err; // let pg-boss retry / dead-letter
       }
     }
   });

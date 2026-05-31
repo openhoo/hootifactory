@@ -28,6 +28,7 @@
         "@hootifactory/core": "workspace:*",
         "@hootifactory/db": "workspace:*",
         "@hootifactory/format-docker": "workspace:*",
+        "@hootifactory/format-go": "workspace:*",
         "@hootifactory/format-npm": "workspace:*",
         "@hootifactory/format-pypi": "workspace:*",
         "@hootifactory/queue": "workspace:*",
@@ -104,6 +105,16 @@
     },
     "packages/format-docker": {
       "name": "@hootifactory/format-docker",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/core": "workspace:*",
+        "@hootifactory/db": "workspace:*",
+        "@hootifactory/storage": "workspace:*",
+        "@hootifactory/types": "workspace:*",
+      },
+    },
+    "packages/format-go": {
+      "name": "@hootifactory/format-go",
       "version": "0.0.0",
       "dependencies": {
         "@hootifactory/core": "workspace:*",
@@ -265,6 +276,8 @@
     "@hootifactory/db": ["@hootifactory/db@workspace:packages/db"],
 
     "@hootifactory/format-docker": ["@hootifactory/format-docker@workspace:packages/format-docker"],
+
+    "@hootifactory/format-go": ["@hootifactory/format-go@workspace:packages/format-go"],
 
     "@hootifactory/format-npm": ["@hootifactory/format-npm@workspace:packages/format-npm"],
 
