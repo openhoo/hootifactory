@@ -1,3 +1,6 @@
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { env } from "@hootifactory/config";
 import {
   and,
   artifacts,
@@ -19,6 +22,7 @@ import {
 import {
   detectScanners,
   osvScanDependencies,
+  runGrypeIfAvailable,
   scanDependencies,
   scanForMalware,
 } from "@hootifactory/scanning";
@@ -83,62 +87,116 @@ export async function processScan(artifactId: string): Promise<void> {
 
   const found: NormalizedFinding[] = [];
   found.push(...scanDependencies(deps));
+
+  let bytes: Uint8Array | null = null;
   try {
-    const bytes = await blobStore.getBytes(art.digest);
-    found.push(...scanForMalware(bytes));
+    bytes = await blobStore.getBytes(art.digest);
   } catch {
-    // blob may be large/unavailable; skip malware scan
+    // blob may be large/unavailable; skip byte-level scans
+  }
+  if (bytes) {
+    found.push(...scanForMalware(bytes));
+    // Run installed external scanners (e.g. Grype) against a scratch copy.
+    const scanners = detectScanners();
+    if (scanners.grype) {
+      let dir: string | null = null;
+      try {
+        const base = env.SCAN_SCRATCH_DIR.replace(/\/+$/, "");
+        await mkdir(base, { recursive: true });
+        dir = await mkdtemp(join(base, "scan-"));
+        const path = join(dir, art.digest.replace(/[^a-z0-9]/gi, "_"));
+        await Bun.write(path, bytes);
+        found.push(...(await runGrypeIfAvailable(path)));
+      } catch (err) {
+        console.error("[scan] external scanner failed", err);
+      } finally {
+        if (dir) await rm(dir, { recursive: true, force: true }).catch(() => {});
+      }
+    }
   }
   if (process.env.SCANNER_OSV === "true") {
-    found.push(...(await osvScanDependencies("npm", deps, process.env.OSV_API_URL)));
+    found.push(...(await osvScanDependencies("npm", deps, env.OSV_API_URL)));
   }
 
   const results = dedupe(found);
 
+  const dedupKey = {
+    blobDigest: art.digest,
+    scanType: "vuln" as const,
+    scanner: "hootifactory-heuristic",
+    scannerVersion: "1",
+    dbVersion: "builtin",
+  };
+  // Upsert on the dedup key: identical bytes reuse one scan row, and a retry after
+  // a failure flips it back to succeeded. Findings are still attached per-artifact below.
   const [scan] = await db
     .insert(scans)
     .values({
       artifactId: art.id,
-      blobDigest: art.digest,
-      scanType: "vuln",
-      scanner: "hootifactory-heuristic",
-      scannerVersion: "1",
-      dbVersion: "builtin",
+      ...dedupKey,
       status: "succeeded",
       startedAt: new Date(),
       finishedAt: new Date(),
       sbomNativeJson: { scanners: detectScanners() },
     })
-    .onConflictDoNothing()
+    .onConflictDoUpdate({
+      target: [
+        scans.blobDigest,
+        scans.scanType,
+        scans.scanner,
+        scans.scannerVersion,
+        scans.dbVersion,
+      ],
+      set: { status: "succeeded", error: null, finishedAt: new Date() },
+    })
     .returning({ id: scans.id });
 
-  if (scan && results.length) {
-    await db.insert(findingsTable).values(
-      results.map((f) => ({
-        scanId: scan.id,
-        artifactId: art.id,
-        type: f.type,
-        vulnId: f.vulnId,
-        aliases: f.aliases,
-        purl: f.purl,
-        packageName: f.packageName,
-        packageVersion: f.packageVersion,
-        severity: f.severity,
-        cvssScore: f.cvssScore,
-        fixedVersion: f.fixedVersion,
-        title: f.title,
-        description: f.description,
-        data: f.data ?? null,
-      })),
-    );
+  const scanId = scan?.id;
+  if (scanId) {
+    // Idempotent: replace this artifact's findings on (re)scan.
+    await db.delete(findingsTable).where(eq(findingsTable.artifactId, art.id));
+    if (results.length) {
+      await db.insert(findingsTable).values(
+        results.map((f) => ({
+          scanId,
+          artifactId: art.id,
+          type: f.type,
+          vulnId: f.vulnId,
+          aliases: f.aliases,
+          purl: f.purl,
+          packageName: f.packageName,
+          packageVersion: f.packageVersion,
+          severity: f.severity,
+          cvssScore: f.cvssScore,
+          fixedVersion: f.fixedVersion,
+          title: f.title,
+          description: f.description,
+          data: f.data ?? null,
+        })),
+      );
+    }
   }
 
-  // Policy decision.
+  // Policy decision — honor every declared gate, OR-combined.
   let highest: Severity = "unknown";
-  for (const f of results) highest = maxSeverity(highest, f.severity);
+  let maxCvss = 0;
+  for (const f of results) {
+    highest = maxSeverity(highest, f.severity);
+    if (typeof f.cvssScore === "number") maxCvss = Math.max(maxCvss, f.cvssScore);
+  }
   const policy = await loadPolicy(repo.orgId, repo.name);
   const threshold = policy?.blockOnSeverity ?? "low";
-  const violates = results.length > 0 && SEVERITY_ORDER[highest] >= SEVERITY_ORDER[threshold];
+  const denyLicenses = policy?.denyLicenses ?? [];
+  const severityViolates =
+    results.length > 0 && SEVERITY_ORDER[highest] >= SEVERITY_ORDER[threshold];
+  // blockOnMalware is a default-ON gate; admins disable it by storing "false".
+  const malwareViolates =
+    (policy?.blockOnMalware ?? "true") !== "false" && results.some((f) => f.type === "malware");
+  const cvssViolates = policy?.maxCvss != null && maxCvss > policy.maxCvss;
+  const licenseViolates =
+    denyLicenses.length > 0 &&
+    results.some((f) => f.type === "license" && !!f.title && denyLicenses.includes(f.title));
+  const violates = severityViolates || malwareViolates || cvssViolates || licenseViolates;
 
   let state: "clean" | "quarantined" | "blocked" = "clean";
   if (violates) state = policy?.mode === "enforce" ? "blocked" : "quarantined";
@@ -152,7 +210,42 @@ export async function processScan(artifactId: string): Promise<void> {
         findings: results.length,
         mode: policy?.mode ?? "audit",
         threshold,
+        reasons: { severityViolates, malwareViolates, cvssViolates, licenseViolates },
       },
     })
     .where(eq(artifacts.id, art.id));
+}
+
+/**
+ * Record a durable failed-scan row for an artifact when processScan throws, so a
+ * scan failure is observable (and recoverable on retry) instead of silently
+ * leaving the artifact 'pending'.
+ */
+export async function recordScanFailure(artifactId: string, err: unknown): Promise<void> {
+  const [art] = await db.select().from(artifacts).where(eq(artifacts.id, artifactId)).limit(1);
+  if (!art) return;
+  const message = (err instanceof Error ? err.message : String(err)).slice(0, 2000);
+  await db
+    .insert(scans)
+    .values({
+      artifactId: art.id,
+      blobDigest: art.digest,
+      scanType: "vuln",
+      scanner: "hootifactory-heuristic",
+      scannerVersion: "1",
+      dbVersion: "builtin",
+      status: "failed",
+      error: message,
+      finishedAt: new Date(),
+    })
+    .onConflictDoUpdate({
+      target: [
+        scans.blobDigest,
+        scans.scanType,
+        scans.scanner,
+        scans.scannerVersion,
+        scans.dbVersion,
+      ],
+      set: { status: "failed", error: message, finishedAt: new Date() },
+    });
 }

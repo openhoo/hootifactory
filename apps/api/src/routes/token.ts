@@ -22,7 +22,6 @@ function dockerToRbac(action: string): "read" | "write" | "delete" | null {
 async function handleToken(c: Context<AppEnv>): Promise<Response> {
   const principal = c.get("principal");
   const url = new URL(c.req.url);
-  const service = url.searchParams.get("service") ?? REGISTRY_TOKEN_SERVICE;
   const scopeList = url.searchParams
     .getAll("scope")
     .flatMap((s) => s.split(" "))
@@ -78,7 +77,9 @@ async function handleToken(c: Context<AppEnv>): Promise<Response> {
 
   const token = await issueRegistryToken({
     subject,
-    audience: service,
+    // Always the registry service name — the single source of truth that /v2
+    // verification checks. Never the client-supplied `service` query param.
+    audience: REGISTRY_TOKEN_SERVICE,
     access,
     ttlSeconds: env.REGISTRY_JWT_TTL,
   });

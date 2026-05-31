@@ -8,6 +8,7 @@ import {
   type RepoContext,
   type RouteEntry,
   type RouteMatch,
+  safeFetch,
   setDistTag,
   storeBlobWithRef,
   upsertPackageVersion,
@@ -37,6 +38,12 @@ function sha512b64(data: Uint8Array): string {
 function basename(name: string): string {
   const i = name.lastIndexOf("/");
   return i >= 0 ? name.slice(i + 1) : name;
+}
+
+/** npm package-name rules (subset): optional scope, url-safe, ≤214 chars. */
+function isValidNpmName(name: string): boolean {
+  if (!name || name.length > 214) return false;
+  return /^(@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/.test(name);
 }
 
 interface NpmDist {
@@ -156,11 +163,18 @@ export class NpmAdapter implements FormatAdapter {
 
   private async publish(name: string, req: Request, ctx: RepoContext): Promise<Response> {
     const body = (await req.json().catch(() => null)) as {
+      name?: string;
       versions?: Record<string, Record<string, unknown>>;
       _attachments?: Record<string, { data: string }>;
       "dist-tags"?: Record<string, string>;
     } | null;
     if (!body) return Response.json({ error: "invalid publish payload" }, { status: 400 });
+    if (!isValidNpmName(name)) {
+      return Response.json({ error: "invalid package name" }, { status: 400 });
+    }
+    if (body.name && body.name !== name) {
+      return Response.json({ error: "package name in body does not match URL" }, { status: 400 });
+    }
 
     const scope = name.startsWith("@") ? (name.split("/")[0] ?? null) : null;
     const pkg = await findOrCreatePackage({
@@ -175,7 +189,17 @@ export class NpmAdapter implements FormatAdapter {
     const base = basename(name);
     const versionIds = new Map<string, string>();
 
+    // Live (non-deleted) versions already published — npm versions are immutable.
+    const live = await this.liveVersions(ctx, pkg.id);
+    const liveSet = new Set(live.map((v) => v.version));
+
     for (const [ver, manifestRaw] of Object.entries(versions)) {
+      if (liveSet.has(ver)) {
+        return Response.json(
+          { error: `cannot publish over the previously published version ${ver}` },
+          { status: 403 },
+        );
+      }
       const manifest = { ...(manifestRaw as Record<string, unknown>) };
       const attKey =
         [`${name}-${ver}.tgz`, `${base}-${ver}.tgz`].find((k) => attachments[k]) ?? undefined;
@@ -266,9 +290,16 @@ export class NpmAdapter implements FormatAdapter {
 
   /** Pull-through: mirror an upstream package (all versions) into this proxy repo. */
   async proxyIngest(pkgName: string, upstreamBase: string, ctx: RepoContext): Promise<boolean> {
+    let upstreamHost = "";
+    try {
+      upstreamHost = new URL(upstreamBase).host;
+    } catch {
+      return false;
+    }
     const url = `${upstreamBase.replace(/\/$/, "")}/${pkgName.replace("/", "%2f")}`;
-    const res = await fetch(url, { headers: { accept: "application/json" } });
-    if (!res.ok) return false;
+    // safeFetch rejects private/loopback/metadata hosts and re-validates redirects.
+    const res = await safeFetch(url, { headers: { accept: "application/json" } }).catch(() => null);
+    if (!res?.ok) return false;
     const packument = (await res.json()) as {
       versions?: Record<string, Record<string, unknown>>;
       "dist-tags"?: Record<string, string>;
@@ -286,7 +317,15 @@ export class NpmAdapter implements FormatAdapter {
       const dist0 = manifest.dist as { tarball?: string } | undefined;
       const tarballUrl = dist0?.tarball;
       if (!tarballUrl) continue;
-      const tRes = await fetch(tarballUrl);
+      // Only mirror tarballs served by the configured upstream host — the URL
+      // comes from untrusted upstream JSON and must not point elsewhere (SSRF).
+      let tRes: Response | null = null;
+      try {
+        if (new URL(tarballUrl).host !== upstreamHost) continue;
+        tRes = await safeFetch(tarballUrl);
+      } catch {
+        continue;
+      }
       if (!tRes.ok) continue;
       const tarball = new Uint8Array(await tRes.arrayBuffer());
       const shasum = sha1hex(tarball);

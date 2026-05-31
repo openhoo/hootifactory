@@ -4,11 +4,14 @@ import {
   ROLE_RANK,
   resolveUserRole,
   revokeToken,
+  roleAllows,
+  writeAudit,
 } from "@hootifactory/auth";
 import {
   addUpstream,
   addVirtualMember,
   applyRetention,
+  assertPublicHttpUrl,
   createRepository,
   isUniqueViolation,
 } from "@hootifactory/core";
@@ -16,6 +19,8 @@ import {
   and,
   apiTokens,
   artifacts,
+  blobRefs,
+  blobs,
   count,
   db,
   desc,
@@ -29,6 +34,7 @@ import {
   quotas,
   repositories,
   scanPolicies,
+  sql,
 } from "@hootifactory/db";
 import type { PackageFormat, Visibility } from "@hootifactory/types";
 import { type Context, Hono } from "hono";
@@ -201,6 +207,12 @@ uiRouter.post("/repositories/:repoId/upstreams", async (c) => {
   if ("error" in guard) return guard.error;
   const body = (await c.req.json().catch(() => null)) as { url?: string; priority?: number } | null;
   if (!body?.url) return c.json({ error: "url required" }, 400);
+  // Reject private/loopback/metadata upstreams at configuration time (SSRF guard).
+  try {
+    assertPublicHttpUrl(body.url);
+  } catch (err) {
+    return c.json({ error: err instanceof Error ? err.message : "invalid upstream url" }, 400);
+  }
   await addUpstream(guard.repo.id, body.url, body.priority ?? 0);
   return c.json({ ok: true }, 201);
 });
@@ -318,7 +330,19 @@ uiRouter.post("/orgs/:orgId/quota", async (c) => {
       .set({ maxStorageBytes: body?.maxStorageBytes ?? null })
       .where(eq(quotas.id, existing.id));
   } else {
-    await db.insert(quotas).values({ orgId, maxStorageBytes: body?.maxStorageBytes ?? null });
+    // Backfill usedStorageBytes from the physical bytes the org's repos already
+    // reference, so a quota created after data exists isn't under-counted.
+    const [agg] = await db
+      .select({ used: sql<number>`coalesce(sum(${blobs.sizeBytes}), 0)` })
+      .from(blobs)
+      .where(
+        sql`${blobs.digest} in (select distinct ${blobRefs.digest} from ${blobRefs} join ${repositories} on ${blobRefs.repositoryId} = ${repositories.id} where ${repositories.orgId} = ${orgId})`,
+      );
+    await db.insert(quotas).values({
+      orgId,
+      maxStorageBytes: body?.maxStorageBytes ?? null,
+      usedStorageBytes: Number(agg?.used ?? 0),
+    });
   }
   return c.json({ ok: true });
 });
@@ -364,6 +388,15 @@ uiRouter.post("/orgs/:orgId/repositories", async (c) => {
       visibility: body.visibility,
       description: body.description,
     });
+    void writeAudit({
+      orgId,
+      action: "repository.create",
+      result: "success",
+      resourceType: "repository",
+      resourceId: repo.id,
+      principal: c.get("principal"),
+      detail: { name: repo.name, format: repo.format, kind: repo.kind },
+    }).catch(() => {});
     return c.json({ repository: repo }, 201);
   } catch (err) {
     if (isUniqueViolation(err)) {
@@ -412,6 +445,14 @@ uiRouter.delete("/orgs/:orgId/tokens/:tokenId", async (c) => {
     if (!decision.allowed) return c.json({ error: "forbidden" }, 403);
   }
   await revokeToken(tokenId);
+  void writeAudit({
+    orgId,
+    action: "token.revoke",
+    result: "success",
+    resourceType: "token",
+    resourceId: tokenId,
+    principal: p,
+  }).catch(() => {});
   return c.json({ ok: true });
 });
 
@@ -430,11 +471,18 @@ uiRouter.post("/orgs/:orgId/tokens", async (c) => {
   } | null;
   if (!body?.name) return c.json({ error: "name required" }, 400);
 
-  // Prevent privilege escalation: a token's role cannot exceed its creator's.
-  if (body.role) {
-    const creatorRole = await resolveUserRole(p.userId, orgId);
-    if (!creatorRole || ROLE_RANK[body.role] > ROLE_RANK[creatorRole]) {
-      return c.json({ error: "cannot grant a role above your own" }, 403);
+  // Prevent privilege escalation: neither the token's role NOR its scope actions
+  // may exceed the creator's own org role. (Scopes act as a hard ceiling in can(),
+  // so an unchecked scope would let a viewer mint a write/delete/admin token.)
+  const creatorRole = await resolveUserRole(p.userId, orgId);
+  if (body.role && (!creatorRole || ROLE_RANK[body.role] > ROLE_RANK[creatorRole])) {
+    return c.json({ error: "cannot grant a role above your own" }, 403);
+  }
+  for (const scope of body.scopes ?? []) {
+    for (const action of scope.actions) {
+      if (!creatorRole || !roleAllows(creatorRole, action)) {
+        return c.json({ error: `cannot grant scope action '${action}' beyond your role` }, 403);
+      }
     }
   }
 
@@ -446,6 +494,15 @@ uiRouter.post("/orgs/:orgId/tokens", async (c) => {
     scopes: body.scopes,
     role: body.role,
   });
+  void writeAudit({
+    orgId,
+    action: "token.create",
+    result: "success",
+    resourceType: "token",
+    resourceId: token.id,
+    principal: p,
+    detail: { name: token.name, type: token.type },
+  }).catch(() => {});
   return c.json(
     { token: { id: token.id, name: token.name, prefix: token.tokenPrefix }, secret },
     201,

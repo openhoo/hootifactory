@@ -9,17 +9,21 @@ import {
   type RepoContext,
   type RouteEntry,
   type RouteMatch,
+  releaseBlobRef,
   storeBlobWithRef,
   upsertPackageVersion,
 } from "@hootifactory/core";
 import {
   and,
+  artifacts,
   blobRefs,
   blobs,
   eq,
+  inArray,
   ociManifests,
   ociTags,
   packages,
+  repositories,
   sql,
   uploadSessions,
 } from "@hootifactory/db";
@@ -38,6 +42,29 @@ async function bodyBytes(req: Request): Promise<Uint8Array> {
 }
 
 const UPLOAD_TTL_MS = 24 * 60 * 60 * 1000;
+
+const INDEX_MEDIA_TYPES = new Set<string>([
+  OCI_MEDIA_TYPES.imageIndexV1,
+  OCI_MEDIA_TYPES.dockerManifestListV2,
+]);
+
+/**
+ * The CAS blob digests an image manifest references (its config + layers). Index
+ * / manifest-list manifests reference sub-manifests (not blobs) and yield [].
+ */
+function manifestBlobDigests(raw: string): string[] {
+  let parsed: { mediaType?: string; config?: { digest?: string }; layers?: { digest?: string }[] };
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  if (parsed.mediaType && INDEX_MEDIA_TYPES.has(parsed.mediaType)) return [];
+  const out = new Set<string>();
+  if (typeof parsed.config?.digest === "string") out.add(parsed.config.digest);
+  for (const l of parsed.layers ?? []) if (typeof l?.digest === "string") out.add(l.digest);
+  return [...out];
+}
 
 export class DockerAdapter implements FormatAdapter {
   readonly format = "docker" as const;
@@ -90,7 +117,7 @@ export class DockerAdapter implements FormatAdapter {
       case "tagsList":
         return this.tagsList(image, req, ctx);
       case "referrers":
-        return this.referrers(image, match.params.digest ?? "", ctx);
+        return this.referrers(match.params.digest ?? "", ctx);
       case "headManifest":
         return this.getManifest(image, match.params.reference ?? "", ctx, true);
       case "getManifest":
@@ -110,9 +137,9 @@ export class DockerAdapter implements FormatAdapter {
       case "cancelUpload":
         return this.cancelUpload(match.params.uuid ?? "", ctx);
       case "headBlob":
-        return this.getBlob(image, match.params.digest ?? "", ctx, true);
+        return this.getBlob(match.params.digest ?? "", ctx, true);
       case "getBlob":
-        return this.getBlob(image, match.params.digest ?? "", ctx, false);
+        return this.getBlob(match.params.digest ?? "", ctx, false);
       default:
         throw Errors.notFound();
     }
@@ -127,6 +154,10 @@ export class DockerAdapter implements FormatAdapter {
   ): Promise<Response> {
     const bytes = await bodyBytes(req);
     const digest = computeDigest(bytes);
+    // If the client addressed the manifest by digest, it must match the content.
+    if (reference.startsWith("sha256:") && reference !== digest) {
+      throw Errors.digestInvalid({ expected: reference, got: digest });
+    }
     const raw = new TextDecoder().decode(bytes);
     let parsed: Record<string, unknown> = {};
     try {
@@ -138,6 +169,20 @@ export class DockerAdapter implements FormatAdapter {
       req.headers.get("content-type") || (parsed.mediaType as string) || OCI_MEDIA_TYPES.manifestV1;
     const config = parsed.config as { digest?: string } | undefined;
     const subject = parsed.subject as { digest?: string } | undefined;
+
+    // Reject an image manifest that references blobs not yet uploaded to this repo.
+    const referencedBlobs = manifestBlobDigests(raw);
+    if (referencedBlobs.length > 0) {
+      const present = await ctx.db
+        .select({ digest: blobRefs.digest })
+        .from(blobRefs)
+        .where(
+          and(eq(blobRefs.repositoryId, ctx.repo.id), inArray(blobRefs.digest, referencedBlobs)),
+        );
+      const have = new Set(present.map((r) => r.digest));
+      const missing = referencedBlobs.filter((d) => !have.has(d));
+      if (missing.length > 0) throw Errors.manifestBlobUnknown({ missing });
+    }
 
     const pkg = await findOrCreatePackage({
       orgId: ctx.repo.orgId,
@@ -255,10 +300,18 @@ export class DockerAdapter implements FormatAdapter {
     ctx: RepoContext,
   ): Promise<Response> {
     if (reference.startsWith("sha256:")) {
+      // Read the manifest first so its now-unreferenced layer/config blobs can be released.
+      const [m] = await ctx.db
+        .select({ raw: ociManifests.raw })
+        .from(ociManifests)
+        .where(and(eq(ociManifests.repositoryId, ctx.repo.id), eq(ociManifests.digest, reference)))
+        .limit(1);
       await ctx.db
         .delete(ociManifests)
         .where(and(eq(ociManifests.repositoryId, ctx.repo.id), eq(ociManifests.digest, reference)));
+      if (m) await this.releaseManifestBlobs(ctx, image, manifestBlobDigests(m.raw));
     } else {
+      // Tag delete only removes the mutable pointer; the manifest + its blobs remain.
       const [pkg] = await ctx.db
         .select({ id: packages.id })
         .from(packages)
@@ -271,6 +324,25 @@ export class DockerAdapter implements FormatAdapter {
       }
     }
     return new Response(null, { status: 202 });
+  }
+
+  /** Release each blob the deleted manifest referenced that no surviving manifest still uses. */
+  private async releaseManifestBlobs(
+    ctx: RepoContext,
+    image: string,
+    digests: string[],
+  ): Promise<void> {
+    if (digests.length === 0) return;
+    const remaining = await ctx.db
+      .select({ raw: ociManifests.raw })
+      .from(ociManifests)
+      .where(eq(ociManifests.repositoryId, ctx.repo.id));
+    const stillUsed = new Set<string>();
+    for (const r of remaining) for (const d of manifestBlobDigests(r.raw)) stillUsed.add(d);
+    for (const digest of digests) {
+      if (stillUsed.has(digest)) continue;
+      await releaseBlobRef(ctx, { digest, kind: "oci_layer", scope: image });
+    }
   }
 
   // ── tags ───────────────────────────────────────────────────────────────
@@ -287,13 +359,29 @@ export class DockerAdapter implements FormatAdapter {
       .where(eq(ociTags.packageId, pkg.id));
     let tags = rows.map((r) => r.tag).sort();
     const url = new URL(req.url);
-    const n = Number(url.searchParams.get("n") ?? 0);
-    if (n > 0) tags = tags.slice(0, n);
-    return Response.json({ name: this.fullName(ctx, image), tags });
+    // `last` is a cursor: return tags strictly after it (lexically).
+    const last = url.searchParams.get("last");
+    if (last) tags = tags.filter((t) => t > last);
+    // `n` is a page size: absent => all; present (incl. 0) => at most n.
+    const nRaw = url.searchParams.get("n");
+    let truncated = false;
+    if (nRaw !== null) {
+      const n = Number(nRaw);
+      if (Number.isFinite(n) && n >= 0) {
+        truncated = tags.length > n;
+        tags = tags.slice(0, n);
+      }
+    }
+    const headers: Record<string, string> = { "content-type": "application/json" };
+    if (truncated && tags.length > 0) {
+      const next = encodeURIComponent(tags[tags.length - 1] ?? "");
+      headers.link = `<${ctx.baseUrl}/${ctx.repo.mountPath}/${image}/tags/list?n=${nRaw}&last=${next}>; rel="next"`;
+    }
+    return new Response(JSON.stringify({ name: this.fullName(ctx, image), tags }), { headers });
   }
 
   // ── referrers ──────────────────────────────────────────────────────────
-  private async referrers(image: string, digest: string, ctx: RepoContext): Promise<Response> {
+  private async referrers(digest: string, ctx: RepoContext): Promise<Response> {
     const rows = await ctx.db
       .select()
       .from(ociManifests)
@@ -313,18 +401,17 @@ export class DockerAdapter implements FormatAdapter {
   }
 
   // ── blobs ──────────────────────────────────────────────────────────────
-  private async getBlob(
-    image: string,
-    digest: string,
-    ctx: RepoContext,
-    headOnly: boolean,
-  ): Promise<Response> {
+  private async getBlob(digest: string, ctx: RepoContext, headOnly: boolean): Promise<Response> {
     const [ref] = await ctx.db
       .select({ id: blobRefs.id })
       .from(blobRefs)
       .where(and(eq(blobRefs.repositoryId, ctx.repo.id), eq(blobRefs.digest, digest)))
       .limit(1);
     if (!ref) throw Errors.blobUnknown({ digest });
+    // Defense-in-depth: a layer reachable only through blocked manifests is blocked too.
+    if (await this.isBlobBlocked(ctx, digest)) {
+      throw Errors.denied({ reason: "blocked by scan policy" });
+    }
     const stat = await ctx.blobs.stat(digest);
     if (!stat) throw Errors.blobUnknown({ digest });
     const headers: Record<string, string> = {
@@ -340,23 +427,44 @@ export class DockerAdapter implements FormatAdapter {
     const url = new URL(req.url);
     const digest = url.searchParams.get("digest");
     const mount = url.searchParams.get("mount");
+    const from = url.searchParams.get("from");
 
-    // cross-repo mount
+    // Cross-repo mount: only honored when the principal can READ a source repo
+    // that actually references the blob (never on global CAS existence alone — that
+    // would let any tenant mount any blob by digest). Otherwise we fall through to a
+    // normal upload session, which is a spec-allowed response to a failed mount.
     if (mount && isValidDigest(mount)) {
-      const [existing] = await ctx.db
-        .select({ digest: blobs.digest })
-        .from(blobs)
-        .where(eq(blobs.digest, mount))
-        .limit(1);
-      if (existing && (await ctx.blobs.exists(mount))) {
-        await this.ensureRef(ctx, mount, image);
-        return new Response(null, {
-          status: 201,
-          headers: {
-            location: `${ctx.baseUrl}/${ctx.repo.mountPath}/${image}/blobs/${mount}`,
-            "docker-content-digest": mount,
-          },
+      const sources = (
+        await ctx.db
+          .select({
+            orgId: repositories.orgId,
+            id: repositories.id,
+            mountPath: repositories.mountPath,
+            visibility: repositories.visibility,
+            scope: blobRefs.scope,
+          })
+          .from(blobRefs)
+          .innerJoin(repositories, eq(blobRefs.repositoryId, repositories.id))
+          .where(eq(blobRefs.digest, mount))
+      ).map((s) => ({ ...s, full: `${s.mountPath.replace(/^v2\//, "")}/${s.scope}` }));
+      const pool = from ? sources.filter((s) => s.full === from) : sources;
+      for (const src of pool) {
+        const decision = await ctx.authorize("read", {
+          orgId: src.orgId,
+          repositoryId: src.id,
+          repositoryName: src.full,
+          visibility: src.visibility,
         });
+        if (decision.allowed && (await ctx.blobs.exists(mount))) {
+          await this.ensureRef(ctx, mount, image);
+          return new Response(null, {
+            status: 201,
+            headers: {
+              location: `${ctx.baseUrl}/${ctx.repo.mountPath}/${image}/blobs/${mount}`,
+              "docker-content-digest": mount,
+            },
+          });
+        }
       }
     }
 
@@ -397,12 +505,39 @@ export class DockerAdapter implements FormatAdapter {
   }
 
   private async loadSession(uuid: string, ctx: RepoContext) {
+    // Scope to the current repo so an upload session cannot be driven cross-repo.
     const [s] = await ctx.db
       .select()
       .from(uploadSessions)
-      .where(eq(uploadSessions.id, uuid))
+      .where(and(eq(uploadSessions.id, uuid), eq(uploadSessions.repositoryId, ctx.repo.id)))
       .limit(1);
     return s ?? null;
+  }
+
+  /**
+   * True when `digest` is a layer/config referenced ONLY by blocked manifests in
+   * this repo (so serving it would leak content from a quarantined/blocked image).
+   * Cheap fast-path: returns false immediately when the repo has no blocked artifact.
+   */
+  private async isBlobBlocked(ctx: RepoContext, digest: string): Promise<boolean> {
+    const blocked = await ctx.db
+      .select({ digest: artifacts.digest })
+      .from(artifacts)
+      .where(and(eq(artifacts.repositoryId, ctx.repo.id), eq(artifacts.state, "blocked")));
+    if (blocked.length === 0) return false;
+    const blockedManifests = new Set(blocked.map((b) => b.digest));
+    const manifests = await ctx.db
+      .select({ digest: ociManifests.digest, raw: ociManifests.raw })
+      .from(ociManifests)
+      .where(eq(ociManifests.repositoryId, ctx.repo.id));
+    let viaBlocked = false;
+    let viaClean = false;
+    for (const m of manifests) {
+      if (!manifestBlobDigests(m.raw).includes(digest)) continue;
+      if (blockedManifests.has(m.digest)) viaBlocked = true;
+      else viaClean = true;
+    }
+    return viaBlocked && !viaClean;
   }
 
   private async appendChunk(

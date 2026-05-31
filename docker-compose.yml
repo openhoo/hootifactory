@@ -3,6 +3,12 @@
 # Run the api/web/scan-worker locally with `bun run dev` against these,
 # or run the full stack with: docker compose --profile app up --build
 x-app-env: &app-env
+  # This is a LOCAL demo stack: run it in development mode so the production
+  # secret-guard (which forbids these well-known dev credentials and requires a
+  # configured registry JWT keypair) does not block startup. A real deployment
+  # uses the image's NODE_ENV=production default with real secrets, where the
+  # guard is enforced.
+  NODE_ENV: development
   DATABASE_URL: postgres://hootifactory:hootifactory@postgres:5432/hootifactory
   S3_ENDPOINT: http://minio:9000
   S3_FORCE_PATH_STYLE: "true"
@@ -117,6 +123,9 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      # The worker reads blobs from object storage, so wait for the bucket too.
+      minio-setup:
+        condition: service_completed_successfully
       migrate:
         condition: service_completed_successfully
 

@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
   bigint,
   index,
@@ -11,6 +12,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { primaryId, timestamps } from "./_helpers";
 import { auditResultEnum } from "./enums";
+import { repositories } from "./repositories";
 import { organizations } from "./tenancy";
 
 /** Storage/artifact quotas, per org (repository null) or per repository. */
@@ -21,14 +23,20 @@ export const quotas = pgTable(
     orgId: uuid()
       .notNull()
       .references(() => organizations.id, { onDelete: "cascade" }),
-    repositoryId: uuid(),
+    repositoryId: uuid().references(() => repositories.id, { onDelete: "cascade" }),
     maxStorageBytes: bigint({ mode: "number" }),
     usedStorageBytes: bigint({ mode: "number" }).notNull().default(0),
     maxArtifacts: bigint({ mode: "number" }),
     usedArtifacts: bigint({ mode: "number" }).notNull().default(0),
     ...timestamps(),
   },
-  (t) => [uniqueIndex("quotas_org_repo_uq").on(t.orgId, t.repositoryId)],
+  (t) => [
+    // Per-repo rows are unique on (org, repo).
+    uniqueIndex("quotas_org_repo_uq").on(t.orgId, t.repositoryId),
+    // A partial unique index enforces a single org-level row (repositoryId IS NULL) —
+    // a plain unique index treats NULLs as distinct and would allow duplicates.
+    uniqueIndex("quotas_org_uq").on(t.orgId).where(sql`${t.repositoryId} is null`),
+  ],
 );
 
 export interface RetentionRule {
@@ -44,7 +52,7 @@ export const retentionPolicies = pgTable(
     orgId: uuid()
       .notNull()
       .references(() => organizations.id, { onDelete: "cascade" }),
-    repositoryId: uuid(),
+    repositoryId: uuid().references(() => repositories.id, { onDelete: "cascade" }),
     rules: jsonb().$type<RetentionRule>().notNull().default({}),
     action: text().notNull().default("delete"),
     ...timestamps(),

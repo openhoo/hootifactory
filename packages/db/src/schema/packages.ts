@@ -10,6 +10,7 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import { primaryId, timestamps } from "./_helpers";
+import { apiTokens } from "./auth";
 import { repositories } from "./repositories";
 import { organizations, users } from "./tenancy";
 
@@ -52,7 +53,7 @@ export const packageVersions = pgTable(
     metadata: jsonb().$type<Record<string, unknown>>().notNull().default({}),
     sizeBytes: bigint({ mode: "number" }).notNull().default(0),
     publishedByUserId: uuid().references(() => users.id, { onDelete: "set null" }),
-    publishedByTokenId: uuid(),
+    publishedByTokenId: uuid().references(() => apiTokens.id, { onDelete: "set null" }),
     deletedAt: timestamp({ withTimezone: true }),
     ...timestamps(),
   },

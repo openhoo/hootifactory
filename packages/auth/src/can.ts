@@ -34,18 +34,23 @@ export function can({ principal, action, resource, effectiveRole }: CanInput): D
     if (resource.orgId && principal.orgId !== resource.orgId) {
       return { allowed: false, code: "cross_org", reason: "token not valid for this organization" };
     }
-    // Explicit scopes are a ceiling: when present, only scope grants apply.
-    if (principal.scopes.length > 0 && resource.repositoryName) {
-      if (scopeGrants(principal.scopes, resource.repositoryName, action)) {
+    // Explicit scopes are a hard ceiling: when present, ONLY scope grants apply —
+    // for every resource, including org-level ones with no repositoryName. A
+    // missing repositoryName means the scopes cannot match, so the request is
+    // denied rather than falling through to the owner's inherited role (which
+    // would let a narrowly-scoped token act with full owner privileges).
+    if (principal.scopes.length > 0) {
+      const name = resource.repositoryName;
+      if (name && scopeGrants(principal.scopes, name, action)) {
         return { allowed: true };
       }
       return {
         allowed: false,
         code: "insufficient_scope",
-        reason: `token scope does not grant '${action}' on ${resource.repositoryName}`,
+        reason: `token scope does not grant '${action}' on ${name ?? resource.type}`,
       };
     }
-    // Scope-less token inherits a role (robot role, or owner's membership role).
+    // Only truly scope-less tokens inherit a role (robot role, or owner's membership role).
     const role = principal.role ?? effectiveRole ?? null;
     if (role && roleAllows(role, action)) return { allowed: true };
     return { allowed: false, code: "insufficient_role", reason: `role does not grant '${action}'` };

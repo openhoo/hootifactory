@@ -44,6 +44,13 @@ export const Errors = {
     new RegistryError(404, "MANIFEST_UNKNOWN", "manifest unknown to registry", detail),
   manifestInvalid: (detail?: unknown) =>
     new RegistryError(400, "MANIFEST_INVALID", "manifest invalid", detail),
+  manifestBlobUnknown: (detail?: unknown) =>
+    new RegistryError(
+      404,
+      "MANIFEST_BLOB_UNKNOWN",
+      "manifest references a blob unknown to registry",
+      detail,
+    ),
   nameUnknown: (detail?: unknown) =>
     new RegistryError(404, "NAME_UNKNOWN", "repository name not known to registry", detail),
   nameInvalid: (detail?: unknown) =>
@@ -64,8 +71,10 @@ export const Errors = {
   unsupported: (detail?: unknown) =>
     new RegistryError(400, "UNSUPPORTED", "the operation is unsupported", detail),
   notFound: (detail?: unknown) => new RegistryError(404, "NOT_FOUND", "not found", detail),
+  // 403, not 413: a quota exhaustion is a persistent account-level refusal, not an
+  // oversized-request-body condition that a smaller retry would resolve.
   quotaExceeded: (detail?: unknown) =>
-    new RegistryError(413, "DENIED", "storage quota exceeded", detail),
+    new RegistryError(403, "DENIED", "storage quota exceeded", detail),
 } as const;
 
 /**

@@ -130,10 +130,13 @@ export async function osvScanDependencies(
         out.push({
           type: "vuln",
           vulnId: v.id,
-          severity: normalizeSeverity(undefined),
+          // OSV's querybatch returns only ids (no severity). Default a confirmed
+          // match to a conservative "high" so it is not silently non-blocking;
+          // a richer per-id severity lookup is a follow-up.
+          severity: "high",
           packageName: entry[0],
-          packageVersion: entry[1],
-          purl: `pkg:${ecosystem.toLowerCase()}/${entry[0]}@${entry[1]}`,
+          packageVersion: stripRange(entry[1]),
+          purl: `pkg:${ecosystem.toLowerCase()}/${entry[0]}@${stripRange(entry[1])}`,
         });
       }
     });

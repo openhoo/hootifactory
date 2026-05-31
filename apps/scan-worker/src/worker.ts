@@ -1,13 +1,15 @@
 import { QUEUES, stopBoss, work } from "@hootifactory/queue";
 import { detectScanners } from "@hootifactory/scanning";
-import { processScan } from "./pipeline";
+import { processScan, recordScanFailure } from "./pipeline";
 
-// Optional health endpoint so orchestrators can wait for readiness.
+// Optional health endpoint so orchestrators can wait for readiness. Reports 503
+// until the queue consumer is actually registered.
+let ready = false;
 if (process.env.WORKER_PORT) {
   Bun.serve({
     port: Number(process.env.WORKER_PORT),
     hostname: "127.0.0.1",
-    fetch: () => new Response("ok"),
+    fetch: () => (ready ? new Response("ok") : new Response("starting", { status: 503 })),
   });
 }
 
@@ -18,11 +20,15 @@ async function main(): Promise<void> {
       try {
         await processScan(job.data.artifactId);
       } catch (err) {
-        // Log and swallow: a poisoned job must not retry-storm the queue.
+        // Record a durable failed-scan row, then surface the error so pg-boss
+        // applies the bounded retry configured at enqueue time (no infinite storm).
         console.error("[scan-worker] scan failed", job.data.artifactId, err);
+        await recordScanFailure(job.data.artifactId, err).catch(() => {});
+        throw err;
       }
     }
   });
+  ready = true;
   console.log("[scan-worker] listening on", QUEUES.scanArtifact);
 }
 

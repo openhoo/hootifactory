@@ -12,15 +12,21 @@ import {
   type RepoContext,
   type RouteMatch,
   resolveRepository,
+  safeFetch,
 } from "@hootifactory/core";
 import type { Context } from "hono";
 import { buildRepoContext } from "./context";
 import type { AppEnv } from "./types";
 
+/** Reserved server path segments that must never fall back to the SPA index.html. */
+const RESERVED_SEGMENTS = ["api", "v2", "token", "healthz", "readyz"];
+
 /** Serve the built SPA (assets + index.html fallback) for single-container deploys. */
 async function serveWeb(pathname: string): Promise<Response | null> {
   if (!env.WEB_DIST) return null;
   const clean = pathname.replace(/^\/+/, "");
+  // API/registry routes must return their real (JSON) 404, not the SPA shell.
+  if (RESERVED_SEGMENTS.some((s) => clean === s || clean.startsWith(`${s}/`))) return null;
   if (clean && !clean.includes("..")) {
     const file = Bun.file(join(env.WEB_DIST, clean));
     if (await file.exists()) return new Response(file);
@@ -34,6 +40,17 @@ async function serveWeb(pathname: string): Promise<Response | null> {
 
 const isRead = (m: string) => m === "GET" || m === "HEAD";
 
+/** Upstream response headers safe + useful to forward on a proxy passthrough. */
+const PROXY_FORWARD_HEADERS = [
+  "content-type",
+  "content-length",
+  "docker-content-digest",
+  "etag",
+  "accept-ranges",
+  "content-range",
+  "last-modified",
+];
+
 /** Virtual repo: try each member in order; return the first non-error response. */
 async function dispatchVirtual(
   adapter: FormatAdapter,
@@ -46,7 +63,15 @@ async function dispatchVirtual(
   const members = await loadVirtualMembers(ctx.repo.id);
   let last: Response | null = null;
   for (const member of members) {
-    const memberCtx: RepoContext = { ...ctx, repo: member };
+    // Authorize against EACH member with its own org/visibility/name — the
+    // request was only authorized against the virtual repo, and members may
+    // belong to other orgs or be private. Skip members the principal can't read.
+    const memberCtx = buildRepoContext(member, ctx.principal);
+    const perm = adapter.requiredPermission(req.method as HttpMethod, match, memberCtx);
+    const decision = await memberCtx.authorize(perm.action, {
+      repositoryName: perm.repositoryName ?? member.name,
+    });
+    if (!decision.allowed) continue;
     const res = await adapter.handle(match, req, memberCtx);
     if (res.status < 400) {
       // Rewrite member mount -> virtual mount so clients route follow-ups through the virtual repo.
@@ -55,7 +80,10 @@ async function dispatchVirtual(
         const body = (await res.text())
           .split(`/${member.mountPath}/`)
           .join(`/${ctx.repo.mountPath}/`);
-        return new Response(body, { status: res.status, headers: res.headers });
+        // Rebuild headers and drop the now-stale content-length (the body changed length).
+        const headers = new Headers(res.headers);
+        headers.delete("content-length");
+        return new Response(body, { status: res.status, headers });
       }
       return res;
     }
@@ -83,14 +111,24 @@ async function dispatchProxy(
     if (ok) return adapter.handle(match, req, ctx);
   }
 
-  // Transparent passthrough for anything else (e.g. files).
+  // Transparent passthrough for anything else (e.g. files). The fetch goes
+  // through safeFetch, which rejects private/loopback/metadata hosts and
+  // re-validates each redirect hop (SSRF defense).
   const target = upstream.url.replace(/\/$/, "") + match.path;
-  const res = await fetch(target);
+  let res: Response;
+  try {
+    res = await safeFetch(target);
+  } catch {
+    return local; // invalid/blocked upstream URL or network error — serve the local miss
+  }
   if (!res.ok) return local;
-  return new Response(res.body, {
-    status: res.status,
-    headers: { "content-type": res.headers.get("content-type") ?? "application/octet-stream" },
-  });
+  const headers = new Headers();
+  for (const h of PROXY_FORWARD_HEADERS) {
+    const v = res.headers.get(h);
+    if (v) headers.set(h, v);
+  }
+  if (!headers.has("content-type")) headers.set("content-type", "application/octet-stream");
+  return new Response(res.body, { status: res.status, headers });
 }
 
 /**

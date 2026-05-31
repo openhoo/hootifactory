@@ -12,8 +12,8 @@ import {
   storeBlobWithRef,
   upsertPackageVersion,
 } from "@hootifactory/core";
-import { and, blobRefs, eq, packages, packageVersions } from "@hootifactory/db";
-import { digestHex } from "@hootifactory/storage";
+import { and, eq, isNull, packages, packageVersions } from "@hootifactory/db";
+import { computeDigest, digestHex } from "@hootifactory/storage";
 import { normalizeName, renderProjectHtml, renderRootHtml, type SimpleFile } from "./simple";
 
 interface PypiFileMeta {
@@ -86,14 +86,32 @@ export class PypiAdapter implements FormatAdapter {
     });
   }
 
+  /** All files across this repo's live (non-pruned) versions. */
+  private async liveFiles(ctx: RepoContext, packageId?: string): Promise<PypiFileMeta[]> {
+    const rows = await ctx.db
+      .select({ metadata: packageVersions.metadata })
+      .from(packageVersions)
+      .innerJoin(packages, eq(packageVersions.packageId, packages.id))
+      .where(
+        and(
+          packageId
+            ? eq(packageVersions.packageId, packageId)
+            : eq(packages.repositoryId, ctx.repo.id),
+          isNull(packageVersions.deletedAt),
+        ),
+      );
+    return rows.flatMap((r) => (r.metadata as { files?: PypiFileMeta[] })?.files ?? []);
+  }
+
   private async simpleProject(projectRaw: string, ctx: RepoContext): Promise<Response> {
     const name = normalizeName(projectRaw);
     const pkg = await this.findPackage(ctx, name);
     if (!pkg) return new Response("Not Found", { status: 404 });
+    // Live versions only — pruned releases must drop out of the PEP 503 index.
     const versions = await ctx.db
       .select({ metadata: packageVersions.metadata })
       .from(packageVersions)
-      .where(eq(packageVersions.packageId, pkg.id));
+      .where(and(eq(packageVersions.packageId, pkg.id), isNull(packageVersions.deletedAt)));
     const files: SimpleFile[] = [];
     for (const v of versions) {
       const fileList = (v.metadata as { files?: PypiFileMeta[] })?.files ?? [];
@@ -112,24 +130,17 @@ export class PypiAdapter implements FormatAdapter {
   }
 
   private async download(filename: string, ctx: RepoContext): Promise<Response> {
-    const [ref] = await ctx.db
-      .select({ digest: blobRefs.digest })
-      .from(blobRefs)
-      .where(
-        and(
-          eq(blobRefs.repositoryId, ctx.repo.id),
-          eq(blobRefs.kind, "pypi_file"),
-          eq(blobRefs.scope, filename),
-        ),
-      )
-      .limit(1);
-    if (!ref || !(await ctx.blobs.exists(ref.digest))) {
+    // Resolve the digest from the SAME metadata the simple index advertises (live
+    // versions only), so the bytes served match the published #sha256 and identical
+    // filenames from different packages don't collide via a blob_refs scan.
+    const file = (await this.liveFiles(ctx)).find((f) => f.filename === filename);
+    if (!file || !(await ctx.blobs.exists(file.blobDigest))) {
       return new Response("Not Found", { status: 404 });
     }
-    if (await isArtifactBlocked(ctx, ref.digest)) {
+    if (await isArtifactBlocked(ctx, file.blobDigest)) {
       return new Response("artifact blocked by scan policy", { status: 403 });
     }
-    return new Response(ctx.blobs.get(ref.digest), {
+    return new Response(ctx.blobs.get(file.blobDigest), {
       headers: { "content-type": "application/octet-stream" },
     });
   }
@@ -148,6 +159,20 @@ export class PypiAdapter implements FormatAdapter {
     const name = normalizeName(rawName);
     const bytes = new Uint8Array(await content.arrayBuffer());
     const filename = content.name;
+
+    // PyPI files are immutable: reject a re-upload of an existing filename.
+    if ((await this.liveFiles(ctx)).some((f) => f.filename === filename)) {
+      return Response.json({ message: "File already exists." }, { status: 409 });
+    }
+    // Validate the client-declared sha256 against the actual bytes before storing.
+    const claimed = form.get("sha256_digest");
+    const actualSha = digestHex(computeDigest(bytes));
+    if (claimed && String(claimed).toLowerCase() !== actualSha) {
+      return Response.json(
+        { message: "sha256_digest does not match uploaded content" },
+        { status: 400 },
+      );
+    }
     const requiresPython = form.get("requires_python")
       ? String(form.get("requires_python"))
       : undefined;

@@ -4,6 +4,7 @@ import {
   db,
   desc,
   eq,
+  inArray,
   isNull,
   packages,
   packageVersions,
@@ -11,8 +12,10 @@ import {
   repositoryUpstreams,
   virtualRepoMembers,
 } from "@hootifactory/db";
+import { blobStore } from "@hootifactory/storage";
 import type { PackageFormat, Visibility } from "@hootifactory/types";
 import type { ResolvedRepo } from "./format/adapter";
+import { releaseRepoDigestTx } from "./service";
 
 const V2_FORMATS = new Set<PackageFormat>(["docker", "oci", "helm"]);
 
@@ -139,26 +142,90 @@ export async function addUpstream(repositoryId: string, url: string, priority = 
   await db.insert(repositoryUpstreams).values({ repositoryId, url, priority });
 }
 
-/** Soft-delete versions beyond the newest `keepLastN` per package. Returns count pruned. */
+/**
+ * Extract the CAS blob digests a stored version references, across formats
+ * (npm dist, pypi files, cargo crate, go zip, nuget nupkg). Docker layer refs
+ * are scoped to the image (not the version) and are reclaimed via the adapter's
+ * delete path, so they are intentionally not covered here.
+ */
+function versionBlobDigests(metadata: unknown): string[] {
+  const out = new Set<string>();
+  const m = (metadata ?? {}) as Record<string, unknown>;
+  const add = (v: unknown) => {
+    if (typeof v === "string" && v.startsWith("sha256:")) out.add(v);
+  };
+  add((m.dist as { blobDigest?: unknown } | undefined)?.blobDigest); // npm
+  add(m.crateDigest); // cargo
+  add(m.zipDigest); // go
+  add(m.nupkgDigest); // nuget
+  for (const f of (m.files as { blobDigest?: unknown }[] | undefined) ?? []) add(f?.blobDigest); // pypi
+  return [...out];
+}
+
+/**
+ * Soft-delete versions beyond the newest `keepLastN` per package, atomically,
+ * and reclaim blob references (and CAS bytes/quota) for any digest no surviving
+ * version still needs. Returns count pruned.
+ */
 export async function applyRetention(repositoryId: string, keepLastN: number): Promise<number> {
-  const pkgs = await db
-    .select({ id: packages.id })
-    .from(packages)
-    .where(eq(packages.repositoryId, repositoryId));
-  let pruned = 0;
-  for (const p of pkgs) {
-    const vers = await db
-      .select({ id: packageVersions.id })
-      .from(packageVersions)
-      .where(and(eq(packageVersions.packageId, p.id), isNull(packageVersions.deletedAt)))
-      .orderBy(desc(packageVersions.createdAt));
-    for (const v of vers.slice(keepLastN)) {
-      await db
+  const [repo] = await db
+    .select({ orgId: repositories.orgId })
+    .from(repositories)
+    .where(eq(repositories.id, repositoryId))
+    .limit(1);
+  if (!repo) return 0;
+
+  const casToDelete: string[] = [];
+  const pruned = await db.transaction(async (tx) => {
+    const pkgs = await tx
+      .select({ id: packages.id })
+      .from(packages)
+      .where(eq(packages.repositoryId, repositoryId));
+
+    const prunedDigests = new Set<string>();
+    let count = 0;
+    for (const p of pkgs) {
+      const vers = await tx
+        .select({ id: packageVersions.id, metadata: packageVersions.metadata })
+        .from(packageVersions)
+        .where(and(eq(packageVersions.packageId, p.id), isNull(packageVersions.deletedAt)))
+        // Deterministic ordering with an id tie-break so equal timestamps prune stably.
+        .orderBy(desc(packageVersions.createdAt), desc(packageVersions.id));
+      const toPrune = vers.slice(keepLastN);
+      if (toPrune.length === 0) continue;
+      await tx
         .update(packageVersions)
         .set({ deletedAt: new Date() })
-        .where(eq(packageVersions.id, v.id));
-      pruned++;
+        .where(
+          inArray(
+            packageVersions.id,
+            toPrune.map((v) => v.id),
+          ),
+        );
+      count += toPrune.length;
+      for (const v of toPrune) for (const d of versionBlobDigests(v.metadata)) prunedDigests.add(d);
     }
-  }
+
+    if (prunedDigests.size > 0) {
+      // Digests still referenced by a surviving (live) version must be kept.
+      const live = await tx
+        .select({ metadata: packageVersions.metadata })
+        .from(packageVersions)
+        .innerJoin(packages, eq(packageVersions.packageId, packages.id))
+        .where(and(eq(packages.repositoryId, repositoryId), isNull(packageVersions.deletedAt)));
+      const liveDigests = new Set<string>();
+      for (const r of live) for (const d of versionBlobDigests(r.metadata)) liveDigests.add(d);
+
+      for (const digest of prunedDigests) {
+        if (liveDigests.has(digest)) continue;
+        const reaped = await releaseRepoDigestTx(tx, { repositoryId, orgId: repo.orgId, digest });
+        if (reaped) casToDelete.push(reaped);
+      }
+    }
+    return count;
+  });
+
+  // Delete reclaimed objects from the CAS after the DB transaction commits.
+  for (const digest of casToDelete) await blobStore.delete(digest).catch(() => {});
   return pruned;
 }

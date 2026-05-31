@@ -2,6 +2,7 @@ import {
   Errors,
   type FormatAdapter,
   findOrCreatePackage,
+  findVersion,
   type HttpMethod,
   isArtifactBlocked,
   type Permission,
@@ -11,11 +12,44 @@ import {
   storeBlobWithRef,
   upsertPackageVersion,
 } from "@hootifactory/core";
-import { and, asc, eq, packages, packageVersions } from "@hootifactory/db";
+import { and, eq, isNull, packages, packageVersions } from "@hootifactory/db";
+import { extractNuspecMeta } from "./nuspec";
 
 interface NugetVersionMeta {
   nupkgDigest: string;
   file: string;
+}
+
+/** NuGet version normalization: drop a zero 4th segment + build metadata, lowercase prerelease. */
+function normalizeNugetVersion(v: string): string {
+  let s = v.trim();
+  const plus = s.indexOf("+");
+  if (plus >= 0) s = s.slice(0, plus); // strip build metadata
+  const dash = s.indexOf("-");
+  const core = dash >= 0 ? s.slice(0, dash) : s;
+  const pre = dash >= 0 ? s.slice(dash).toLowerCase() : "";
+  const nums = core.split(".").map((n) => String(Number.parseInt(n, 10) || 0));
+  while (nums.length < 3) nums.push("0");
+  if (nums.length === 4 && nums[3] === "0") nums.pop();
+  return nums.join(".") + pre;
+}
+
+/** Compare two normalized NuGet versions (numeric core; a release outranks its prerelease). */
+function compareNugetVersions(a: string, b: string): number {
+  const split = (v: string) => {
+    const d = v.indexOf("-");
+    const core = (d >= 0 ? v.slice(0, d) : v).split(".").map(Number);
+    return { core, pre: d >= 0 ? v.slice(d + 1) : null };
+  };
+  const pa = split(a);
+  const pb = split(b);
+  for (let i = 0; i < 3; i++) {
+    if ((pa.core[i] ?? 0) !== (pb.core[i] ?? 0)) return (pa.core[i] ?? 0) - (pb.core[i] ?? 0);
+  }
+  if (!pa.pre && pb.pre) return 1;
+  if (pa.pre && !pb.pre) return -1;
+  if (pa.pre && pb.pre) return pa.pre < pb.pre ? -1 : pa.pre > pb.pre ? 1 : 0;
+  return 0;
 }
 
 /**
@@ -68,7 +102,12 @@ export class NugetAdapter implements FormatAdapter {
       case "versions":
         return this.versions(match.params.id ?? "", ctx);
       case "download":
-        return this.download(match.params.id ?? "", match.params.version ?? "", ctx);
+        return this.download(
+          match.params.id ?? "",
+          match.params.version ?? "",
+          match.params.file ?? "",
+          ctx,
+        );
       case "registration":
         return this.registration(match.params.id ?? "", base, ctx);
       default:
@@ -86,17 +125,19 @@ export class NugetAdapter implements FormatAdapter {
   }
 
   private async listVersions(ctx: RepoContext, packageId: string) {
-    return ctx.db
+    const rows = await ctx.db
       .select({ version: packageVersions.version, metadata: packageVersions.metadata })
       .from(packageVersions)
-      .where(eq(packageVersions.packageId, packageId))
-      .orderBy(asc(packageVersions.createdAt));
+      // Live versions only; sorted by SemVer so flat-container + registration bounds are correct.
+      .where(and(eq(packageVersions.packageId, packageId), isNull(packageVersions.deletedAt)));
+    return rows.sort((a, b) => compareNugetVersions(a.version, b.version));
   }
 
   private async versions(id: string, ctx: RepoContext): Promise<Response> {
     const pkg = await this.findPkg(ctx, id);
     if (!pkg) return new Response("Not Found", { status: 404 });
     const rows = await this.listVersions(ctx, pkg.id);
+    if (rows.length === 0) return new Response("Not Found", { status: 404 });
     return Response.json({ versions: rows.map((r) => r.version) });
   }
 
@@ -104,21 +145,57 @@ export class NugetAdapter implements FormatAdapter {
     const pkg = await this.findPkg(ctx, id);
     if (!pkg) return new Response("Not Found", { status: 404 });
     const rows = await this.listVersions(ctx, pkg.id);
-    const items = rows.map((r) => ({
-      "@type": "Package",
-      catalogEntry: { id, version: r.version },
-      packageContent: `${base}/v3-flatcontainer/${id.toLowerCase()}/${r.version}/${id.toLowerCase()}.${r.version}.nupkg`,
-    }));
-    return Response.json({ count: 1, items: [{ count: items.length, items }] });
+    const lower = id.toLowerCase();
+    const registrationUrl = `${base}/v3/registrations/${lower}/index.json`;
+    const items = rows.map((r) => {
+      const leaf = `${base}/v3/registrations/${lower}/${r.version}.json`;
+      const content = `${base}/v3-flatcontainer/${lower}/${r.version}/${lower}.${r.version}.nupkg`;
+      return {
+        "@id": leaf,
+        "@type": "Package",
+        catalogEntry: {
+          "@id": leaf,
+          "@type": "PackageDetails",
+          id,
+          version: r.version,
+          listed: true,
+          packageContent: content,
+        },
+        packageContent: content,
+        registration: registrationUrl,
+      };
+    });
+    const pages =
+      rows.length === 0
+        ? []
+        : [
+            {
+              "@id": registrationUrl,
+              count: items.length,
+              lower: rows[0]?.version,
+              upper: rows[rows.length - 1]?.version,
+              items,
+            },
+          ];
+    return Response.json({ count: pages.length, items: pages });
   }
 
-  private async download(id: string, version: string, ctx: RepoContext): Promise<Response> {
+  private async download(
+    id: string,
+    version: string,
+    file: string,
+    ctx: RepoContext,
+  ): Promise<Response> {
     const pkg = await this.findPkg(ctx, id);
     if (!pkg) throw Errors.notFound();
+    const norm = normalizeNugetVersion(version);
+    // The filename segment must match the canonical {id}.{version}.nupkg this server builds.
+    const expected = `${id.toLowerCase()}.${norm}.nupkg`;
+    if (file && file.toLowerCase() !== expected) throw Errors.notFound();
     const [v] = await ctx.db
       .select({ metadata: packageVersions.metadata })
       .from(packageVersions)
-      .where(and(eq(packageVersions.packageId, pkg.id), eq(packageVersions.version, version)))
+      .where(and(eq(packageVersions.packageId, pkg.id), eq(packageVersions.version, norm)))
       .limit(1);
     const digest = (v?.metadata as unknown as NugetVersionMeta | undefined)?.nupkgDigest;
     if (!digest || !(await ctx.blobs.exists(digest))) throw Errors.notFound();
@@ -132,30 +209,53 @@ export class NugetAdapter implements FormatAdapter {
 
   private async publish(req: Request, ctx: RepoContext): Promise<Response> {
     const url = new URL(req.url);
-    const id = (url.searchParams.get("id") ?? "").trim();
-    const version = (url.searchParams.get("version") ?? "").trim();
-    if (!id || !version) {
-      return Response.json({ error: "id and version query params required" }, { status: 400 });
-    }
-    // Accept the raw .nupkg body or a multipart "package" field.
+    let id = (url.searchParams.get("id") ?? "").trim();
+    let version = (url.searchParams.get("version") ?? "").trim();
+
+    // Accept the raw .nupkg body or a multipart part (real `dotnet nuget push`
+    // sends a positional file part, not a named "package" field).
     let bytes: Uint8Array;
     const ct = req.headers.get("content-type") ?? "";
     if (ct.includes("multipart/form-data")) {
       const form = await req.formData();
-      const file = form.get("package") ?? form.get("content");
+      const file =
+        form.get("package") ??
+        form.get("content") ??
+        [...form.values()].find((v) => v instanceof File);
       if (!(file instanceof File))
         return Response.json({ error: "missing package" }, { status: 400 });
       bytes = new Uint8Array(await file.arrayBuffer());
     } else {
       bytes = new Uint8Array(await req.arrayBuffer());
     }
+
+    // Derive id/version from the .nupkg's nuspec when the client didn't pass them.
+    if (!id || !version) {
+      const meta = extractNuspecMeta(bytes);
+      if (meta) {
+        id = id || meta.id;
+        version = version || meta.version;
+      }
+    }
+    if (!id || !version) {
+      return Response.json(
+        { error: "could not determine package id and version" },
+        { status: 400 },
+      );
+    }
+    version = normalizeNugetVersion(version);
+
     const lower = id.toLowerCase();
-    const file = `${lower}.${version}.nupkg`;
     const pkg = await findOrCreatePackage({
       orgId: ctx.repo.orgId,
       repositoryId: ctx.repo.id,
       name: lower,
     });
+    // NuGet packages are immutable — a duplicate push is a 409 Conflict.
+    const existing = await findVersion(pkg.id, version);
+    if (existing && !existing.deletedAt) return new Response(null, { status: 409 });
+
+    const file = `${lower}.${version}.nupkg`;
     const stored = await storeBlobWithRef(ctx, {
       data: bytes,
       kind: "generic_file",

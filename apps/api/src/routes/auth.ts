@@ -1,4 +1,4 @@
-import { createSession, hashPassword, revokeSession } from "@hootifactory/auth";
+import { createSession, hashPassword, revokeSession, writeAudit } from "@hootifactory/auth";
 import { env } from "@hootifactory/config";
 import { isUniqueViolation } from "@hootifactory/core";
 import { db, users } from "@hootifactory/db";
@@ -60,10 +60,25 @@ authRouter.post("/login", async (c) => {
   if (!body?.username || !body?.password) {
     return c.json({ error: "username and password required" }, 400);
   }
+  const ip = c.req.header("x-forwarded-for") ?? undefined;
   const principal = await authenticateUserPassword(body.username, body.password);
-  if (!principal || principal.kind !== "user") {
+  if (principal?.kind !== "user") {
+    void writeAudit({
+      action: "auth.login",
+      result: "failure",
+      ip,
+      detail: { username: body.username },
+    }).catch(() => {});
     return c.json({ error: "invalid credentials" }, 401);
   }
+  void writeAudit({
+    action: "auth.login",
+    result: "success",
+    ip,
+    principal,
+    resourceType: "user",
+    resourceId: principal.userId,
+  }).catch(() => {});
   const { secret, expiresAt } = await createSession(principal.userId, {
     ip: c.req.header("x-forwarded-for") ?? undefined,
     userAgent: c.req.header("user-agent") ?? undefined,

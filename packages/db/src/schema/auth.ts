@@ -95,6 +95,11 @@ export const roleBindings = pgTable(
     uniqueIndex("role_bindings_user_repo_uq")
       .on(t.orgId, t.userId, t.repositoryId)
       .where(sql`${t.userId} is not null`),
+    // A partial unique index dedupes org-wide user bindings (repositoryId IS NULL),
+    // which the composite index above leaves distinct because NULLs are distinct.
+    uniqueIndex("role_bindings_user_org_uq")
+      .on(t.orgId, t.userId)
+      .where(sql`${t.userId} is not null and ${t.repositoryId} is null`),
   ],
 );
 

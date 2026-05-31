@@ -1,8 +1,12 @@
-import type {
-  ButtonHTMLAttributes,
-  InputHTMLAttributes,
-  ReactNode,
-  SelectHTMLAttributes,
+import {
+  type ButtonHTMLAttributes,
+  cloneElement,
+  type InputHTMLAttributes,
+  isValidElement,
+  type ReactElement,
+  type ReactNode,
+  type SelectHTMLAttributes,
+  useId,
 } from "react";
 
 export function Button({
@@ -45,11 +49,22 @@ export function Select(props: SelectHTMLAttributes<HTMLSelectElement>) {
 }
 
 export function Field({ label, children }: { label: string; children: ReactNode }) {
+  // Associate the label with its control via a generated id (injected into the
+  // single child element), so it's an accessible, statically-valid label.
+  const id = useId();
+  const control = isValidElement(children)
+    ? cloneElement(children as ReactElement<{ id?: string }>, { id })
+    : children;
   return (
-    <label className="block space-y-1">
-      <span className="text-xs font-medium text-neutral-600 dark:text-neutral-400">{label}</span>
-      {children}
-    </label>
+    <div className="space-y-1">
+      <label
+        htmlFor={id}
+        className="block text-xs font-medium text-neutral-600 dark:text-neutral-400"
+      >
+        {label}
+      </label>
+      {control}
+    </div>
   );
 }
 

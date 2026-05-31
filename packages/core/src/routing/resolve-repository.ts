@@ -13,8 +13,9 @@ export interface RepoResolution {
  *   npm/pypi/...:  "<format>/<org>/<repo>"   (e.g. "npm/acme/internal")
  *   docker/oci/helm: "v2/<org>/<repo>"        (Docker forces the /v2/ prefix)
  *
- * Returns null for unmatched paths (e.g. the global "/v2/" version check and
- * "/v2/_catalog", which the API handles before repo resolution).
+ * Returns null for unmatched paths (e.g. the global "/v2/" version check, which
+ * the API handles before repo resolution). Note: a global "/v2/_catalog" endpoint
+ * is not implemented; such requests currently 404.
  */
 export async function resolveRepository(pathname: string): Promise<RepoResolution | null> {
   const norm = pathname.replace(/^\/+/, "").replace(/\/+$/, "");

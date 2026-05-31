@@ -1,4 +1,5 @@
 import {
+  hashPassword,
   type Principal,
   resolveSession,
   resolveToken,
@@ -20,9 +21,14 @@ async function userPrincipalById(userId: string): Promise<Principal | null> {
     .from(users)
     .where(eq(users.id, userId))
     .limit(1);
-  if (!u || !u.isActive) return null;
+  if (!u?.isActive) return null;
   return { kind: "user", userId: u.id, username: u.username };
 }
+
+// A valid argon2id hash used to equalize timing when the username is unknown, so
+// login does not leak (via response time) whether an account exists.
+let dummyHash: Promise<string> | null = null;
+const timingHash = () => (dummyHash ??= hashPassword("hootifactory-timing-equalizer"));
 
 /** Verify username/password (UI login + registry Basic auth with user creds). */
 export async function authenticateUserPassword(
@@ -30,8 +36,10 @@ export async function authenticateUserPassword(
   password: string,
 ): Promise<Principal | null> {
   const [u] = await db.select().from(users).where(eq(users.username, username)).limit(1);
-  if (!u || !u.isActive || !u.passwordHash) return null;
-  if (!(await verifyPassword(password, u.passwordHash))) return null;
+  // Always run the (costly) verify — against a dummy hash when the user is absent —
+  // so the timing of a hit and a miss are indistinguishable.
+  const ok = await verifyPassword(password, u?.passwordHash ?? (await timingHash()));
+  if (!u?.isActive || !u.passwordHash || !ok) return null;
   return { kind: "user", userId: u.id, username: u.username };
 }
 
@@ -84,6 +92,14 @@ export async function authenticate(c: Context<AppEnv>): Promise<Principal> {
       const p = await resolveToken(authz.trim());
       if (p) return p;
     }
+  }
+
+  // NuGet clients (dotnet/nuget push) send the credential as an API key header,
+  // never in Authorization. Treat it as a Hootifactory scoped token.
+  const apiKey = c.req.header("x-nuget-apikey");
+  if (apiKey?.startsWith(TOKEN_PREFIX)) {
+    const p = await resolveToken(apiKey.trim());
+    if (p) return p;
   }
 
   const session = getCookie(c, SESSION_COOKIE);

@@ -73,8 +73,14 @@ export async function resolveToken(secret: string): Promise<Principal | null> {
   if (!row || row.revokedAt) return null;
   if (row.expiresAt && row.expiresAt.getTime() < Date.now()) return null;
 
-  // best-effort last-used bookkeeping
-  void db.update(apiTokens).set({ lastUsedAt: new Date() }).where(eq(apiTokens.id, row.id));
+  // best-effort last-used bookkeeping. `.catch()` both executes the lazy Drizzle
+  // query (a bare `void db.update(...)` is never sent) and swallows transient
+  // failures so they don't surface as an unhandled rejection on every request.
+  void db
+    .update(apiTokens)
+    .set({ lastUsedAt: new Date() })
+    .where(eq(apiTokens.id, row.id))
+    .catch(() => {});
 
   return {
     kind: "token",

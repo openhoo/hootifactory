@@ -43,7 +43,13 @@ export function buildRepoContext(repo: ResolvedRepo, principal: Principal): Repo
         })
         .returning({ id: artifacts.id });
       if (artifact) {
-        await enqueue(QUEUES.scanArtifact, { artifactId: artifact.id });
+        // Bounded retry with backoff so a transient failure recovers but a
+        // poisoned job can't retry-storm the queue.
+        await enqueue(
+          QUEUES.scanArtifact,
+          { artifactId: artifact.id },
+          { retryLimit: 5, retryDelay: 30, retryBackoff: true },
+        );
       }
     },
   };

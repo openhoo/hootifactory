@@ -128,6 +128,18 @@ describe("can() — token org boundary", () => {
     });
     expect(del.allowed).toBe(false);
   });
+  test("scoped token cannot escalate on an org-level resource (no repositoryName)", () => {
+    // Even if the owner is an org admin/owner, a scoped token must not inherit
+    // that role on a resource its scopes can't match (privilege-escalation guard).
+    const d = can({
+      principal: tokenScoped,
+      action: "admin",
+      resource: { type: "org", orgId: "orgA" },
+      effectiveRole: "owner",
+    });
+    expect(d.allowed).toBe(false);
+    expect(d.code).toBe("insufficient_scope");
+  });
 });
 
 describe("can() — user", () => {

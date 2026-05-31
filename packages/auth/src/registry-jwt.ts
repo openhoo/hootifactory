@@ -29,6 +29,14 @@ async function getKeys(): Promise<Keys> {
         const publicKey = (await importSPKI(env.REGISTRY_JWT_PUBLIC_KEY, "RS256")) as CryptoKey;
         return { privateKey, publicKey, kid: "configured" };
       }
+      // No configured keypair — generate an ephemeral one. This is fine for a
+      // single-process dev/test run, but tokens won't verify across replicas and
+      // are invalidated on restart. Production is already required to set the keys
+      // (enforced by the config schema); warn loudly for any other environment.
+      console.warn(
+        "[registry-jwt] REGISTRY_JWT_PRIVATE_KEY/PUBLIC_KEY unset — using an EPHEMERAL keypair. " +
+          "OCI Bearer tokens will not survive restarts and are invalid across multiple API replicas.",
+      );
       const { privateKey, publicKey } = await generateKeyPair("RS256", { extractable: true });
       return { privateKey, publicKey, kid: "ephemeral" };
     })();
@@ -69,6 +77,7 @@ export async function verifyRegistryToken(
   const { payload } = await jwtVerify(token, publicKey, {
     issuer: env.REGISTRY_PUBLIC_URL,
     audience,
+    algorithms: ["RS256"], // pin the algorithm (defense-in-depth against alg confusion)
   });
   return {
     subject: payload.sub,

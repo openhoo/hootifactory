@@ -8,6 +8,13 @@
       "when": 1780240477555,
       "tag": "0000_tidy_sphinx",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1780254602015,
+      "tag": "0001_first_vindicator",
+      "breakpoints": true
     }
   ]
 }

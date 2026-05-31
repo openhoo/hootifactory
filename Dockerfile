@@ -19,7 +19,7 @@ ENV NODE_ENV=production \
     WEB_DIST=/app/apps/web/dist
 EXPOSE 3000
 USER bun
-# Healthcheck hits the API readiness endpoint.
+# Healthcheck hits the API readiness endpoint (/readyz verifies DB connectivity).
 HEALTHCHECK --interval=15s --timeout=5s --retries=5 \
-  CMD bun -e "fetch('http://127.0.0.1:'+(process.env.API_PORT||3000)+'/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+  CMD bun -e "fetch('http://127.0.0.1:'+(process.env.API_PORT||3000)+'/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 CMD ["bun", "run", "apps/api/src/server.ts"]

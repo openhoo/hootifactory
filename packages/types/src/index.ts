@@ -28,13 +28,6 @@ export const OCI_MEDIA_TYPES = {
   dockerLayerGzip: "application/vnd.docker.image.rootfs.diff.tar.gzip",
 } as const;
 
-export const MANIFEST_MEDIA_TYPES: readonly string[] = [
-  OCI_MEDIA_TYPES.manifestV1,
-  OCI_MEDIA_TYPES.imageIndexV1,
-  OCI_MEDIA_TYPES.dockerManifestV2,
-  OCI_MEDIA_TYPES.dockerManifestListV2,
-];
-
 /** An OCI content descriptor. */
 export interface OciDescriptor {
   mediaType: string;

@@ -18,6 +18,7 @@ import {
   scanTypeEnum,
   severityEnum,
 } from "./enums";
+import { repositories } from "./repositories";
 import { organizations } from "./tenancy";
 
 /** A scannable artifact (an OCI image/blob, npm tarball, pypi file) keyed by digest. */
@@ -28,7 +29,9 @@ export const artifacts = pgTable(
     orgId: uuid()
       .notNull()
       .references(() => organizations.id, { onDelete: "cascade" }),
-    repositoryId: uuid().notNull(),
+    repositoryId: uuid()
+      .notNull()
+      .references(() => repositories.id, { onDelete: "cascade" }),
     digest: varchar({ length: 80 }).notNull(),
     mediaType: text(),
     name: text(),
@@ -40,6 +43,7 @@ export const artifacts = pgTable(
   (t) => [
     uniqueIndex("artifacts_org_repo_digest_uq").on(t.orgId, t.repositoryId, t.digest),
     index("artifacts_digest_idx").on(t.digest),
+    index("artifacts_repo_idx").on(t.repositoryId),
     index("artifacts_state_idx").on(t.state),
   ],
 );
