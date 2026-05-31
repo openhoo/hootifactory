@@ -9,11 +9,14 @@ import { createRepository, isUniqueViolation } from "@hootifactory/core";
 import {
   and,
   apiTokens,
+  count,
   db,
   desc,
   eq,
   memberships,
   organizations,
+  packages,
+  packageVersions,
   repositories,
 } from "@hootifactory/db";
 import type { PackageFormat, Visibility } from "@hootifactory/types";
@@ -82,6 +85,79 @@ uiRouter.get("/orgs/:orgId/repositories", async (c) => {
   }
   const rows = await db.select().from(repositories).where(eq(repositories.orgId, orgId));
   return c.json({ repositories: rows });
+});
+
+// ── content browsing ─────────────────────────────────────────────────────
+uiRouter.get("/repositories/:repoId", async (c) => {
+  const [repo] = await db
+    .select()
+    .from(repositories)
+    .where(eq(repositories.id, c.req.param("repoId")))
+    .limit(1);
+  if (!repo) return c.json({ error: "repository not found" }, 404);
+  const decision = await authorize(c.get("principal"), "read", {
+    type: "repository",
+    orgId: repo.orgId,
+    repositoryId: repo.id,
+    repositoryName: repo.name,
+    visibility: repo.visibility,
+  });
+  if (!decision.allowed) {
+    return c.json({ error: decision.reason }, decision.code === "unauthenticated" ? 401 : 403);
+  }
+  const countRows = await db
+    .select({ value: count() })
+    .from(packages)
+    .where(eq(packages.repositoryId, repo.id));
+  return c.json({ repository: repo, packageCount: countRows[0]?.value ?? 0 });
+});
+
+uiRouter.get("/repositories/:repoId/packages", async (c) => {
+  const [repo] = await db
+    .select()
+    .from(repositories)
+    .where(eq(repositories.id, c.req.param("repoId")))
+    .limit(1);
+  if (!repo) return c.json({ error: "repository not found" }, 404);
+  const decision = await authorize(c.get("principal"), "read", {
+    type: "repository",
+    orgId: repo.orgId,
+    repositoryId: repo.id,
+    repositoryName: repo.name,
+    visibility: repo.visibility,
+  });
+  if (!decision.allowed) {
+    return c.json({ error: decision.reason }, decision.code === "unauthenticated" ? 401 : 403);
+  }
+  const rows = await db
+    .select({ id: packages.id, name: packages.name, latestVersion: packages.latestVersion })
+    .from(packages)
+    .where(eq(packages.repositoryId, repo.id))
+    .orderBy(packages.name);
+  return c.json({ packages: rows });
+});
+
+uiRouter.get("/packages/:packageId/versions", async (c) => {
+  const [pkg] = await db
+    .select()
+    .from(packages)
+    .where(eq(packages.id, c.req.param("packageId")))
+    .limit(1);
+  if (!pkg) return c.json({ error: "package not found" }, 404);
+  const decision = await authorize(c.get("principal"), "read", { type: "org", orgId: pkg.orgId });
+  if (!decision.allowed) {
+    return c.json({ error: decision.reason }, decision.code === "unauthenticated" ? 401 : 403);
+  }
+  const rows = await db
+    .select({
+      version: packageVersions.version,
+      sizeBytes: packageVersions.sizeBytes,
+      createdAt: packageVersions.createdAt,
+    })
+    .from(packageVersions)
+    .where(eq(packageVersions.packageId, pkg.id))
+    .orderBy(desc(packageVersions.createdAt));
+  return c.json({ package: { id: pkg.id, name: pkg.name }, versions: rows });
 });
 
 uiRouter.post("/orgs/:orgId/repositories", async (c) => {
