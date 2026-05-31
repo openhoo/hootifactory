@@ -79,6 +79,10 @@ export async function authenticate(c: Context<AppEnv>): Promise<Principal> {
         const up = await authenticateUserPassword(user, pass);
         if (up) return up;
       }
+    } else if (authz.startsWith(TOKEN_PREFIX)) {
+      // Bare token (Cargo sends the token with no scheme).
+      const p = await resolveToken(authz.trim());
+      if (p) return p;
     }
   }
 

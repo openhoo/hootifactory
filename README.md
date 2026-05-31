@@ -2,10 +2,24 @@
 
 A self-hostable, **multi-format artifact & package manager** — an open-source alternative to JFrog Artifactory + Harbor + a standalone scanner, in one tool.
 
-- **Formats:** Docker/OCI, npm, PyPI (Phase 1); Helm, NuGet, Go, Cargo (later).
+- **Formats:** npm, Docker/OCI, PyPI, Helm, Go, Cargo, NuGet (8 total). npm,
+  Docker, PyPI, Helm and Go are verified end-to-end against their real clients.
 - **Repository kinds:** hosted, remote (pull-through proxy/cache), virtual (group/aggregate).
-- **Supply-chain security:** SBOM generation, vulnerability + dependency + malware scanning, policy gates (audit / enforce).
-- **Multi-tenant:** organizations, RBAC, scoped API tokens, audit log.
+- **Supply-chain security:** dependency/malware scanning (heuristic + optional
+  Syft/Grype/Trivy/OSV/ClamAV), policy gates (audit / enforce) that quarantine or
+  block on findings, async scan workers (pg-boss).
+- **Multi-tenant:** organizations, RBAC (`can()` with org-boundary enforcement),
+  scoped API tokens, OIDC group→role mapping, audit log.
+- **Governance:** storage quotas, retention pruning.
+
+## Verification
+
+```bash
+bun test ./packages      # unit + integration (storage on MinIO, auth/RBAC, route matcher, scanning, OIDC)
+bun run e2e:install      # one-time: Playwright chromium
+bun run test:e2e         # 43 Playwright e2e — drives real npm/docker/pip/helm/go clients,
+                         # the browser UI, proxy/virtual repos, scanning+policy gates, governance
+```
 
 ## Stack
 

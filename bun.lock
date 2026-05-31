@@ -27,9 +27,11 @@
         "@hootifactory/config": "workspace:*",
         "@hootifactory/core": "workspace:*",
         "@hootifactory/db": "workspace:*",
+        "@hootifactory/format-cargo": "workspace:*",
         "@hootifactory/format-docker": "workspace:*",
         "@hootifactory/format-go": "workspace:*",
         "@hootifactory/format-npm": "workspace:*",
+        "@hootifactory/format-nuget": "workspace:*",
         "@hootifactory/format-pypi": "workspace:*",
         "@hootifactory/queue": "workspace:*",
         "@hootifactory/storage": "workspace:*",
@@ -103,6 +105,16 @@
         "drizzle-orm": "^0.45.2",
       },
     },
+    "packages/format-cargo": {
+      "name": "@hootifactory/format-cargo",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/core": "workspace:*",
+        "@hootifactory/db": "workspace:*",
+        "@hootifactory/storage": "workspace:*",
+        "@hootifactory/types": "workspace:*",
+      },
+    },
     "packages/format-docker": {
       "name": "@hootifactory/format-docker",
       "version": "0.0.0",
@@ -125,6 +137,16 @@
     },
     "packages/format-npm": {
       "name": "@hootifactory/format-npm",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/core": "workspace:*",
+        "@hootifactory/db": "workspace:*",
+        "@hootifactory/storage": "workspace:*",
+        "@hootifactory/types": "workspace:*",
+      },
+    },
+    "packages/format-nuget": {
+      "name": "@hootifactory/format-nuget",
       "version": "0.0.0",
       "dependencies": {
         "@hootifactory/core": "workspace:*",
@@ -275,11 +297,15 @@
 
     "@hootifactory/db": ["@hootifactory/db@workspace:packages/db"],
 
+    "@hootifactory/format-cargo": ["@hootifactory/format-cargo@workspace:packages/format-cargo"],
+
     "@hootifactory/format-docker": ["@hootifactory/format-docker@workspace:packages/format-docker"],
 
     "@hootifactory/format-go": ["@hootifactory/format-go@workspace:packages/format-go"],
 
     "@hootifactory/format-npm": ["@hootifactory/format-npm@workspace:packages/format-npm"],
+
+    "@hootifactory/format-nuget": ["@hootifactory/format-nuget@workspace:packages/format-nuget"],
 
     "@hootifactory/format-pypi": ["@hootifactory/format-pypi@workspace:packages/format-pypi"],
 
