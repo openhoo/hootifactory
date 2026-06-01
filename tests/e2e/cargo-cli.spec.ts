@@ -111,5 +111,13 @@ test.describe("cargo sparse registry (real cargo)", () => {
     const indexPath = `${crateName.slice(0, 2)}/${crateName.slice(2, 4)}/${crateName}`;
     const indexText = await (await owner.ctx.get(`/${repo.mountPath}/${indexPath}`)).text();
     expect(indexText).toContain('"vers":"1.0.0"');
+
+    cargo(["yank", crateName, "--version", "1.0.0", "--registry", "hooti"], pubDir, env);
+    const yanked = await (await owner.ctx.get(`/${repo.mountPath}/${indexPath}`)).text();
+    expect(yanked).toContain('"yanked":true');
+
+    cargo(["yank", crateName, "--version", "1.0.0", "--registry", "hooti", "--undo"], pubDir, env);
+    const unyanked = await (await owner.ctx.get(`/${repo.mountPath}/${indexPath}`)).text();
+    expect(unyanked).toContain('"yanked":false');
   });
 });
