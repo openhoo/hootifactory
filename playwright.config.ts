@@ -38,6 +38,7 @@ export default defineConfig({
         NODE_ENV: "test",
         LOG_LEVEL: "warn",
         SCANNER_ENABLED: "true",
+        SCANNER_CLI_RUNTIME: "disabled",
       },
     },
     {
@@ -51,6 +52,7 @@ export default defineConfig({
         DATABASE_URL: TEST_DATABASE_URL,
         WORKER_PORT: String(WORKER_PORT),
         SCANNER_ENABLED: "true",
+        SCANNER_CLI_RUNTIME: "disabled",
         NODE_ENV: "test",
         LOG_LEVEL: "warn",
       },

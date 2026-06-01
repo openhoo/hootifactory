@@ -25,6 +25,11 @@ bun run test:e2e         # Playwright e2e — drives Dockerized npm/docker/oras/
 bun run test:e2e:clients # real-client specs only; Docker supplies the external package-manager CLIs
 ```
 
+Docker is the integration boundary for external CLIs. The e2e real-client specs
+run npm, Docker, ORAS, pip/twine, Helm, Go, Cargo and dotnet through pinned
+container images, and the optional scanner CLIs default to Docker images for
+Syft, Grype, Trivy and ClamAV (`SCANNER_CLI_RUNTIME=docker`).
+
 Unit tests are regular Bun `*.test.{ts,tsx}` or `*.spec.{ts,tsx}` files. Name
 service-backed tests `*.integration.test.{ts,tsx}` so the default unit pass stays
 fast and independent. Unit test runs emit Bun coverage tables and package-local

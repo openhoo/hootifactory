@@ -14,6 +14,7 @@ import {
   setDistTag,
   storeBlobWithRef,
   upsertPackageVersion,
+  upsertPackageVersionWithBlobRef,
 } from "@hootifactory/core";
 import {
   and,
@@ -26,6 +27,7 @@ import {
   sql,
   versionTags,
 } from "@hootifactory/db";
+import { computeDigest } from "@hootifactory/storage";
 import { buildPackument } from "./packument";
 
 function sha1hex(data: Uint8Array): string {
@@ -112,6 +114,26 @@ function upstreamDistMatchesBytes(
     if (sha1hex(data) !== dist.shasum.trim().toLowerCase()) return false;
   }
   return true;
+}
+
+function upstreamDistMatchesStored(
+  dist: { integrity?: string; shasum?: string },
+  stored: NpmDist,
+): boolean {
+  let checked = false;
+  if (typeof dist.integrity === "string" && dist.integrity.trim()) {
+    checked = true;
+    const tokens = dist.integrity
+      .trim()
+      .split(/\s+/)
+      .map((token) => token.split("?")[0] ?? "");
+    if (!tokens.includes(stored.integrity)) return false;
+  }
+  if (typeof dist.shasum === "string" && dist.shasum.trim()) {
+    checked = true;
+    if (dist.shasum.trim().toLowerCase() !== stored.shasum) return false;
+  }
+  return checked;
 }
 
 interface NpmDist {
@@ -550,7 +572,7 @@ export class NpmAdapter implements FormatAdapter {
       "dist-tags"?: Record<string, string>;
     };
     const scope = pkgName.startsWith("@") ? (pkgName.split("/")[0] ?? null) : null;
-    let pkg: Awaited<ReturnType<typeof findOrCreatePackage>> | null = null;
+    let pkg = await this.findPackage(ctx, pkgName);
     const base = basename(pkgName);
     for (const [ver, manifestRaw] of Object.entries(packument.versions ?? {})) {
       if (!isValidNpmVersion(ver)) continue;
@@ -562,6 +584,36 @@ export class NpmAdapter implements FormatAdapter {
       const dist0 = manifest.dist as { integrity?: string; shasum?: string; tarball?: string };
       const tarballUrl = dist0?.tarball;
       if (!tarballUrl) continue;
+      const [existingVersion] = pkg
+        ? await ctx.db
+            .select({ metadata: packageVersions.metadata })
+            .from(packageVersions)
+            .where(
+              and(
+                eq(packageVersions.packageId, pkg.id),
+                eq(packageVersions.version, ver),
+                isNull(packageVersions.deletedAt),
+              ),
+            )
+            .limit(1)
+        : [];
+      const existingDist = (existingVersion?.metadata as { dist?: NpmDist } | undefined)?.dist;
+      if (pkg && existingDist && upstreamDistMatchesStored(dist0, existingDist)) {
+        manifest.dist = {
+          ...(dist0 ?? {}),
+          tarball: `${ctx.baseUrl}/${ctx.repo.mountPath}/${packagePath(pkgName)}/-/${existingDist.filename}`,
+          shasum: existingDist.shasum,
+          integrity: existingDist.integrity,
+        };
+        // Refresh metadata without re-downloading or re-scanning unchanged bytes.
+        await upsertPackageVersion(ctx, {
+          packageId: pkg.id,
+          version: ver,
+          metadata: { manifest, dist: existingDist },
+          sizeBytes: existingDist.size,
+        });
+        continue;
+      }
       // Only mirror tarballs served by the configured upstream host — the URL
       // comes from untrusted upstream JSON and must not point elsewhere (SSRF).
       let tRes: Response | null = null;
@@ -580,50 +632,40 @@ export class NpmAdapter implements FormatAdapter {
         name: pkgName,
         namespace: scope,
       });
-      const [existingVersion] = await ctx.db
-        .select({ metadata: packageVersions.metadata })
-        .from(packageVersions)
-        .where(
-          and(
-            eq(packageVersions.packageId, pkg.id),
-            eq(packageVersions.version, ver),
-            isNull(packageVersions.deletedAt),
-          ),
-        )
-        .limit(1);
-      const previousDigest = (existingVersion?.metadata as { dist?: NpmDist } | undefined)?.dist
-        ?.blobDigest;
+      const previousDigest = existingDist?.blobDigest;
       const shasum = sha1hex(tarball);
       const integrity = `sha512-${sha512b64(tarball)}`;
       const filename = `${base}-${ver}.tgz`;
-      const stored = await storeBlobWithRef(ctx, {
-        data: tarball,
-        kind: "npm_tarball",
-        scope: `${pkgName}@${ver}`,
-        mediaType: "application/octet-stream",
-      });
       manifest.dist = {
         ...(dist0 ?? {}),
         tarball: `${ctx.baseUrl}/${ctx.repo.mountPath}/${packagePath(pkgName)}/-/${filename}`,
         shasum,
         integrity,
       };
-      await upsertPackageVersion(ctx, {
+      const dist: NpmDist = {
+        filename,
+        blobDigest: computeDigest(tarball),
+        shasum,
+        integrity,
+        size: tarball.length,
+      };
+      const { stored } = await upsertPackageVersionWithBlobRef(ctx, {
         packageId: pkg.id,
         version: ver,
         metadata: {
           manifest,
-          dist: { filename, blobDigest: stored.digest, shasum, integrity, size: tarball.length },
+          dist,
         },
         sizeBytes: tarball.length,
-      });
-      if (previousDigest && previousDigest !== stored.digest) {
-        await releaseBlobRef(ctx, {
-          digest: previousDigest,
+        blob: {
+          data: tarball,
           kind: "npm_tarball",
           scope: `${pkgName}@${ver}`,
-        });
-      }
+          mediaType: "application/octet-stream",
+          previousDigest,
+        },
+      });
+      if (stored.digest !== dist.blobDigest) throw new Error("stored npm tarball digest mismatch");
       await ctx.enqueueScan({
         digest: stored.digest,
         name: pkgName,

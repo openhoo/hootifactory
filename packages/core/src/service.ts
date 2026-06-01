@@ -367,6 +367,139 @@ export async function upsertPackageVersion(
   return row.id;
 }
 
+export async function upsertPackageVersionWithBlobRef(
+  ctx: RepoContext,
+  opts: {
+    packageId: string;
+    version: string;
+    metadata: Record<string, unknown>;
+    sizeBytes: number;
+    blob: {
+      data: Uint8Array;
+      mediaType?: string;
+      kind: BlobRefKind;
+      scope: string;
+      previousDigest?: string | null;
+    };
+  },
+): Promise<{ stored: StoredBlob; versionId: string }> {
+  const put = await ctx.blobs.put(opts.blob.data);
+  const publisher = publisherOf(ctx);
+  let refCreated = false;
+  let deleteCasDigest: string | null = null;
+  let versionId = "";
+
+  await ctx.db.transaction(async (tx) => {
+    const quota = await lockOrgQuotaTx(tx, ctx.repo.orgId);
+    const previousDigest =
+      opts.blob.previousDigest && opts.blob.previousDigest !== put.digest
+        ? opts.blob.previousDigest
+        : null;
+    let oldRefundBytes = 0;
+
+    if (previousDigest) {
+      const [oldBlob] = await tx
+        .select({ size: blobs.sizeBytes })
+        .from(blobs)
+        .where(eq(blobs.digest, previousDigest))
+        .limit(1);
+      const oldDeleted = await tx
+        .delete(blobRefs)
+        .where(
+          and(
+            eq(blobRefs.digest, previousDigest),
+            eq(blobRefs.kind, opts.blob.kind),
+            eq(blobRefs.repositoryId, ctx.repo.id),
+            eq(blobRefs.scope, opts.blob.scope),
+          ),
+        )
+        .returning({ id: blobRefs.id });
+      if (
+        oldBlob &&
+        oldDeleted.length > 0 &&
+        !(await orgAlreadyReferencesDigestTx(tx, ctx.repo.orgId, previousDigest))
+      ) {
+        oldRefundBytes = oldBlob.size;
+      }
+    }
+
+    const chargeOrg = !(await orgAlreadyReferencesDigestTx(tx, ctx.repo.orgId, put.digest));
+
+    const created = await tx
+      .insert(blobs)
+      .values({
+        digest: put.digest,
+        sizeBytes: put.size,
+        storageKey: ctx.blobs.blobKey(put.digest),
+        mediaType: opts.blob.mediaType ?? null,
+        refCount: 0,
+        state: "active",
+      })
+      .onConflictDoNothing()
+      .returning({ digest: blobs.digest });
+    if (created.length === 0) {
+      await tx
+        .update(blobs)
+        .set({ state: "active", pendingSince: null })
+        .where(and(eq(blobs.digest, put.digest), eq(blobs.state, "pending_delete")));
+    }
+
+    const refRows = await tx
+      .insert(blobRefs)
+      .values({
+        digest: put.digest,
+        kind: opts.blob.kind,
+        repositoryId: ctx.repo.id,
+        scope: opts.blob.scope,
+      })
+      .onConflictDoNothing()
+      .returning({ id: blobRefs.id });
+    refCreated = refRows.length > 0;
+
+    const netDelta = (refCreated && chargeOrg ? put.size : 0) - oldRefundBytes;
+    if (netDelta > 0) assertStorageQuotaRowAllows(quota, netDelta);
+
+    if (refCreated) {
+      await tx
+        .update(blobs)
+        .set({ refCount: sql`${blobs.refCount} + 1` })
+        .where(eq(blobs.digest, put.digest));
+    }
+    if (netDelta !== 0) await adjustStorageUsedTx(tx, ctx.repo.orgId, netDelta);
+
+    const [versionRow] = await tx
+      .insert(packageVersions)
+      .values({
+        orgId: ctx.repo.orgId,
+        packageId: opts.packageId,
+        version: opts.version,
+        metadata: opts.metadata,
+        sizeBytes: opts.sizeBytes,
+        ...publisher,
+      })
+      .onConflictDoUpdate({
+        target: [packageVersions.packageId, packageVersions.version],
+        set: { metadata: opts.metadata, sizeBytes: opts.sizeBytes, deletedAt: null },
+      })
+      .returning({ id: packageVersions.id });
+    if (!versionRow) throw new Error("failed to upsert package version");
+    versionId = versionRow.id;
+
+    if (previousDigest) {
+      const rows = await tx
+        .delete(blobs)
+        .where(and(eq(blobs.digest, previousDigest), eq(blobs.refCount, 0)))
+        .returning({ digest: blobs.digest });
+      deleteCasDigest = rows[0]?.digest ?? null;
+    }
+  });
+
+  if (deleteCasDigest) {
+    await ctx.blobs.delete(deleteCasDigest).catch(() => {});
+  }
+  return { stored: { ...put, refCreated }, versionId };
+}
+
 export async function createPackageVersion(
   ctx: RepoContext,
   opts: {

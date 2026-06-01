@@ -16,6 +16,12 @@ x-app-env: &app-env
   S3_SECRET_ACCESS_KEY: hootifactory
   S3_BUCKET: hootifactory
   SCANNER_ENABLED: "true"
+  SCANNER_CLI_RUNTIME: docker
+  SCANNER_DOCKER_COMMAND: docker
+  SYFT_IMAGE: anchore/syft:latest
+  GRYPE_IMAGE: anchore/grype:latest
+  TRIVY_IMAGE: aquasec/trivy:latest
+  CLAMAV_IMAGE: clamav/clamav:latest
 
 services:
   postgres:

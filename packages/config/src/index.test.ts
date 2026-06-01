@@ -20,6 +20,9 @@ describe("environment auth creation defaults", () => {
     expect(devEnv.AUTH_LOGIN_WINDOW_SECONDS).toBe(60);
     expect(devEnv.REGISTRY_MAX_UPLOAD_BYTES).toBe(100 * 1024 * 1024);
     expect(devEnv.SCAN_MAX_BYTES).toBe(100 * 1024 * 1024);
+    expect(devEnv.SCANNER_CLI_RUNTIME).toBe("docker");
+    expect(devEnv.GRYPE_IMAGE).toBe("anchore/grype:latest");
+    expect(devEnv.TRIVY_IMAGE).toBe("aquasec/trivy:latest");
     expect(loadEnv({ NODE_ENV: "test" }).AUTH_ALLOW_REGISTRATION).toBe(true);
     expect(loadEnv({ NODE_ENV: "test" }).AUTH_ALLOW_ORG_CREATION).toBe(true);
   });
@@ -44,11 +47,14 @@ describe("environment auth creation defaults", () => {
     const env = loadEnv({
       CLAMAV_REST_URL: "http://clamav:3310/scan/",
       TRIVY_SERVER_URL: "http://trivy:4954/",
+      SCANNER_CLI_RUNTIME: "host",
     });
     expect(env.CLAMAV_REST_URL).toBe("http://clamav:3310/scan");
     expect(env.TRIVY_SERVER_URL).toBe("http://trivy:4954");
+    expect(env.SCANNER_CLI_RUNTIME).toBe("host");
     expect(() => loadEnv({ CLAMAV_REST_URL: "clamav:3310" })).toThrow();
     expect(() => loadEnv({ TRIVY_SERVER_URL: "trivy:4954" })).toThrow();
+    expect(() => loadEnv({ SCANNER_CLI_RUNTIME: "local" })).toThrow();
   });
 
   test("registry upload limit is a positive integer", () => {

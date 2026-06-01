@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   detectScanners,
+  dockerScannerRunArgs,
   osvScanDependencies,
   parseClamAvRestFindings,
   parseTrivyFindings,
@@ -126,8 +127,25 @@ describe("heuristic scanning", () => {
     ]);
   });
 
+  test("builds Docker scanner commands with target bind mounts", () => {
+    const args = dockerScannerRunArgs({
+      args: ["fs", "--quiet", "--format", "json", "/tmp/hoot-scan/blob"],
+      image: "aquasec/trivy:latest",
+      target: "/tmp/hoot-scan/blob",
+    });
+
+    expect(args).toContain("--pull");
+    expect(args).toContain("missing");
+    expect(args).toContain("type=bind,source=/tmp/hoot-scan,target=/tmp/hoot-scan,readonly");
+    expect(args).toContain("aquasec/trivy:latest");
+    expect(args.slice(-5)).toEqual(["fs", "--quiet", "--format", "json", "/tmp/hoot-scan/blob"]);
+  });
+
   test("maps ClamAV REST responses and treats configured REST as available", async () => {
-    expect(detectScanners({ clamavRestUrl: "http://clamav:3310/scan" }).clamav).toBe(true);
+    expect(
+      detectScanners({ clamavRestUrl: "http://clamav:3310/scan", cliRuntime: "disabled" }).clamav,
+    ).toBe(true);
+    expect(detectScanners({ cliRuntime: "disabled" }).grype).toBe(false);
     expect(parseClamAvRestFindings({ infected: true, viruses: ["Eicar-Test-Signature"] })).toEqual([
       {
         type: "malware",

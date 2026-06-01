@@ -101,6 +101,12 @@ const EnvSchema = z
 
     // Scanning (Phase 3)
     SCANNER_ENABLED: boolish.default(false),
+    SCANNER_CLI_RUNTIME: z.enum(["auto", "docker", "host", "disabled"]).default("docker"),
+    SCANNER_DOCKER_COMMAND: z.string().default("docker"),
+    SYFT_IMAGE: z.string().default("anchore/syft:latest"),
+    GRYPE_IMAGE: z.string().default("anchore/grype:latest"),
+    TRIVY_IMAGE: z.string().default("aquasec/trivy:latest"),
+    CLAMAV_IMAGE: z.string().default("clamav/clamav:latest"),
     CLAMAV_REST_URL: httpUrl.optional(),
     TRIVY_SERVER_URL: httpUrl.optional(),
     OSV_API_URL: absoluteUrl.default("https://api.osv.dev"),

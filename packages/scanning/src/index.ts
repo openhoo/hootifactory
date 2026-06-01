@@ -1,3 +1,4 @@
+import { dirname, resolve } from "node:path";
 import type { NormalizedFinding, Severity } from "@hootifactory/scan-core";
 import { normalizeSeverity } from "@hootifactory/scan-core";
 
@@ -80,25 +81,143 @@ export interface AvailableScanners {
   clamav: boolean;
 }
 
+export type ScannerCliRuntime = "auto" | "docker" | "host" | "disabled";
+
 export interface ScannerRuntimeOptions {
   trivyServerUrl?: string;
   clamavRestUrl?: string;
+  cliRuntime?: ScannerCliRuntime;
+  dockerCommand?: string;
+  syftImage?: string;
+  grypeImage?: string;
+  trivyImage?: string;
+  clamavImage?: string;
 }
 
-/** Detect which external scanner binaries are installed. */
+const DEFAULT_SCANNER_IMAGES = {
+  syft: "anchore/syft:latest",
+  grype: "anchore/grype:latest",
+  trivy: "aquasec/trivy:latest",
+  clamav: "clamav/clamav:latest",
+} as const;
+
+let dockerAvailableCache: Map<string, boolean> | null = null;
+
+function hostBinAvailable(bin: string): boolean {
+  try {
+    return Boolean(Bun.which(bin));
+  } catch {
+    return false;
+  }
+}
+
+function dockerAvailable(command = "docker"): boolean {
+  dockerAvailableCache ??= new Map();
+  const cached = dockerAvailableCache.get(command);
+  if (cached !== undefined) return cached;
+  if (!hostBinAvailable(command)) {
+    dockerAvailableCache.set(command, false);
+    return false;
+  }
+  try {
+    const proc = Bun.spawnSync([command, "info"], { stdout: "ignore", stderr: "ignore" });
+    const ok = proc.exitCode === 0;
+    dockerAvailableCache.set(command, ok);
+    return ok;
+  } catch {
+    dockerAvailableCache.set(command, false);
+    return false;
+  }
+}
+
+function cliRuntime(options: ScannerRuntimeOptions): ScannerCliRuntime {
+  return options.cliRuntime ?? "docker";
+}
+
+function scannerCliAvailable(hostBins: string[], options: ScannerRuntimeOptions): boolean {
+  const runtime = cliRuntime(options);
+  if (runtime === "disabled") return false;
+  if (runtime === "docker") return dockerAvailable(options.dockerCommand);
+  if (runtime === "host") return hostBins.some(hostBinAvailable);
+  return dockerAvailable(options.dockerCommand) || hostBins.some(hostBinAvailable);
+}
+
+function shouldUseDocker(options: ScannerRuntimeOptions): boolean {
+  const runtime = cliRuntime(options);
+  if (runtime === "docker") return true;
+  if (runtime === "auto") return dockerAvailable(options.dockerCommand);
+  if (runtime === "host") return false;
+  return false;
+}
+
+export function dockerScannerRunArgs(input: {
+  args: string[];
+  entrypoint?: string;
+  image: string;
+  target: string;
+}): string[] {
+  const target = resolve(input.target);
+  const targetDir = dirname(target);
+  const args = [
+    "run",
+    "--rm",
+    "--pull",
+    "missing",
+    "--mount",
+    `type=bind,source=${targetDir},target=${targetDir},readonly`,
+    "--workdir",
+    targetDir,
+  ];
+  if (process.platform === "linux") {
+    args.push("--network", "host");
+  } else {
+    args.push("--add-host", "host.docker.internal:host-gateway");
+  }
+  if (input.entrypoint) args.push("--entrypoint", input.entrypoint);
+  args.push(input.image, ...input.args);
+  return args;
+}
+
+async function runScannerCli(input: {
+  args: string[];
+  dockerEntryPoint?: string;
+  hostBins: string[];
+  image: string;
+  options: ScannerRuntimeOptions;
+  target: string;
+}): Promise<string | null> {
+  const target = resolve(input.target);
+  const useDocker = shouldUseDocker(input.options);
+  const command = useDocker
+    ? (input.options.dockerCommand ?? "docker")
+    : input.hostBins.find(hostBinAvailable);
+  if (!command) return null;
+  const args = useDocker
+    ? dockerScannerRunArgs({
+        args: input.args,
+        entrypoint: input.dockerEntryPoint,
+        image: input.image,
+        target,
+      })
+    : input.args;
+  try {
+    const proc = Bun.spawn([command, ...args], { stdout: "pipe", stderr: "ignore" });
+    const text = await new Response(proc.stdout).text();
+    await proc.exited;
+    return text;
+  } catch {
+    return null;
+  }
+}
+
+/** Detect which external scanner clients can be run. Docker-backed clients are the default. */
 export function detectScanners(options: ScannerRuntimeOptions = {}): AvailableScanners {
-  const has = (bin: string) => {
-    try {
-      return Boolean(Bun.which(bin));
-    } catch {
-      return false;
-    }
-  };
   return {
-    syft: has("syft"),
-    grype: has("grype"),
-    trivy: has("trivy"),
-    clamav: Boolean(options.clamavRestUrl) || has("clamdscan") || has("clamscan"),
+    syft: scannerCliAvailable(["syft"], options),
+    grype: scannerCliAvailable(["grype"], options),
+    trivy: scannerCliAvailable(["trivy"], options),
+    clamav:
+      Boolean(options.clamavRestUrl) || scannerCliAvailable(["clamdscan", "clamscan"], options),
   };
 }
 
@@ -152,12 +271,21 @@ export async function osvScanDependencies(
 }
 
 /** Run Syft (SBOM) + Grype (vuln) over a path, when installed. Returns [] otherwise. */
-export async function runGrypeIfAvailable(target: string): Promise<NormalizedFinding[]> {
-  if (!detectScanners().grype) return [];
+export async function runGrypeIfAvailable(
+  target: string,
+  options: ScannerRuntimeOptions = {},
+): Promise<NormalizedFinding[]> {
+  if (!detectScanners(options).grype) return [];
   try {
-    const proc = Bun.spawn(["grype", target, "-o", "json"], { stdout: "pipe", stderr: "ignore" });
-    const text = await new Response(proc.stdout).text();
-    await proc.exited;
+    const resolvedTarget = resolve(target);
+    const text = await runScannerCli({
+      args: [resolvedTarget, "-o", "json"],
+      hostBins: ["grype"],
+      image: options.grypeImage ?? DEFAULT_SCANNER_IMAGES.grype,
+      options,
+      target: resolvedTarget,
+    });
+    if (!text) return [];
     const data = JSON.parse(text) as {
       matches?: {
         vulnerability?: { id?: string; severity?: string; fix?: { versions?: string[] } };
@@ -227,16 +355,23 @@ export function trivyFsArgs(target: string, serverUrl?: string): string[] {
 
 export async function runTrivyIfAvailable(
   target: string,
-  serverUrl?: string,
+  serverUrlOrOptions?: string | ScannerRuntimeOptions,
 ): Promise<NormalizedFinding[]> {
-  if (!detectScanners().trivy) return [];
+  const options =
+    typeof serverUrlOrOptions === "string"
+      ? { trivyServerUrl: serverUrlOrOptions }
+      : (serverUrlOrOptions ?? {});
+  if (!detectScanners(options).trivy) return [];
   try {
-    const proc = Bun.spawn(["trivy", ...trivyFsArgs(target, serverUrl)], {
-      stdout: "pipe",
-      stderr: "ignore",
+    const resolvedTarget = resolve(target);
+    const text = await runScannerCli({
+      args: trivyFsArgs(resolvedTarget, options.trivyServerUrl),
+      hostBins: ["trivy"],
+      image: options.trivyImage ?? DEFAULT_SCANNER_IMAGES.trivy,
+      options,
+      target: resolvedTarget,
     });
-    const text = await new Response(proc.stdout).text();
-    await proc.exited;
+    if (!text) return [];
     return parseTrivyFindings(JSON.parse(text));
   } catch {
     return [];
@@ -287,11 +422,15 @@ function parseClamAvCliFindings(output: string): NormalizedFinding[] {
 export async function runClamAvIfAvailable(
   target: string,
   bytes: Uint8Array,
-  restUrl?: string,
+  restUrlOrOptions?: string | ScannerRuntimeOptions,
 ): Promise<NormalizedFinding[]> {
-  if (restUrl) {
+  const options =
+    typeof restUrlOrOptions === "string"
+      ? { clamavRestUrl: restUrlOrOptions }
+      : (restUrlOrOptions ?? {});
+  if (options.clamavRestUrl) {
     try {
-      const res = await fetch(restUrl, {
+      const res = await fetch(options.clamavRestUrl, {
         method: "POST",
         headers: { "content-type": "application/octet-stream" },
         body: bytes,
@@ -302,19 +441,19 @@ export async function runClamAvIfAvailable(
       return [];
     }
   }
-  const bin = Bun.which("clamdscan") ? "clamdscan" : Bun.which("clamscan") ? "clamscan" : null;
-  if (!bin) return [];
+  if (!detectScanners(options).clamav) return [];
   try {
-    const proc = Bun.spawn([bin, "--no-summary", target], {
-      stdout: "pipe",
-      stderr: "pipe",
+    const resolvedTarget = resolve(target);
+    const stdout = await runScannerCli({
+      args: ["--no-summary", resolvedTarget],
+      dockerEntryPoint: "clamscan",
+      hostBins: ["clamdscan", "clamscan"],
+      image: options.clamavImage ?? DEFAULT_SCANNER_IMAGES.clamav,
+      options,
+      target: resolvedTarget,
     });
-    const [stdout, stderr] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-    ]);
-    await proc.exited;
-    return parseClamAvCliFindings(`${stdout}\n${stderr}`);
+    if (!stdout) return [];
+    return parseClamAvCliFindings(stdout);
   } catch {
     return [];
   }
@@ -327,10 +466,10 @@ export async function runExternalScanners(
 ): Promise<NormalizedFinding[]> {
   const scanners = detectScanners(options);
   const findings: NormalizedFinding[] = [];
-  if (scanners.grype) findings.push(...(await runGrypeIfAvailable(target)));
-  if (scanners.trivy) findings.push(...(await runTrivyIfAvailable(target, options.trivyServerUrl)));
+  if (scanners.grype) findings.push(...(await runGrypeIfAvailable(target, options)));
+  if (scanners.trivy) findings.push(...(await runTrivyIfAvailable(target, options)));
   if (scanners.clamav) {
-    findings.push(...(await runClamAvIfAvailable(target, bytes, options.clamavRestUrl)));
+    findings.push(...(await runClamAvIfAvailable(target, bytes, options)));
   }
   return findings;
 }

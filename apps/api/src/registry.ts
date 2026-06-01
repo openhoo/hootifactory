@@ -197,17 +197,29 @@ async function dispatchProxy(
   if (!isRead(req.method))
     throw Errors.unsupported({ reason: "writes are not allowed on proxy repositories" });
 
+  const upstream = await loadUpstream(ctx.repo.id);
+  let refreshed = false;
+  if (
+    upstream &&
+    adapter.proxyIngest &&
+    match.entry.handlerId === "packument" &&
+    req.method === "GET"
+  ) {
+    refreshed = await adapter
+      .proxyIngest(match.params.pkg ?? "", upstream.url, ctx)
+      .catch(() => false);
+  }
+
   const local = await adapterResponse(adapter, match, req, ctx);
   if (local.status < 400) return local;
 
-  const upstream = await loadUpstream(ctx.repo.id);
   if (!upstream) return local;
 
   // Format-aware mirror (npm packument -> ingest tarballs), then retry locally.
   // Do not fall back to transparent passthrough: returning upstream bytes
   // directly would bypass local artifact records, scan policy, quotas, and
   // retention semantics.
-  if (adapter.proxyIngest && match.entry.handlerId === "packument") {
+  if (!refreshed && adapter.proxyIngest && match.entry.handlerId === "packument") {
     const ok = await adapter.proxyIngest(match.params.pkg ?? "", upstream.url, ctx);
     if (ok) return adapter.handle(match, req, ctx);
   }

@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
@@ -8,6 +9,10 @@ import { expect, test } from "@playwright/test";
 import { dockerNpm, dockerReachableUrl, ensureDockerAvailable } from "./docker-clients";
 import { createRepo, createToken, setupOwner } from "./helpers";
 
+const TEST_DATABASE_URL =
+  process.env.E2E_DATABASE_URL ??
+  "postgres://hootifactory:hootifactory@localhost:5432/hootifactory_test";
+
 function npm(args: string[], cwd: string): string {
   return dockerNpm(args, cwd);
 }
@@ -16,14 +21,21 @@ function npmrc(registry: string, token: string): string {
   return `registry=${registry}\n${registry.replace(/^https?:/, "")}:_authToken=${token}\n`;
 }
 
-function publish(baseURL: string, mountPath: string, token: string, pkgName: string): void {
+function publish(
+  baseURL: string,
+  mountPath: string,
+  token: string,
+  pkgName: string,
+  version = "1.0.0",
+  content = pkgName,
+): void {
   const registry = `${dockerReachableUrl(baseURL)}/${mountPath}/`;
   const dir = mkdtempSync(join(tmpdir(), "pub-"));
   writeFileSync(
     join(dir, "package.json"),
-    JSON.stringify({ name: pkgName, version: "1.0.0", main: "index.js" }),
+    JSON.stringify({ name: pkgName, version, main: "index.js" }),
   );
-  writeFileSync(join(dir, "index.js"), `module.exports = ${JSON.stringify(pkgName)};\n`);
+  writeFileSync(join(dir, "index.js"), `module.exports = ${JSON.stringify(content)};\n`);
   writeFileSync(join(dir, ".npmrc"), npmrc(registry, token));
   npm(["publish", "--registry", registry], dir);
 }
@@ -123,6 +135,98 @@ async function startNpmUpstream(input: {
     requests,
     close: () => new Promise<void>((resolve) => (server as Server).close(() => resolve())),
   };
+}
+
+async function startMutableNpmUpstream(input: {
+  name: string;
+  versions: Record<string, Buffer>;
+  latest: string;
+}): Promise<{
+  url: string;
+  set: (versions: Record<string, Buffer>, latest: string) => void;
+  close: () => Promise<void>;
+}> {
+  let currentVersions = input.versions;
+  let currentLatest = input.latest;
+  const server = createServer((req, res) => {
+    const url = new URL(req.url ?? "/", "http://127.0.0.1");
+    const base = `http://${req.headers.host}`;
+    if (url.pathname === `/${input.name}`) {
+      res.setHeader("content-type", "application/json");
+      res.end(
+        JSON.stringify({
+          name: input.name,
+          versions: Object.fromEntries(
+            Object.entries(currentVersions).map(([version, bytes]) => [
+              version,
+              {
+                name: input.name,
+                version,
+                dist: {
+                  tarball: `${base}/${input.name}/-/${input.name}-${version}.tgz`,
+                  shasum: sha1hex(bytes),
+                  integrity: sha512Integrity(bytes),
+                },
+              },
+            ]),
+          ),
+          "dist-tags": { latest: currentLatest },
+        }),
+      );
+      return;
+    }
+    for (const [version, bytes] of Object.entries(currentVersions)) {
+      if (url.pathname === `/${input.name}/-/${input.name}-${version}.tgz`) {
+        res.setHeader("content-type", "application/octet-stream");
+        res.end(bytes);
+        return;
+      }
+    }
+    res.statusCode = 404;
+    res.end("not found");
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address() as AddressInfo;
+  return {
+    url: `http://127.0.0.1:${address.port}`,
+    set: (versions, latest) => {
+      currentVersions = versions;
+      currentLatest = latest;
+    },
+    close: () => new Promise<void>((resolve) => (server as Server).close(() => resolve())),
+  };
+}
+
+function proxyNpmRefState(input: { repoId: string; scope: string }): { refs: string[] } {
+  const out = execFileSync(
+    "bun",
+    [
+      "-e",
+      [
+        'import { and, blobRefs, db, eq } from "@hootifactory/db";',
+        "const refs = await db",
+        "  .select({ digest: blobRefs.digest })",
+        "  .from(blobRefs)",
+        "  .where(and(",
+        "    eq(blobRefs.repositoryId, process.env.REPO_ID),",
+        '    eq(blobRefs.kind, "npm_tarball"),',
+        "    eq(blobRefs.scope, process.env.REF_SCOPE),",
+        "  ));",
+        "console.log(JSON.stringify({ refs: refs.map((r) => r.digest).sort() }));",
+      ].join("\n"),
+    ],
+    {
+      env: {
+        ...process.env,
+        DATABASE_URL: TEST_DATABASE_URL,
+        REPO_ID: input.repoId,
+        REF_SCOPE: input.scope,
+      },
+      stdio: "pipe",
+      encoding: "utf8",
+    },
+  );
+  return JSON.parse(out);
 }
 
 const CRC_TABLE = new Uint32Array(256).map((_, n) => {
@@ -371,6 +475,104 @@ test.describe("virtual + proxy repositories (Dockerized real npm)", () => {
     expect(packages.packages.find((p: { name: string }) => p.name === pkg)?.latestVersion).toBe(
       "1.0.0",
     );
+  });
+
+  test("proxy repo refreshes cached packuments for new upstream versions", async ({ baseURL }) => {
+    test.setTimeout(120_000);
+    const owner = await setupOwner(baseURL!);
+    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "t" })).json())
+      .secret as string;
+    const upstream = (
+      await repoFrom(
+        await createRepo(owner.ctx, owner.orgId, {
+          name: "npm-refresh-up",
+          format: "npm",
+          visibility: "public",
+        }),
+      )
+    ).repository;
+    const proxy = (
+      await repoFrom(
+        await createRepo(owner.ctx, owner.orgId, {
+          name: "npm-refresh-proxy",
+          format: "npm",
+          kind: "proxy",
+        }),
+      )
+    ).repository;
+    await owner.ctx.post(`/api/repositories/${proxy.id}/upstreams`, {
+      data: { url: `${baseURL}/${upstream.mountPath}/` },
+    });
+
+    const pkg = `refresh${Date.now().toString(36)}`;
+    publish(baseURL!, upstream.mountPath, token, pkg, "1.0.0", "stable");
+    const registry = `${dockerReachableUrl(baseURL!)}/${proxy.mountPath}/`;
+    const dir = mkdtempSync(join(tmpdir(), "refresh-"));
+    writeFileSync(join(dir, ".npmrc"), npmrc(registry, token));
+    expect(npm(["view", pkg, "version", "--registry", registry], dir).trim()).toBe("1.0.0");
+    const oldEtag = (await owner.ctx.get(`/${proxy.mountPath}/${pkg}`)).headers().etag;
+    expect(oldEtag).toMatch(/^".+"$/);
+
+    publish(baseURL!, upstream.mountPath, token, pkg, "1.1.0", "fresh");
+
+    const refreshed = await owner.ctx.get(`/${proxy.mountPath}/${pkg}`, {
+      headers: { "if-none-match": oldEtag },
+    });
+    expect(refreshed.status()).toBe(200);
+    expect((await refreshed.json())["dist-tags"].latest).toBe("1.1.0");
+    expect(npm(["view", pkg, "version", "--registry", registry], dir).trim()).toBe("1.1.0");
+
+    const installDir = installAll(baseURL!, proxy.mountPath, token, [`${pkg}@1.1.0`]);
+    expect(existsSync(join(installDir, "node_modules", pkg, "index.js"))).toBe(true);
+  });
+
+  test("proxy replacement refresh uses net quota and keeps one blob ref", async ({ baseURL }) => {
+    test.setTimeout(120_000);
+    const owner = await setupOwner(baseURL!);
+    const proxy = (
+      await repoFrom(
+        await createRepo(owner.ctx, owner.orgId, {
+          name: "npm-proxy-replace",
+          format: "npm",
+          kind: "proxy",
+        }),
+      )
+    ).repository;
+    const pkg = `replace${Date.now().toString(36)}`;
+    const oldBytes = Buffer.from("old replacement bytes");
+    const newBytes = Buffer.from("new replacement bytes");
+    expect(oldBytes.byteLength).toBe(newBytes.byteLength);
+    const upstream = await startMutableNpmUpstream({
+      name: pkg,
+      versions: { "1.0.0": oldBytes },
+      latest: "1.0.0",
+    });
+    try {
+      await owner.ctx.post(`/api/repositories/${proxy.id}/upstreams`, {
+        data: { url: `${upstream.url}/` },
+      });
+      expect((await owner.ctx.get(`/${proxy.mountPath}/${pkg}`)).status()).toBe(200);
+      await pollArtifact(owner.ctx, proxy.id, pkg);
+      await owner.ctx.post(`/api/orgs/${owner.orgId}/quota`, {
+        data: { maxStorageBytes: 1_000_000 },
+      });
+      const quotaBefore = await (await owner.ctx.get(`/api/orgs/${owner.orgId}/quota`)).json();
+      expect(quotaBefore.usedStorageBytes).toBeGreaterThan(0);
+      await owner.ctx.post(`/api/orgs/${owner.orgId}/quota`, {
+        data: { maxStorageBytes: quotaBefore.usedStorageBytes },
+      });
+
+      upstream.set({ "1.0.0": newBytes }, "1.0.0");
+      const refreshed = await owner.ctx.get(`/${proxy.mountPath}/${pkg}`);
+      expect(refreshed.status()).toBe(200);
+      const tarball = await owner.ctx.get(`/${proxy.mountPath}/${pkg}/-/${pkg}-1.0.0.tgz`);
+      expect(Buffer.from(await tarball.body()).toString()).toBe(newBytes.toString());
+      const quotaAfter = await (await owner.ctx.get(`/api/orgs/${owner.orgId}/quota`)).json();
+      expect(quotaAfter.usedStorageBytes).toBe(quotaBefore.usedStorageBytes);
+      expect(proxyNpmRefState({ repoId: proxy.id, scope: `${pkg}@1.0.0` }).refs).toHaveLength(1);
+    } finally {
+      await upstream.close();
+    }
   });
 
   test("proxy-mirrored packages are recorded and scanned locally", async ({ baseURL }) => {

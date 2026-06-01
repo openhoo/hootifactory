@@ -23,7 +23,16 @@ if (process.env.WORKER_PORT) {
 async function main(): Promise<void> {
   console.log(
     "[scan-worker] starting; external scanners:",
-    detectScanners({ trivyServerUrl: env.TRIVY_SERVER_URL, clamavRestUrl: env.CLAMAV_REST_URL }),
+    detectScanners({
+      clamavImage: env.CLAMAV_IMAGE,
+      trivyServerUrl: env.TRIVY_SERVER_URL,
+      clamavRestUrl: env.CLAMAV_REST_URL,
+      cliRuntime: env.SCANNER_CLI_RUNTIME,
+      dockerCommand: env.SCANNER_DOCKER_COMMAND,
+      grypeImage: env.GRYPE_IMAGE,
+      syftImage: env.SYFT_IMAGE,
+      trivyImage: env.TRIVY_IMAGE,
+    }),
   );
   await work<{ artifactId: string }>(
     QUEUES.scanArtifact,

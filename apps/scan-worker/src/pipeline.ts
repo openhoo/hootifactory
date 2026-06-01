@@ -116,8 +116,14 @@ export async function processScan(artifactId: string): Promise<void> {
     scannedBytePayload = true;
     found.push(...scanForMalware(bytes));
     const scannerOptions = {
+      clamavImage: env.CLAMAV_IMAGE,
       trivyServerUrl: env.TRIVY_SERVER_URL,
       clamavRestUrl: env.CLAMAV_REST_URL,
+      cliRuntime: env.SCANNER_CLI_RUNTIME,
+      dockerCommand: env.SCANNER_DOCKER_COMMAND,
+      grypeImage: env.GRYPE_IMAGE,
+      syftImage: env.SYFT_IMAGE,
+      trivyImage: env.TRIVY_IMAGE,
     };
     const scanners = detectScanners(scannerOptions);
     if (scanners.grype || scanners.trivy || scanners.clamav) {
@@ -233,7 +239,18 @@ export async function processScan(artifactId: string): Promise<void> {
       status: "succeeded",
       startedAt: new Date(),
       finishedAt: new Date(),
-      sbomNativeJson: { scanners: detectScanners() },
+      sbomNativeJson: {
+        scanners: detectScanners({
+          clamavImage: env.CLAMAV_IMAGE,
+          trivyServerUrl: env.TRIVY_SERVER_URL,
+          clamavRestUrl: env.CLAMAV_REST_URL,
+          cliRuntime: env.SCANNER_CLI_RUNTIME,
+          dockerCommand: env.SCANNER_DOCKER_COMMAND,
+          grypeImage: env.GRYPE_IMAGE,
+          syftImage: env.SYFT_IMAGE,
+          trivyImage: env.TRIVY_IMAGE,
+        }),
+      },
     })
     .onConflictDoUpdate({
       target: [
