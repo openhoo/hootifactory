@@ -176,7 +176,7 @@ export class CargoAdapter implements FormatAdapter {
     if (off + jsonLen + 4 > buf.byteLength) {
       throw Errors.manifestInvalid({ reason: "truncated publish metadata" });
     }
-    const meta = JSON.parse(new TextDecoder().decode(buf.subarray(off, off + jsonLen))) as {
+    let meta: {
       name: string;
       vers: string;
       deps?: {
@@ -192,6 +192,14 @@ export class CargoAdapter implements FormatAdapter {
       }[];
       features?: Record<string, string[]>;
     };
+    try {
+      meta = JSON.parse(new TextDecoder().decode(buf.subarray(off, off + jsonLen))) as typeof meta;
+    } catch {
+      throw Errors.manifestInvalid({ reason: "invalid publish metadata json" });
+    }
+    if (typeof meta.name !== "string" || typeof meta.vers !== "string") {
+      throw Errors.manifestInvalid({ reason: "publish metadata requires name and vers" });
+    }
     off += jsonLen;
     const crateLen = dv.getUint32(off, true);
     off += 4;

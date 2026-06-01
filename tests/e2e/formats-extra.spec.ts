@@ -10,6 +10,15 @@ function cargoPublishBody(meta: object, crate: Uint8Array): Buffer {
   return Buffer.concat([head, json, clen, Buffer.from(crate)]);
 }
 
+function framedCargoPublishBody(rawJson: string, crate: Uint8Array): Buffer {
+  const json = Buffer.from(rawJson);
+  const head = Buffer.alloc(4);
+  head.writeUInt32LE(json.length, 0);
+  const clen = Buffer.alloc(4);
+  clen.writeUInt32LE(crate.length, 0);
+  return Buffer.concat([head, json, clen, Buffer.from(crate)]);
+}
+
 const CRC_TABLE = new Uint32Array(256).map((_, n) => {
   let c = n;
   for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
@@ -229,6 +238,36 @@ test.describe("cargo sparse registry (protocol)", () => {
     expect(
       (await owner.ctx.get(`/${repo.mountPath}/api/v1/crates/${crate}/1.0.0/download`)).status(),
     ).toBe(404);
+  });
+
+  test("malformed framed publish payloads are rejected with 400", async ({ baseURL }) => {
+    const owner = await setupOwner(baseURL!);
+    const repo = (
+      await (
+        await createRepo(owner.ctx, owner.orgId, {
+          name: "crates-bad",
+          format: "cargo",
+          visibility: "public",
+        })
+      ).json()
+    ).repository as { mountPath: string };
+    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "t" })).json())
+      .secret as string;
+    const anon = await anonContext(baseURL!);
+
+    const invalidJson = await anon.put(`/${repo.mountPath}/api/v1/crates/new`, {
+      headers: { authorization: token },
+      data: framedCargoPublishBody("{not-json", new TextEncoder().encode("crate")),
+    });
+    expect(invalidJson.status()).toBe(400);
+    expect((await invalidJson.json()).errors[0].code).toBe("MANIFEST_INVALID");
+
+    const missingFields = await anon.put(`/${repo.mountPath}/api/v1/crates/new`, {
+      headers: { authorization: token },
+      data: cargoPublishBody({ name: "missing-version" }, new TextEncoder().encode("crate")),
+    });
+    expect(missingFields.status()).toBe(400);
+    expect((await missingFields.json()).errors[0].code).toBe("MANIFEST_INVALID");
   });
 });
 
