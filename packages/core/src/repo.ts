@@ -10,6 +10,7 @@ import {
   packageVersions,
   repositories,
   repositoryUpstreams,
+  versionTags,
   virtualRepoMembers,
 } from "@hootifactory/db";
 import { blobStore } from "@hootifactory/storage";
@@ -192,24 +193,44 @@ export async function applyRetention(repositoryId: string, keepLastN: number): P
     let count = 0;
     for (const p of pkgs) {
       const vers = await tx
-        .select({ id: packageVersions.id, metadata: packageVersions.metadata })
+        .select({
+          id: packageVersions.id,
+          version: packageVersions.version,
+          metadata: packageVersions.metadata,
+        })
         .from(packageVersions)
         .where(and(eq(packageVersions.packageId, p.id), isNull(packageVersions.deletedAt)))
         // Deterministic ordering with an id tie-break so equal timestamps prune stably.
         .orderBy(desc(packageVersions.createdAt), desc(packageVersions.id));
+      const survivors = vers.slice(0, keepLastN);
       const toPrune = vers.slice(keepLastN);
       if (toPrune.length === 0) continue;
+      const prunedIds = toPrune.map((v) => v.id);
       await tx
         .update(packageVersions)
         .set({ deletedAt: new Date() })
-        .where(
-          inArray(
-            packageVersions.id,
-            toPrune.map((v) => v.id),
-          ),
-        );
+        .where(inArray(packageVersions.id, prunedIds));
       count += toPrune.length;
       for (const v of toPrune) for (const d of versionBlobDigests(v.metadata)) prunedDigests.add(d);
+
+      const deletedTags = await tx
+        .delete(versionTags)
+        .where(and(eq(versionTags.packageId, p.id), inArray(versionTags.versionId, prunedIds)))
+        .returning({ tag: versionTags.tag });
+      const latest = survivors[0] ?? null;
+      await tx
+        .update(packages)
+        .set({ latestVersion: latest?.version ?? null })
+        .where(eq(packages.id, p.id));
+      if (latest && deletedTags.some((t) => t.tag === "latest")) {
+        await tx
+          .insert(versionTags)
+          .values({ packageId: p.id, tag: "latest", versionId: latest.id })
+          .onConflictDoUpdate({
+            target: [versionTags.packageId, versionTags.tag],
+            set: { versionId: latest.id },
+          });
+      }
     }
 
     if (prunedDigests.size > 0) {

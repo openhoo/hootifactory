@@ -128,8 +128,22 @@ test.describe("governance: quotas + retention", () => {
       expect(publish(baseURL!, repo.mountPath, token, pkg, v).ok).toBe(true);
     }
 
+    for (const tag of ["latest", "beta"]) {
+      const tagRes = await owner.ctx.put(`/${repo.mountPath}/-/package/${pkg}/dist-tags/${tag}`, {
+        data: `"1.0.0"`,
+      });
+      expect(tagRes.status()).toBe(200);
+    }
+
     const before = await (await owner.ctx.get(`/${repo.mountPath}/${pkg}`)).json();
     expect(Object.keys(before.versions)).toHaveLength(3);
+    expect(before["dist-tags"].latest).toBe("1.0.0");
+    expect(before["dist-tags"].beta).toBe("1.0.0");
+
+    const invalid = await owner.ctx.post(`/api/repositories/${repo.id}/retention/apply`, {
+      data: { keepLastN: 0 },
+    });
+    expect(invalid.status()).toBe(400);
 
     const applied = await (
       await owner.ctx.post(`/api/repositories/${repo.id}/retention/apply`, {
@@ -141,5 +155,23 @@ test.describe("governance: quotas + retention", () => {
     const after = await (await owner.ctx.get(`/${repo.mountPath}/${pkg}`)).json();
     expect(Object.keys(after.versions)).toHaveLength(2);
     expect(after.versions["1.0.0"]).toBeUndefined();
+    expect(after["dist-tags"].latest).toBe("1.0.2");
+    expect(after["dist-tags"].beta).toBeUndefined();
+
+    const listedTags = await (
+      await owner.ctx.get(`/${repo.mountPath}/-/package/${pkg}/dist-tags`)
+    ).json();
+    expect(listedTags).toEqual({ latest: "1.0.2" });
+
+    const packagesRes = await owner.ctx.get(`/api/repositories/${repo.id}/packages`);
+    const packagesBody = (await packagesRes.json()) as {
+      packages: { id: string; name: string; latestVersion: string | null }[];
+    };
+    const listed = packagesBody.packages.find((p) => p.name === pkg);
+    expect(listed?.latestVersion).toBe("1.0.2");
+
+    const versionsRes = await owner.ctx.get(`/api/packages/${listed!.id}/versions`);
+    const versionsBody = (await versionsRes.json()) as { versions: { version: string }[] };
+    expect(versionsBody.versions.map((v) => v.version).sort()).toEqual(["1.0.1", "1.0.2"]);
   });
 });

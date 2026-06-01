@@ -128,7 +128,7 @@ export class NpmAdapter implements FormatAdapter {
       .select({ tag: versionTags.tag, version: packageVersions.version })
       .from(versionTags)
       .innerJoin(packageVersions, eq(versionTags.versionId, packageVersions.id))
-      .where(eq(versionTags.packageId, packageId));
+      .where(and(eq(versionTags.packageId, packageId), isNull(packageVersions.deletedAt)));
     const out: Record<string, string> = {};
     for (const r of rows) out[r.tag] = r.version;
     return out;
@@ -262,7 +262,13 @@ export class NpmAdapter implements FormatAdapter {
     const [row] = await ctx.db
       .select({ id: packageVersions.id })
       .from(packageVersions)
-      .where(and(eq(packageVersions.packageId, packageId), eq(packageVersions.version, version)))
+      .where(
+        and(
+          eq(packageVersions.packageId, packageId),
+          eq(packageVersions.version, version),
+          isNull(packageVersions.deletedAt),
+        ),
+      )
       .limit(1);
     return row?.id;
   }

@@ -184,7 +184,7 @@ uiRouter.get("/packages/:packageId/versions", async (c) => {
       createdAt: packageVersions.createdAt,
     })
     .from(packageVersions)
-    .where(eq(packageVersions.packageId, pkg.id))
+    .where(and(eq(packageVersions.packageId, pkg.id), isNull(packageVersions.deletedAt)))
     .orderBy(desc(packageVersions.createdAt));
   return c.json({ package: { id: pkg.id, name: pkg.name }, versions: rows });
 });
@@ -384,7 +384,11 @@ uiRouter.post("/repositories/:repoId/retention/apply", async (c) => {
   const guard = await repoAdminGuard(c, c.req.param("repoId"));
   if ("error" in guard) return guard.error;
   const body = (await c.req.json().catch(() => null)) as { keepLastN?: number } | null;
-  const pruned = await applyRetention(guard.repo.id, body?.keepLastN ?? 10);
+  const keepLastN = body?.keepLastN ?? 10;
+  if (!Number.isInteger(keepLastN) || keepLastN < 1) {
+    return c.json({ error: "keepLastN must be a positive integer" }, 400);
+  }
+  const pruned = await applyRetention(guard.repo.id, keepLastN);
   return c.json({ pruned });
 });
 
