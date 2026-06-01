@@ -18,6 +18,7 @@ import { extractNuspecMeta } from "./nuspec";
 interface NugetVersionMeta {
   nupkgDigest: string;
   file: string;
+  listed?: boolean;
 }
 
 /** NuGet version normalization: drop a zero 4th segment + build metadata, lowercase prerelease. */
@@ -70,6 +71,8 @@ export class NugetAdapter implements FormatAdapter {
     return [
       { method: "GET", pattern: "/v3/index.json", handlerId: "serviceIndex" },
       { method: "PUT", pattern: "/v3/package", handlerId: "publish" },
+      { method: "DELETE", pattern: "/v3/package/:id/:version", handlerId: "delete" },
+      { method: "POST", pattern: "/v3/package/:id/:version", handlerId: "relist" },
       { method: "GET", pattern: "/v3-flatcontainer/:id/index.json", handlerId: "versions" },
       { method: "GET", pattern: "/v3-flatcontainer/:id/:version/:file", handlerId: "download" },
       { method: "GET", pattern: "/v3/registrations/:id/index.json", handlerId: "registration" },
@@ -98,6 +101,10 @@ export class NugetAdapter implements FormatAdapter {
         });
       case "publish":
         return this.publish(req, ctx);
+      case "delete":
+        return this.setListed(match.params.id ?? "", match.params.version ?? "", false, ctx);
+      case "relist":
+        return this.setListed(match.params.id ?? "", match.params.version ?? "", true, ctx);
       case "versions":
         return this.versions(match.params.id ?? "", ctx);
       case "download":
@@ -129,7 +136,9 @@ export class NugetAdapter implements FormatAdapter {
       .from(packageVersions)
       // Live versions only; sorted by SemVer so flat-container + registration bounds are correct.
       .where(and(eq(packageVersions.packageId, packageId), isNull(packageVersions.deletedAt)));
-    return rows.sort((a, b) => compareNugetVersions(a.version, b.version));
+    return rows
+      .filter((r) => (r.metadata as unknown as NugetVersionMeta).listed !== false)
+      .sort((a, b) => compareNugetVersions(a.version, b.version));
   }
 
   private async versions(id: string, ctx: RepoContext): Promise<Response> {
@@ -212,6 +221,35 @@ export class NugetAdapter implements FormatAdapter {
     });
   }
 
+  private async setListed(
+    id: string,
+    version: string,
+    listed: boolean,
+    ctx: RepoContext,
+  ): Promise<Response> {
+    const pkg = await this.findPkg(ctx, id);
+    if (!pkg) throw Errors.notFound();
+    const norm = normalizeNugetVersion(version);
+    const [row] = await ctx.db
+      .select({ id: packageVersions.id, metadata: packageVersions.metadata })
+      .from(packageVersions)
+      .where(
+        and(
+          eq(packageVersions.packageId, pkg.id),
+          eq(packageVersions.version, norm),
+          isNull(packageVersions.deletedAt),
+        ),
+      )
+      .limit(1);
+    if (!row) throw Errors.notFound();
+    const metadata = (row.metadata ?? {}) as unknown as NugetVersionMeta;
+    await ctx.db
+      .update(packageVersions)
+      .set({ metadata: { ...metadata, listed } })
+      .where(eq(packageVersions.id, row.id));
+    return new Response(null, { status: listed ? 200 : 204 });
+  }
+
   private async publish(req: Request, ctx: RepoContext): Promise<Response> {
     const url = new URL(req.url);
     let id = (url.searchParams.get("id") ?? "").trim();
@@ -271,7 +309,7 @@ export class NugetAdapter implements FormatAdapter {
     await upsertPackageVersion(ctx, {
       packageId: pkg.id,
       version,
-      metadata: { nupkgDigest: stored.digest, file, displayId: id },
+      metadata: { nupkgDigest: stored.digest, file, displayId: id, listed: true },
       sizeBytes: bytes.length,
     });
     await ctx.enqueueScan({

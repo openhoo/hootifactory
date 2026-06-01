@@ -435,6 +435,24 @@ test.describe("nuget v3 (protocol)", () => {
     expect(versions.versions).toContain("1.0.0");
     expect(versions.versions).toContain("1.0.1");
 
+    const unlist = await owner.ctx.delete(`/${repo.mountPath}/v3/package/${pkgId}/1.0.1`);
+    expect(unlist.status()).toBe(204);
+    const afterUnlist = await (
+      await owner.ctx.get(`/${repo.mountPath}/v3-flatcontainer/${lower}/index.json`)
+    ).json();
+    expect(afterUnlist.versions).toEqual(["1.0.0"]);
+    const unlistedDownload = await owner.ctx.get(
+      `/${repo.mountPath}/v3-flatcontainer/${lower}/1.0.1/${lower}.1.0.1.nupkg`,
+    );
+    expect(unlistedDownload.status()).toBe(200);
+
+    const relist = await owner.ctx.post(`/${repo.mountPath}/v3/package/${pkgId}/1.0.1`);
+    expect(relist.status()).toBe(200);
+    const afterRelist = await (
+      await owner.ctx.get(`/${repo.mountPath}/v3-flatcontainer/${lower}/index.json`)
+    ).json();
+    expect(afterRelist.versions).toContain("1.0.1");
+
     const dl = await owner.ctx.get(
       `/${repo.mountPath}/v3-flatcontainer/${lower}/1.0.0/${lower}.1.0.0.nupkg`,
     );
