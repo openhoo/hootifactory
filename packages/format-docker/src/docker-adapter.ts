@@ -15,7 +15,6 @@ import {
 } from "@hootifactory/core";
 import {
   and,
-  artifacts,
   blobRefs,
   blobs,
   eq,
@@ -78,6 +77,42 @@ function validateContentRange(req: Request, expectedStart: number, chunkLength: 
       got: contentRange,
     });
   }
+}
+
+function parseBlobRange(value: string | null, size: number): { start: number; end: number } | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("bytes=") || trimmed.includes(",")) {
+    throw Errors.blobUploadInvalid({ reason: "invalid range", range: value });
+  }
+  const spec = trimmed.slice("bytes=".length);
+  const match = /^(\d*)-(\d*)$/.exec(spec);
+  if (!match) throw Errors.blobUploadInvalid({ reason: "invalid range", range: value });
+
+  const startRaw = match[1] ?? "";
+  const endRaw = match[2] ?? "";
+  if (!startRaw && !endRaw)
+    throw Errors.blobUploadInvalid({ reason: "invalid range", range: value });
+
+  if (!startRaw) {
+    const suffix = Number(endRaw);
+    if (!Number.isSafeInteger(suffix) || suffix <= 0 || size === 0) {
+      throw Errors.blobUploadInvalid({ reason: "unsatisfiable range", range: value });
+    }
+    return { start: Math.max(0, size - suffix), end: size - 1 };
+  }
+
+  const start = Number(startRaw);
+  const requestedEnd = endRaw ? Number(endRaw) : size - 1;
+  if (
+    !Number.isSafeInteger(start) ||
+    !Number.isSafeInteger(requestedEnd) ||
+    start > requestedEnd ||
+    start >= size
+  ) {
+    throw Errors.blobUploadInvalid({ reason: "unsatisfiable range", range: value });
+  }
+  return { start, end: Math.min(requestedEnd, size - 1) };
 }
 
 function packageVersionDigestEquals(digest: string) {
@@ -173,9 +208,9 @@ export class DockerAdapter implements FormatAdapter {
       case "cancelUpload":
         return this.cancelUpload(match.params.uuid ?? "", ctx);
       case "headBlob":
-        return this.getBlob(image, match.params.digest ?? "", ctx, true);
+        return this.getBlob(image, match.params.digest ?? "", req, ctx, true);
       case "getBlob":
-        return this.getBlob(image, match.params.digest ?? "", ctx, false);
+        return this.getBlob(image, match.params.digest ?? "", req, ctx, false);
       default:
         throw Errors.notFound();
     }
@@ -448,7 +483,7 @@ export class DockerAdapter implements FormatAdapter {
   private async liveManifestRowsForImage(
     ctx: RepoContext,
     image: string,
-  ): Promise<{ raw: string }[]> {
+  ): Promise<{ digest: string; raw: string }[]> {
     const [pkg] = await ctx.db
       .select({ id: packages.id })
       .from(packages)
@@ -472,7 +507,7 @@ export class DockerAdapter implements FormatAdapter {
     }
     if (digests.size === 0) return [];
     return ctx.db
-      .select({ raw: ociManifests.raw })
+      .select({ digest: ociManifests.digest, raw: ociManifests.raw })
       .from(ociManifests)
       .where(
         and(eq(ociManifests.repositoryId, ctx.repo.id), inArray(ociManifests.digest, [...digests])),
@@ -573,6 +608,7 @@ export class DockerAdapter implements FormatAdapter {
   private async getBlob(
     image: string,
     digest: string,
+    req: Request,
     ctx: RepoContext,
     headOnly: boolean,
   ): Promise<Response> {
@@ -589,16 +625,45 @@ export class DockerAdapter implements FormatAdapter {
       .limit(1);
     if (!ref) throw Errors.blobUnknown({ digest });
     // Defense-in-depth: a layer reachable only through blocked manifests is blocked too.
-    if (await this.isBlobBlocked(ctx, digest)) {
+    if (await this.isBlobBlocked(ctx, image, digest)) {
       throw Errors.denied({ reason: "blocked by scan policy" });
     }
     const stat = await ctx.blobs.stat(digest);
     if (!stat) throw Errors.blobUnknown({ digest });
     const headers: Record<string, string> = {
+      "accept-ranges": "bytes",
       "docker-content-digest": digest,
       "content-length": String(stat.size),
       "content-type": "application/octet-stream",
     };
+    let range: { start: number; end: number } | null = null;
+    try {
+      range = parseBlobRange(req.headers.get("range"), stat.size);
+    } catch (err) {
+      if (err instanceof Error) {
+        return new Response(null, {
+          status: 416,
+          headers: {
+            "accept-ranges": "bytes",
+            "content-range": `bytes */${stat.size}`,
+            "content-length": "0",
+          },
+        });
+      }
+      throw err;
+    }
+    if (range) {
+      headers["content-range"] = `bytes ${range.start}-${range.end}/${stat.size}`;
+      headers["content-length"] = String(range.end - range.start + 1);
+      if (headOnly) return new Response(null, { status: 206, headers });
+      const body = await new Response(
+        ctx.blobs.getRange(digest, range.start, range.end + 1),
+      ).arrayBuffer();
+      return new Response(body, {
+        status: 206,
+        headers,
+      });
+    }
     if (headOnly) return new Response(null, { status: 200, headers });
     return new Response(ctx.blobs.get(digest), { status: 200, headers });
   }
@@ -716,29 +781,19 @@ export class DockerAdapter implements FormatAdapter {
   }
 
   /**
-   * True when `digest` is a layer/config referenced ONLY by blocked manifests in
-   * this repo (so serving it would leak content from a quarantined/blocked image).
-   * Cheap fast-path: returns false immediately when the repo has no blocked artifact.
+   * True when `digest` is reachable for this image only through manifests that
+   * scan policy would deny. A shared CAS digest can be clean for one image while
+   * still blocked for another image's pending or blocked manifest.
    */
-  private async isBlobBlocked(ctx: RepoContext, digest: string): Promise<boolean> {
-    const blocked = await ctx.db
-      .select({ digest: artifacts.digest })
-      .from(artifacts)
-      .where(and(eq(artifacts.repositoryId, ctx.repo.id), eq(artifacts.state, "blocked")));
-    if (blocked.length === 0) return false;
-    const blockedManifests = new Set(blocked.map((b) => b.digest));
-    const manifests = await ctx.db
-      .select({ digest: ociManifests.digest, raw: ociManifests.raw })
-      .from(ociManifests)
-      .where(eq(ociManifests.repositoryId, ctx.repo.id));
-    let viaBlocked = false;
-    let viaClean = false;
+  private async isBlobBlocked(ctx: RepoContext, image: string, digest: string): Promise<boolean> {
+    const manifests = await this.liveManifestRowsForImage(ctx, image);
+    let referenced = false;
     for (const m of manifests) {
       if (!manifestBlobDigests(m.raw).includes(digest)) continue;
-      if (blockedManifests.has(m.digest)) viaBlocked = true;
-      else viaClean = true;
+      referenced = true;
+      if (!(await isArtifactBlocked(ctx, m.digest))) return false;
     }
-    return viaBlocked && !viaClean;
+    return referenced;
   }
 
   private async appendChunk(

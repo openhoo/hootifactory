@@ -176,6 +176,19 @@ async function putOciManifest(
   configDigest: string,
   layerDigest: string,
 ): Promise<string> {
+  return putOciManifestWithLayers(ctx, mountPath, image, tag, configDigest, [
+    { digest: layerDigest, size: Buffer.byteLength(EICAR) },
+  ]);
+}
+
+async function putOciManifestWithLayers(
+  ctx: APIRequestContext,
+  mountPath: string,
+  image: string,
+  tag: string,
+  configDigest: string,
+  layers: { digest: string; size: number }[],
+): Promise<string> {
   const raw = JSON.stringify({
     schemaVersion: 2,
     mediaType: OCI_MEDIA_TYPES.manifestV1,
@@ -185,11 +198,11 @@ async function putOciManifest(
       size: Buffer.byteLength("{}"),
     },
     layers: [
-      {
+      ...layers.map((layer) => ({
         mediaType: OCI_MEDIA_TYPES.layerTarGzip,
-        digest: layerDigest,
-        size: Buffer.byteLength(EICAR),
-      },
+        digest: layer.digest,
+        size: layer.size,
+      })),
     ],
   });
   const digest = sha256(raw);
@@ -312,6 +325,88 @@ test.describe("scanning + policy gates", () => {
 
     const blocked = await owner.ctx.get(`/${repo.mountPath}/${image}/manifests/1.0`);
     expect(blocked.status()).toBe(403);
+
+    const blockedBlob = await owner.ctx.get(`/${repo.mountPath}/${image}/blobs/${layerDigest}`);
+    expect(blockedBlob.status()).toBe(403);
+    const blockedBlobHead = await owner.ctx.head(
+      `/${repo.mountPath}/${image}/blobs/${layerDigest}`,
+    );
+    expect(blockedBlobHead.status()).toBe(403);
+    const blockedBlobRange = await owner.ctx.get(
+      `/${repo.mountPath}/${image}/blobs/${layerDigest}`,
+      {
+        headers: { range: "bytes=0-3" },
+      },
+    );
+    expect(blockedBlobRange.status()).toBe(403);
+
+    setArtifactState(art.id, "pending");
+    const pendingManifest = await owner.ctx.get(`/${repo.mountPath}/${image}/manifests/1.0`);
+    expect(pendingManifest.status()).toBe(403);
+    const pendingBlob = await owner.ctx.get(`/${repo.mountPath}/${image}/blobs/${layerDigest}`);
+    expect(pendingBlob.status()).toBe(403);
+  });
+
+  test("OCI blob scan gates are image-scoped", async ({ baseURL }) => {
+    const owner = await setupOwner(baseURL!);
+    const repo = (
+      await (
+        await createRepo(owner.ctx, owner.orgId, { name: "scan-shared", format: "docker" })
+      ).json()
+    ).repository as { id: string; mountPath: string };
+    await owner.ctx.post(`/api/orgs/${owner.orgId}/scan-policies`, {
+      data: { repositoryPattern: "scan-shared", mode: "enforce", blockOnSeverity: "high" },
+    });
+
+    const id = Date.now().toString(36);
+    const cleanImage = `clean${id}`;
+    const blockedImage = `blocked${id}`;
+    const sharedLayer = Buffer.from("shared clean layer");
+    const evilLayer = Buffer.from(EICAR);
+
+    const cleanConfig = await uploadOciBlob(
+      owner.ctx,
+      repo.mountPath,
+      cleanImage,
+      Buffer.from("{}"),
+    );
+    const cleanShared = await uploadOciBlob(owner.ctx, repo.mountPath, cleanImage, sharedLayer);
+    await putOciManifestWithLayers(owner.ctx, repo.mountPath, cleanImage, "1.0", cleanConfig, [
+      { digest: cleanShared, size: sharedLayer.byteLength },
+    ]);
+    const cleanArt = await pollArtifact(owner.ctx, repo.id, cleanImage);
+    expect(cleanArt.state).toBe("clean");
+
+    const blockedConfig = await uploadOciBlob(
+      owner.ctx,
+      repo.mountPath,
+      blockedImage,
+      Buffer.from("{}"),
+    );
+    const blockedShared = await uploadOciBlob(owner.ctx, repo.mountPath, blockedImage, sharedLayer);
+    const blockedEvil = await uploadOciBlob(owner.ctx, repo.mountPath, blockedImage, evilLayer);
+    expect(blockedShared).toBe(cleanShared);
+    await putOciManifestWithLayers(owner.ctx, repo.mountPath, blockedImage, "1.0", blockedConfig, [
+      { digest: blockedShared, size: sharedLayer.byteLength },
+      { digest: blockedEvil, size: evilLayer.byteLength },
+    ]);
+    const blockedArt = await pollArtifact(owner.ctx, repo.id, blockedImage);
+    expect(blockedArt.state).toBe("blocked");
+
+    const cleanSharedBlob = await owner.ctx.get(
+      `/${repo.mountPath}/${cleanImage}/blobs/${cleanShared}`,
+    );
+    expect(cleanSharedBlob.status()).toBe(200);
+
+    const blockedSharedBlob = await owner.ctx.get(
+      `/${repo.mountPath}/${blockedImage}/blobs/${blockedShared}`,
+    );
+    expect(blockedSharedBlob.status()).toBe(403);
+
+    const blockedEvilBlob = await owner.ctx.get(
+      `/${repo.mountPath}/${blockedImage}/blobs/${blockedEvil}`,
+    );
+    expect(blockedEvilBlob.status()).toBe(403);
   });
 
   test("identical OCI bytes still get per-artifact scan rows", async ({ baseURL }) => {

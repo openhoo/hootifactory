@@ -465,6 +465,54 @@ test.describe("docker registry protocol authorization", () => {
     expect(otherBlobAfterDelete.status()).toBe(200);
   });
 
+  test("blob downloads honor single byte ranges", async ({ baseURL }) => {
+    const owner = await setupOwner(baseURL!);
+    const repo = (
+      await (
+        await createRepo(owner.ctx, owner.orgId, { name: "containers", format: "docker" })
+      ).json()
+    ).repository as { mountPath: string };
+
+    const bytes = Buffer.from("0123456789abcdef");
+    const digest = await uploadBlob(owner.ctx, repo.mountPath, "ranges", bytes);
+    const path = `/${repo.mountPath}/ranges/blobs/${digest}`;
+
+    const fullHead = await owner.ctx.head(path);
+    expect(fullHead.status()).toBe(200);
+    expect(fullHead.headers()["accept-ranges"]).toBe("bytes");
+    expect(fullHead.headers()["content-length"]).toBe(String(bytes.length));
+
+    const middle = await owner.ctx.get(path, { headers: { range: "bytes=2-5" } });
+    expect(middle.status()).toBe(206);
+    expect(middle.headers()["docker-content-digest"]).toBe(digest);
+    expect(middle.headers()["content-range"]).toBe(`bytes 2-5/${bytes.length}`);
+    expect(middle.headers()["content-length"]).toBe("4");
+    expect(Buffer.from(await middle.body()).toString("utf8")).toBe("2345");
+
+    const openEnded = await owner.ctx.get(path, { headers: { range: "bytes=6-" } });
+    expect(openEnded.status()).toBe(206);
+    expect(openEnded.headers()["content-range"]).toBe(`bytes 6-15/${bytes.length}`);
+    expect(Buffer.from(await openEnded.body()).toString("utf8")).toBe("6789abcdef");
+
+    const suffix = await owner.ctx.get(path, { headers: { range: "bytes=-4" } });
+    expect(suffix.status()).toBe(206);
+    expect(suffix.headers()["content-range"]).toBe(`bytes 12-15/${bytes.length}`);
+    expect(Buffer.from(await suffix.body()).toString("utf8")).toBe("cdef");
+
+    const rangeHead = await owner.ctx.head(path, { headers: { range: "bytes=1-3" } });
+    expect(rangeHead.status()).toBe(206);
+    expect(rangeHead.headers()["content-range"]).toBe(`bytes 1-3/${bytes.length}`);
+    expect(rangeHead.headers()["content-length"]).toBe("3");
+
+    const outOfBounds = await owner.ctx.get(path, { headers: { range: "bytes=999-" } });
+    expect(outOfBounds.status()).toBe(416);
+    expect(outOfBounds.headers()["content-range"]).toBe(`bytes */${bytes.length}`);
+
+    const multiRange = await owner.ctx.get(path, { headers: { range: "bytes=0-1,3-4" } });
+    expect(multiRange.status()).toBe(416);
+    expect(multiRange.headers()["content-range"]).toBe(`bytes */${bytes.length}`);
+  });
+
   test("resumable uploads enforce offsets, digest retries, and session state", async ({
     baseURL,
   }) => {
