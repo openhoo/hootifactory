@@ -67,6 +67,22 @@ function stripBodyForFallbackHead(fellBackToGet: boolean, res: Response): Respon
   return new Response(null, { status: res.status, statusText: res.statusText, headers });
 }
 
+function shouldRewriteVirtualBody(contentType: string): boolean {
+  return contentType.includes("json") || contentType.includes("text/html");
+}
+
+async function rewriteVirtualBody(
+  res: Response,
+  memberMountPath: string,
+  virtualMountPath: string,
+): Promise<Response> {
+  const body = (await res.text()).split(`/${memberMountPath}/`).join(`/${virtualMountPath}/`);
+  // Rebuild headers and drop the now-stale content-length (the body changed length).
+  const headers = new Headers(res.headers);
+  headers.delete("content-length");
+  return new Response(body, { status: res.status, headers });
+}
+
 async function adapterResponse(
   adapter: FormatAdapter,
   match: RouteMatch,
@@ -106,14 +122,8 @@ async function dispatchVirtual(
     if (res.status < 400) {
       // Rewrite member mount -> virtual mount so clients route follow-ups through the virtual repo.
       const ct = res.headers.get("content-type") ?? "";
-      if (ct.includes("json") && member.mountPath !== ctx.repo.mountPath) {
-        const body = (await res.text())
-          .split(`/${member.mountPath}/`)
-          .join(`/${ctx.repo.mountPath}/`);
-        // Rebuild headers and drop the now-stale content-length (the body changed length).
-        const headers = new Headers(res.headers);
-        headers.delete("content-length");
-        return new Response(body, { status: res.status, headers });
+      if (shouldRewriteVirtualBody(ct) && member.mountPath !== ctx.repo.mountPath) {
+        return rewriteVirtualBody(res, member.mountPath, ctx.repo.mountPath);
       }
       return res;
     }

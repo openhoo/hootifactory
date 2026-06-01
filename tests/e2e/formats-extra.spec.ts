@@ -659,4 +659,59 @@ test.describe("pypi simple API (protocol)", () => {
     });
     expect(republish.status()).toBe(409);
   });
+
+  test("virtual project pages keep file links on the virtual repository", async ({ baseURL }) => {
+    const owner = await setupOwner(baseURL!);
+    const member = (
+      await (
+        await createRepo(owner.ctx, owner.orgId, {
+          name: "pypi-member",
+          format: "pypi",
+          visibility: "public",
+        })
+      ).json()
+    ).repository as { id: string; mountPath: string };
+    const virtual = (
+      await (
+        await createRepo(owner.ctx, owner.orgId, {
+          name: "pypi-virtual",
+          format: "pypi",
+          kind: "virtual",
+          visibility: "public",
+        })
+      ).json()
+    ).repository as { id: string; mountPath: string };
+    await owner.ctx.post(`/api/repositories/${virtual.id}/members`, {
+      data: { memberRepoId: member.id, position: 0 },
+    });
+    const secret = (
+      await (await createToken(owner.ctx, owner.orgId, { name: "pypi-virtual" })).json()
+    ).secret as string;
+    const anon = await anonContext(baseURL!);
+    const id = Date.now().toString(36);
+    const pkg = `hootvirt${id}`;
+    const filename = `${pkg}-1.0.0-py3-none-any.whl`;
+
+    expect(
+      (
+        await uploadPypiFile({
+          ctx: anon,
+          mountPath: member.mountPath,
+          secret,
+          pkg,
+          version: "1.0.0",
+          filename,
+          bytes: Buffer.from("virtual pypi artifact"),
+        })
+      ).status(),
+    ).toBe(200);
+
+    const simple = await (await owner.ctx.get(`/${virtual.mountPath}/simple/${pkg}/`)).text();
+    expect(simple).toContain(`/${virtual.mountPath}/files/${filename}`);
+    expect(simple).not.toContain(`/${member.mountPath}/files/${filename}`);
+
+    const file = await owner.ctx.get(`/${virtual.mountPath}/files/${filename}`);
+    expect(file.status()).toBe(200);
+    expect(Buffer.from(await file.body()).toString("utf8")).toBe("virtual pypi artifact");
+  });
 });
