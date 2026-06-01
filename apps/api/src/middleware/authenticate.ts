@@ -9,6 +9,7 @@ import {
 } from "@hootifactory/auth";
 import { Errors, REGISTRY_TOKEN_SERVICE } from "@hootifactory/core";
 import { db, eq, users } from "@hootifactory/db";
+import { logger, withSpan } from "@hootifactory/observability";
 import type { Context } from "hono";
 import { getCookie } from "hono/cookie";
 import type { AppEnv } from "../types";
@@ -58,7 +59,7 @@ export async function authenticateUserPassword(
  * credentials fail closed instead of falling through to a cookie. Requests with
  * no credentials default to anonymous.
  */
-export async function authenticate(c: Context<AppEnv>): Promise<Principal> {
+async function authenticateInner(c: Context<AppEnv>): Promise<Principal> {
   const authz = c.req.header("authorization");
   if (authz) {
     if (authz.startsWith("Bearer ")) {
@@ -155,4 +156,34 @@ export async function authenticate(c: Context<AppEnv>): Promise<Principal> {
 
   c.set("authSource", "anonymous");
   return { kind: "anonymous" };
+}
+
+export async function authenticate(c: Context<AppEnv>): Promise<Principal> {
+  return withSpan(
+    "auth.authenticate",
+    {
+      "auth.has_authorization_header": Boolean(c.req.header("authorization")),
+      "auth.has_nuget_api_key": Boolean(c.req.header("x-nuget-apikey")),
+      "auth.has_session_cookie": Boolean(getCookie(c, SESSION_COOKIE)),
+    },
+    async (span) => {
+      try {
+        const principal = await authenticateInner(c);
+        span.setAttributes({
+          "auth.source": c.get("authSource"),
+          "auth.principal.kind": principal.kind,
+        });
+        return principal;
+      } catch (err) {
+        span.setAttribute("auth.decision", "denied");
+        logger.warn("authentication failed", {
+          method: c.req.method,
+          path: new URL(c.req.url).pathname,
+          authScheme: c.req.header("authorization")?.split(/\s+/, 1)[0] ?? "none",
+          hasNugetApiKey: Boolean(c.req.header("x-nuget-apikey")),
+        });
+        throw err;
+      }
+    },
+  );
 }

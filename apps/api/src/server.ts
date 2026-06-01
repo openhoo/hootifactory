@@ -1,4 +1,5 @@
 import { env } from "@hootifactory/config";
+import { shutdownObservability } from "@hootifactory/observability";
 import { stopBoss } from "@hootifactory/queue";
 import { app } from "./app";
 import { registerAdapters } from "./bootstrap";
@@ -31,6 +32,7 @@ const shutdown = async (signal: string) => {
   try {
     await server.stop();
     await stopBoss();
+    await shutdownObservability();
   } catch (err) {
     logger.error("error during shutdown", {
       error: err instanceof Error ? err.message : String(err),

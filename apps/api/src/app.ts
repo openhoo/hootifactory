@@ -1,5 +1,11 @@
 import { env } from "@hootifactory/config";
 import { RegistryError } from "@hootifactory/core";
+import {
+  addSpanEvent,
+  initializeObservability,
+  instrumentHttpRequest,
+  setActiveSpanAttributes,
+} from "@hootifactory/observability";
 import { type Context, Hono } from "hono";
 import { logger } from "./lib/logger";
 import { authenticate } from "./middleware/authenticate";
@@ -10,6 +16,8 @@ import { tokenRouter } from "./routes/token";
 import { uiRouter } from "./routes/ui";
 import { v2VersionCheck } from "./routes/v2";
 import type { AppEnv } from "./types";
+
+initializeObservability({ serviceRole: "api" });
 
 export const app = new Hono<AppEnv>();
 
@@ -25,19 +33,45 @@ function parseContentLength(value: string | undefined): number | "invalid" | nul
 
 function registryPathname(url: string): string | null {
   const pathname = new URL(url).pathname;
-  return pathname === "/v2" || pathname === "/v2/" || pathname.startsWith("/v2/") ? pathname : null;
+  return pathname.startsWith("/v2/") && pathname !== "/v2/" ? pathname : null;
 }
+
+app.use("*", async (c, next) => {
+  await instrumentHttpRequest(c.req.raw, async (telemetry) => {
+    c.set("requestId", telemetry.requestId);
+    c.set("correlationId", telemetry.correlationId);
+    c.header("x-request-id", telemetry.requestId);
+    c.header("x-correlation-id", telemetry.correlationId);
+    await next();
+    telemetry.setStatusCode(c.res.status || 200);
+  });
+});
 
 app.use("*", async (c, next) => {
   const contentLength = parseContentLength(c.req.header("content-length"));
   const registryPath = registryPathname(c.req.url);
   if (contentLength === "invalid") {
+    addSpanEvent("http.request.invalid_content_length");
+    logger.debug("invalid content-length rejected", {
+      method: c.req.method,
+      path: new URL(c.req.url).pathname,
+    });
     if (registryPath) {
       return new RegistryError(400, "SIZE_INVALID", "invalid content-length").toResponse();
     }
     return c.json({ errors: [{ code: "BAD_REQUEST", message: "invalid content-length" }] }, 400);
   }
   if (contentLength != null && contentLength > env.REGISTRY_MAX_UPLOAD_BYTES) {
+    addSpanEvent("http.request.payload_too_large", {
+      "http.request.body.size": contentLength,
+      "http.request.body.size_limit": env.REGISTRY_MAX_UPLOAD_BYTES,
+    });
+    logger.debug("oversized request rejected", {
+      method: c.req.method,
+      path: new URL(c.req.url).pathname,
+      contentLength,
+      limit: env.REGISTRY_MAX_UPLOAD_BYTES,
+    });
     if (registryPath) {
       return new RegistryError(
         413,
@@ -86,19 +120,43 @@ function rejectsCookieCsrf(c: Context<AppEnv>): boolean {
 
 // Identity for every request (defaults to anonymous).
 app.use("*", async (c, next) => {
-  c.set("principal", await authenticate(c));
+  const principal = await authenticate(c);
+  c.set("principal", principal);
+  setActiveSpanAttributes({
+    "auth.principal.kind": principal.kind,
+    "auth.source": c.get("authSource"),
+  });
+  logger.debug("request principal resolved", {
+    authSource: c.get("authSource"),
+    principalKind: principal.kind,
+  });
   await next();
 });
 
 app.use("*", async (c, next) => {
   if (rejectsCookieCsrf(c)) {
+    addSpanEvent("auth.csrf_rejected", { "auth.source": c.get("authSource") });
+    logger.warn("cross-origin session request denied", {
+      method: c.req.method,
+      path: new URL(c.req.url).pathname,
+      origin: c.req.header("origin"),
+      fetchSite: c.req.header("sec-fetch-site"),
+    });
     return c.json({ error: "cross-origin session request denied" }, 403);
   }
   await next();
 });
 
 app.onError((err, c) => {
-  if (err instanceof RegistryError) return err.toResponse();
+  if (err instanceof RegistryError) {
+    const meta = { status: err.status, code: err.code, path: new URL(c.req.url).pathname };
+    if (err.status >= 500) {
+      logger.error("registry error response", meta);
+    } else {
+      logger.debug("registry error response", meta);
+    }
+    return err.toResponse();
+  }
   logger.error("unhandled error", { error: err instanceof Error ? err.message : String(err) });
   return c.json({ errors: [{ code: "INTERNAL", message: "internal server error" }] }, 500);
 });

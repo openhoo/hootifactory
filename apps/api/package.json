@@ -22,6 +22,7 @@
     "@hootifactory/format-npm": "workspace:*",
     "@hootifactory/format-nuget": "workspace:*",
     "@hootifactory/format-pypi": "workspace:*",
+    "@hootifactory/observability": "workspace:*",
     "@hootifactory/queue": "workspace:*",
     "@hootifactory/scan-core": "workspace:*",
     "@hootifactory/storage": "workspace:*",

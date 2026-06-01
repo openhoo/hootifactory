@@ -1,4 +1,5 @@
 import { env } from "@hootifactory/config";
+import { logger, withSpan } from "@hootifactory/observability";
 import { type Job, PgBoss, type SendOptions, type WorkOptions } from "pg-boss";
 
 export const QUEUES = {
@@ -16,11 +17,15 @@ export async function getBoss(): Promise<PgBoss> {
   if (!startPromise) {
     startPromise = (async () => {
       const boss = new PgBoss(env.DATABASE_URL);
-      boss.on("error", (err) => console.error("[pg-boss]", err));
-      await boss.start();
-      for (const q of Object.values(QUEUES)) {
-        await boss.createQueue(q);
-      }
+      boss.on("error", (err) => logger.error("pg-boss error", { error: err }));
+      await withSpan("queue.start", {}, async () => {
+        await boss.start();
+        for (const q of Object.values(QUEUES)) {
+          await withSpan("queue.ensure", { "messaging.destination.name": q }, () =>
+            boss.createQueue(q),
+          );
+        }
+      });
       bossInstance = boss;
       return boss;
     })();
@@ -34,7 +39,9 @@ export async function enqueue<T extends object>(
   options: SendOptions = {},
 ): Promise<string | null> {
   const boss = await getBoss();
-  return boss.send(queue, data, options);
+  return withSpan("queue.enqueue", { "messaging.destination.name": queue }, () =>
+    boss.send(queue, data, options),
+  );
 }
 
 export type JobHandler<T extends object> = (jobs: Job<T>[]) => Promise<void>;
@@ -45,12 +52,14 @@ export async function work<T extends object>(
   options: WorkOptions = {},
 ): Promise<string> {
   const boss = await getBoss();
-  return boss.work<T>(queue, options, handler);
+  return withSpan("queue.register_worker", { "messaging.destination.name": queue }, () =>
+    boss.work<T>(queue, options, handler),
+  );
 }
 
 export async function stopBoss(): Promise<void> {
   if (bossInstance) {
-    await bossInstance.stop();
+    await withSpan("queue.stop", {}, () => bossInstance?.stop() ?? Promise.resolve());
     bossInstance = null;
     startPromise = null;
   }

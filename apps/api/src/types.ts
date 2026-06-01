@@ -8,5 +8,7 @@ export type AppEnv = {
     principal: Principal;
     authSource: AuthSource;
     registryAuthFailure?: RegistryAuthFailure;
+    requestId: string;
+    correlationId: string;
   };
 };

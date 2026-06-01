@@ -39,6 +39,26 @@ LCOV reports under `coverage/lcov.info`.
 
 Bun · Hono · Drizzle ORM + PostgreSQL · S3 / MinIO (content-addressable storage) · pg-boss · React + Vite + Tailwind + shadcn/ui.
 
+## Observability
+
+The API and scan worker emit correlated JSON logs by default. Each HTTP request
+gets `x-request-id` and `x-correlation-id` response headers, and log lines written
+inside that request or a derived scan job include `request_id`, `correlation_id`,
+`trace_id` and `span_id`.
+
+Set `OTEL_EXPORTER_OTLP_ENDPOINT=http://collector:4318` to export logs, traces
+and metrics over OTLP/HTTP. `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`,
+`OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` and `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`
+override the base endpoint for individual signals. The API defaults to
+`service.name=hootifactory-api`; the scan worker defaults to
+`service.name=hootifactory-scan-worker`. Set `OTEL_SERVICE_NAME` or
+`OTEL_RESOURCE_ATTRIBUTES` to override resource metadata.
+
+Traces include HTTP ingress, auth resolution, registry repository resolution,
+RBAC decisions, adapter dispatch, proxy refreshes, virtual repository fan-out,
+queue enqueue/worker registration, and scan phases from artifact loading through
+finding persistence and policy decision.
+
 ## Monorepo layout
 
 ```
@@ -47,7 +67,7 @@ apps/
   scan-worker/  async scanning pipeline (pg-boss consumer)
   web/          management UI (React + Vite + Tailwind + shadcn)
 packages/
-  config/  types/  db/  storage/  core/  auth/  queue/  scan-core/
+  config/  types/  db/  storage/  core/  auth/  queue/  observability/  scan-core/
   format-npm/  format-docker/  format-pypi/  ...
 ```
 

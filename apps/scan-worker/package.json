@@ -14,6 +14,7 @@
   "dependencies": {
     "@hootifactory/config": "workspace:*",
     "@hootifactory/db": "workspace:*",
+    "@hootifactory/observability": "workspace:*",
     "@hootifactory/queue": "workspace:*",
     "@hootifactory/scan-core": "workspace:*",
     "@hootifactory/scanning": "workspace:*",

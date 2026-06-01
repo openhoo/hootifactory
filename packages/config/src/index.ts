@@ -22,6 +22,16 @@ const absoluteUrl = z
 
 const httpUrl = absoluteUrl.refine((s) => /^https?:\/\//.test(s), "must be an http(s) URL");
 
+const optionalHttpUrl = z.preprocess(
+  (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
+  httpUrl.optional(),
+);
+
+const optionalNonEmptyString = z.preprocess(
+  (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
+  z.string().min(1).optional(),
+);
+
 const originList = z
   .string()
   .default("")
@@ -61,6 +71,18 @@ const EnvSchema = z
   .object({
     NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
     LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
+
+    // OpenTelemetry (logs, traces, metrics)
+    OTEL_SDK_DISABLED: boolish.default(false),
+    OTEL_SERVICE_NAME: optionalNonEmptyString,
+    OTEL_SERVICE_VERSION: z.string().min(1).default("0.0.0"),
+    OTEL_RESOURCE_ATTRIBUTES: z.string().default(""),
+    OTEL_EXPORTER_OTLP_ENDPOINT: optionalHttpUrl,
+    OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: optionalHttpUrl,
+    OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: optionalHttpUrl,
+    OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: optionalHttpUrl,
+    OTEL_EXPORTER_OTLP_HEADERS: z.string().default(""),
+    OTEL_METRIC_EXPORT_INTERVAL_MS: z.coerce.number().int().positive().default(60_000),
 
     // API server
     API_PORT: z.coerce.number().int().positive().default(3000),
@@ -107,8 +129,8 @@ const EnvSchema = z
     GRYPE_IMAGE: z.string().default("anchore/grype:latest"),
     TRIVY_IMAGE: z.string().default("aquasec/trivy:latest"),
     CLAMAV_IMAGE: z.string().default("clamav/clamav:latest"),
-    CLAMAV_REST_URL: httpUrl.optional(),
-    TRIVY_SERVER_URL: httpUrl.optional(),
+    CLAMAV_REST_URL: optionalHttpUrl,
+    TRIVY_SERVER_URL: optionalHttpUrl,
     OSV_API_URL: absoluteUrl.default("https://api.osv.dev"),
     SCAN_SCRATCH_DIR: z.string().default("./scratch"),
     SCAN_MAX_BYTES: z.coerce

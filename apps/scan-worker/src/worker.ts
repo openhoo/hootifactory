@@ -1,7 +1,21 @@
 import { env } from "@hootifactory/config";
+import {
+  initializeObservability,
+  instrumentQueueJob,
+  logger,
+  shutdownObservability,
+  type TelemetryContextCarrier,
+} from "@hootifactory/observability";
 import { QUEUES, stopBoss, work } from "@hootifactory/queue";
 import { detectScanners } from "@hootifactory/scanning";
 import { processScan, recordScanFailure } from "./pipeline";
+
+initializeObservability({ serviceRole: "scan-worker" });
+
+interface ScanArtifactJob {
+  artifactId: string;
+  telemetry?: TelemetryContextCarrier;
+}
 
 const workerBatchSize = Math.max(1, Number(process.env.SCAN_WORKER_BATCH_SIZE ?? 16) || 16);
 const pollingIntervalSeconds = Math.max(
@@ -21,9 +35,8 @@ if (process.env.WORKER_PORT) {
 }
 
 async function main(): Promise<void> {
-  console.log(
-    "[scan-worker] starting; external scanners:",
-    detectScanners({
+  logger.info("scan worker starting", {
+    externalScanners: detectScanners({
       clamavImage: env.CLAMAV_IMAGE,
       trivyServerUrl: env.TRIVY_SERVER_URL,
       clamavRestUrl: env.CLAMAV_REST_URL,
@@ -33,20 +46,30 @@ async function main(): Promise<void> {
       syftImage: env.SYFT_IMAGE,
       trivyImage: env.TRIVY_IMAGE,
     }),
-  );
-  await work<{ artifactId: string }>(
+  });
+  await work<ScanArtifactJob>(
     QUEUES.scanArtifact,
     async (jobs) => {
       for (const job of jobs) {
-        try {
-          await processScan(job.data.artifactId);
-        } catch (err) {
-          // Record a durable failed-scan row, then surface the error so pg-boss
-          // applies the bounded retry configured at enqueue time (no infinite storm).
-          console.error("[scan-worker] scan failed", job.data.artifactId, err);
-          await recordScanFailure(job.data.artifactId, err).catch(() => {});
-          throw err;
-        }
+        await instrumentQueueJob(
+          QUEUES.scanArtifact,
+          job.data.telemetry,
+          {
+            "messaging.message.id": String(job.id),
+            "artifact.id": job.data.artifactId,
+          },
+          async () => {
+            try {
+              await processScan(job.data.artifactId);
+            } catch (err) {
+              // Record a durable failed-scan row, then surface the error so pg-boss
+              // applies the bounded retry configured at enqueue time (no infinite storm).
+              logger.error("scan job failed", { artifactId: job.data.artifactId, error: err });
+              await recordScanFailure(job.data.artifactId, err).catch(() => {});
+              throw err;
+            }
+          },
+        );
       }
     },
     {
@@ -55,17 +78,22 @@ async function main(): Promise<void> {
     },
   );
   ready = true;
-  console.log("[scan-worker] listening on", QUEUES.scanArtifact);
+  logger.info("scan worker listening", { queue: QUEUES.scanArtifact });
 }
 
 const shutdown = async () => {
-  await stopBoss();
-  process.exit(0);
+  try {
+    logger.info("scan worker shutting down");
+    await stopBoss();
+    await shutdownObservability();
+  } finally {
+    process.exit(0);
+  }
 };
 process.on("SIGTERM", shutdown);
 process.on("SIGINT", shutdown);
 
 main().catch((err) => {
-  console.error("[scan-worker] fatal", err);
+  logger.error("scan worker fatal error", { error: err });
   process.exit(1);
 });
