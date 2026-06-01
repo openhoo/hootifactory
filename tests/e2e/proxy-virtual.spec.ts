@@ -8,8 +8,8 @@ import { expect, test } from "@playwright/test";
 import { dockerNpm, dockerReachableUrl, ensureDockerAvailable } from "./docker-clients";
 import { createRepo, createToken, setupOwner } from "./helpers";
 
-function npm(args: string[], cwd: string): void {
-  dockerNpm(args, cwd);
+function npm(args: string[], cwd: string): string {
+  return dockerNpm(args, cwd);
 }
 
 function npmrc(registry: string, token: string): string {
@@ -67,6 +67,8 @@ async function startNpmUpstream(input: {
   name: string;
   advertisedBytes: Buffer;
   includeHashes?: boolean;
+  manifestName?: string;
+  manifestVersion?: string;
   redirectTarballTo?: string;
   servedBytes: Buffer;
 }): Promise<{ url: string; requests: string[]; close: () => Promise<void> }> {
@@ -83,8 +85,8 @@ async function startNpmUpstream(input: {
           name: input.name,
           versions: {
             "1.0.0": {
-              name: input.name,
-              version: "1.0.0",
+              name: input.manifestName ?? input.name,
+              version: input.manifestVersion ?? "1.0.0",
               dist:
                 input.includeHashes === false
                   ? { tarball: `${base}${tarballPath}` }
@@ -267,6 +269,60 @@ test.describe("virtual + proxy repositories (Dockerized real npm)", () => {
     expect(existsSync(join(dir, "node_modules", pkgB, "index.js"))).toBe(true);
   });
 
+  test("virtual repo search merges readable member repos", async ({ baseURL }) => {
+    test.setTimeout(120_000);
+    const owner = await setupOwner(baseURL!);
+    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "t" })).json())
+      .secret as string;
+    const a = (
+      await repoFrom(
+        await createRepo(owner.ctx, owner.orgId, { name: "npm-search-a", format: "npm" }),
+      )
+    ).repository;
+    const b = (
+      await repoFrom(
+        await createRepo(owner.ctx, owner.orgId, { name: "npm-search-b", format: "npm" }),
+      )
+    ).repository;
+    const v = (
+      await repoFrom(
+        await createRepo(owner.ctx, owner.orgId, {
+          name: "npm-search-virt",
+          format: "npm",
+          kind: "virtual",
+        }),
+      )
+    ).repository;
+    await owner.ctx.post(`/api/repositories/${v.id}/members`, {
+      data: { memberRepoId: a.id, position: 0 },
+    });
+    await owner.ctx.post(`/api/repositories/${v.id}/members`, {
+      data: { memberRepoId: b.id, position: 1 },
+    });
+
+    const id = Date.now().toString(36);
+    const pkgA = `virtsearch-a-${id}`;
+    const pkgB = `virtsearch-b-${id}`;
+    publish(baseURL!, a.mountPath, token, pkgA);
+    publish(baseURL!, b.mountPath, token, pkgB);
+
+    const registry = `${dockerReachableUrl(baseURL!)}/${v.mountPath}/`;
+    const dir = mkdtempSync(join(tmpdir(), "search-"));
+    writeFileSync(join(dir, ".npmrc"), npmrc(registry, token));
+    const results = JSON.parse(
+      npm(["search", `virtsearch`, "--json", "--registry", registry], dir),
+    ) as {
+      name: string;
+      version: string;
+    }[];
+    expect(results).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: pkgA, version: "1.0.0" }),
+        expect.objectContaining({ name: pkgB, version: "1.0.0" }),
+      ]),
+    );
+  });
+
   test("proxy repo mirrors a package from its upstream", async ({ baseURL }) => {
     test.setTimeout(120_000);
     const owner = await setupOwner(baseURL!);
@@ -310,6 +366,11 @@ test.describe("virtual + proxy repositories (Dockerized real npm)", () => {
       `/${proxy.mountPath}/${pkg}/-/${pkg}-1.0.0.tgz`,
     );
     expect(localTarballAfterIngest.status()).toBe(200);
+
+    const packages = await (await owner.ctx.get(`/api/repositories/${proxy.id}/packages`)).json();
+    expect(packages.packages.find((p: { name: string }) => p.name === pkg)?.latestVersion).toBe(
+      "1.0.0",
+    );
   });
 
   test("proxy-mirrored packages are recorded and scanned locally", async ({ baseURL }) => {
@@ -383,6 +444,38 @@ test.describe("virtual + proxy repositories (Dockerized real npm)", () => {
 
       const tarball = await owner.ctx.get(`/${proxy.mountPath}/${pkg}/-/${pkg}-1.0.0.tgz`);
       expect(tarball.status()).toBe(404);
+    } finally {
+      await upstream.close();
+    }
+  });
+
+  test("proxy repo rejects upstream manifests with mismatched identity", async ({ baseURL }) => {
+    const owner = await setupOwner(baseURL!);
+    const proxy = (
+      await repoFrom(
+        await createRepo(owner.ctx, owner.orgId, {
+          name: "npm-proxy-identity",
+          format: "npm",
+          kind: "proxy",
+        }),
+      )
+    ).repository;
+    const pkg = `badidentity${Date.now().toString(36)}`;
+    const upstream = await startNpmUpstream({
+      name: pkg,
+      manifestName: `${pkg}-other`,
+      advertisedBytes: Buffer.from("identity tarball"),
+      servedBytes: Buffer.from("identity tarball"),
+    });
+    try {
+      await owner.ctx.post(`/api/repositories/${proxy.id}/upstreams`, {
+        data: { url: `${upstream.url}/` },
+      });
+
+      const packument = await owner.ctx.get(`/${proxy.mountPath}/${pkg}`);
+      expect(packument.status()).toBe(404);
+      const packages = await (await owner.ctx.get(`/api/repositories/${proxy.id}/packages`)).json();
+      expect(packages.packages.find((p: { name: string }) => p.name === pkg)).toBeUndefined();
     } finally {
       await upstream.close();
     }

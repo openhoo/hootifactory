@@ -53,11 +53,18 @@ test.describe("npm protocol publish validation", () => {
       npmPayload({ name: pkg, version: "1.0.0" }),
       npmPayload({ name: pkg, version: "1.0.0", attachmentData: "not base64!" }),
       npmPayload({ name: pkg, version: "not-a-version", attachmentData: encoded }),
+      npmPayload({ name: pkg, version: "1.0.0-01", attachmentData: encoded }),
       npmPayload({
         name: pkg,
         version: "1.0.0",
         attachmentData: encoded,
         distTags: { "1.0.0": "1.0.0" },
+      }),
+      npmPayload({
+        name: pkg,
+        version: "1.0.0",
+        attachmentData: encoded,
+        distTags: { v1: "1.0.0" },
       }),
       npmPayload({
         name: pkg,
@@ -94,7 +101,33 @@ test.describe("npm protocol publish validation", () => {
     });
     expect(res.status()).toBe(201);
 
-    const packument = await (await owner.ctx.get(`/${repo.mountPath}/${pkg}`)).json();
+    const packumentRes = await owner.ctx.get(`/${repo.mountPath}/${pkg}`);
+    const packumentEtag = packumentRes.headers().etag;
+    expect(packumentEtag).toMatch(/^".+"$/);
+    expect(
+      (
+        await owner.ctx.get(`/${repo.mountPath}/${pkg}`, {
+          headers: { "if-none-match": packumentEtag },
+        })
+      ).status(),
+    ).toBe(304);
+    expect((await owner.ctx.head(`/${repo.mountPath}/${pkg}`)).headers().etag).toBe(packumentEtag);
+
+    const tarballRes = await owner.ctx.get(`/${repo.mountPath}/${pkg}/-/${pkg}-1.0.0.tgz`);
+    const tarballEtag = tarballRes.headers().etag;
+    expect(tarballEtag).toMatch(/^".+"$/);
+    expect(
+      (
+        await owner.ctx.get(`/${repo.mountPath}/${pkg}/-/${pkg}-1.0.0.tgz`, {
+          headers: { "if-none-match": tarballEtag },
+        })
+      ).status(),
+    ).toBe(304);
+    expect(
+      (await owner.ctx.head(`/${repo.mountPath}/${pkg}/-/${pkg}-1.0.0.tgz`)).headers().etag,
+    ).toBe(tarballEtag);
+
+    const packument = await packumentRes.json();
     expect(packument["dist-tags"].latest).toBe("1.0.0");
     expect(packument.versions["1.0.0"].dist.shasum).toBe(
       createHash("sha1").update(bytes).digest("hex"),

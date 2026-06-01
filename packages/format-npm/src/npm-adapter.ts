@@ -17,6 +17,7 @@ import {
 } from "@hootifactory/core";
 import {
   and,
+  desc,
   eq,
   isNull,
   like,
@@ -28,6 +29,11 @@ import {
 import { buildPackument } from "./packument";
 
 function sha1hex(data: Uint8Array): string {
+  const h = new Bun.CryptoHasher("sha1");
+  h.update(data);
+  return h.digest("hex");
+}
+function sha1hexText(data: string): string {
   const h = new Bun.CryptoHasher("sha1");
   h.update(data);
   return h.digest("hex");
@@ -58,14 +64,21 @@ function isValidNpmName(name: string): boolean {
 }
 
 function isValidNpmVersion(version: string): boolean {
-  return /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(
-    version,
-  );
+  const match =
+    /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.exec(
+      version,
+    );
+  if (!match) return false;
+  for (const id of (match[4] ?? "").split(".").filter(Boolean)) {
+    if (/^\d+$/.test(id) && !/^(0|[1-9]\d*)$/.test(id)) return false;
+  }
+  return true;
 }
 
 function isValidDistTag(tag: string): boolean {
   if (!tag || tag.length > 214) return false;
   if (!/^[A-Za-z][A-Za-z0-9._~-]*$/.test(tag)) return false;
+  if (/^v\d/i.test(tag)) return false;
   return !isValidNpmVersion(tag);
 }
 
@@ -128,6 +141,21 @@ function decodeBase64(data: unknown): Buffer | null {
   return decoded;
 }
 
+function boundedInt(value: string | null, fallback: number, min: number, max: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(Math.trunc(parsed), max));
+}
+
+function ifNoneMatch(req: Request, etag: string): boolean {
+  const header = req.headers.get("if-none-match");
+  if (!header) return false;
+  return header
+    .split(",")
+    .map((v) => v.trim())
+    .some((v) => v === "*" || v === etag || v === `W/${etag}`);
+}
+
 export class NpmAdapter implements FormatAdapter {
   readonly format = "npm" as const;
   readonly capabilities = {
@@ -142,6 +170,8 @@ export class NpmAdapter implements FormatAdapter {
       { method: "GET", pattern: "/-/ping", handlerId: "ping" },
       { method: "GET", pattern: "/-/whoami", handlerId: "whoami" },
       { method: "GET", pattern: "/-/v1/search", handlerId: "search" },
+      { method: "POST", pattern: "/-/npm/v1/security/advisories/bulk", handlerId: "auditBulk" },
+      { method: "POST", pattern: "/-/npm/v1/security/audits/quick", handlerId: "auditQuick" },
       { method: "GET", pattern: "/-/package/:pkg+/dist-tags", handlerId: "distTagsList" },
       { method: "PUT", pattern: "/-/package/:pkg+/dist-tags/:tag", handlerId: "distTagSet" },
       { method: "DELETE", pattern: "/-/package/:pkg+/dist-tags/:tag", handlerId: "distTagDelete" },
@@ -151,8 +181,13 @@ export class NpmAdapter implements FormatAdapter {
     ];
   }
 
-  requiredPermission(method: HttpMethod): Permission {
-    return { action: method === "GET" || method === "HEAD" ? "read" : "write" };
+  requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
+    return {
+      action:
+        method === "GET" || method === "HEAD" || match?.entry.handlerId.startsWith("audit")
+          ? "read"
+          : "write",
+    };
   }
 
   authChallenge() {
@@ -167,10 +202,14 @@ export class NpmAdapter implements FormatAdapter {
         return Response.json({ username: ctx.principal.kind === "user" ? "user" : "token" });
       case "search":
         return this.searchHandler(req, ctx);
+      case "auditBulk":
+        return Response.json({});
+      case "auditQuick":
+        return Response.json({ advisories: {}, vulnerabilities: {}, metadata: {} });
       case "packument":
-        return this.packument(match.params.pkg ?? "", ctx);
+        return this.packument(match.params.pkg ?? "", req, ctx);
       case "tarball":
-        return this.tarball(match.params.pkg ?? "", match.params.filename ?? "", ctx);
+        return this.tarball(match.params.pkg ?? "", match.params.filename ?? "", req, ctx);
       case "publish":
         return this.publish(match.params.pkg ?? "", req, ctx);
       case "distTagsList":
@@ -211,17 +250,27 @@ export class NpmAdapter implements FormatAdapter {
     return out;
   }
 
-  private async packument(name: string, ctx: RepoContext): Promise<Response> {
+  private async packument(name: string, req: Request, ctx: RepoContext): Promise<Response> {
     if (!isValidNpmName(name))
       return Response.json({ error: "invalid package name" }, { status: 400 });
     const pkg = await this.findPackage(ctx, name);
     if (!pkg) return Response.json({ error: "Not found" }, { status: 404 });
     const versions = await this.liveVersions(ctx, pkg.id);
     const tags = await this.distTags(ctx, pkg.id);
-    return Response.json(buildPackument(name, versions, tags));
+    const body = JSON.stringify(buildPackument(name, versions, tags));
+    const etag = `"${sha1hexText(body)}"`;
+    if (ifNoneMatch(req, etag)) return new Response(null, { status: 304, headers: { etag } });
+    return new Response(body, {
+      headers: { "content-type": "application/json; charset=utf-8", etag },
+    });
   }
 
-  private async tarball(name: string, filename: string, ctx: RepoContext): Promise<Response> {
+  private async tarball(
+    name: string,
+    filename: string,
+    req: Request,
+    ctx: RepoContext,
+  ): Promise<Response> {
     if (!isValidNpmName(name))
       return Response.json({ error: "invalid package name" }, { status: 400 });
     const pkg = await this.findPackage(ctx, name);
@@ -237,8 +286,10 @@ export class NpmAdapter implements FormatAdapter {
     if (await isArtifactBlocked(ctx, dist.blobDigest)) {
       return Response.json({ error: "artifact blocked by scan policy" }, { status: 403 });
     }
+    const etag = `"${dist.shasum}"`;
+    if (ifNoneMatch(req, etag)) return new Response(null, { status: 304, headers: { etag } });
     return new Response(ctx.blobs.get(dist.blobDigest), {
-      headers: { "content-type": "application/octet-stream", etag: `"${dist.shasum}"` },
+      headers: { "content-type": "application/octet-stream", etag },
     });
   }
 
@@ -504,6 +555,10 @@ export class NpmAdapter implements FormatAdapter {
     for (const [ver, manifestRaw] of Object.entries(packument.versions ?? {})) {
       if (!isValidNpmVersion(ver)) continue;
       const manifest = { ...manifestRaw } as Record<string, unknown>;
+      if (manifest.name !== undefined && manifest.name !== pkgName) continue;
+      if (manifest.version !== undefined && manifest.version !== ver) continue;
+      manifest.name = pkgName;
+      manifest.version = ver;
       const dist0 = manifest.dist as { integrity?: string; shasum?: string; tarball?: string };
       const tarballUrl = dist0?.tarball;
       if (!tarballUrl) continue;
@@ -577,18 +632,34 @@ export class NpmAdapter implements FormatAdapter {
       });
     }
     if (!pkg) return false;
+    const desiredTags = new Map<string, { version: string; versionId: string }>();
     for (const [tag, ver] of Object.entries(packument["dist-tags"] ?? {})) {
-      if (!isValidDistTag(tag)) continue;
+      if (!isValidDistTag(tag) || typeof ver !== "string") continue;
       const vid = await this.versionId(ctx, pkg.id, ver);
-      if (vid) await setDistTag(ctx, pkg.id, tag, vid);
+      if (vid) desiredTags.set(tag, { version: ver, versionId: vid });
     }
+    const currentTags = await this.distTags(ctx, pkg.id);
+    for (const tag of Object.keys(currentTags)) {
+      if (desiredTags.has(tag)) continue;
+      await ctx.db
+        .delete(versionTags)
+        .where(and(eq(versionTags.packageId, pkg.id), eq(versionTags.tag, tag)));
+    }
+    for (const [tag, { versionId }] of desiredTags) {
+      await setDistTag(ctx, pkg.id, tag, versionId);
+    }
+    await ctx.db
+      .update(packages)
+      .set({ latestVersion: desiredTags.get("latest")?.version ?? null })
+      .where(eq(packages.id, pkg.id));
     return true;
   }
 
   private async searchHandler(req: Request, ctx: RepoContext): Promise<Response> {
     const url = new URL(req.url);
     const text = url.searchParams.get("text") ?? "";
-    const size = Math.min(Number(url.searchParams.get("size") ?? 20), 100);
+    const from = boundedInt(url.searchParams.get("from"), 0, 0, 10_000);
+    const size = boundedInt(url.searchParams.get("size"), 20, 0, 100);
     const rows = await ctx.db
       .select()
       .from(packages)
@@ -598,12 +669,42 @@ export class NpmAdapter implements FormatAdapter {
           text ? like(packages.name, `%${text}%`) : sql`true`,
         ),
       )
-      .limit(size);
-    const objects = rows.map((p) => ({
-      package: { name: p.name, version: p.latestVersion ?? "0.0.0", description: "" },
-      score: { final: 1, detail: { quality: 1, popularity: 1, maintenance: 1 } },
-      searchScore: 1,
-    }));
-    return Response.json({ objects, total: objects.length, time: new Date().toISOString() });
+      .limit(Math.max(from + size, 100));
+
+    const objects: Record<string, unknown>[] = [];
+    for (const p of rows) {
+      const versions = await ctx.db
+        .select()
+        .from(packageVersions)
+        .where(and(eq(packageVersions.packageId, p.id), isNull(packageVersions.deletedAt)))
+        .orderBy(desc(packageVersions.createdAt), desc(packageVersions.id));
+      if (versions.length === 0) continue;
+
+      const tags = await this.distTags(ctx, p.id);
+      const version = tags.latest ?? versions[0]!.version;
+      const selected = versions.find((v) => v.version === version) ?? versions[0]!;
+      const manifest =
+        (selected.metadata as { manifest?: Record<string, unknown> } | undefined)?.manifest ?? {};
+      objects.push({
+        package: {
+          name: p.name,
+          version: selected.version,
+          description: typeof manifest.description === "string" ? manifest.description : "",
+          keywords: Array.isArray(manifest.keywords) ? manifest.keywords : [],
+          date: selected.createdAt.toISOString(),
+          links: { npm: `${ctx.baseUrl}/${ctx.repo.mountPath}/${packagePath(p.name)}` },
+          publisher: { username: "hootifactory", email: "" },
+          maintainers: [{ username: "hootifactory", email: "" }],
+        },
+        score: { final: 1, detail: { quality: 1, popularity: 1, maintenance: 1 } },
+        searchScore: 1,
+      });
+    }
+
+    return Response.json({
+      objects: objects.slice(from, from + size),
+      total: objects.length,
+      time: new Date().toISOString(),
+    });
   }
 }

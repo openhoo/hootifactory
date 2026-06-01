@@ -97,6 +97,60 @@ async function adapterResponse(
   }
 }
 
+function searchWindow(req: Request): { from: number; size: number } {
+  const url = new URL(req.url);
+  const parse = (name: string, fallback: number, min: number, max: number) => {
+    const value = Number(url.searchParams.get(name));
+    if (!Number.isFinite(value)) return fallback;
+    return Math.max(min, Math.min(Math.trunc(value), max));
+  };
+  return { from: parse("from", 0, 0, 10_000), size: parse("size", 20, 0, 100) };
+}
+
+function allSearchResultsRequest(req: Request): Request {
+  const url = new URL(req.url);
+  url.searchParams.set("from", "0");
+  url.searchParams.set("size", "100");
+  return new Request(url.toString(), { method: req.method, headers: req.headers });
+}
+
+async function dispatchVirtualSearch(
+  adapter: FormatAdapter,
+  match: RouteMatch,
+  req: Request,
+  ctx: RepoContext,
+): Promise<Response> {
+  const members = await loadVirtualMembers(ctx.repo.id);
+  const seen = new Set<string>();
+  const objects: unknown[] = [];
+  for (const member of members) {
+    const memberCtx = buildRepoContext(member, ctx.principal);
+    const perm = adapter.requiredPermission(req.method as HttpMethod, match, memberCtx);
+    const decision = await memberCtx.authorize(perm.action, {
+      repositoryName: perm.repositoryName ?? member.name,
+    });
+    if (!decision.allowed) continue;
+
+    const res = await adapterResponse(adapter, match, allSearchResultsRequest(req), memberCtx);
+    if (res.status >= 400) continue;
+    const body = (await res.json().catch(() => null)) as {
+      objects?: Array<{ package?: { name?: unknown } }>;
+    } | null;
+    for (const object of body?.objects ?? []) {
+      const name = object.package?.name;
+      if (typeof name !== "string" || seen.has(name)) continue;
+      seen.add(name);
+      objects.push(object);
+    }
+  }
+  const { from, size } = searchWindow(req);
+  return Response.json({
+    objects: objects.slice(from, from + size),
+    total: objects.length,
+    time: new Date().toISOString(),
+  });
+}
+
 /** Virtual repo: try each member in order; return the first non-error response. */
 async function dispatchVirtual(
   adapter: FormatAdapter,
@@ -106,6 +160,7 @@ async function dispatchVirtual(
 ): Promise<Response> {
   if (!isRead(req.method))
     throw Errors.unsupported({ reason: "writes are not allowed on virtual repositories" });
+  if (match.entry.handlerId === "search") return dispatchVirtualSearch(adapter, match, req, ctx);
   const members = await loadVirtualMembers(ctx.repo.id);
   let last: Response | null = null;
   for (const member of members) {
