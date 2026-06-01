@@ -165,6 +165,21 @@ function referrerManifest(subjectDigest: string): string {
   });
 }
 
+function artifactManifestWithBlob(blobDigest: string, size: number): string {
+  return JSON.stringify({
+    schemaVersion: 2,
+    mediaType: ARTIFACT_MANIFEST_MEDIA_TYPE,
+    artifactType: "application/vnd.hootifactory.test.artifact",
+    blobs: [
+      {
+        mediaType: "application/vnd.hootifactory.test.payload",
+        digest: blobDigest,
+        size,
+      },
+    ],
+  });
+}
+
 async function putReferrer(
   ctx: APIRequestContext,
   mountPath: string,
@@ -463,6 +478,48 @@ test.describe("docker registry protocol authorization", () => {
       `/${repo.mountPath}/other/blobs/${otherLayerDigest}`,
     );
     expect(otherBlobAfterDelete.status()).toBe(200);
+  });
+
+  test("OCI artifact manifest blobs are validated and released by image scope", async ({
+    baseURL,
+  }) => {
+    const owner = await setupOwner(baseURL!);
+    const repo = (
+      await (await createRepo(owner.ctx, owner.orgId, { name: "artifacts", format: "oci" })).json()
+    ).repository as { mountPath: string };
+
+    const payload = Buffer.from("artifact payload");
+    const payloadDigest = await uploadBlob(owner.ctx, repo.mountPath, "demo", payload);
+    const manifest = artifactManifestWithBlob(payloadDigest, payload.byteLength);
+    const manifestDigest = sha256(manifest);
+
+    const put = await owner.ctx.put(`/${repo.mountPath}/demo/manifests/v1`, {
+      headers: { "content-type": ARTIFACT_MANIFEST_MEDIA_TYPE },
+      data: manifest,
+    });
+    expect(put.status()).toBe(201);
+    expect(put.headers()["docker-content-digest"]).toBe(manifestDigest);
+
+    const crossImage = await owner.ctx.put(`/${repo.mountPath}/other/manifests/v1`, {
+      headers: { "content-type": ARTIFACT_MANIFEST_MEDIA_TYPE },
+      data: manifest,
+    });
+    expect(crossImage.status()).toBe(404);
+    expect((await crossImage.json()).errors[0].code).toBe("MANIFEST_BLOB_UNKNOWN");
+
+    const payloadBeforeDelete = await owner.ctx.get(
+      `/${repo.mountPath}/demo/blobs/${payloadDigest}`,
+    );
+    expect(payloadBeforeDelete.status()).toBe(200);
+
+    const deleted = await owner.ctx.delete(`/${repo.mountPath}/demo/manifests/${manifestDigest}`);
+    expect(deleted.status()).toBe(202);
+
+    const payloadAfterDelete = await owner.ctx.get(
+      `/${repo.mountPath}/demo/blobs/${payloadDigest}`,
+    );
+    expect(payloadAfterDelete.status()).toBe(404);
+    expect((await payloadAfterDelete.json()).errors[0].code).toBe("BLOB_UNKNOWN");
   });
 
   test("blob downloads honor single byte ranges", async ({ baseURL }) => {

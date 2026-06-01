@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { OCI_MEDIA_TYPES, type OciManifest, type PackageFormat } from "./index";
+import {
+  OCI_MEDIA_TYPES,
+  type OciManifest,
+  ociManifestReferences,
+  type PackageFormat,
+} from "./index";
 
 describe("shared type constants", () => {
   test("keeps OCI and Docker media type constants stable", () => {
@@ -22,5 +27,32 @@ describe("shared type constants", () => {
 
     expect(format).toBe("cargo");
     expect(manifest.layers?.[0]?.mediaType).toBe(OCI_MEDIA_TYPES.layerTarGzip);
+  });
+
+  test("extracts OCI artifact blob descriptors separately from child manifests", () => {
+    const refs = ociManifestReferences(
+      JSON.stringify({
+        schemaVersion: 2,
+        config: { mediaType: OCI_MEDIA_TYPES.configV1, digest: "sha256:config", size: 2 },
+        layers: [{ mediaType: OCI_MEDIA_TYPES.layerTarGzip, digest: "sha256:layer", size: 10 }],
+        blobs: [
+          {
+            mediaType: "application/vnd.example.payload",
+            digest: "sha256:artifact-blob",
+            size: 12,
+          },
+        ],
+        manifests: [
+          {
+            mediaType: OCI_MEDIA_TYPES.manifestV1,
+            digest: "sha256:child-manifest",
+            size: 123,
+          },
+        ],
+      }),
+    );
+
+    expect(refs.blobs).toEqual(["sha256:config", "sha256:layer", "sha256:artifact-blob"]);
+    expect(refs.manifests).toEqual(["sha256:child-manifest"]);
   });
 });

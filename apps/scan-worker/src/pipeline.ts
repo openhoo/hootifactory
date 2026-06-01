@@ -28,7 +28,7 @@ import {
   scanForMalware,
 } from "@hootifactory/scanning";
 import { blobStore } from "@hootifactory/storage";
-import type { OciManifest } from "@hootifactory/types";
+import { ociManifestReferences } from "@hootifactory/types";
 
 type PolicyRow = typeof scanPolicies.$inferSelect;
 
@@ -53,25 +53,6 @@ export function dedupeFindings(items: NormalizedFinding[]): NormalizedFinding[] 
     }
   }
   return out;
-}
-
-export function ociManifestReferences(raw: string): { blobs: string[]; manifests: string[] } {
-  let parsed: OciManifest;
-  try {
-    parsed = JSON.parse(raw) as OciManifest;
-  } catch {
-    return { blobs: [], manifests: [] };
-  }
-  const blobs = new Set<string>();
-  const manifests = new Set<string>();
-  if (parsed.config?.digest) blobs.add(parsed.config.digest);
-  for (const layer of parsed.layers ?? []) {
-    if (layer.digest) blobs.add(layer.digest);
-  }
-  for (const manifest of parsed.manifests ?? []) {
-    if (manifest.digest) manifests.add(manifest.digest);
-  }
-  return { blobs: [...blobs], manifests: [...manifests] };
 }
 
 const OCI_FORMATS = new Set(["docker", "oci", "helm"]);

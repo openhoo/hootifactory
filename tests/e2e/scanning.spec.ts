@@ -8,6 +8,7 @@ import { type APIRequestContext, expect, test } from "@playwright/test";
 import { createRepo, createToken, setupOwner } from "./helpers";
 
 const EICAR = "X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*";
+const ARTIFACT_MANIFEST_MEDIA_TYPE = "application/vnd.oci.artifact.manifest.v1+json";
 const TEST_DATABASE_URL =
   process.env.E2E_DATABASE_URL ??
   "postgres://hootifactory:hootifactory@localhost:5432/hootifactory_test";
@@ -247,6 +248,36 @@ async function putOciManifestWithLayers(
   return digest;
 }
 
+async function putOciArtifactManifest(
+  ctx: APIRequestContext,
+  mountPath: string,
+  image: string,
+  tag: string,
+  blobDigest: string,
+  size: number,
+): Promise<string> {
+  const raw = JSON.stringify({
+    schemaVersion: 2,
+    mediaType: ARTIFACT_MANIFEST_MEDIA_TYPE,
+    artifactType: "application/vnd.hootifactory.test.artifact",
+    blobs: [
+      {
+        mediaType: "application/vnd.hootifactory.test.payload",
+        digest: blobDigest,
+        size,
+      },
+    ],
+  });
+  const digest = sha256(raw);
+  const res = await ctx.put(`/${mountPath}/${image}/manifests/${tag}`, {
+    headers: { "content-type": ARTIFACT_MANIFEST_MEDIA_TYPE },
+    data: raw,
+  });
+  expect(res.status()).toBe(201);
+  expect(res.headers()["docker-content-digest"]).toBe(digest);
+  return digest;
+}
+
 test.describe("scanning + policy gates", () => {
   test("enforce policy blocks a vulnerable package; clean package is served", async ({
     baseURL,
@@ -464,6 +495,36 @@ test.describe("scanning + policy gates", () => {
       `/${repo.mountPath}/${blockedImage}/blobs/${blockedEvil}`,
     );
     expect(blockedEvilBlob.status()).toBe(403);
+  });
+
+  test("enforce policy blocks OCI artifact manifest blobs", async ({ baseURL }) => {
+    const owner = await setupOwner(baseURL!);
+    const repo = (
+      await (await createRepo(owner.ctx, owner.orgId, { name: "scan-oci", format: "oci" })).json()
+    ).repository as { id: string; mountPath: string };
+    await owner.ctx.post(`/api/orgs/${owner.orgId}/scan-policies`, {
+      data: { repositoryPattern: "scan-oci", mode: "enforce", blockOnSeverity: "high" },
+    });
+
+    const image = `artifact${Date.now().toString(36)}`;
+    const payload = Buffer.from(EICAR);
+    const payloadDigest = await uploadOciBlob(owner.ctx, repo.mountPath, image, payload);
+    await putOciArtifactManifest(
+      owner.ctx,
+      repo.mountPath,
+      image,
+      "v1",
+      payloadDigest,
+      payload.byteLength,
+    );
+
+    const art = await pollArtifact(owner.ctx, repo.id, image);
+    expect(art.state).toBe("blocked");
+
+    const blockedManifest = await owner.ctx.get(`/${repo.mountPath}/${image}/manifests/v1`);
+    expect(blockedManifest.status()).toBe(403);
+    const blockedBlob = await owner.ctx.get(`/${repo.mountPath}/${image}/blobs/${payloadDigest}`);
+    expect(blockedBlob.status()).toBe(403);
   });
 
   test("identical OCI bytes still get per-artifact scan rows", async ({ baseURL }) => {

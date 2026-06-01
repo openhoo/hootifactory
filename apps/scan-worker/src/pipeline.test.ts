@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { dedupeFindings, ociManifestReferences } from "./pipeline";
+import { ociManifestReferences } from "@hootifactory/types";
+import { dedupeFindings } from "./pipeline";
 
 describe("scan pipeline pure helpers", () => {
   test("deduplicates findings by type, vulnerability/title, and package identity", () => {
@@ -37,12 +38,13 @@ describe("scan pipeline pure helpers", () => {
         schemaVersion: 2,
         config: { digest: "sha256:config" },
         layers: [{ digest: "sha256:layer1" }, { digest: "sha256:layer1" }],
+        blobs: [{ digest: "sha256:artifact-blob" }],
         manifests: [{ digest: "sha256:child1" }, { digest: "sha256:child2" }],
       }),
     );
 
     expect(refs).toEqual({
-      blobs: ["sha256:config", "sha256:layer1"],
+      blobs: ["sha256:config", "sha256:layer1", "sha256:artifact-blob"],
       manifests: ["sha256:child1", "sha256:child2"],
     });
   });

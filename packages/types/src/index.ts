@@ -45,7 +45,28 @@ export interface OciManifest {
   artifactType?: string;
   config?: OciDescriptor;
   layers?: OciDescriptor[];
+  blobs?: OciDescriptor[];
   manifests?: OciDescriptor[];
   subject?: OciDescriptor;
   annotations?: Record<string, string>;
+}
+
+function addDescriptorDigest(out: Set<string>, descriptor: { digest?: unknown } | undefined): void {
+  if (typeof descriptor?.digest === "string") out.add(descriptor.digest);
+}
+
+export function ociManifestReferences(raw: string): { blobs: string[]; manifests: string[] } {
+  let parsed: OciManifest;
+  try {
+    parsed = JSON.parse(raw) as OciManifest;
+  } catch {
+    return { blobs: [], manifests: [] };
+  }
+  const blobs = new Set<string>();
+  const manifests = new Set<string>();
+  addDescriptorDigest(blobs, parsed.config);
+  for (const layer of parsed.layers ?? []) addDescriptorDigest(blobs, layer);
+  for (const blob of parsed.blobs ?? []) addDescriptorDigest(blobs, blob);
+  for (const manifest of parsed.manifests ?? []) addDescriptorDigest(manifests, manifest);
+  return { blobs: [...blobs], manifests: [...manifests] };
 }

@@ -29,7 +29,7 @@ import {
   uploadSessions,
 } from "@hootifactory/db";
 import { computeDigest, isValidDigest, stagingKey } from "@hootifactory/storage";
-import { OCI_MEDIA_TYPES } from "@hootifactory/types";
+import { OCI_MEDIA_TYPES, ociManifestReferences } from "@hootifactory/types";
 
 function concat(a: Uint8Array, b: Uint8Array): Uint8Array {
   const out = new Uint8Array(a.length + b.length);
@@ -45,11 +45,6 @@ async function bodyBytes(req: Request): Promise<Uint8Array> {
 const UPLOAD_TTL_MS = 24 * 60 * 60 * 1000;
 
 type Tx = Parameters<Parameters<RepoContext["db"]["transaction"]>[0]>[0];
-
-const INDEX_MEDIA_TYPES = new Set<string>([
-  OCI_MEDIA_TYPES.imageIndexV1,
-  OCI_MEDIA_TYPES.dockerManifestListV2,
-]);
 
 function parseContentRange(value: string | null): { start: number; end: number } | null {
   if (!value) return null;
@@ -123,20 +118,11 @@ function packageVersionDigestEquals(digest: string) {
 
 /**
  * The CAS blob digests an image manifest references (its config + layers). Index
- * / manifest-list manifests reference sub-manifests (not blobs) and yield [].
+ * / manifest-list manifests reference sub-manifests (not blobs). OCI artifact
+ * manifests reference payloads through `blobs`.
  */
 function manifestBlobDigests(raw: string): string[] {
-  let parsed: { mediaType?: string; config?: { digest?: string }; layers?: { digest?: string }[] };
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return [];
-  }
-  if (parsed.mediaType && INDEX_MEDIA_TYPES.has(parsed.mediaType)) return [];
-  const out = new Set<string>();
-  if (typeof parsed.config?.digest === "string") out.add(parsed.config.digest);
-  for (const l of parsed.layers ?? []) if (typeof l?.digest === "string") out.add(l.digest);
-  return [...out];
+  return ociManifestReferences(raw).blobs;
 }
 
 export class DockerAdapter implements FormatAdapter {
