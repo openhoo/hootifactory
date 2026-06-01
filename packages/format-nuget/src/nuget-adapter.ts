@@ -79,15 +79,25 @@ function extractMultipartFile(contentType: string, body: Uint8Array): Uint8Array
   return null;
 }
 
+function validPrerelease(pre: string): boolean {
+  return pre.split(".").every((part) => /^[0-9A-Za-z-]+$/.test(part));
+}
+
 /** NuGet version normalization: drop a zero 4th segment + build metadata, lowercase prerelease. */
-function normalizeNugetVersion(v: string): string {
+function normalizeNugetVersion(v: string): string | null {
   let s = v.trim();
+  if (!s) return null;
   const plus = s.indexOf("+");
   if (plus >= 0) s = s.slice(0, plus); // strip build metadata
   const dash = s.indexOf("-");
   const core = dash >= 0 ? s.slice(0, dash) : s;
-  const pre = dash >= 0 ? s.slice(dash).toLowerCase() : "";
-  const nums = core.split(".").map((n) => String(Number.parseInt(n, 10) || 0));
+  const preRaw = dash >= 0 ? s.slice(dash + 1) : "";
+  if (dash >= 0 && !preRaw) return null;
+  if (preRaw && !validPrerelease(preRaw)) return null;
+  const parts = core.split(".");
+  if (parts.length > 4 || parts.some((part) => !/^\d+$/.test(part))) return null;
+  const pre = preRaw ? `-${preRaw.toLowerCase()}` : "";
+  const nums = parts.map((n) => String(Number.parseInt(n, 10)));
   while (nums.length < 3) nums.push("0");
   if (nums.length === 4 && nums[3] === "0") nums.pop();
   return nums.join(".") + pre;
@@ -102,7 +112,8 @@ function compareNugetVersions(a: string, b: string): number {
   };
   const pa = split(a);
   const pb = split(b);
-  for (let i = 0; i < 3; i++) {
+  const maxCore = Math.max(pa.core.length, pb.core.length);
+  for (let i = 0; i < maxCore; i++) {
     if ((pa.core[i] ?? 0) !== (pb.core[i] ?? 0)) return (pa.core[i] ?? 0) - (pb.core[i] ?? 0);
   }
   if (!pa.pre && pb.pre) return 1;
@@ -255,6 +266,7 @@ export class NugetAdapter implements FormatAdapter {
     const pkg = await this.findPkg(ctx, id);
     if (!pkg) throw Errors.notFound();
     const norm = normalizeNugetVersion(version);
+    if (!norm) throw Errors.notFound();
     // The filename segment must match the canonical {id}.{version}.nupkg this server builds.
     const expected = `${id.toLowerCase()}.${norm}.nupkg`;
     if (file && file.toLowerCase() !== expected) throw Errors.notFound();
@@ -288,6 +300,7 @@ export class NugetAdapter implements FormatAdapter {
     const pkg = await this.findPkg(ctx, id);
     if (!pkg) throw Errors.notFound();
     const norm = normalizeNugetVersion(version);
+    if (!norm) throw Errors.notFound();
     const [row] = await ctx.db
       .select({ id: packageVersions.id, metadata: packageVersions.metadata })
       .from(packageVersions)
@@ -326,21 +339,27 @@ export class NugetAdapter implements FormatAdapter {
       bytes = new Uint8Array(await req.arrayBuffer());
     }
 
-    // Derive id/version from the .nupkg's nuspec when the client didn't pass them.
-    if (!id || !version) {
-      const meta = extractNuspecMeta(bytes);
-      if (meta) {
-        id = id || meta.id;
-        version = version || meta.version;
-      }
-    }
-    if (!id || !version) {
+    const meta = extractNuspecMeta(bytes);
+    if (!meta) {
       return Response.json(
         { error: "could not determine package id and version" },
         { status: 400 },
       );
     }
-    version = normalizeNugetVersion(version);
+    if (id && id.toLowerCase() !== meta.id.toLowerCase()) {
+      return Response.json({ error: "package id does not match nuspec" }, { status: 400 });
+    }
+    id = id || meta.id;
+
+    const normalizedMetaVersion = normalizeNugetVersion(meta.version);
+    const normalizedQueryVersion = version ? normalizeNugetVersion(version) : normalizedMetaVersion;
+    if (!normalizedMetaVersion || !normalizedQueryVersion) {
+      return Response.json({ error: "invalid package version" }, { status: 400 });
+    }
+    if (normalizedQueryVersion !== normalizedMetaVersion) {
+      return Response.json({ error: "package version does not match nuspec" }, { status: 400 });
+    }
+    version = normalizedMetaVersion;
 
     const lower = id.toLowerCase();
     const pkg = await findOrCreatePackage({

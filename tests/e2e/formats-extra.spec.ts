@@ -424,6 +424,45 @@ test.describe("nuget v3 (protocol)", () => {
     });
     expect(next.status()).toBe(201);
 
+    const invalidPush = await owner.ctx.put(`/${repo.mountPath}/v3/package`, {
+      headers: { "content-type": "application/octet-stream" },
+      data: createNupkg(pkgId, "not-a-version"),
+    });
+    expect(invalidPush.status()).toBe(400);
+
+    const mismatchedId = await owner.ctx.put(
+      `/${repo.mountPath}/v3/package?id=${encodeURIComponent(`${pkgId}.Other`)}&version=1.0.2`,
+      {
+        headers: { "content-type": "application/octet-stream" },
+        data: createNupkg(pkgId, "1.0.2"),
+      },
+    );
+    expect(mismatchedId.status()).toBe(400);
+    const mismatchedVersion = await owner.ctx.put(
+      `/${repo.mountPath}/v3/package?id=${encodeURIComponent(pkgId)}&version=1.0.3`,
+      {
+        headers: { "content-type": "application/octet-stream" },
+        data: createNupkg(pkgId, "1.0.2"),
+      },
+    );
+    expect(mismatchedVersion.status()).toBe(400);
+
+    const zeroPkgId = `Hoot.Zero${id}`;
+    const zeroLower = zeroPkgId.toLowerCase();
+    const zeroPush = await owner.ctx.put(`/${repo.mountPath}/v3/package`, {
+      headers: { "content-type": "application/octet-stream" },
+      data: createNupkg(zeroPkgId, "0.0.0"),
+    });
+    expect(zeroPush.status()).toBe(201);
+    const invalidVersionDownload = await owner.ctx.get(
+      `/${repo.mountPath}/v3-flatcontainer/${zeroLower}/not-a-version/${zeroLower}.0.0.0.nupkg`,
+    );
+    expect(invalidVersionDownload.status()).toBe(404);
+    const invalidVersionUnlist = await owner.ctx.delete(
+      `/${repo.mountPath}/v3/package/${zeroPkgId}/not-a-version`,
+    );
+    expect(invalidVersionUnlist.status()).toBe(404);
+
     const svc = await (await owner.ctx.get(`/${repo.mountPath}/v3/index.json`)).json();
     expect(
       svc.resources.some((r: { "@type": string }) => r["@type"].startsWith("PackageBaseAddress")),
