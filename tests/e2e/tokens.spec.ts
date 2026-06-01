@@ -73,13 +73,18 @@ test.describe("api tokens", () => {
     expect(created.status()).toBe(201);
     const { token, secret } = await created.json();
     expect(secret).toMatch(/^hoot_/);
+    expect(token.role).toBe("developer");
+    expect(Date.parse(token.expiresAt)).toBeGreaterThan(Date.now());
 
     const anon = await anonContext(baseURL!);
     const ok = await anon.get("/api/me", { headers: { authorization: `Bearer ${secret}` } });
     expect(ok.status()).toBe(200);
 
     const list = await (await owner.ctx.get(`/api/orgs/${owner.orgId}/tokens`)).json();
-    expect(list.tokens.some((t: { id: string }) => t.id === token.id)).toBe(true);
+    const listed = list.tokens.find((t: { id: string }) => t.id === token.id);
+    expect(listed).toBeTruthy();
+    expect(listed.role).toBe("developer");
+    expect(Date.parse(listed.expiresAt)).toBeGreaterThan(Date.now());
 
     const del = await owner.ctx.delete(`/api/orgs/${owner.orgId}/tokens/${token.id}`);
     expect(del.status()).toBe(200);

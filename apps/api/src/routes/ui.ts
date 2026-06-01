@@ -86,6 +86,23 @@ function repositoryDto(repo: RepositoryRow) {
   };
 }
 
+type ApiTokenRow = typeof apiTokens.$inferSelect;
+
+function tokenDto(token: ApiTokenRow) {
+  return {
+    id: token.id,
+    name: token.name,
+    prefix: token.tokenPrefix,
+    type: token.type,
+    scopes: token.scopes,
+    role: token.role,
+    expiresAt: token.expiresAt,
+    revokedAt: token.revokedAt,
+    lastUsedAt: token.lastUsedAt,
+    createdAt: token.createdAt,
+  };
+}
+
 uiRouter.get("/me", (c) => {
   const p = c.get("principal");
   if (p.kind === "anonymous") return c.json({ authenticated: false }, 401);
@@ -617,18 +634,30 @@ uiRouter.post("/orgs/:orgId/tokens", async (c) => {
     type?: "personal" | "robot";
     scopes?: { repository: string; actions: ("read" | "write" | "delete" | "admin")[] }[];
     role?: "viewer" | "developer" | "admin" | "owner";
+    expiresAt?: string | null;
   } | null;
   if (!body?.name) return c.json({ error: "name required" }, 400);
+  const hasScopes = (body.scopes?.length ?? 0) > 0;
+  const requestedRole = body.role ?? (hasScopes ? undefined : "developer");
+  const expiresAt =
+    body.expiresAt === null
+      ? null
+      : body.expiresAt
+        ? new Date(body.expiresAt)
+        : new Date(Date.now() + 90 * 24 * 60 * 60 * 1000);
+  if (expiresAt && Number.isNaN(expiresAt.getTime())) {
+    return c.json({ error: "expiresAt must be an ISO timestamp or null" }, 400);
+  }
 
   // Prevent privilege escalation: neither the token's role NOR its scope actions
   // may exceed the creator's own org role. (Scopes act as a hard ceiling in can(),
   // so an unchecked scope would let a viewer mint a write/delete/admin token.)
   const creatorRole = await resolveUserRole(p.userId, orgId);
-  if (body.role && (!creatorRole || ROLE_RANK[body.role] > ROLE_RANK[creatorRole])) {
+  if (requestedRole && (!creatorRole || ROLE_RANK[requestedRole] > ROLE_RANK[creatorRole])) {
     return c.json({ error: "cannot grant a role above your own" }, 403);
   }
   const orgRepos =
-    body.role || body.scopes?.length
+    requestedRole || body.scopes?.length
       ? await db
           .select({
             id: repositories.id,
@@ -638,12 +667,12 @@ uiRouter.post("/orgs/:orgId/tokens", async (c) => {
           .from(repositories)
           .where(eq(repositories.orgId, orgId))
       : [];
-  if (body.role) {
+  if (requestedRole) {
     for (const repo of orgRepos) {
       const repoRole = await resolveUserRole(p.userId, orgId, repo.id);
-      if (!repoRole || ROLE_RANK[body.role] > ROLE_RANK[repoRole]) {
+      if (!repoRole || ROLE_RANK[requestedRole] > ROLE_RANK[repoRole]) {
         return c.json(
-          { error: `cannot grant role '${body.role}' on repository '${repo.name}'` },
+          { error: `cannot grant role '${requestedRole}' on repository '${repo.name}'` },
           403,
         );
       }
@@ -677,7 +706,8 @@ uiRouter.post("/orgs/:orgId/tokens", async (c) => {
     name: body.name,
     type: body.type,
     scopes: body.scopes,
-    role: body.role,
+    role: requestedRole,
+    expiresAt,
   });
   void writeAudit({
     orgId,
@@ -688,8 +718,5 @@ uiRouter.post("/orgs/:orgId/tokens", async (c) => {
     principal: p,
     detail: { name: token.name, type: token.type },
   }).catch(() => {});
-  return c.json(
-    { token: { id: token.id, name: token.name, prefix: token.tokenPrefix }, secret },
-    201,
-  );
+  return c.json({ token: tokenDto(token), secret }, 201);
 });
