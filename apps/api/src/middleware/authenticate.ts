@@ -7,13 +7,17 @@ import {
   verifyPassword,
   verifyRegistryToken,
 } from "@hootifactory/auth";
-import { REGISTRY_TOKEN_SERVICE } from "@hootifactory/core";
+import { Errors, REGISTRY_TOKEN_SERVICE } from "@hootifactory/core";
 import { db, eq, users } from "@hootifactory/db";
 import type { Context } from "hono";
 import { getCookie } from "hono/cookie";
 import type { AppEnv } from "../types";
 
 export const SESSION_COOKIE = "hoot_session";
+
+function invalidCredentials(): never {
+  throw Errors.unauthorized("invalid authorization credentials");
+}
 
 async function userPrincipalById(userId: string): Promise<Principal | null> {
   const [u] = await db
@@ -45,8 +49,9 @@ export async function authenticateUserPassword(
 
 /**
  * Resolve the request's identity from (in order): Bearer token, Basic auth
- * (token-as-password or user/pass), then the session cookie. Defaults to
- * anonymous. Docker registry JWTs are handled inside the docker adapter flow.
+ * (token-as-password or user/pass), then the session cookie. Invalid explicit
+ * credentials fail closed instead of falling through to a cookie. Requests with
+ * no credentials default to anonymous.
  */
 export async function authenticate(c: Context<AppEnv>): Promise<Principal> {
   const authz = c.req.header("authorization");
@@ -56,6 +61,7 @@ export async function authenticate(c: Context<AppEnv>): Promise<Principal> {
       if (tok.startsWith(TOKEN_PREFIX)) {
         const p = await resolveToken(tok);
         if (p) return p;
+        invalidCredentials();
       } else {
         // OCI registry Bearer JWT (issued by /token).
         try {
@@ -66,7 +72,7 @@ export async function authenticate(c: Context<AppEnv>): Promise<Principal> {
             access: verified.access,
           };
         } catch {
-          // not a valid registry token — fall through
+          invalidCredentials();
         }
       }
     } else if (authz.startsWith("Basic ")) {
@@ -74,7 +80,7 @@ export async function authenticate(c: Context<AppEnv>): Promise<Principal> {
       try {
         decoded = atob(authz.slice(6).trim());
       } catch {
-        decoded = "";
+        invalidCredentials();
       }
       const idx = decoded.indexOf(":");
       if (idx >= 0) {
@@ -87,10 +93,14 @@ export async function authenticate(c: Context<AppEnv>): Promise<Principal> {
         const up = await authenticateUserPassword(user, pass);
         if (up) return up;
       }
+      invalidCredentials();
     } else if (authz.startsWith(TOKEN_PREFIX)) {
       // Bare token (Cargo sends the token with no scheme).
       const p = await resolveToken(authz.trim());
       if (p) return p;
+      invalidCredentials();
+    } else {
+      invalidCredentials();
     }
   }
 
@@ -100,6 +110,9 @@ export async function authenticate(c: Context<AppEnv>): Promise<Principal> {
   if (apiKey?.startsWith(TOKEN_PREFIX)) {
     const p = await resolveToken(apiKey.trim());
     if (p) return p;
+    invalidCredentials();
+  } else if (apiKey) {
+    invalidCredentials();
   }
 
   const session = getCookie(c, SESSION_COOKIE);

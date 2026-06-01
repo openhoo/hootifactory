@@ -80,9 +80,27 @@ test.describe("authentication", () => {
     expect((await me.json()).principal.kind).toBe("token");
   });
 
-  test("garbage bearer -> anonymous (401 on /api/me)", async ({ baseURL }) => {
+  test("garbage bearer -> 401 on /api/me", async ({ baseURL }) => {
     const anon = await anonContext(baseURL!);
     const me = await anon.get("/api/me", { headers: { authorization: "Bearer hoot_garbage" } });
     expect(me.status()).toBe(401);
+  });
+
+  test("invalid explicit auth does not fall back to a valid session cookie", async ({
+    baseURL,
+  }) => {
+    const owner = await setupOwner(baseURL!);
+    expect((await owner.ctx.get("/api/me")).status()).toBe(200);
+
+    const bearer = await owner.ctx.get("/api/me", {
+      headers: { authorization: "Bearer hoot_garbage" },
+    });
+    expect(bearer.status()).toBe(401);
+
+    const basic = Buffer.from(`${owner.username}:wrong-password`).toString("base64");
+    const basicRes = await owner.ctx.get("/api/me", {
+      headers: { authorization: `Basic ${basic}` },
+    });
+    expect(basicRes.status()).toBe(401);
   });
 });
