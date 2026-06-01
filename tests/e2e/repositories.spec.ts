@@ -125,13 +125,15 @@ test.describe("repositories", () => {
     });
     expect(npmProxy.status()).toBe(201);
 
-    const dockerProxy = await createRepo(owner.ctx, owner.orgId, {
-      name: uniq("repo"),
-      format: "docker",
-      kind: "proxy",
-    });
-    expect(dockerProxy.status()).toBe(400);
-    expect(await dockerProxy.text()).toContain("proxy repositories are not supported");
+    for (const format of ["docker", "oci", "helm", "pypi", "go", "cargo", "nuget"]) {
+      const proxy = await createRepo(owner.ctx, owner.orgId, {
+        name: uniq("repo"),
+        format,
+        kind: "proxy",
+      });
+      expect(proxy.status()).toBe(400);
+      expect(await proxy.text()).toContain("proxy repositories are not supported");
+    }
   });
 
   test("anonymous cannot create repo -> 401", async ({ baseURL }) => {

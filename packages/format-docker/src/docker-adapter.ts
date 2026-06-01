@@ -130,7 +130,7 @@ export class DockerAdapter implements FormatAdapter {
   readonly capabilities = {
     contentAddressable: true,
     resumableUploads: true,
-    proxyable: true,
+    proxyable: false,
     virtualizable: true,
   };
 

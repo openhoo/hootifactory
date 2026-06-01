@@ -77,7 +77,7 @@ export class PypiAdapter implements FormatAdapter {
   readonly capabilities = {
     contentAddressable: false,
     resumableUploads: false,
-    proxyable: true,
+    proxyable: false,
     virtualizable: true,
   };
 

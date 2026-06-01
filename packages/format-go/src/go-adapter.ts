@@ -187,7 +187,7 @@ export class GoAdapter implements FormatAdapter {
   readonly capabilities = {
     contentAddressable: false,
     resumableUploads: false,
-    proxyable: true,
+    proxyable: false,
     virtualizable: true,
   };
 
