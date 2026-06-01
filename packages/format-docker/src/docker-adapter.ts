@@ -44,6 +44,8 @@ async function bodyBytes(req: Request): Promise<Uint8Array> {
 
 const UPLOAD_TTL_MS = 24 * 60 * 60 * 1000;
 
+type Tx = Parameters<Parameters<RepoContext["db"]["transaction"]>[0]>[0];
+
 const INDEX_MEDIA_TYPES = new Set<string>([
   OCI_MEDIA_TYPES.imageIndexV1,
   OCI_MEDIA_TYPES.dockerManifestListV2,
@@ -759,6 +761,17 @@ export class DockerAdapter implements FormatAdapter {
     return s ?? null;
   }
 
+  private async loadSessionForUpdateTx(uuid: string, ctx: RepoContext, tx: Tx) {
+    // Scope to the current repo so an upload session cannot be driven cross-repo.
+    const [s] = await tx
+      .select()
+      .from(uploadSessions)
+      .where(and(eq(uploadSessions.id, uuid), eq(uploadSessions.repositoryId, ctx.repo.id)))
+      .for("update")
+      .limit(1);
+    return s ?? null;
+  }
+
   private async loadOpenSession(uuid: string, ctx: RepoContext) {
     const s = await this.loadSession(uuid, ctx);
     if (!s) throw Errors.blobUploadUnknown({ uuid });
@@ -766,6 +779,27 @@ export class DockerAdapter implements FormatAdapter {
     if (s.expiresAt.getTime() <= Date.now()) {
       await ctx.blobs.deleteKey(s.storageKey).catch(() => {});
       await ctx.db
+        .update(uploadSessions)
+        .set({ state: "aborted" })
+        .where(
+          and(
+            eq(uploadSessions.id, uuid),
+            eq(uploadSessions.repositoryId, ctx.repo.id),
+            eq(uploadSessions.state, "open"),
+          ),
+        );
+      throw Errors.blobUploadUnknown({ uuid, reason: "expired" });
+    }
+    return s;
+  }
+
+  private async loadOpenSessionForUpdateTx(uuid: string, ctx: RepoContext, tx: Tx) {
+    const s = await this.loadSessionForUpdateTx(uuid, ctx, tx);
+    if (!s) throw Errors.blobUploadUnknown({ uuid });
+    if (s.state !== "open") throw Errors.blobUploadUnknown({ uuid, state: s.state });
+    if (s.expiresAt.getTime() <= Date.now()) {
+      await ctx.blobs.deleteKey(s.storageKey).catch(() => {});
+      await tx
         .update(uploadSessions)
         .set({ state: "aborted" })
         .where(
@@ -836,19 +870,22 @@ export class DockerAdapter implements FormatAdapter {
     ctx: RepoContext,
   ): Promise<Response> {
     const chunk = await bodyBytes(req);
-    const s = await this.loadOpenSession(uuid, ctx);
-    validateContentRange(req, s.offsetBytes, chunk.length);
-    const offset = await this.appendChunk(s, chunk, ctx);
-    await ctx.db
-      .update(uploadSessions)
-      .set({ offsetBytes: offset })
-      .where(
-        and(
-          eq(uploadSessions.id, uuid),
-          eq(uploadSessions.repositoryId, ctx.repo.id),
-          eq(uploadSessions.state, "open"),
-        ),
-      );
+    const offset = await ctx.db.transaction(async (tx) => {
+      const s = await this.loadOpenSessionForUpdateTx(uuid, ctx, tx);
+      validateContentRange(req, s.offsetBytes, chunk.length);
+      const nextOffset = await this.appendChunk(s, chunk, ctx);
+      await tx
+        .update(uploadSessions)
+        .set({ offsetBytes: nextOffset })
+        .where(
+          and(
+            eq(uploadSessions.id, uuid),
+            eq(uploadSessions.repositoryId, ctx.repo.id),
+            eq(uploadSessions.state, "open"),
+          ),
+        );
+      return nextOffset;
+    });
     return new Response(null, {
       status: 202,
       headers: {
@@ -871,33 +908,36 @@ export class DockerAdapter implements FormatAdapter {
     if (!digest || !isValidDigest(digest)) throw Errors.digestInvalid({ reason: "missing digest" });
 
     const chunk = await bodyBytes(req);
-    const s = await this.loadOpenSession(uuid, ctx);
-    validateContentRange(req, s.offsetBytes, chunk.length);
-    const existing =
-      s.offsetBytes > 0 ? await ctx.blobs.bytesAtKey(s.storageKey) : new Uint8Array(0);
-    if (existing.length !== s.offsetBytes) {
-      throw Errors.blobUploadInvalid({
-        reason: "staging offset mismatch",
-        expected: s.offsetBytes,
-        actual: existing.length,
-      });
-    }
-    const full = chunk.length ? concat(existing, chunk) : existing;
-    if (computeDigest(full) !== digest) {
-      throw Errors.digestInvalid({ expected: digest, got: computeDigest(full) });
-    }
-    await storeBlobWithRef(ctx, { data: full, kind: "oci_layer", scope: image });
-    await ctx.blobs.deleteKey(s.storageKey).catch(() => {});
-    await ctx.db
-      .update(uploadSessions)
-      .set({ state: "committed", offsetBytes: full.length })
-      .where(
-        and(
-          eq(uploadSessions.id, uuid),
-          eq(uploadSessions.repositoryId, ctx.repo.id),
-          eq(uploadSessions.state, "open"),
-        ),
-      );
+    const committed = await ctx.db.transaction(async (tx) => {
+      const s = await this.loadOpenSessionForUpdateTx(uuid, ctx, tx);
+      validateContentRange(req, s.offsetBytes, chunk.length);
+      const existing =
+        s.offsetBytes > 0 ? await ctx.blobs.bytesAtKey(s.storageKey) : new Uint8Array(0);
+      if (existing.length !== s.offsetBytes) {
+        throw Errors.blobUploadInvalid({
+          reason: "staging offset mismatch",
+          expected: s.offsetBytes,
+          actual: existing.length,
+        });
+      }
+      const full = chunk.length ? concat(existing, chunk) : existing;
+      if (computeDigest(full) !== digest) {
+        throw Errors.digestInvalid({ expected: digest, got: computeDigest(full) });
+      }
+      await storeBlobWithRef(ctx, { data: full, kind: "oci_layer", scope: image });
+      await tx
+        .update(uploadSessions)
+        .set({ state: "committed", offsetBytes: full.length })
+        .where(
+          and(
+            eq(uploadSessions.id, uuid),
+            eq(uploadSessions.repositoryId, ctx.repo.id),
+            eq(uploadSessions.state, "open"),
+          ),
+        );
+      return { storageKey: s.storageKey };
+    });
+    await ctx.blobs.deleteKey(committed.storageKey).catch(() => {});
 
     return new Response(null, {
       status: 201,
@@ -910,11 +950,13 @@ export class DockerAdapter implements FormatAdapter {
   }
 
   private async cancelUpload(uuid: string, ctx: RepoContext): Promise<Response> {
-    const s = await this.loadSession(uuid, ctx);
-    if (s && s.state === "open") {
-      await ctx.blobs.deleteKey(s.storageKey).catch(() => {});
-      await ctx.db.delete(uploadSessions).where(eq(uploadSessions.id, uuid));
-    }
+    await ctx.db.transaction(async (tx) => {
+      const s = await this.loadSessionForUpdateTx(uuid, ctx, tx);
+      if (s && s.state === "open") {
+        await ctx.blobs.deleteKey(s.storageKey).catch(() => {});
+        await tx.delete(uploadSessions).where(eq(uploadSessions.id, uuid));
+      }
+    });
     return new Response(null, { status: 204 });
   }
 }
