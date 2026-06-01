@@ -117,8 +117,18 @@ test.describe("virtual + proxy repositories (real npm)", () => {
     const pkg = `up${Date.now().toString(36)}`;
     publish(baseURL!, upstream.mountPath, token, pkg);
 
+    const directTarballBeforeIngest = await owner.ctx.get(
+      `/${proxy.mountPath}/${pkg}/-/${pkg}-1.0.0.tgz`,
+    );
+    expect(directTarballBeforeIngest.status()).toBe(404);
+
     const dir = installAll(baseURL!, proxy.mountPath, token, [`${pkg}@1.0.0`]);
     expect(existsSync(join(dir, "node_modules", pkg, "index.js"))).toBe(true);
+
+    const localTarballAfterIngest = await owner.ctx.get(
+      `/${proxy.mountPath}/${pkg}/-/${pkg}-1.0.0.tgz`,
+    );
+    expect(localTarballAfterIngest.status()).toBe(200);
   });
 });
 

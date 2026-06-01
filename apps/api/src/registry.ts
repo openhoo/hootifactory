@@ -13,7 +13,6 @@ import {
   type RepoContext,
   type RouteMatch,
   resolveRepository,
-  safeFetch,
 } from "@hootifactory/core";
 import type { Context } from "hono";
 import { buildRepoContext } from "./context";
@@ -52,17 +51,6 @@ async function serveWeb(pathname: string): Promise<Response | null> {
 
 const isRead = (m: string) => m === "GET" || m === "HEAD";
 const OCI_BEARER_FORMATS = new Set(["docker", "oci", "helm"]);
-
-/** Upstream response headers safe + useful to forward on a proxy passthrough. */
-const PROXY_FORWARD_HEADERS = [
-  "content-type",
-  "content-length",
-  "docker-content-digest",
-  "etag",
-  "accept-ranges",
-  "content-range",
-  "last-modified",
-];
 
 function isRegistryMiss(err: unknown): err is RegistryError {
   return (
@@ -141,29 +129,14 @@ async function dispatchProxy(
   if (!upstream) return local;
 
   // Format-aware mirror (npm packument -> ingest tarballs), then retry locally.
+  // Do not fall back to transparent passthrough: returning upstream bytes
+  // directly would bypass local artifact records, scan policy, quotas, and
+  // retention semantics.
   if (adapter.proxyIngest && match.entry.handlerId === "packument") {
     const ok = await adapter.proxyIngest(match.params.pkg ?? "", upstream.url, ctx);
     if (ok) return adapter.handle(match, req, ctx);
   }
-
-  // Transparent passthrough for anything else (e.g. files). The fetch goes
-  // through safeFetch, which rejects private/loopback/metadata hosts and
-  // re-validates each redirect hop (SSRF defense).
-  const target = upstream.url.replace(/\/$/, "") + match.path;
-  let res: Response;
-  try {
-    res = await safeFetch(target);
-  } catch {
-    return local; // invalid/blocked upstream URL or network error — serve the local miss
-  }
-  if (!res.ok) return local;
-  const headers = new Headers();
-  for (const h of PROXY_FORWARD_HEADERS) {
-    const v = res.headers.get(h);
-    if (v) headers.set(h, v);
-  }
-  if (!headers.has("content-type")) headers.set("content-type", "application/octet-stream");
-  return new Response(res.body, { status: res.status, headers });
+  return local;
 }
 
 /**
