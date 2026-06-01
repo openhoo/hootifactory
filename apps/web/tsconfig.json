@@ -3,7 +3,7 @@
   "compilerOptions": {
     "lib": ["ESNext", "DOM", "DOM.Iterable"],
     "jsx": "react-jsx",
-    "types": ["react", "react-dom", "vite/client"],
+    "types": ["bun", "react", "react-dom", "vite/client"],
     "noEmit": true,
     "paths": {
       "@/*": ["./src/*"]

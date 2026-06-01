@@ -42,7 +42,7 @@ async function loadPolicy(orgId: string, repoName: string): Promise<PolicyRow | 
   return wildcard;
 }
 
-function dedupe(items: NormalizedFinding[]): NormalizedFinding[] {
+export function dedupeFindings(items: NormalizedFinding[]): NormalizedFinding[] {
   const seen = new Set<string>();
   const out: NormalizedFinding[] = [];
   for (const f of items) {
@@ -55,7 +55,7 @@ function dedupe(items: NormalizedFinding[]): NormalizedFinding[] {
   return out;
 }
 
-function ociManifestReferences(raw: string): { blobs: string[]; manifests: string[] } {
+export function ociManifestReferences(raw: string): { blobs: string[]; manifests: string[] } {
   let parsed: OciManifest;
   try {
     parsed = JSON.parse(raw) as OciManifest;
@@ -233,7 +233,7 @@ export async function processScan(artifactId: string): Promise<void> {
     found.push(...(await osvScanDependencies("npm", deps, env.OSV_API_URL)));
   }
 
-  const results = dedupe(found);
+  const results = dedupeFindings(found);
 
   const dedupKey = {
     artifactId: art.id,
