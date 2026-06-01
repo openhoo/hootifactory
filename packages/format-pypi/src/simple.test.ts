@@ -1,10 +1,25 @@
 import { describe, expect, test } from "bun:test";
-import { normalizeName, renderProjectHtml, renderRootHtml } from "./simple";
+import {
+  isSafeDistributionFilename,
+  isValidProjectName,
+  normalizeName,
+  renderProjectHtml,
+  renderRootHtml,
+} from "./simple";
 
 describe("PyPI simple API rendering", () => {
   test("normalizes project names according to PEP 503", () => {
     expect(normalizeName("My_Pkg.Name")).toBe("my-pkg-name");
     expect(normalizeName("already-normal")).toBe("already-normal");
+  });
+
+  test("validates project names and distribution filenames before storage", () => {
+    expect(isValidProjectName("My_Pkg.Name")).toBe(true);
+    expect(isValidProjectName("bad/name")).toBe(false);
+    expect(isValidProjectName("../pkg")).toBe(false);
+    expect(isSafeDistributionFilename("pkg-1.0.0-py3-none-any.whl")).toBe(true);
+    expect(isSafeDistributionFilename("pkg/1.0.0.whl")).toBe(false);
+    expect(isSafeDistributionFilename("pkg\\1.0.0.whl")).toBe(false);
   });
 
   test("escapes project page filenames, URLs, and python requirements", () => {

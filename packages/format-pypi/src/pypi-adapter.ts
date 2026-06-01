@@ -15,7 +15,14 @@ import {
 } from "@hootifactory/core";
 import { and, eq, isNull, packages, packageVersions } from "@hootifactory/db";
 import { computeDigest, digestHex } from "@hootifactory/storage";
-import { normalizeName, renderProjectHtml, renderRootHtml, type SimpleFile } from "./simple";
+import {
+  isSafeDistributionFilename,
+  isValidProjectName,
+  normalizeName,
+  renderProjectHtml,
+  renderRootHtml,
+  type SimpleFile,
+} from "./simple";
 
 interface PypiFileMeta {
   filename: string;
@@ -205,9 +212,15 @@ export class PypiAdapter implements FormatAdapter {
     if (!rawName || !version) {
       return Response.json({ error: "missing name or version" }, { status: 400 });
     }
+    if (!isValidProjectName(rawName)) {
+      return Response.json({ error: "invalid project name" }, { status: 400 });
+    }
     const name = normalizeName(rawName);
     const bytes = new Uint8Array(await content.arrayBuffer());
     const filename = content.name;
+    if (!isSafeDistributionFilename(filename)) {
+      return Response.json({ error: "invalid distribution filename" }, { status: 400 });
+    }
     const filenameIdentity = parsePypiFilename(filename);
     if (
       !filenameIdentity ||

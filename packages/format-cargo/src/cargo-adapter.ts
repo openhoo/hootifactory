@@ -23,6 +23,10 @@ export function cargoIndexPath(name: string): string {
   return `${n.slice(0, 2)}/${n.slice(2, 4)}/${n}`;
 }
 
+export function isValidCargoCrateName(name: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(name);
+}
+
 function sha256hex(bytes: Uint8Array): string {
   const h = new Bun.CryptoHasher("sha256");
   h.update(bytes);
@@ -200,6 +204,9 @@ export class CargoAdapter implements FormatAdapter {
     }
     if (typeof meta.name !== "string" || typeof meta.vers !== "string") {
       throw Errors.manifestInvalid({ reason: "publish metadata requires name and vers" });
+    }
+    if (!isValidCargoCrateName(meta.name)) {
+      throw Errors.manifestInvalid({ reason: "invalid crate name" });
     }
     off += jsonLen;
     const crateLen = dv.getUint32(off, true);

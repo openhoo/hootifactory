@@ -57,3 +57,12 @@ ${links}
 export function normalizeName(name: string): string {
   return name.toLowerCase().replace(/[-_.]+/g, "-");
 }
+
+/** Core Metadata project names: ASCII alnum with internal dot/underscore/hyphen separators. */
+export function isValidProjectName(name: string): boolean {
+  return /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/.test(name);
+}
+
+export function isSafeDistributionFilename(filename: string): boolean {
+  return Boolean(filename) && !filename.includes("/") && !filename.includes("\\");
+}

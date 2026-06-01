@@ -331,6 +331,18 @@ test.describe("cargo sparse registry (protocol)", () => {
     });
     expect(missingFields.status()).toBe(400);
     expect((await missingFields.json()).errors[0].code).toBe("MANIFEST_INVALID");
+
+    for (const crate of ["bad/name", "../crate", "bad\\name"]) {
+      const invalidName = await anon.put(`/${repo.mountPath}/api/v1/crates/new`, {
+        headers: { authorization: token },
+        data: cargoPublishBody(
+          { name: crate, vers: "1.0.0", deps: [], features: {} },
+          new TextEncoder().encode("crate"),
+        ),
+      });
+      expect(invalidName.status()).toBe(400);
+      expect((await invalidName.json()).errors[0].code).toBe("MANIFEST_INVALID");
+    }
   });
 });
 
@@ -576,6 +588,28 @@ test.describe("pypi simple API (protocol)", () => {
       bytes: Buffer.from("wrong project wheel"),
     });
     expect(wrongProject.status()).toBe(400);
+
+    const invalidName = await uploadPypiFile({
+      ctx: anon,
+      mountPath: repo.mountPath,
+      secret,
+      pkg: `bad/name-${id}`,
+      version: "1.0.0",
+      filename: `bad_name_${id}-1.0.0-py3-none-any.whl`,
+      bytes: Buffer.from("invalid project"),
+    });
+    expect(invalidName.status()).toBe(400);
+
+    const invalidFilename = await uploadPypiFile({
+      ctx: anon,
+      mountPath: repo.mountPath,
+      secret,
+      pkg,
+      version: "1.0.0",
+      filename: `${pkg}/1.0.0-py3-none-any.whl`,
+      bytes: Buffer.from("invalid filename"),
+    });
+    expect(invalidFilename.status()).toBe(400);
 
     const valid = await uploadPypiFile({
       ctx: anon,
