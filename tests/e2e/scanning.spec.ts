@@ -69,23 +69,6 @@ async function pollArtifact(
   throw new Error(`artifact ${name} was not scanned within ${timeoutMs}ms`);
 }
 
-async function pollArtifactSeen(
-  ctx: APIRequestContext,
-  repoId: string,
-  name: string,
-  timeoutMs = 10_000,
-): Promise<{ id: string; state: string }> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const res = await ctx.get(`/api/repositories/${repoId}/artifacts`);
-    const body = (await res.json()) as { artifacts: { id: string; name: string; state: string }[] };
-    const found = body.artifacts.find((a) => a.name === name);
-    if (found) return found;
-    await new Promise((r) => setTimeout(r, 100));
-  }
-  throw new Error(`artifact ${name} was not created within ${timeoutMs}ms`);
-}
-
 function sha256(bytes: Buffer | string): string {
   return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 }
@@ -257,7 +240,8 @@ test.describe("scanning + policy gates", () => {
 
     const pkg = `pendingpkg${Date.now().toString(36)}`;
     const tarball = await publishRawNpm(owner.ctx, repo.mountPath, pkg, {});
-    const art = await pollArtifactSeen(owner.ctx, repo.id, pkg);
+    const art = await pollArtifact(owner.ctx, repo.id, pkg);
+    expect(art.state).toBe("clean");
     setArtifactState(art.id, "pending");
 
     const pending = await owner.ctx.get(`/${repo.mountPath}/${pkg}/-/${pkg}-1.0.0.tgz`);
