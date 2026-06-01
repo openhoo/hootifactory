@@ -6,8 +6,13 @@ test.describe("repositories", () => {
     const owner = await setupOwner(baseURL!);
     const cases: [string, string][] = [
       ["docker", "v2"],
+      ["oci", "v2"],
+      ["helm", "v2"],
       ["npm", "npm"],
       ["pypi", "pypi"],
+      ["go", "go"],
+      ["cargo", "cargo"],
+      ["nuget", "nuget"],
     ];
     for (const [format, seg] of cases) {
       const name = uniq("repo");
@@ -38,6 +43,15 @@ test.describe("repositories", () => {
   test("missing fields -> 400", async ({ baseURL }) => {
     const owner = await setupOwner(baseURL!);
     expect((await createRepo(owner.ctx, owner.orgId, { name: "x" })).status()).toBe(400);
+  });
+
+  test("unsupported formats are rejected", async ({ baseURL }) => {
+    const owner = await setupOwner(baseURL!);
+    for (const format of ["generic", "maven"]) {
+      const res = await createRepo(owner.ctx, owner.orgId, { name: uniq("repo"), format });
+      expect(res.status()).toBe(400);
+      expect(await res.text()).toContain("unsupported repository format");
+    }
   });
 
   test("anonymous cannot create repo -> 401", async ({ baseURL }) => {

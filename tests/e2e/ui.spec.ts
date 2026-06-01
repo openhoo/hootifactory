@@ -26,6 +26,17 @@ test.describe("web UI (browser)", () => {
     // create a repository
     await page.getByRole("link", { name: "Repositories" }).click();
     await page.getByTestId("new-repo").click();
+    await expect(page.getByTestId("repo-format")).toBeVisible();
+    expect(await page.getByTestId("repo-format").locator("option").allTextContents()).toEqual([
+      "npm",
+      "docker",
+      "oci",
+      "pypi",
+      "helm",
+      "nuget",
+      "go",
+      "cargo",
+    ]);
     await page.getByTestId("repo-name").fill("uirepo");
     await page.getByTestId("repo-format").selectOption("docker");
     await page.getByTestId("repo-create").click();

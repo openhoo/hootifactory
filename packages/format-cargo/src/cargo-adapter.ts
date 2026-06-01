@@ -11,7 +11,7 @@ import {
   storeBlobWithRef,
   upsertPackageVersion,
 } from "@hootifactory/core";
-import { and, asc, eq, packages, packageVersions } from "@hootifactory/db";
+import { and, asc, eq, isNull, packages, packageVersions } from "@hootifactory/db";
 
 /** Cargo sparse-index path sharding for a crate name. */
 export function cargoIndexPath(name: string): string {
@@ -102,7 +102,7 @@ export class CargoAdapter implements FormatAdapter {
     const vers = await ctx.db
       .select({ metadata: packageVersions.metadata })
       .from(packageVersions)
-      .where(eq(packageVersions.packageId, pkg.id))
+      .where(and(eq(packageVersions.packageId, pkg.id), isNull(packageVersions.deletedAt)))
       .orderBy(asc(packageVersions.createdAt));
     const lines = vers
       .map((v) => JSON.stringify((v.metadata as unknown as CargoVersionMeta).index))
@@ -116,7 +116,13 @@ export class CargoAdapter implements FormatAdapter {
     const [v] = await ctx.db
       .select({ metadata: packageVersions.metadata })
       .from(packageVersions)
-      .where(and(eq(packageVersions.packageId, pkg.id), eq(packageVersions.version, version)))
+      .where(
+        and(
+          eq(packageVersions.packageId, pkg.id),
+          eq(packageVersions.version, version),
+          isNull(packageVersions.deletedAt),
+        ),
+      )
       .limit(1);
     const digest = (v?.metadata as unknown as CargoVersionMeta | undefined)?.crateDigest;
     if (!digest || !(await ctx.blobs.exists(digest))) throw Errors.notFound();
@@ -140,7 +146,13 @@ export class CargoAdapter implements FormatAdapter {
     const [v] = await ctx.db
       .select({ id: packageVersions.id, metadata: packageVersions.metadata })
       .from(packageVersions)
-      .where(and(eq(packageVersions.packageId, pkg.id), eq(packageVersions.version, version)))
+      .where(
+        and(
+          eq(packageVersions.packageId, pkg.id),
+          eq(packageVersions.version, version),
+          isNull(packageVersions.deletedAt),
+        ),
+      )
       .limit(1);
     if (!v) throw Errors.notFound();
     const meta = (v.metadata ?? {}) as { index?: Record<string, unknown> };
@@ -195,6 +207,19 @@ export class CargoAdapter implements FormatAdapter {
       repositoryId: ctx.repo.id,
       name,
     });
+    const [existing] = await ctx.db
+      .select({ id: packageVersions.id })
+      .from(packageVersions)
+      .where(
+        and(
+          eq(packageVersions.packageId, pkg.id),
+          eq(packageVersions.version, meta.vers),
+          isNull(packageVersions.deletedAt),
+        ),
+      )
+      .limit(1);
+    if (existing) return Response.json({ error: "version already exists" }, { status: 409 });
+
     const stored = await storeBlobWithRef(ctx, {
       data: crateBytes,
       kind: "generic_file",

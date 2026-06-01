@@ -567,7 +567,7 @@ function DashboardPage() {
 }
 
 // ── repositories ─────────────────────────────────────────────────────────
-const FORMATS = ["npm", "docker", "pypi", "helm", "nuget", "go", "cargo", "generic"];
+const FORMATS = ["npm", "docker", "oci", "pypi", "helm", "nuget", "go", "cargo"];
 
 function ReposPage() {
   const { selected } = useOrg();

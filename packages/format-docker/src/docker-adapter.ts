@@ -20,9 +20,11 @@ import {
   blobs,
   eq,
   inArray,
+  isNull,
   ociManifests,
   ociTags,
   packages,
+  packageVersions,
   repositories,
   sql,
   uploadSessions,
@@ -137,9 +139,9 @@ export class DockerAdapter implements FormatAdapter {
       case "cancelUpload":
         return this.cancelUpload(match.params.uuid ?? "", ctx);
       case "headBlob":
-        return this.getBlob(match.params.digest ?? "", ctx, true);
+        return this.getBlob(image, match.params.digest ?? "", ctx, true);
       case "getBlob":
-        return this.getBlob(match.params.digest ?? "", ctx, false);
+        return this.getBlob(image, match.params.digest ?? "", ctx, false);
       default:
         throw Errors.notFound();
     }
@@ -177,7 +179,11 @@ export class DockerAdapter implements FormatAdapter {
         .select({ digest: blobRefs.digest })
         .from(blobRefs)
         .where(
-          and(eq(blobRefs.repositoryId, ctx.repo.id), inArray(blobRefs.digest, referencedBlobs)),
+          and(
+            eq(blobRefs.repositoryId, ctx.repo.id),
+            eq(blobRefs.scope, image),
+            inArray(blobRefs.digest, referencedBlobs),
+          ),
         );
       const have = new Set(present.map((r) => r.digest));
       const missing = referencedBlobs.filter((d) => !have.has(d));
@@ -209,6 +215,8 @@ export class DockerAdapter implements FormatAdapter {
       .returning({ id: ociManifests.id });
 
     // Tag (mutable pointer) + a UI-visible version when reference is not a digest.
+    // Digest-addressed pushes still record the image->digest ownership so a
+    // scoped token for another image cannot later fetch the manifest by digest.
     if (!reference.startsWith("sha256:")) {
       await ctx.db
         .insert(ociTags)
@@ -222,6 +230,13 @@ export class DockerAdapter implements FormatAdapter {
           target: [ociTags.packageId, ociTags.tag],
           set: { manifestId: manifest!.id },
         });
+      await upsertPackageVersion(ctx, {
+        packageId: pkg.id,
+        version: reference,
+        metadata: { digest, mediaType, manifest: parsed },
+        sizeBytes: bytes.length,
+      });
+    } else {
       await upsertPackageVersion(ctx, {
         packageId: pkg.id,
         version: reference,
@@ -247,7 +262,35 @@ export class DockerAdapter implements FormatAdapter {
   }
 
   private async resolveManifest(image: string, reference: string, ctx: RepoContext) {
+    const [pkg] = await ctx.db
+      .select({ id: packages.id })
+      .from(packages)
+      .where(and(eq(packages.repositoryId, ctx.repo.id), eq(packages.name, image)))
+      .limit(1);
+    if (!pkg) return null;
+
     if (reference.startsWith("sha256:")) {
+      const [tagged] = await ctx.db
+        .select({ manifest: ociManifests })
+        .from(ociTags)
+        .innerJoin(ociManifests, eq(ociTags.manifestId, ociManifests.id))
+        .where(and(eq(ociTags.packageId, pkg.id), eq(ociManifests.digest, reference)))
+        .limit(1);
+      if (tagged) return tagged.manifest;
+
+      const [digestVersion] = await ctx.db
+        .select({ id: packageVersions.id })
+        .from(packageVersions)
+        .where(
+          and(
+            eq(packageVersions.packageId, pkg.id),
+            eq(packageVersions.version, reference),
+            isNull(packageVersions.deletedAt),
+          ),
+        )
+        .limit(1);
+      if (!digestVersion) return null;
+
       const [m] = await ctx.db
         .select()
         .from(ociManifests)
@@ -255,12 +298,6 @@ export class DockerAdapter implements FormatAdapter {
         .limit(1);
       return m ?? null;
     }
-    const [pkg] = await ctx.db
-      .select({ id: packages.id })
-      .from(packages)
-      .where(and(eq(packages.repositoryId, ctx.repo.id), eq(packages.name, image)))
-      .limit(1);
-    if (!pkg) return null;
     const [tag] = await ctx.db
       .select({ manifestId: ociTags.manifestId })
       .from(ociTags)
@@ -300,6 +337,8 @@ export class DockerAdapter implements FormatAdapter {
     ctx: RepoContext,
   ): Promise<Response> {
     if (reference.startsWith("sha256:")) {
+      const scoped = await this.resolveManifest(image, reference, ctx);
+      if (!scoped) throw Errors.manifestUnknown({ reference });
       // Read the manifest first so its now-unreferenced layer/config blobs can be released.
       const [m] = await ctx.db
         .select({ raw: ociManifests.raw })
@@ -401,11 +440,22 @@ export class DockerAdapter implements FormatAdapter {
   }
 
   // ── blobs ──────────────────────────────────────────────────────────────
-  private async getBlob(digest: string, ctx: RepoContext, headOnly: boolean): Promise<Response> {
+  private async getBlob(
+    image: string,
+    digest: string,
+    ctx: RepoContext,
+    headOnly: boolean,
+  ): Promise<Response> {
     const [ref] = await ctx.db
       .select({ id: blobRefs.id })
       .from(blobRefs)
-      .where(and(eq(blobRefs.repositoryId, ctx.repo.id), eq(blobRefs.digest, digest)))
+      .where(
+        and(
+          eq(blobRefs.repositoryId, ctx.repo.id),
+          eq(blobRefs.scope, image),
+          eq(blobRefs.digest, digest),
+        ),
+      )
       .limit(1);
     if (!ref) throw Errors.blobUnknown({ digest });
     // Defense-in-depth: a layer reachable only through blocked manifests is blocked too.

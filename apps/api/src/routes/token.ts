@@ -52,7 +52,7 @@ async function handleToken(c: Context<AppEnv>): Promise<Response> {
           type: "repository",
           orgId: repo.orgId,
           repositoryId: repo.id,
-          repositoryName: repo.name,
+          repositoryName: name,
           visibility: repo.visibility,
         });
         if (decision.allowed && !granted.includes(da)) granted.push(da);

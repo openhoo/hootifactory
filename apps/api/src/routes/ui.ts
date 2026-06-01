@@ -13,6 +13,7 @@ import {
   applyRetention,
   assertPublicHttpUrl,
   createRepository,
+  formatRegistry,
   isUniqueViolation,
 } from "@hootifactory/core";
 import {
@@ -370,6 +371,9 @@ uiRouter.post("/orgs/:orgId/repositories", async (c) => {
   } | null;
   if (!body?.name || !body?.format) {
     return c.json({ error: "name and format required" }, 400);
+  }
+  if (!formatRegistry.has(body.format)) {
+    return c.json({ error: `unsupported repository format '${body.format}'` }, 400);
   }
   const [org] = await db
     .select({ slug: organizations.slug })

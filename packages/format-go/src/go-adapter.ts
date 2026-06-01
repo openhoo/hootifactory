@@ -11,7 +11,7 @@ import {
   storeBlobWithRef,
   upsertPackageVersion,
 } from "@hootifactory/core";
-import { and, asc, eq, packages, packageVersions } from "@hootifactory/db";
+import { and, asc, eq, isNull, packages, packageVersions } from "@hootifactory/db";
 
 interface GoVersionMeta {
   mod: string;
@@ -117,7 +117,7 @@ export class GoAdapter implements FormatAdapter {
         createdAt: packageVersions.createdAt,
       })
       .from(packageVersions)
-      .where(eq(packageVersions.packageId, packageId))
+      .where(and(eq(packageVersions.packageId, packageId), isNull(packageVersions.deletedAt)))
       .orderBy(asc(packageVersions.createdAt));
   }
 
@@ -156,7 +156,13 @@ export class GoAdapter implements FormatAdapter {
     const [row] = await ctx.db
       .select({ metadata: packageVersions.metadata, createdAt: packageVersions.createdAt })
       .from(packageVersions)
-      .where(and(eq(packageVersions.packageId, pkg.id), eq(packageVersions.version, version)))
+      .where(
+        and(
+          eq(packageVersions.packageId, pkg.id),
+          eq(packageVersions.version, version),
+          isNull(packageVersions.deletedAt),
+        ),
+      )
       .limit(1);
     if (!row) throw Errors.notFound();
     const meta = row.metadata as unknown as GoVersionMeta;
@@ -212,6 +218,19 @@ export class GoAdapter implements FormatAdapter {
       repositoryId: ctx.repo.id,
       name: moduleName,
     });
+    const [existing] = await ctx.db
+      .select({ id: packageVersions.id })
+      .from(packageVersions)
+      .where(
+        and(
+          eq(packageVersions.packageId, pkg.id),
+          eq(packageVersions.version, version),
+          isNull(packageVersions.deletedAt),
+        ),
+      )
+      .limit(1);
+    if (existing) return Response.json({ error: "version already exists" }, { status: 409 });
+
     const stored = await storeBlobWithRef(ctx, {
       data: zipBytes,
       kind: "generic_file",

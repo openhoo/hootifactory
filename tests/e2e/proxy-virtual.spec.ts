@@ -121,3 +121,48 @@ test.describe("virtual + proxy repositories (real npm)", () => {
     expect(existsSync(join(dir, "node_modules", pkg, "index.js"))).toBe(true);
   });
 });
+
+test.describe("virtual repositories with throwing adapters", () => {
+  test("go virtual repo continues past a missing first member", async ({ baseURL }) => {
+    const owner = await setupOwner(baseURL!);
+    const a = (
+      await repoFrom(await createRepo(owner.ctx, owner.orgId, { name: "go-a", format: "go" }))
+    ).repository;
+    const b = (
+      await repoFrom(await createRepo(owner.ctx, owner.orgId, { name: "go-b", format: "go" }))
+    ).repository;
+    const v = (
+      await repoFrom(
+        await createRepo(owner.ctx, owner.orgId, {
+          name: "go-virt",
+          format: "go",
+          kind: "virtual",
+        }),
+      )
+    ).repository;
+    await owner.ctx.post(`/api/repositories/${v.id}/members`, {
+      data: { memberRepoId: a.id, position: 0 },
+    });
+    await owner.ctx.post(`/api/repositories/${v.id}/members`, {
+      data: { memberRepoId: b.id, position: 1 },
+    });
+
+    const moduleName = `hoot.test/virt${Date.now().toString(36)}`;
+    const version = "v1.0.0";
+    const up = await owner.ctx.put(`/${b.mountPath}/${moduleName}/@v/${version}`, {
+      multipart: {
+        mod: `module ${moduleName}\n\ngo 1.20\n`,
+        zip: {
+          name: "m.zip",
+          mimeType: "application/zip",
+          buffer: Buffer.from("zip"),
+        },
+      },
+    });
+    expect(up.status()).toBe(200);
+
+    const list = await owner.ctx.get(`/${v.mountPath}/${moduleName}/@v/list`);
+    expect(list.status()).toBe(200);
+    expect((await list.text()).trim()).toBe(version);
+  });
+});

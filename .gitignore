@@ -25,6 +25,7 @@ scratch/
 
 # editor / os
 .DS_Store
+.claude/
 .idea/
 .vscode/*
 !.vscode/extensions.json

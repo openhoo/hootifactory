@@ -9,6 +9,7 @@ import {
   loadUpstream,
   loadVirtualMembers,
   matchRoute,
+  RegistryError,
   type RepoContext,
   type RouteMatch,
   resolveRepository,
@@ -19,7 +20,18 @@ import { buildRepoContext } from "./context";
 import type { AppEnv } from "./types";
 
 /** Reserved server path segments that must never fall back to the SPA index.html. */
-const RESERVED_SEGMENTS = ["api", "v2", "token", "healthz", "readyz"];
+const RESERVED_SEGMENTS = [
+  "api",
+  "v2",
+  "token",
+  "healthz",
+  "readyz",
+  "npm",
+  "pypi",
+  "go",
+  "cargo",
+  "nuget",
+];
 
 /** Serve the built SPA (assets + index.html fallback) for single-container deploys. */
 async function serveWeb(pathname: string): Promise<Response | null> {
@@ -51,6 +63,28 @@ const PROXY_FORWARD_HEADERS = [
   "last-modified",
 ];
 
+function isRegistryMiss(err: unknown): err is RegistryError {
+  return (
+    err instanceof RegistryError &&
+    err.status === 404 &&
+    ["BLOB_UNKNOWN", "MANIFEST_UNKNOWN", "NAME_UNKNOWN", "NOT_FOUND"].includes(err.code)
+  );
+}
+
+async function adapterResponse(
+  adapter: FormatAdapter,
+  match: RouteMatch,
+  req: Request,
+  ctx: RepoContext,
+): Promise<Response> {
+  try {
+    return await adapter.handle(match, req, ctx);
+  } catch (err) {
+    if (isRegistryMiss(err)) return err.toResponse();
+    throw err;
+  }
+}
+
 /** Virtual repo: try each member in order; return the first non-error response. */
 async function dispatchVirtual(
   adapter: FormatAdapter,
@@ -72,7 +106,7 @@ async function dispatchVirtual(
       repositoryName: perm.repositoryName ?? member.name,
     });
     if (!decision.allowed) continue;
-    const res = await adapter.handle(match, req, memberCtx);
+    const res = await adapterResponse(adapter, match, req, memberCtx);
     if (res.status < 400) {
       // Rewrite member mount -> virtual mount so clients route follow-ups through the virtual repo.
       const ct = res.headers.get("content-type") ?? "";
@@ -99,7 +133,7 @@ async function dispatchProxy(
   req: Request,
   ctx: RepoContext,
 ): Promise<Response> {
-  const local = await adapter.handle(match, req, ctx);
+  const local = await adapterResponse(adapter, match, req, ctx);
   if (local.status < 400 || !isRead(req.method)) return local;
 
   const upstream = await loadUpstream(ctx.repo.id);
