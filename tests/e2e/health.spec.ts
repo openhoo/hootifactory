@@ -7,10 +7,21 @@ test.describe("health & version", () => {
     expect((await res.json()).status).toBe("ok");
   });
 
-  test("GET /readyz -> ready (db reachable)", async ({ request }) => {
+  test("GET /readyz -> ready (dependencies reachable)", async ({ request }) => {
     const res = await request.get("/readyz");
     expect(res.status()).toBe(200);
-    expect((await res.json()).status).toBe("ready");
+    const body = (await res.json()) as {
+      status: string;
+      checks: { name: string; ok: boolean }[];
+    };
+    expect(body.status).toBe("ready");
+    expect(body.checks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "db", ok: true }),
+        expect.objectContaining({ name: "storage", ok: true }),
+        expect.objectContaining({ name: "queue", ok: true }),
+      ]),
+    );
   });
 
   test("GET /v2/ -> OCI version header", async ({ request }) => {
