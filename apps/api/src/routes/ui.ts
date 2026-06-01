@@ -41,6 +41,7 @@ import {
   sql,
   users,
 } from "@hootifactory/db";
+import { isValidRepositoryPattern, SEVERITY_ORDER, type Severity } from "@hootifactory/scan-core";
 import type { PackageFormat, RepoKind, Visibility } from "@hootifactory/types";
 import { type Context, Hono } from "hono";
 import type { AppEnv } from "../types";
@@ -57,6 +58,14 @@ function isVisibility(value: unknown): value is Visibility {
 
 function isInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value);
+}
+
+function isPolicyMode(value: unknown): value is "audit" | "enforce" {
+  return value === "audit" || value === "enforce";
+}
+
+function isSeverity(value: unknown): value is Severity {
+  return typeof value === "string" && value in SEVERITY_ORDER;
 }
 
 function scopeMayTargetRepo(pattern: string, repo: { name: string; mountPath: string }): boolean {
@@ -374,18 +383,35 @@ uiRouter.post("/orgs/:orgId/scan-policies", async (c) => {
     return c.json({ error: decision.reason }, decision.code === "unauthenticated" ? 401 : 403);
   }
   const body = (await c.req.json().catch(() => null)) as {
-    repositoryPattern?: string;
-    mode?: "audit" | "enforce";
-    blockOnSeverity?: "critical" | "high" | "medium" | "low" | "negligible" | "unknown";
+    repositoryPattern?: unknown;
+    mode?: unknown;
+    blockOnSeverity?: unknown;
   } | null;
   if (!body?.mode) return c.json({ error: "mode required" }, 400);
+  if (!isPolicyMode(body.mode)) {
+    return c.json({ error: `unsupported scan policy mode '${String(body.mode)}'` }, 400);
+  }
+  const repositoryPattern = body.repositoryPattern ?? "*";
+  if (typeof repositoryPattern !== "string" || !isValidRepositoryPattern(repositoryPattern)) {
+    return c.json(
+      {
+        error:
+          "repository pattern must use repository-name characters plus '*' wildcards, or '*' for all repositories",
+      },
+      400,
+    );
+  }
+  const blockOnSeverity = body.blockOnSeverity ?? null;
+  if (blockOnSeverity != null && !isSeverity(blockOnSeverity)) {
+    return c.json({ error: `unsupported scan policy severity '${String(blockOnSeverity)}'` }, 400);
+  }
   const [row] = await db
     .insert(scanPolicies)
     .values({
       orgId,
-      repositoryPattern: body.repositoryPattern ?? "*",
+      repositoryPattern,
       mode: body.mode,
-      blockOnSeverity: body.blockOnSeverity ?? null,
+      blockOnSeverity,
     })
     .returning();
   void writeAudit({
@@ -396,9 +422,9 @@ uiRouter.post("/orgs/:orgId/scan-policies", async (c) => {
     resourceId: row?.id,
     principal: c.get("principal"),
     detail: {
-      repositoryPattern: body.repositoryPattern ?? "*",
+      repositoryPattern,
       mode: body.mode,
-      blockOnSeverity: body.blockOnSeverity ?? null,
+      blockOnSeverity,
     },
   }).catch(() => {});
   return c.json({ policy: row }, 201);

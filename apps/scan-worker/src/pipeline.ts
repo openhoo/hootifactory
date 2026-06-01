@@ -17,6 +17,7 @@ import {
 import {
   maxSeverity,
   type NormalizedFinding,
+  resolveScanPolicy,
   SEVERITY_ORDER,
   type Severity,
 } from "@hootifactory/scan-core";
@@ -34,12 +35,7 @@ type PolicyRow = typeof scanPolicies.$inferSelect;
 
 async function loadPolicy(orgId: string, repoName: string): Promise<PolicyRow | null> {
   const rows = await db.select().from(scanPolicies).where(eq(scanPolicies.orgId, orgId));
-  let wildcard: PolicyRow | null = null;
-  for (const p of rows) {
-    if (p.repositoryPattern === repoName) return p;
-    if (p.repositoryPattern === "*") wildcard = p;
-  }
-  return wildcard;
+  return resolveScanPolicy(rows, repoName);
 }
 
 export function dedupeFindings(items: NormalizedFinding[]): NormalizedFinding[] {

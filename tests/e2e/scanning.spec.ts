@@ -279,6 +279,71 @@ async function putOciArtifactManifest(
 }
 
 test.describe("scanning + policy gates", () => {
+  test("scan policy API rejects invalid modes, severities, and repository patterns", async ({
+    baseURL,
+  }) => {
+    const owner = await setupOwner(baseURL!);
+    for (const data of [
+      { repositoryPattern: "bad/name", mode: "audit", blockOnSeverity: "high" },
+      { repositoryPattern: 42, mode: "audit", blockOnSeverity: "high" },
+      { repositoryPattern: "*", mode: "deny", blockOnSeverity: "high" },
+      { repositoryPattern: "*", mode: "audit", blockOnSeverity: "severe" },
+    ]) {
+      const res = await owner.ctx.post(`/api/orgs/${owner.orgId}/scan-policies`, { data });
+      expect(res.status()).toBe(400);
+    }
+  });
+
+  test("scan policy globs resolve deterministically with exact policies winning", async ({
+    baseURL,
+  }) => {
+    const owner = await setupOwner(baseURL!);
+    const id = Date.now().toString(36);
+    const prefix = `scanpolicy-${id}`;
+    const exactRepoName = `${prefix}-specific`;
+    const targetRepoName = `${prefix}-target`;
+
+    for (const data of [
+      { repositoryPattern: `${prefix}-*`, mode: "enforce", blockOnSeverity: "high" },
+      { repositoryPattern: exactRepoName, mode: "enforce", blockOnSeverity: "high" },
+      { repositoryPattern: exactRepoName, mode: "audit", blockOnSeverity: "high" },
+    ]) {
+      expect(
+        (await owner.ctx.post(`/api/orgs/${owner.orgId}/scan-policies`, { data })).status(),
+      ).toBe(201);
+    }
+
+    const exactRepo = (
+      await (
+        await createRepo(owner.ctx, owner.orgId, { name: exactRepoName, format: "npm" })
+      ).json()
+    ).repository as { id: string; mountPath: string };
+    const targetRepo = (
+      await (
+        await createRepo(owner.ctx, owner.orgId, { name: targetRepoName, format: "npm" })
+      ).json()
+    ).repository as { id: string; mountPath: string };
+
+    const exactPkg = `exactpkg${id}`;
+    const targetPkg = `targetpkg${id}`;
+    const exactTarball = await publishRawNpm(owner.ctx, exactRepo.mountPath, exactPkg, {
+      "evil-dep": "1.0.0",
+    });
+    await publishRawNpm(owner.ctx, targetRepo.mountPath, targetPkg, { "evil-dep": "1.0.0" });
+
+    const exactArt = await pollArtifact(owner.ctx, exactRepo.id, exactPkg);
+    expect(exactArt.state).toBe("quarantined");
+    const targetArt = await pollArtifact(owner.ctx, targetRepo.id, targetPkg);
+    expect(targetArt.state).toBe("blocked");
+
+    setArtifactState(exactArt.id, "pending");
+    const pendingExact = await owner.ctx.get(
+      `/${exactRepo.mountPath}/${exactPkg}/-/${exactPkg}-1.0.0.tgz`,
+    );
+    expect(pendingExact.status()).toBe(200);
+    expect(Buffer.from(await pendingExact.body())).toEqual(exactTarball);
+  });
+
   test("enforce policy blocks a vulnerable package; clean package is served", async ({
     baseURL,
   }) => {

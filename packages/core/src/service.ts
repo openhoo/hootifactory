@@ -12,6 +12,7 @@ import {
   sql,
   versionTags,
 } from "@hootifactory/db";
+import { resolveScanPolicy } from "@hootifactory/scan-core";
 import { computeDigest } from "@hootifactory/storage";
 import { Errors } from "./errors";
 import type { RepoContext } from "./format/adapter";
@@ -80,13 +81,10 @@ async function adjustStorageUsedTx(tx: Tx, orgId: string, delta: number): Promis
 /** True if a published artifact (by digest, in this repo) is policy-blocked. */
 export async function isArtifactBlocked(ctx: RepoContext, digest: string): Promise<boolean> {
   const policies = await ctx.db
-    .select({ mode: scanPolicies.mode, repositoryPattern: scanPolicies.repositoryPattern })
+    .select()
     .from(scanPolicies)
     .where(eq(scanPolicies.orgId, ctx.repo.orgId));
-  const policy =
-    policies.find((p) => p.repositoryPattern === ctx.repo.name) ??
-    policies.find((p) => p.repositoryPattern === "*") ??
-    null;
+  const policy = resolveScanPolicy(policies, ctx.repo.name);
   const [row] = await ctx.db
     .select({ state: artifacts.state })
     .from(artifacts)

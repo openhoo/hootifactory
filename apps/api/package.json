@@ -23,6 +23,7 @@
     "@hootifactory/format-nuget": "workspace:*",
     "@hootifactory/format-pypi": "workspace:*",
     "@hootifactory/queue": "workspace:*",
+    "@hootifactory/scan-core": "workspace:*",
     "@hootifactory/storage": "workspace:*",
     "@hootifactory/types": "workspace:*",
     "hono": "^4.12.23"

@@ -65,3 +65,73 @@ export interface SbomComponent {
 export function findingKey(f: NormalizedFinding): string {
   return `${f.type}:${f.vulnId ?? f.title ?? ""}:${f.purl ?? f.packageName ?? ""}`;
 }
+
+export interface ScanPolicyPattern {
+  repositoryPattern: string;
+  id?: string | null;
+  createdAt?: Date | string | null;
+  updatedAt?: Date | string | null;
+}
+
+export function isValidRepositoryPattern(pattern: string): boolean {
+  if (pattern.length === 0 || pattern.length > 256) return false;
+  if (pattern.includes("..")) return false;
+  if (pattern === "*") return true;
+  if (!/[A-Za-z0-9]/.test(pattern)) return false;
+  return /^[A-Za-z0-9*][A-Za-z0-9._*-]*$/.test(pattern);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+export function repositoryPatternMatches(pattern: string, repoName: string): boolean {
+  if (!isValidRepositoryPattern(pattern)) return false;
+  if (!pattern.includes("*")) return pattern === repoName;
+  const source = pattern.split("*").map(escapeRegExp).join(".*");
+  return new RegExp(`^${source}$`).test(repoName);
+}
+
+function patternSpecificity(pattern: string): {
+  exact: number;
+  literalChars: number;
+  wildcardChars: number;
+} {
+  const wildcardChars = pattern.length - pattern.replaceAll("*", "").length;
+  return {
+    exact: wildcardChars === 0 ? 1 : 0,
+    literalChars: pattern.length - wildcardChars,
+    wildcardChars,
+  };
+}
+
+function policyTime(policy: ScanPolicyPattern): number {
+  const raw = policy.updatedAt ?? policy.createdAt;
+  if (!raw) return 0;
+  const ms = raw instanceof Date ? raw.getTime() : new Date(raw).getTime();
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+export function resolveScanPolicy<T extends ScanPolicyPattern>(
+  policies: T[],
+  repoName: string,
+): T | null {
+  const matches = policies.filter((policy) =>
+    repositoryPatternMatches(policy.repositoryPattern, repoName),
+  );
+  matches.sort((a, b) => {
+    const aSpec = patternSpecificity(a.repositoryPattern);
+    const bSpec = patternSpecificity(b.repositoryPattern);
+    if (aSpec.exact !== bSpec.exact) return bSpec.exact - aSpec.exact;
+    if (aSpec.literalChars !== bSpec.literalChars) {
+      return bSpec.literalChars - aSpec.literalChars;
+    }
+    if (aSpec.wildcardChars !== bSpec.wildcardChars) {
+      return aSpec.wildcardChars - bSpec.wildcardChars;
+    }
+    const timeDelta = policyTime(b) - policyTime(a);
+    if (timeDelta !== 0) return timeDelta;
+    return String(b.id ?? "").localeCompare(String(a.id ?? ""));
+  });
+  return matches[0] ?? null;
+}

@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { findingKey, maxSeverity, normalizeSeverity } from "./index";
+import {
+  findingKey,
+  isValidRepositoryPattern,
+  maxSeverity,
+  normalizeSeverity,
+  repositoryPatternMatches,
+  resolveScanPolicy,
+} from "./index";
 
 describe("scan-core severity helpers", () => {
   test("normalizes scanner severity labels to the canonical scale", () => {
@@ -29,5 +36,56 @@ describe("scan-core severity helpers", () => {
     expect(
       findingKey({ type: "malware", title: "EICAR", packageName: "payload", severity: "critical" }),
     ).toBe("malware:EICAR:payload");
+  });
+
+  test("validates repository policy patterns conservatively", () => {
+    expect(isValidRepositoryPattern("*")).toBe(true);
+    expect(isValidRepositoryPattern("scan-*")).toBe(true);
+    expect(isValidRepositoryPattern("scan.prod_1")).toBe(true);
+    expect(isValidRepositoryPattern("")).toBe(false);
+    expect(isValidRepositoryPattern("**")).toBe(false);
+    expect(isValidRepositoryPattern("../repo")).toBe(false);
+    expect(isValidRepositoryPattern("repo/name")).toBe(false);
+  });
+
+  test("matches scan policy repository globs against repository names", () => {
+    expect(repositoryPatternMatches("*", "scan-prod")).toBe(true);
+    expect(repositoryPatternMatches("scan-*", "scan-prod")).toBe(true);
+    expect(repositoryPatternMatches("scan-*", "prod-scan")).toBe(false);
+    expect(repositoryPatternMatches("scan-prod", "scan-prod")).toBe(true);
+    expect(repositoryPatternMatches("scan-prod", "scan-prod-canary")).toBe(false);
+  });
+
+  test("resolves scan policies by specificity and deterministic newest tie-break", () => {
+    const rows = [
+      {
+        id: "wild",
+        repositoryPattern: "*",
+        mode: "enforce",
+        createdAt: new Date("2025-01-01T00:00:00Z"),
+      },
+      {
+        id: "glob",
+        repositoryPattern: "scan-*",
+        mode: "audit",
+        createdAt: new Date("2025-01-02T00:00:00Z"),
+      },
+      {
+        id: "exact-old",
+        repositoryPattern: "scan-prod",
+        mode: "enforce",
+        createdAt: new Date("2025-01-03T00:00:00Z"),
+      },
+      {
+        id: "exact-new",
+        repositoryPattern: "scan-prod",
+        mode: "audit",
+        createdAt: new Date("2025-01-04T00:00:00Z"),
+      },
+    ];
+
+    expect(resolveScanPolicy(rows, "scan-canary")?.id).toBe("glob");
+    expect(resolveScanPolicy(rows, "other")?.id).toBe("wild");
+    expect(resolveScanPolicy(rows, "scan-prod")?.id).toBe("exact-new");
   });
 });
