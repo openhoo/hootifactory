@@ -9,8 +9,9 @@ registerAdapters();
 const server = Bun.serve({
   port: env.API_PORT,
   hostname: env.API_HOST,
-  // allow large layer/tarball uploads (10 GiB)
-  maxRequestBodySize: 10 * 1024 * 1024 * 1024,
+  // Adapters currently buffer uploads before storing them; keep the server
+  // ceiling explicit and aligned with the API's early Content-Length guard.
+  maxRequestBodySize: env.REGISTRY_MAX_UPLOAD_BYTES,
   idleTimeout: 120,
   fetch: app.fetch,
 });

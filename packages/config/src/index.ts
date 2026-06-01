@@ -42,6 +42,11 @@ const EnvSchema = z
     // API server
     API_PORT: z.coerce.number().int().positive().default(3000),
     API_HOST: z.string().default("0.0.0.0"),
+    REGISTRY_MAX_UPLOAD_BYTES: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(100 * 1024 * 1024),
     REGISTRY_PUBLIC_URL: absoluteUrl.default("http://localhost:3000"),
     /** When set, the API serves the built web UI (single-container deploys). */
     WEB_DIST: z.string().optional(),
