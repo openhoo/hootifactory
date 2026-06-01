@@ -194,7 +194,13 @@ export class NugetAdapter implements FormatAdapter {
     const [v] = await ctx.db
       .select({ metadata: packageVersions.metadata })
       .from(packageVersions)
-      .where(and(eq(packageVersions.packageId, pkg.id), eq(packageVersions.version, norm)))
+      .where(
+        and(
+          eq(packageVersions.packageId, pkg.id),
+          eq(packageVersions.version, norm),
+          isNull(packageVersions.deletedAt),
+        ),
+      )
       .limit(1);
     const digest = (v?.metadata as unknown as NugetVersionMeta | undefined)?.nupkgDigest;
     if (!digest || !(await ctx.blobs.exists(digest))) throw Errors.notFound();

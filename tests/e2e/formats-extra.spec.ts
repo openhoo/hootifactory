@@ -276,7 +276,9 @@ test.describe("go module proxy (protocol)", () => {
 });
 
 test.describe("nuget v3 (protocol)", () => {
-  test("push -> service index -> flat container -> download", async ({ baseURL }) => {
+  test("push -> service index -> flat container -> download, duplicate, retention", async ({
+    baseURL,
+  }) => {
     const owner = await setupOwner(baseURL!);
     const repo = (
       await (
@@ -286,7 +288,7 @@ test.describe("nuget v3 (protocol)", () => {
           visibility: "public",
         })
       ).json()
-    ).repository as { mountPath: string };
+    ).repository as { id: string; mountPath: string };
 
     const id = Date.now().toString(36);
     const pkgId = `Hoot.Pkg${id}`;
@@ -299,6 +301,18 @@ test.describe("nuget v3 (protocol)", () => {
     });
     expect(push.status()).toBe(201);
 
+    const duplicate = await owner.ctx.put(`/${repo.mountPath}/v3/package`, {
+      headers: { "content-type": "application/octet-stream" },
+      data: createNupkg(pkgId, "1.0.0.0"),
+    });
+    expect(duplicate.status()).toBe(409);
+
+    const next = await owner.ctx.put(`/${repo.mountPath}/v3/package`, {
+      headers: { "content-type": "application/octet-stream" },
+      data: createNupkg(pkgId, "1.0.1"),
+    });
+    expect(next.status()).toBe(201);
+
     const svc = await (await owner.ctx.get(`/${repo.mountPath}/v3/index.json`)).json();
     expect(
       svc.resources.some((r: { "@type": string }) => r["@type"].startsWith("PackageBaseAddress")),
@@ -308,11 +322,34 @@ test.describe("nuget v3 (protocol)", () => {
       await owner.ctx.get(`/${repo.mountPath}/v3-flatcontainer/${lower}/index.json`)
     ).json();
     expect(versions.versions).toContain("1.0.0");
+    expect(versions.versions).toContain("1.0.1");
 
     const dl = await owner.ctx.get(
       `/${repo.mountPath}/v3-flatcontainer/${lower}/1.0.0/${lower}.1.0.0.nupkg`,
     );
     expect(dl.status()).toBe(200);
     expect(Buffer.from(await dl.body())).toEqual(nupkg);
+
+    const pruned = await (
+      await owner.ctx.post(`/api/repositories/${repo.id}/retention/apply`, {
+        data: { keepLastN: 1 },
+      })
+    ).json();
+    expect(pruned.pruned).toBe(1);
+
+    const after = await (
+      await owner.ctx.get(`/${repo.mountPath}/v3-flatcontainer/${lower}/index.json`)
+    ).json();
+    expect(after.versions).toEqual(["1.0.1"]);
+    const reg = await (
+      await owner.ctx.get(`/${repo.mountPath}/v3/registrations/${lower}/index.json`)
+    ).json();
+    expect(reg.items[0].lower).toBe("1.0.1");
+    expect(reg.items[0].upper).toBe("1.0.1");
+
+    const prunedDownload = await owner.ctx.get(
+      `/${repo.mountPath}/v3-flatcontainer/${lower}/1.0.0/${lower}.1.0.0.nupkg`,
+    );
+    expect(prunedDownload.status()).toBe(404);
   });
 });
