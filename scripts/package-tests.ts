@@ -18,8 +18,16 @@ if (testFiles.length === 0) {
 }
 
 const args = ["test"];
-if (mode === "unit" && !extraArgs.includes("--watch")) {
+if (mode === "unit" && !hasOption(extraArgs, "--watch")) {
   args.push("--parallel");
+}
+if (mode === "unit" && shouldEnableCoverage(extraArgs)) {
+  if (!hasOption(extraArgs, "--coverage")) {
+    args.push("--coverage");
+  }
+  if (!hasOption(extraArgs, "--coverage-reporter")) {
+    args.push("--coverage-reporter=text", "--coverage-reporter=lcov");
+  }
 }
 args.push(...extraArgs, ...testFiles.map((file) => relative(cwd, file)));
 
@@ -72,6 +80,14 @@ async function walk(dir: string, files: string[]): Promise<void> {
 
 function shouldSkipDir(name: string): boolean {
   return ["node_modules", "dist", "build", "coverage", ".turbo", ".vite"].includes(name);
+}
+
+function shouldEnableCoverage(args: string[]): boolean {
+  return !hasOption(args, "--watch") && !args.includes("--coverage=false");
+}
+
+function hasOption(args: string[], name: string): boolean {
+  return args.some((arg) => arg === name || arg.startsWith(`${name}=`));
 }
 
 function isTestFile(file: string): boolean {

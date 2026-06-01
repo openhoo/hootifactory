@@ -26,7 +26,8 @@ bun run test:e2e         # 58 Playwright e2e — drives real npm/docker/pip/helm
 
 Unit tests are regular Bun `*.test.{ts,tsx}` or `*.spec.{ts,tsx}` files. Name
 service-backed tests `*.integration.test.{ts,tsx}` so the default unit pass stays
-fast and independent.
+fast and independent. Unit test runs emit Bun coverage tables and package-local
+LCOV reports under `coverage/lcov.info`.
 
 ## Stack
 
