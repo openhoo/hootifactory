@@ -6,6 +6,9 @@
   "scripts": {
     "dev": "bun --watch src/worker.ts",
     "start": "bun src/worker.ts",
+    "test": "bun run test:unit",
+    "test:unit": "bun run ../../scripts/package-tests.ts unit",
+    "test:integration": "bun run ../../scripts/package-tests.ts integration",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

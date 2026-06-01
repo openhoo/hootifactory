@@ -16,11 +16,17 @@ A self-hostable, **multi-format artifact & package manager** — an open-source 
 ## Verification
 
 ```bash
-bun test ./packages      # unit + integration (storage on MinIO, auth/RBAC, route matcher, scanning, OIDC)
+bun run test             # unit tests across every workspace package/app
+bun run test:integration # service-backed Bun tests, e.g. DB/MinIO integration
+bun run test:all         # unit + integration
 bun run e2e:install      # one-time: Playwright chromium
 bun run test:e2e         # 58 Playwright e2e — drives real npm/docker/pip/helm/go/cargo clients,
                          # the browser UI, proxy/virtual repos, scanning+policy gates, governance
 ```
+
+Unit tests are regular Bun `*.test.{ts,tsx}` or `*.spec.{ts,tsx}` files. Name
+service-backed tests `*.integration.test.{ts,tsx}` so the default unit pass stays
+fast and independent.
 
 ## Stack
 
