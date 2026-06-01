@@ -68,9 +68,15 @@ export interface TokenInfo {
   lastUsedAt: string | null;
   createdAt: string;
 }
+export interface AuthMethods {
+  password: boolean;
+  registration: boolean;
+  oidc: { enabled: false } | { enabled: true; name: string; startUrl: string };
+}
 
 export const api = {
   me: () => req<{ authenticated: boolean; principal: unknown }>("GET", "/api/me"),
+  authMethods: () => req<AuthMethods>("GET", "/api/auth/methods"),
   login: (username: string, password: string) =>
     req("POST", "/api/auth/login", { username, password }),
   register: (username: string, email: string, password: string) =>

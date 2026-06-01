@@ -55,6 +55,58 @@ const originList = z
     return [...new Set(origins)];
   });
 
+const roleName = z.enum(["viewer", "developer", "admin", "owner"]);
+
+const orgSlug = z
+  .string()
+  .trim()
+  .regex(/^[a-z0-9][a-z0-9-]{1,62}$/, "org must be a slug (2-63 lowercase chars)");
+
+const oidcScopes = z
+  .string()
+  .default("openid profile email groups")
+  .transform((value) => [
+    ...new Set(
+      value
+        .split(/\s+/)
+        .map((s) => s.trim())
+        .filter(Boolean),
+    ),
+  ])
+  .refine((scopes) => scopes.includes("openid"), "AUTH_OIDC_SCOPES must include openid");
+
+const OidcGroupMappingsSchema = z.record(
+  z.string().min(1),
+  z.array(z.strictObject({ org: orgSlug, role: roleName })).min(1),
+);
+
+const oidcGroupMappings = z
+  .string()
+  .default("{}")
+  .transform((value, ctx) => {
+    let parsed: unknown;
+    try {
+      parsed = value.trim() ? JSON.parse(value) : {};
+    } catch {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "AUTH_OIDC_GROUP_MAPPINGS must be valid JSON",
+      });
+      return z.NEVER;
+    }
+    const result = OidcGroupMappingsSchema.safeParse(parsed);
+    if (!result.success) {
+      for (const issue of result.error.issues) {
+        ctx.addIssue({
+          ...issue,
+          path: ["AUTH_OIDC_GROUP_MAPPINGS", ...issue.path],
+        });
+      }
+      return z.NEVER;
+    }
+    return result.data;
+  });
+
 /** Well-known dev-default secret values that must never reach production. */
 const DEV_DEFAULT_SECRETS = {
   SESSION_SECRET: "dev-session-secret-change-me-please-32chars",
@@ -117,6 +169,16 @@ const EnvSchema = z
     AUTH_ALLOW_ORG_CREATION: boolish.optional(),
     AUTH_LOGIN_MAX_ATTEMPTS: z.coerce.number().int().positive().default(5),
     AUTH_LOGIN_WINDOW_SECONDS: z.coerce.number().int().positive().default(60),
+    AUTH_OIDC_ENABLED: boolish.default(false),
+    AUTH_OIDC_NAME: z.string().trim().min(1).max(128).default("Single Sign-On"),
+    AUTH_OIDC_ISSUER: optionalHttpUrl,
+    AUTH_OIDC_CLIENT_ID: optionalNonEmptyString,
+    AUTH_OIDC_CLIENT_SECRET: optionalNonEmptyString,
+    AUTH_OIDC_SCOPES: oidcScopes,
+    AUTH_OIDC_GROUP_CLAIM: z.string().trim().min(1).default("groups"),
+    AUTH_OIDC_EMAIL_CLAIM: z.string().trim().min(1).default("email"),
+    AUTH_OIDC_USERNAME_CLAIM: z.string().trim().min(1).default("preferred_username"),
+    AUTH_OIDC_GROUP_MAPPINGS: oidcGroupMappings,
     REGISTRY_JWT_PRIVATE_KEY: z.string().optional(),
     REGISTRY_JWT_PUBLIC_KEY: z.string().optional(),
     REGISTRY_JWT_TTL: z.coerce.number().int().positive().default(300),
@@ -172,6 +234,35 @@ const EnvSchema = z
         message:
           "REGISTRY_JWT_PRIVATE_KEY and REGISTRY_JWT_PUBLIC_KEY are required when NODE_ENV=production",
       });
+    }
+    if (v.AUTH_OIDC_ENABLED) {
+      for (const key of [
+        "AUTH_OIDC_ISSUER",
+        "AUTH_OIDC_CLIENT_ID",
+        "AUTH_OIDC_CLIENT_SECRET",
+      ] as const) {
+        if (!v[key]) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [key],
+            message: `${key} is required when AUTH_OIDC_ENABLED=true`,
+          });
+        }
+      }
+      if (Object.keys(v.AUTH_OIDC_GROUP_MAPPINGS).length === 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["AUTH_OIDC_GROUP_MAPPINGS"],
+          message: "AUTH_OIDC_GROUP_MAPPINGS must map at least one group when OIDC is enabled",
+        });
+      }
+      if (v.NODE_ENV === "production" && v.AUTH_OIDC_ISSUER?.startsWith("http://")) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["AUTH_OIDC_ISSUER"],
+          message: "AUTH_OIDC_ISSUER must use https in production",
+        });
+      }
     }
   })
   .transform((v) =>

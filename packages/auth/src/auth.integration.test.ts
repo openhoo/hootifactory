@@ -3,13 +3,15 @@ import {
   apiTokens,
   db,
   eq,
+  externalIdentities,
   memberships,
   organizations,
   repositories,
   roleBindings,
   users,
 } from "@hootifactory/db";
-import { authorize, effectiveRoleFor } from "./authorize";
+import { authorize, effectiveRoleFor, resolveUserRole } from "./authorize";
+import { OIDC_PROVIDER, syncOidcUser } from "./oidc";
 import { hashPassword, verifyPassword } from "./password";
 import type { Principal } from "./principal";
 import { issueRegistryToken, registryJwks, verifyRegistryToken } from "./registry-jwt";
@@ -19,6 +21,9 @@ import { createApiToken, resolveToken, revokeToken } from "./tokens";
 let orgId = "";
 let userId = "";
 let secondOrgId = "";
+let orgSlug = "";
+let secondOrgSlug = "";
+const cleanupUserIds: string[] = [];
 
 beforeAll(async () => {
   const [org] = await db
@@ -26,6 +31,7 @@ beforeAll(async () => {
     .values({ slug: `test-${crypto.randomUUID().slice(0, 8)}`, displayName: "Test Org" })
     .returning();
   orgId = org!.id;
+  orgSlug = org!.slug;
   const [u] = await db
     .insert(users)
     .values({
@@ -40,9 +46,13 @@ beforeAll(async () => {
     .values({ slug: `test-${crypto.randomUUID().slice(0, 8)}`, displayName: "Second Test Org" })
     .returning();
   secondOrgId = secondOrg!.id;
+  secondOrgSlug = secondOrg!.slug;
 });
 
 afterAll(async () => {
+  for (const id of cleanupUserIds) {
+    await db.delete(users).where(eq(users.id, id));
+  }
   if (secondOrgId) await db.delete(organizations).where(eq(organizations.id, secondOrgId));
   if (orgId) await db.delete(organizations).where(eq(organizations.id, orgId));
   if (userId) await db.delete(users).where(eq(users.id, userId));
@@ -272,6 +282,114 @@ describe("sessions (DB)", () => {
     expect(resolved?.userId).toBe(userId);
     await revokeSession(secret);
     expect(await resolveSession(secret)).toBeNull();
+  });
+});
+
+describe("OIDC user sync (DB)", () => {
+  test("auto-provisions a mapped user and grants org access", async () => {
+    const email = `${crypto.randomUUID()}@oidc.test`;
+    const user = await syncOidcUser({
+      issuer: "https://idp.test",
+      subject: crypto.randomUUID(),
+      email,
+      emailVerified: true,
+      username: "Alice SSO",
+      displayName: "Alice SSO",
+      groups: ["developers"],
+      grants: [{ org: orgSlug, role: "developer", groups: ["developers"] }],
+    });
+    cleanupUserIds.push(user.id);
+
+    await expect(resolveUserRole(user.id, orgId)).resolves.toBe("developer");
+    const [identity] = await db
+      .select()
+      .from(externalIdentities)
+      .where(eq(externalIdentities.userId, user.id))
+      .limit(1);
+    expect(identity?.provider).toBe(OIDC_PROVIDER);
+    expect(identity?.email).toBe(email);
+  });
+
+  test("links an existing local user only when email is verified", async () => {
+    const email = `${crypto.randomUUID()}@oidc.test`;
+    const [local] = await db
+      .insert(users)
+      .values({ email, username: `local-${crypto.randomUUID().slice(0, 8)}` })
+      .returning();
+    cleanupUserIds.push(local!.id);
+
+    const linked = await syncOidcUser({
+      issuer: "https://idp.test",
+      subject: crypto.randomUUID(),
+      email,
+      emailVerified: true,
+      username: "linked-user",
+      displayName: "Linked User",
+      groups: ["admins"],
+      grants: [{ org: orgSlug, role: "owner", groups: ["admins"] }],
+    });
+
+    expect(linked.id).toBe(local!.id);
+    await expect(resolveUserRole(local!.id, orgId)).resolves.toBe("owner");
+  });
+
+  test("denies unverified email conflicts", async () => {
+    const email = `${crypto.randomUUID()}@oidc.test`;
+    const [local] = await db
+      .insert(users)
+      .values({ email, username: `conflict-${crypto.randomUUID().slice(0, 8)}` })
+      .returning();
+    cleanupUserIds.push(local!.id);
+
+    await expect(
+      syncOidcUser({
+        issuer: "https://idp.test",
+        subject: crypto.randomUUID(),
+        email,
+        emailVerified: false,
+        username: "conflict-user",
+        displayName: "Conflict User",
+        groups: ["developers"],
+        grants: [{ org: orgSlug, role: "developer", groups: ["developers"] }],
+      }),
+    ).rejects.toThrow(/email must be verified/);
+  });
+
+  test("reconciles stale OIDC grants without deleting local memberships", async () => {
+    const email = `${crypto.randomUUID()}@oidc.test`;
+    const subject = crypto.randomUUID();
+    const user = await syncOidcUser({
+      issuer: "https://idp.test",
+      subject,
+      email,
+      emailVerified: true,
+      username: "grant-sync",
+      displayName: "Grant Sync",
+      groups: ["developers", "viewers"],
+      grants: [
+        { org: orgSlug, role: "developer", groups: ["developers"] },
+        { org: secondOrgSlug, role: "viewer", groups: ["viewers"] },
+      ],
+    });
+    cleanupUserIds.push(user.id);
+    await db.insert(memberships).values({ orgId, userId: user.id, role: "viewer" });
+
+    await expect(resolveUserRole(user.id, orgId)).resolves.toBe("developer");
+    await expect(resolveUserRole(user.id, secondOrgId)).resolves.toBe("viewer");
+
+    await syncOidcUser({
+      issuer: "https://idp.test",
+      subject,
+      email,
+      emailVerified: true,
+      username: "grant-sync",
+      displayName: "Grant Sync",
+      groups: ["admins"],
+      grants: [{ org: secondOrgSlug, role: "owner", groups: ["admins"] }],
+    });
+
+    await expect(resolveUserRole(user.id, orgId)).resolves.toBe("viewer");
+    await expect(resolveUserRole(user.id, secondOrgId)).resolves.toBe("owner");
   });
 });
 

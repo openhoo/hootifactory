@@ -16,6 +16,7 @@
     "@hootifactory/config": "workspace:*",
     "@hootifactory/db": "workspace:*",
     "@hootifactory/types": "workspace:*",
-    "jose": "^6.2.3"
+    "jose": "^6.2.3",
+    "openid-client": "^6.8.4"
   }
 }

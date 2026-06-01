@@ -99,6 +99,8 @@ function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const methods = useQuery({ queryKey: ["auth-methods"], queryFn: api.authMethods });
+  const oidc = methods.data?.oidc;
 
   const submit = useMutation({
     mutationFn: async () => {
@@ -111,6 +113,11 @@ function LoginPage() {
     },
     onError: (e) => setError(e instanceof ApiError ? e.message : "failed"),
   });
+
+  useEffect(() => {
+    const callbackError = new URLSearchParams(window.location.search).get("error");
+    if (callbackError?.startsWith("sso")) setError("Single sign-on failed");
+  }, []);
 
   return (
     <div className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden bg-background px-4">
@@ -179,20 +186,42 @@ function LoginPage() {
               >
                 {submit.isPending ? <Spinner /> : mode === "login" ? "Sign in" : "Register"}
               </Button>
+              {mode === "login" && oidc?.enabled && (
+                <>
+                  <Separator />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="lg"
+                    className="h-9 w-full"
+                    onClick={() => {
+                      const returnTo = "/";
+                      window.location.assign(
+                        `${oidc.startUrl}?returnTo=${encodeURIComponent(returnTo)}`,
+                      );
+                    }}
+                  >
+                    <ShieldCheck className="size-4" />
+                    {oidc.name}
+                  </Button>
+                </>
+              )}
             </form>
           </CardContent>
         </Card>
 
-        <button
-          type="button"
-          className="mt-4 w-full text-center text-xs text-muted-foreground transition-colors hover:text-primary"
-          onClick={() => {
-            setError("");
-            setMode(mode === "login" ? "register" : "login");
-          }}
-        >
-          {mode === "login" ? "Need an account? Register" : "Have an account? Sign in"}
-        </button>
+        {methods.data?.registration && (
+          <button
+            type="button"
+            className="mt-4 w-full text-center text-xs text-muted-foreground transition-colors hover:text-primary"
+            onClick={() => {
+              setError("");
+              setMode(mode === "login" ? "register" : "login");
+            }}
+          >
+            {mode === "login" ? "Need an account? Register" : "Have an account? Sign in"}
+          </button>
+        )}
       </div>
     </div>
   );

@@ -85,4 +85,59 @@ describe("environment auth creation defaults", () => {
     expect(() => loadEnv({ AUTH_LOGIN_MAX_ATTEMPTS: "0" })).toThrow();
     expect(() => loadEnv({ AUTH_LOGIN_WINDOW_SECONDS: "-1" })).toThrow();
   });
+
+  test("OIDC configuration is parsed when enabled", () => {
+    const env = loadEnv({
+      NODE_ENV: "test",
+      AUTH_OIDC_ENABLED: "true",
+      AUTH_OIDC_NAME: "Zitadel",
+      AUTH_OIDC_ISSUER: "http://idp.test/",
+      AUTH_OIDC_CLIENT_ID: "hootifactory",
+      AUTH_OIDC_CLIENT_SECRET: "secret",
+      AUTH_OIDC_SCOPES: "openid email profile groups email",
+      AUTH_OIDC_GROUP_MAPPINGS: JSON.stringify({
+        developers: [{ org: "acme", role: "developer" }],
+        admins: [
+          { org: "acme", role: "owner" },
+          { org: "tools", role: "admin" },
+        ],
+      }),
+    });
+    expect(env.AUTH_OIDC_ENABLED).toBe(true);
+    expect(env.AUTH_OIDC_NAME).toBe("Zitadel");
+    expect(env.AUTH_OIDC_ISSUER).toBe("http://idp.test");
+    expect(env.AUTH_OIDC_SCOPES).toEqual(["openid", "email", "profile", "groups"]);
+    expect(env.AUTH_OIDC_GROUP_MAPPINGS.admins?.[1]).toEqual({
+      org: "tools",
+      role: "admin",
+    });
+  });
+
+  test("OIDC fails closed when enabled without required config", () => {
+    expect(() => loadEnv({ AUTH_OIDC_ENABLED: "true" })).toThrow(/AUTH_OIDC_ISSUER is required/);
+    expect(() =>
+      loadEnv({
+        AUTH_OIDC_ENABLED: "true",
+        AUTH_OIDC_ISSUER: "https://idp.test",
+        AUTH_OIDC_CLIENT_ID: "hootifactory",
+        AUTH_OIDC_CLIENT_SECRET: "secret",
+        AUTH_OIDC_GROUP_MAPPINGS: "{}",
+      }),
+    ).toThrow(/AUTH_OIDC_GROUP_MAPPINGS/);
+  });
+
+  test("production OIDC issuer must use https", () => {
+    expect(() =>
+      loadEnv({
+        ...prodSource,
+        AUTH_OIDC_ENABLED: "true",
+        AUTH_OIDC_ISSUER: "http://idp.test",
+        AUTH_OIDC_CLIENT_ID: "hootifactory",
+        AUTH_OIDC_CLIENT_SECRET: "secret",
+        AUTH_OIDC_GROUP_MAPPINGS: JSON.stringify({
+          admins: [{ org: "acme", role: "owner" }],
+        }),
+      }),
+    ).toThrow(/AUTH_OIDC_ISSUER must use https/);
+  });
 });

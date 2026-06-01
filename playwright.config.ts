@@ -6,6 +6,7 @@ const BASE_URL = process.env.E2E_BASE_URL ?? `http://127.0.0.1:${PORT}`;
 const WEB_PORT = Number(process.env.E2E_WEB_PORT ?? 5174);
 const WEB_URL = `http://127.0.0.1:${WEB_PORT}`;
 const WORKER_PORT = Number(process.env.E2E_WORKER_PORT ?? 3398);
+const OIDC_PORT = Number(process.env.E2E_OIDC_PORT ?? 4578);
 const TEST_DATABASE_URL =
   process.env.E2E_DATABASE_URL ??
   "postgres://hootifactory:hootifactory@localhost:5432/hootifactory_test";
@@ -53,6 +54,14 @@ export default defineConfig({
         LOG_LEVEL: "warn",
         SCANNER_ENABLED: "true",
         SCANNER_CLI_RUNTIME: "disabled",
+        AUTH_OIDC_ENABLED: "true",
+        AUTH_OIDC_NAME: "E2E SSO",
+        AUTH_OIDC_ISSUER: `http://127.0.0.1:${OIDC_PORT}`,
+        AUTH_OIDC_CLIENT_ID: "hootifactory-e2e",
+        AUTH_OIDC_CLIENT_SECRET: "e2e-secret",
+        AUTH_OIDC_GROUP_MAPPINGS: JSON.stringify({
+          "oidc-admins": [{ org: "oidc-e2e", role: "owner" }],
+        }),
       },
     },
     {

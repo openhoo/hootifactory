@@ -125,3 +125,53 @@ export const oidcProviders = pgTable("oidc_providers", {
   enabled: boolean().notNull().default(true),
   ...timestamps(),
 });
+
+/** External identity links for SSO providers. */
+export const externalIdentities = pgTable(
+  "external_identities",
+  {
+    id: primaryId(),
+    provider: varchar({ length: 32 }).notNull(),
+    issuer: text().notNull(),
+    subject: text().notNull(),
+    userId: uuid()
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    email: varchar({ length: 320 }),
+    lastLoginAt: timestamp({ withTimezone: true }),
+    ...timestamps(),
+  },
+  (t) => [
+    uniqueIndex("external_identities_provider_subject_uq").on(t.provider, t.issuer, t.subject),
+    index("external_identities_user_idx").on(t.userId),
+  ],
+);
+
+/** Org-wide roles managed by an external auth provider and refreshed at login. */
+export const externalRoleGrants = pgTable(
+  "external_role_grants",
+  {
+    id: primaryId(),
+    provider: varchar({ length: 32 }).notNull(),
+    issuer: text().notNull(),
+    userId: uuid()
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    orgId: uuid()
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    role: roleNameEnum().notNull(),
+    groups: jsonb().$type<string[]>().notNull().default([]),
+    ...timestamps(),
+  },
+  (t) => [
+    uniqueIndex("external_role_grants_provider_user_org_uq").on(
+      t.provider,
+      t.issuer,
+      t.userId,
+      t.orgId,
+    ),
+    index("external_role_grants_user_idx").on(t.userId),
+    index("external_role_grants_org_idx").on(t.orgId),
+  ],
+);

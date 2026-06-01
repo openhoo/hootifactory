@@ -31,6 +31,7 @@ import {
   db,
   desc,
   eq,
+  externalRoleGrants,
   findings,
   isNull,
   memberships,
@@ -190,7 +191,7 @@ uiRouter.get("/me", (c) => {
 uiRouter.get("/orgs", async (c) => {
   const p = c.get("principal");
   if (p.kind !== "user") return c.json({ orgs: [] });
-  const orgs = await db
+  const membershipOrgs = await db
     .select({
       id: organizations.id,
       slug: organizations.slug,
@@ -200,6 +201,22 @@ uiRouter.get("/orgs", async (c) => {
     .from(memberships)
     .innerJoin(organizations, eq(memberships.orgId, organizations.id))
     .where(eq(memberships.userId, p.userId));
+  const externalOrgs = await db
+    .select({
+      id: organizations.id,
+      slug: organizations.slug,
+      displayName: organizations.displayName,
+      role: externalRoleGrants.role,
+    })
+    .from(externalRoleGrants)
+    .innerJoin(organizations, eq(externalRoleGrants.orgId, organizations.id))
+    .where(eq(externalRoleGrants.userId, p.userId));
+  const byId = new Map<string, (typeof membershipOrgs)[number]>();
+  for (const org of [...membershipOrgs, ...externalOrgs]) {
+    const existing = byId.get(org.id);
+    if (!existing || ROLE_RANK[org.role] > ROLE_RANK[existing.role]) byId.set(org.id, org);
+  }
+  const orgs = [...byId.values()].sort((a, b) => a.slug.localeCompare(b.slug));
   return c.json({ orgs });
 });
 

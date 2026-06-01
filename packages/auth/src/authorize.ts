@@ -1,4 +1,12 @@
-import { and, db, eq, isNull, memberships, roleBindings } from "@hootifactory/db";
+import {
+  and,
+  db,
+  eq,
+  externalRoleGrants,
+  isNull,
+  memberships,
+  roleBindings,
+} from "@hootifactory/db";
 import { can } from "./can";
 import { type Action, maxRole, minRole, type RoleName } from "./permissions";
 import type { Decision, Principal, ResourceRef } from "./principal";
@@ -47,6 +55,14 @@ export async function resolveUserRole(
     )
     .limit(1);
   if (orgBinding) role = role ? maxRole(role, orgBinding.role) : orgBinding.role;
+
+  const externalGrants = await db
+    .select({ role: externalRoleGrants.role })
+    .from(externalRoleGrants)
+    .where(and(eq(externalRoleGrants.userId, userId), eq(externalRoleGrants.orgId, orgId)));
+  for (const grant of externalGrants) {
+    role = role ? maxRole(role, grant.role) : grant.role;
+  }
 
   return role;
 }

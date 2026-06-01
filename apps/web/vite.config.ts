@@ -16,7 +16,9 @@ export default defineConfig({
   server: {
     host: "127.0.0.1",
     port: Number(process.env.WEB_PORT ?? 5173),
-    proxy: Object.fromEntries(proxied.map((p) => [p, { target: API, changeOrigin: true }])),
+    proxy: Object.fromEntries(
+      proxied.map((p) => [p, { target: API, changeOrigin: true, xfwd: true }]),
+    ),
   },
   build: { outDir: "dist", sourcemap: false },
 });

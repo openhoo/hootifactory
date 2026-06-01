@@ -1,4 +1,16 @@
-import { createSession, hashPassword, revokeSession, writeAudit } from "@hootifactory/auth";
+import {
+  createOidcAuthorizationRequest,
+  createSession,
+  hashPassword,
+  type OidcProviderConfig,
+  resolveOidcCallbackClaims,
+  revokeSession,
+  safeOidcReturnTo,
+  signOidcState,
+  syncOidcUser,
+  verifyOidcState,
+  writeAudit,
+} from "@hootifactory/auth";
 import { env } from "@hootifactory/config";
 import { isUniqueViolation, z } from "@hootifactory/core";
 import { db, users } from "@hootifactory/db";
@@ -15,6 +27,7 @@ import type { AppEnv } from "../types";
 import { validateJsonBody } from "../validation";
 
 export const authRouter = new Hono<AppEnv>();
+const OIDC_STATE_COOKIE = "hoot_oidc_state";
 
 interface LoginThrottleBucket {
   count: number;
@@ -77,6 +90,128 @@ function recordLoginFailure(key: string): LoginThrottleBucket {
 function clearLoginFailures(key: string): void {
   loginFailures.delete(key);
 }
+
+function oidcConfig(): OidcProviderConfig | null {
+  if (!env.AUTH_OIDC_ENABLED) return null;
+  if (!env.AUTH_OIDC_ISSUER || !env.AUTH_OIDC_CLIENT_ID || !env.AUTH_OIDC_CLIENT_SECRET) {
+    return null;
+  }
+  return {
+    issuer: env.AUTH_OIDC_ISSUER,
+    clientId: env.AUTH_OIDC_CLIENT_ID,
+    clientSecret: env.AUTH_OIDC_CLIENT_SECRET,
+    scopes: env.AUTH_OIDC_SCOPES,
+    groupClaim: env.AUTH_OIDC_GROUP_CLAIM,
+    groupMappings: env.AUTH_OIDC_GROUP_MAPPINGS,
+    emailClaim: env.AUTH_OIDC_EMAIL_CLAIM,
+    usernameClaim: env.AUTH_OIDC_USERNAME_CLAIM,
+  };
+}
+
+function forwardedValue(c: Context<AppEnv>, header: string): string | undefined {
+  return c.req.header(header)?.split(",")[0]?.trim() || undefined;
+}
+
+function browserFacingUrl(c: Context<AppEnv>): URL {
+  const url = new URL(c.req.url);
+  const host = forwardedValue(c, "x-forwarded-host");
+  if (host) {
+    url.host = host;
+    url.protocol = `${forwardedValue(c, "x-forwarded-proto") ?? url.protocol.replace(":", "")}:`;
+  }
+  return url;
+}
+
+function oidcCallbackUrl(c: Context<AppEnv>): string {
+  const url = browserFacingUrl(c);
+  url.pathname = "/api/auth/oidc/callback";
+  url.search = "";
+  url.hash = "";
+  return url.href;
+}
+
+function loginRedirect(error = "sso_failed"): string {
+  return `/login?error=${encodeURIComponent(error)}`;
+}
+
+authRouter.get("/methods", (c) =>
+  c.json({
+    password: true,
+    registration: env.AUTH_ALLOW_REGISTRATION,
+    oidc: env.AUTH_OIDC_ENABLED
+      ? {
+          enabled: true,
+          name: env.AUTH_OIDC_NAME,
+          startUrl: "/api/auth/oidc/start",
+        }
+      : { enabled: false },
+  }),
+);
+
+authRouter.get("/oidc/start", async (c) => {
+  const config = oidcConfig();
+  if (!config) return c.json({ error: "OIDC is not enabled" }, 404);
+  const requestUrl = browserFacingUrl(c);
+  const returnTo = safeOidcReturnTo(requestUrl.searchParams.get("returnTo"));
+  const request = await createOidcAuthorizationRequest(config, oidcCallbackUrl(c), returnTo);
+  setCookie(c, OIDC_STATE_COOKIE, signOidcState(request.state, env.SESSION_SECRET), {
+    httpOnly: true,
+    sameSite: "Lax",
+    path: "/api/auth/oidc",
+    secure: env.NODE_ENV === "production",
+    expires: new Date(request.state.expiresAt),
+  });
+  return c.redirect(request.url.href);
+});
+
+authRouter.get("/oidc/callback", async (c) => {
+  const config = oidcConfig();
+  if (!config) return c.redirect(loginRedirect("sso_disabled"));
+  const state = verifyOidcState(getCookie(c, OIDC_STATE_COOKIE), env.SESSION_SECRET);
+  deleteCookie(c, OIDC_STATE_COOKIE, { path: "/api/auth/oidc" });
+  if (!state) return c.redirect(loginRedirect("sso_state"));
+
+  try {
+    const claims = await resolveOidcCallbackClaims(config, browserFacingUrl(c), state);
+    const user = await syncOidcUser(claims);
+    const { secret, expiresAt } = await createSession(user.id, {
+      ip: c.req.header("x-forwarded-for") ?? undefined,
+      userAgent: c.req.header("user-agent") ?? undefined,
+    });
+    setCookie(c, SESSION_COOKIE, secret, {
+      httpOnly: true,
+      sameSite: "Lax",
+      path: "/",
+      secure: env.NODE_ENV === "production",
+      expires: expiresAt,
+    });
+    setActiveSpanAttributes({ "enduser.id": user.id, "auth.event": "oidc_login" });
+    logger.info("OIDC login succeeded", { userId: user.id, issuer: claims.issuer });
+    void writeAudit({
+      action: "auth.oidc_login",
+      result: "success",
+      resourceType: "user",
+      resourceId: user.id,
+      detail: {
+        issuer: claims.issuer,
+        subject: claims.subject,
+        groups: claims.groups,
+        grants: claims.grants.map((grant) => ({ org: grant.org, role: grant.role })),
+      },
+    }).catch(() => {});
+    return c.redirect(state.returnTo);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    addSpanEvent("auth.oidc_login_failed", { "auth.failure": message });
+    logger.warn("OIDC login failed", { error: message });
+    void writeAudit({
+      action: "auth.oidc_login",
+      result: "failure",
+      detail: { error: message },
+    }).catch(() => {});
+    return c.redirect(loginRedirect());
+  }
+});
 
 authRouter.post("/register", async (c) => {
   if (!env.AUTH_ALLOW_REGISTRATION) {
