@@ -49,6 +49,8 @@ const INSTRUMENTATION_NAME = "hootifactory";
 const LOG_LEVELS = { debug: 10, info: 20, warn: 30, error: 40 } as const;
 
 type LogLevel = keyof typeof LOG_LEVELS;
+type LogAttributeValue = string | number | boolean;
+type QueueWorkStatus = "succeeded" | "failed";
 type Signal = "traces" | "metrics" | "logs";
 
 export interface AppLogger {
@@ -70,6 +72,11 @@ export interface TelemetryContextCarrier {
   trace?: Record<string, string>;
   requestId?: string;
   correlationId?: string;
+}
+
+export interface QueueBatchJob {
+  id: string;
+  name?: string;
 }
 
 export interface ObservabilityOptions {
@@ -97,12 +104,17 @@ interface MetricInstruments {
   httpRequests: Counter;
   httpRequestDuration: Histogram;
   registryRequests: Counter;
+  queueActiveJobs: UpDownCounter;
+  queueBatches: Counter;
+  queueBatchDuration: Histogram;
+  queueBatchSize: Histogram;
   queueJobs: Counter;
   queueJobDuration: Histogram;
 }
 
 let runtime: ObservabilityRuntime | null = null;
 let metricInstruments: MetricInstruments | null = null;
+let serviceLogContext: { serviceName: string; serviceRole: string } | null = null;
 
 const correlationStorage = new AsyncLocalStorage<CorrelationContext>();
 
@@ -131,6 +143,10 @@ const recordSetter: TextMapSetter<Record<string, string>> = {
 };
 
 export function initializeObservability(options: ObservabilityOptions): ObservabilityRuntime {
+  const serviceName =
+    options.serviceName ?? env.OTEL_SERVICE_NAME ?? `hootifactory-${options.serviceRole}`;
+  serviceLogContext = { serviceName, serviceRole: options.serviceRole };
+
   if (runtime) return runtime;
 
   if (env.OTEL_SDK_DISABLED) {
@@ -145,8 +161,7 @@ export function initializeObservability(options: ObservabilityOptions): Observab
   const resource = defaultResource().merge(
     resourceFromAttributes({
       ...parseKeyValueList(env.OTEL_RESOURCE_ATTRIBUTES),
-      [ATTR_SERVICE_NAME]:
-        options.serviceName ?? env.OTEL_SERVICE_NAME ?? `hootifactory-${options.serviceRole}`,
+      [ATTR_SERVICE_NAME]: serviceName,
       [ATTR_SERVICE_VERSION]: env.OTEL_SERVICE_VERSION,
       [ATTR_DEPLOYMENT_ENVIRONMENT_NAME]: env.NODE_ENV,
       "service.instance.id": process.env.HOSTNAME ?? randomUUID(),
@@ -221,6 +236,7 @@ export async function shutdownObservability(): Promise<void> {
   await runtime?.shutdown();
   runtime = null;
   metricInstruments = null;
+  serviceLogContext = null;
 }
 
 export function currentCorrelationContext(): CorrelationContext {
@@ -364,54 +380,137 @@ export async function instrumentQueueJob<T>(
   attributes: Attributes,
   handler: () => Promise<T>,
 ): Promise<T> {
-  const parentContext = propagation.extract(ROOT_CONTEXT, carrier?.trace ?? {}, recordGetter);
+  const parentContext = propagation.extract(context.active(), carrier?.trace ?? {}, recordGetter);
   const tracer = trace.getTracer(INSTRUMENTATION_NAME, env.OTEL_SERVICE_VERSION);
+  const baseAttributes: Attributes = {
+    "messaging.system": "pg-boss",
+    "messaging.destination.name": queue,
+    "messaging.operation.name": "process",
+    ...attributes,
+  };
   const span = tracer.startSpan(
     `${queue} process`,
     {
       kind: SpanKind.CONSUMER,
-      attributes: {
-        "messaging.system": "pg-boss",
-        "messaging.destination.name": queue,
-        ...attributes,
-      },
+      attributes: baseAttributes,
     },
     parentContext,
   );
   const spanContext = span.spanContext();
   const started = performance.now();
   const activeContext = trace.setSpan(parentContext, span);
+  const requestId = carrier?.requestId ?? randomUUID();
+  const correlationId = carrier?.correlationId ?? carrier?.requestId ?? requestId;
+  const logAttributes = scalarLogAttributes(baseAttributes);
+  const jobId =
+    typeof attributes["messaging.message.id"] === "string"
+      ? attributes["messaging.message.id"]
+      : undefined;
+
+  instruments().queueActiveJobs.add(1, { queue });
 
   return context.with(activeContext, () =>
     withCorrelationContext(
       {
-        requestId: carrier?.requestId,
-        correlationId: carrier?.correlationId ?? carrier?.requestId,
+        requestId,
+        correlationId,
         traceId: spanContext.traceId,
         spanId: spanContext.spanId,
       },
       async () => {
-        let status = "succeeded";
-        try {
-          const result = await handler();
-          span.setStatus({ code: SpanStatusCode.OK });
-          return result;
-        } catch (err) {
-          status = "failed";
-          span.recordException(exceptionFor(err));
-          span.setStatus({ code: SpanStatusCode.ERROR, message: messageFor(err) });
-          throw err;
-        } finally {
-          const metricAttributes = { queue, status };
-          instruments().queueJobs.add(1, metricAttributes);
-          instruments().queueJobDuration.record(
-            (performance.now() - started) / 1000,
-            metricAttributes,
-          );
-          span.end();
-        }
+        return withLogAttributes(logAttributes, async () => {
+          let status: QueueWorkStatus = "succeeded";
+          logger.debug("queue job started", { queue, jobId });
+          try {
+            const result = await handler();
+            span.setStatus({ code: SpanStatusCode.OK });
+            logger.info("queue job completed", {
+              queue,
+              jobId,
+              durationMs: elapsedMs(started),
+            });
+            return result;
+          } catch (err) {
+            status = "failed";
+            span.recordException(exceptionFor(err));
+            span.setStatus({ code: SpanStatusCode.ERROR, message: messageFor(err) });
+            logger.error("queue job failed", {
+              queue,
+              jobId,
+              durationMs: elapsedMs(started),
+              error: err,
+            });
+            throw err;
+          } finally {
+            const durationSeconds = (performance.now() - started) / 1000;
+            const metricAttributes = { queue, status };
+            instruments().queueActiveJobs.add(-1, { queue });
+            instruments().queueJobs.add(1, metricAttributes);
+            instruments().queueJobDuration.record(durationSeconds, metricAttributes);
+            span.setAttributes({
+              "queue.job.status": status,
+              "queue.job.duration_ms": durationSeconds * 1000,
+            });
+            span.end();
+          }
+        });
       },
     ),
+  );
+}
+
+export async function instrumentQueueBatch<T>(
+  queue: string,
+  jobs: readonly QueueBatchJob[],
+  handler: () => Promise<T>,
+): Promise<T> {
+  const started = performance.now();
+  const jobCount = jobs.length;
+  const firstJobId = jobs[0]?.id;
+  const attributes: Attributes = {
+    "messaging.system": "pg-boss",
+    "messaging.destination.name": queue,
+    "messaging.batch.message_count": jobCount,
+    ...(firstJobId ? { "messaging.message.id": firstJobId } : {}),
+  };
+  const logAttributes = scalarLogAttributes(attributes);
+
+  return withLogAttributes(logAttributes, async () =>
+    withSpan(`${queue} batch`, attributes, async (span) => {
+      let status: QueueWorkStatus = "succeeded";
+      logger.debug("queue batch received", { queue, jobCount, firstJobId });
+      try {
+        return await handler();
+      } catch (err) {
+        status = "failed";
+        logger.error("queue batch failed", {
+          queue,
+          jobCount,
+          firstJobId,
+          durationMs: elapsedMs(started),
+          error: err,
+        });
+        throw err;
+      } finally {
+        const durationSeconds = (performance.now() - started) / 1000;
+        const metricAttributes = { queue, status };
+        instruments().queueBatches.add(1, metricAttributes);
+        instruments().queueBatchDuration.record(durationSeconds, metricAttributes);
+        instruments().queueBatchSize.record(jobCount, { queue });
+        span.setAttributes({
+          "queue.batch.status": status,
+          "queue.batch.duration_ms": durationSeconds * 1000,
+        });
+        if (status === "succeeded") {
+          logger.debug("queue batch completed", {
+            queue,
+            jobCount,
+            firstJobId,
+            durationMs: elapsedMs(started),
+          });
+        }
+      }
+    }),
   );
 }
 
@@ -474,15 +573,24 @@ function emit(level: LogLevel, msg: string, meta?: unknown): void {
 
   const now = new Date();
   const current = currentCorrelationContext();
+  const error = errorForMeta(meta);
   const line: Record<string, unknown> = {
     t: now.toISOString(),
     level,
     msg,
   };
+  if (serviceLogContext) {
+    line.service_name = serviceLogContext.serviceName;
+    line.service_role = serviceLogContext.serviceRole;
+  }
   if (current.requestId) line.request_id = current.requestId;
   if (current.correlationId) line.correlation_id = current.correlationId;
   if (current.traceId) line.trace_id = current.traceId;
   if (current.spanId) line.span_id = current.spanId;
+  if (error) {
+    line.error_name = error.name;
+    line.error_message = error.message;
+  }
   if (current.attributes) {
     for (const [key, value] of Object.entries(current.attributes)) line[key] = value;
   }
@@ -503,13 +611,19 @@ function emit(level: LogLevel, msg: string, meta?: unknown): void {
       context: context.active(),
       attributes: {
         "log.level": level,
+        ...(serviceLogContext
+          ? {
+              "service.name": serviceLogContext.serviceName,
+              "service.role": serviceLogContext.serviceRole,
+            }
+          : {}),
         ...(current.requestId ? { "request.id": current.requestId } : {}),
         ...(current.correlationId ? { "correlation.id": current.correlationId } : {}),
         ...(current.traceId ? { trace_id: current.traceId } : {}),
         ...(current.spanId ? { span_id: current.spanId } : {}),
         ...attributesForMeta(meta),
       },
-      exception: meta instanceof Error ? meta : undefined,
+      exception: error,
     });
   }
 }
@@ -540,6 +654,22 @@ function instruments(): MetricInstruments {
     registryRequests: meter.createCounter("registry.server.requests", {
       description: "Registry dispatch requests by package format and outcome.",
       unit: "{request}",
+    }),
+    queueActiveJobs: meter.createUpDownCounter("queue.jobs.active", {
+      description: "Queue jobs currently being processed by workers.",
+      unit: "{job}",
+    }),
+    queueBatches: meter.createCounter("queue.batches.processed", {
+      description: "Queue batches processed by workers.",
+      unit: "{batch}",
+    }),
+    queueBatchDuration: meter.createHistogram("queue.batch.duration", {
+      description: "Queue batch processing duration.",
+      unit: "s",
+    }),
+    queueBatchSize: meter.createHistogram("queue.batch.size", {
+      description: "Queue batch size observed by workers.",
+      unit: "{job}",
     }),
     queueJobs: meter.createCounter("queue.jobs.processed", {
       description: "Queue jobs processed by workers.",
@@ -630,6 +760,7 @@ function statusCodeForError(err: unknown): number {
 
 function attributesForMeta(meta: unknown): Attributes {
   if (meta === undefined || meta === null) return {};
+  const error = errorForMeta(meta);
   if (meta instanceof Error) {
     return {
       "exception.type": meta.name,
@@ -641,6 +772,11 @@ function attributesForMeta(meta: unknown): Attributes {
     return { "meta.value": String(meta) };
   }
   const attrs: Attributes = {};
+  if (error) {
+    attrs["exception.type"] = error.name;
+    attrs["exception.message"] = error.message;
+    if (error.stack) attrs["exception.stacktrace"] = error.stack;
+  }
   for (const [key, value] of Object.entries(meta as Record<string, unknown>).slice(0, 32)) {
     if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
       attrs[`meta.${key}`] = value;
@@ -649,6 +785,29 @@ function attributesForMeta(meta: unknown): Attributes {
     }
   }
   return attrs;
+}
+
+function errorForMeta(meta: unknown): Error | undefined {
+  if (meta instanceof Error) return meta;
+  if (meta && typeof meta === "object" && !Array.isArray(meta)) {
+    const nested = (meta as { error?: unknown }).error;
+    if (nested instanceof Error) return nested;
+  }
+  return undefined;
+}
+
+function scalarLogAttributes(attributes: Attributes): Record<string, LogAttributeValue> {
+  const out: Record<string, LogAttributeValue> = {};
+  for (const [key, value] of Object.entries(attributes)) {
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
+function elapsedMs(started: number): number {
+  return Math.round((performance.now() - started) * 100) / 100;
 }
 
 function sanitizeForJson(value: unknown, seen = new WeakSet<object>(), depth = 0): unknown {

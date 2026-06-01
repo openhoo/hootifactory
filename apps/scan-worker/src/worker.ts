@@ -1,10 +1,13 @@
 import { env } from "@hootifactory/config";
 import {
   initializeObservability,
+  instrumentHttpRequest,
+  instrumentQueueBatch,
   instrumentQueueJob,
   logger,
   shutdownObservability,
   type TelemetryContextCarrier,
+  withSpan,
 } from "@hootifactory/observability";
 import { QUEUES, stopBoss, work } from "@hootifactory/queue";
 import { detectScanners } from "@hootifactory/scanning";
@@ -26,74 +29,123 @@ const pollingIntervalSeconds = Math.max(
 // Optional health endpoint so orchestrators can wait for readiness. Reports 503
 // until the queue consumer is actually registered.
 let ready = false;
+let healthServer: ReturnType<typeof Bun.serve> | null = null;
 if (process.env.WORKER_PORT) {
-  Bun.serve({
+  healthServer = Bun.serve({
     port: Number(process.env.WORKER_PORT),
     hostname: "127.0.0.1",
-    fetch: () => (ready ? new Response("ok") : new Response("starting", { status: 503 })),
+    fetch: (request) =>
+      instrumentHttpRequest(request, async (telemetry) => {
+        telemetry.setRoute("/worker/healthz");
+        telemetry.setAttribute("worker.role", "scan-worker");
+        telemetry.setAttribute("worker.ready", ready);
+        const response = ready ? new Response("ok") : new Response("starting", { status: 503 });
+        telemetry.setStatusCode(response.status);
+        return response;
+      }),
   });
 }
 
 async function main(): Promise<void> {
-  logger.info("scan worker starting", {
-    externalScanners: detectScanners({
-      clamavImage: env.CLAMAV_IMAGE,
-      trivyServerUrl: env.TRIVY_SERVER_URL,
-      clamavRestUrl: env.CLAMAV_REST_URL,
-      cliRuntime: env.SCANNER_CLI_RUNTIME,
-      dockerCommand: env.SCANNER_DOCKER_COMMAND,
-      grypeImage: env.GRYPE_IMAGE,
-      syftImage: env.SYFT_IMAGE,
-      trivyImage: env.TRIVY_IMAGE,
-    }),
-  });
-  await work<ScanArtifactJob>(
-    QUEUES.scanArtifact,
-    async (jobs) => {
-      for (const job of jobs) {
-        await instrumentQueueJob(
-          QUEUES.scanArtifact,
-          job.data.telemetry,
-          {
-            "messaging.message.id": String(job.id),
-            "artifact.id": job.data.artifactId,
-          },
-          async () => {
-            try {
-              await processScan(job.data.artifactId);
-            } catch (err) {
-              // Record a durable failed-scan row, then surface the error so pg-boss
-              // applies the bounded retry configured at enqueue time (no infinite storm).
-              logger.error("scan job failed", { artifactId: job.data.artifactId, error: err });
-              await recordScanFailure(job.data.artifactId, err).catch(() => {});
-              throw err;
-            }
-          },
-        );
-      }
-    },
+  const scannerOptions = {
+    clamavImage: env.CLAMAV_IMAGE,
+    trivyServerUrl: env.TRIVY_SERVER_URL,
+    clamavRestUrl: env.CLAMAV_REST_URL,
+    cliRuntime: env.SCANNER_CLI_RUNTIME,
+    dockerCommand: env.SCANNER_DOCKER_COMMAND,
+    grypeImage: env.GRYPE_IMAGE,
+    syftImage: env.SYFT_IMAGE,
+    trivyImage: env.TRIVY_IMAGE,
+  };
+  await withSpan(
+    "worker.start",
     {
-      batchSize: workerBatchSize,
-      pollingIntervalSeconds,
+      "worker.role": "scan-worker",
+      "messaging.destination.name": QUEUES.scanArtifact,
+      "worker.batch_size": workerBatchSize,
+      "worker.polling_interval_seconds": pollingIntervalSeconds,
+    },
+    async (span) => {
+      logger.info("scan worker starting", {
+        queue: QUEUES.scanArtifact,
+        batchSize: workerBatchSize,
+        pollingIntervalSeconds,
+        workerPort: process.env.WORKER_PORT,
+        externalScanners: detectScanners(scannerOptions),
+      });
+      const workerId = await work<ScanArtifactJob>(
+        QUEUES.scanArtifact,
+        async (jobs) =>
+          instrumentQueueBatch(QUEUES.scanArtifact, jobs, async () => {
+            for (const job of jobs) {
+              await instrumentQueueJob(
+                QUEUES.scanArtifact,
+                job.data.telemetry,
+                {
+                  "messaging.message.id": String(job.id),
+                  "artifact.id": job.data.artifactId,
+                },
+                async () => {
+                  try {
+                    await processScan(job.data.artifactId);
+                  } catch (err) {
+                    // Record a durable failed-scan row, then surface the error so pg-boss
+                    // applies the bounded retry configured at enqueue time (no infinite storm).
+                    logger.error("scan job failed", {
+                      artifactId: job.data.artifactId,
+                      error: err,
+                    });
+                    await recordScanFailure(job.data.artifactId, err).catch(() => {});
+                    throw err;
+                  }
+                },
+              );
+            }
+          }),
+        {
+          batchSize: workerBatchSize,
+          pollingIntervalSeconds,
+        },
+      );
+      ready = true;
+      span.setAttribute("worker.id", workerId);
+      logger.info("scan worker listening", {
+        queue: QUEUES.scanArtifact,
+        workerId,
+        batchSize: workerBatchSize,
+        pollingIntervalSeconds,
+      });
     },
   );
-  ready = true;
-  logger.info("scan worker listening", { queue: QUEUES.scanArtifact });
 }
 
-const shutdown = async () => {
+let shuttingDown = false;
+const shutdown = async (signal: string, exitCode = 0, reason?: unknown) => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  const meta = { signal, ...(reason !== undefined ? { error: reason } : {}) };
+  if (exitCode === 0) {
+    logger.info("scan worker shutting down", meta);
+  } else {
+    logger.error("scan worker shutting down after fatal error", meta);
+  }
   try {
-    logger.info("scan worker shutting down");
+    ready = false;
+    await healthServer?.stop();
     await stopBoss();
-    await shutdownObservability();
+  } catch (err) {
+    exitCode = 1;
+    logger.error("scan worker shutdown error", { signal, error: err });
   } finally {
-    process.exit(0);
+    await shutdownObservability();
+    process.exit(exitCode);
   }
 };
-process.on("SIGTERM", shutdown);
-process.on("SIGINT", shutdown);
+process.on("SIGTERM", () => void shutdown("SIGTERM"));
+process.on("SIGINT", () => void shutdown("SIGINT"));
+process.on("uncaughtException", (err) => void shutdown("uncaughtException", 1, err));
+process.on("unhandledRejection", (reason) => void shutdown("unhandledRejection", 1, reason));
 
 main().catch((err) => {
-  logger.error("scan worker fatal error", { error: err });
-  process.exit(1);
+  void shutdown("startup_error", 1, err);
 });
