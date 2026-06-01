@@ -24,6 +24,45 @@ function available(cmd: string, args: string[]): boolean {
   }
 }
 
+function buildZip(moduleName: string, version: string): Buffer {
+  const work = mkdtempSync(join(tmpdir(), "hoot-go-"));
+  const builder = join(work, "build_zip.py");
+  writeFileSync(builder, ZIP_BUILDER);
+  const zipPath = execFileSync("python3", [builder, join(work, "m.zip"), moduleName, version], {
+    encoding: "utf8",
+  }).trim();
+  return readFileSync(zipPath);
+}
+
+async function uploadModule(
+  ctx: Awaited<ReturnType<typeof setupOwner>>["ctx"],
+  mountPath: string,
+  moduleName: string,
+  version: string,
+): Promise<void> {
+  const up = await ctx.put(`/${mountPath}/${moduleName}/@v/${version}`, {
+    multipart: {
+      mod: `module ${moduleName}\n\ngo 1.20\n`,
+      zip: { name: "m.zip", mimeType: "application/zip", buffer: buildZip(moduleName, version) },
+    },
+  });
+  expect(up.status()).toBe(200);
+}
+
+function goEnv(baseURL: string, mountPath: string): NodeJS.ProcessEnv {
+  const goCache = mkdtempSync(join(tmpdir(), "gocache-"));
+  return {
+    ...process.env,
+    GOPROXY: `${baseURL}/${mountPath}`,
+    GOSUMDB: "off",
+    GOFLAGS: "-mod=mod",
+    GOTOOLCHAIN: "local",
+    GOMODCACHE: join(goCache, "mod"),
+    GOCACHE: join(goCache, "build"),
+    GOPATH: goCache,
+  };
+}
+
 test.describe("go module proxy (real go)", () => {
   test.skip(
     !available("go", ["version"]) || !available("python3", ["--version"]),
@@ -47,23 +86,7 @@ test.describe("go module proxy (real go)", () => {
     const moduleName = `hoot.test/mod${id}`;
     const version = "v1.0.0";
 
-    // build a valid module zip
-    const work = mkdtempSync(join(tmpdir(), "hoot-go-"));
-    const builder = join(work, "build_zip.py");
-    writeFileSync(builder, ZIP_BUILDER);
-    const zipPath = execFileSync("python3", [builder, join(work, "m.zip"), moduleName, version], {
-      encoding: "utf8",
-    }).trim();
-    const zipBytes = readFileSync(zipPath);
-
-    // upload via the custom hosted-module endpoint
-    const up = await owner.ctx.put(`/${repo.mountPath}/${moduleName}/@v/${version}`, {
-      multipart: {
-        mod: `module ${moduleName}\n\ngo 1.20\n`,
-        zip: { name: "m.zip", mimeType: "application/zip", buffer: zipBytes },
-      },
-    });
-    expect(up.status()).toBe(200);
+    await uploadModule(owner.ctx, repo.mountPath, moduleName, version);
 
     // @v/list reflects the version
     const list = await owner.ctx.get(`/${repo.mountPath}/${moduleName}/@v/list`);
@@ -72,17 +95,7 @@ test.describe("go module proxy (real go)", () => {
     // go mod download against our GOPROXY
     const consumer = mkdtempSync(join(tmpdir(), "hoot-goc-"));
     writeFileSync(join(consumer, "go.mod"), "module hoot.test/consumer\n\ngo 1.20\n");
-    const goCache = mkdtempSync(join(tmpdir(), "gocache-"));
-    const env = {
-      ...process.env,
-      GOPROXY: `${baseURL}/${repo.mountPath}`,
-      GOSUMDB: "off",
-      GOFLAGS: "-mod=mod",
-      GOTOOLCHAIN: "local",
-      GOMODCACHE: join(goCache, "mod"),
-      GOCACHE: join(goCache, "build"),
-      GOPATH: goCache,
-    };
+    const env = goEnv(baseURL!, repo.mountPath);
     try {
       const out = execFileSync("go", ["mod", "download", "-x", `${moduleName}@${version}`], {
         cwd: consumer,
@@ -95,5 +108,39 @@ test.describe("go module proxy (real go)", () => {
       const e = err as { stdout?: string; stderr?: string };
       throw new Error(`go mod download failed:\n${e.stdout ?? ""}\n${e.stderr ?? ""}`);
     }
+  });
+
+  test("@latest prefers the newest release over prereleases", async ({ baseURL }) => {
+    test.setTimeout(180_000);
+    const owner = await setupOwner(baseURL!);
+    const repo = (
+      await (
+        await createRepo(owner.ctx, owner.orgId, {
+          name: "gomods-latest",
+          format: "go",
+          visibility: "public",
+        })
+      ).json()
+    ).repository as { mountPath: string };
+
+    const id = Date.now().toString(36);
+    const moduleName = `hoot.test/latest${id}`;
+    await uploadModule(owner.ctx, repo.mountPath, moduleName, "v1.0.0");
+    await uploadModule(owner.ctx, repo.mountPath, moduleName, "v1.2.0-rc.1");
+    await uploadModule(owner.ctx, repo.mountPath, moduleName, "v1.1.0");
+
+    const latest = await owner.ctx.get(`/${repo.mountPath}/${moduleName}/@latest`);
+    expect(latest.status()).toBe(200);
+    expect((await latest.json()).Version).toBe("v1.1.0");
+
+    const consumer = mkdtempSync(join(tmpdir(), "hoot-goc-latest-"));
+    writeFileSync(join(consumer, "go.mod"), "module hoot.test/consumer\n\ngo 1.20\n");
+    const out = execFileSync("go", ["mod", "download", "-json", `${moduleName}@latest`], {
+      cwd: consumer,
+      env: goEnv(baseURL!, repo.mountPath),
+      stdio: "pipe",
+      encoding: "utf8",
+    });
+    expect(JSON.parse(out).Version).toBe("v1.1.0");
   });
 });
