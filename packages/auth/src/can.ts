@@ -42,7 +42,7 @@ export function can({ principal, action, resource, effectiveRole }: CanInput): D
     if (principal.scopes.length > 0) {
       const name = resource.repositoryName;
       if (name && scopeGrants(principal.scopes, name, action)) {
-        const role = effectiveRole ?? principal.role ?? null;
+        const role = effectiveRole !== undefined ? effectiveRole : (principal.role ?? null);
         if (!role || !roleAllows(role, action)) {
           return {
             allowed: false,
@@ -59,7 +59,7 @@ export function can({ principal, action, resource, effectiveRole }: CanInput): D
       };
     }
     // Only truly scope-less tokens inherit a role (robot role, or owner's membership role).
-    const role = principal.role ?? effectiveRole ?? null;
+    const role = effectiveRole !== undefined ? effectiveRole : (principal.role ?? null);
     if (role && roleAllows(role, action)) return { allowed: true };
     return { allowed: false, code: "insufficient_role", reason: `role does not grant '${action}'` };
   }

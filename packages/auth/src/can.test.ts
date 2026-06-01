@@ -151,6 +151,38 @@ describe("can() — token org boundary", () => {
     expect(d.allowed).toBe(false);
     expect(d.code).toBe("insufficient_role");
   });
+  test("effective role caps token stored role, including null", () => {
+    const tokenWithStoredAdmin: Principal = {
+      ...tokenScoped,
+      role: "admin",
+    };
+    const capped = can({
+      principal: tokenWithStoredAdmin,
+      action: "write",
+      resource: { type: "repository", orgId: "orgA", repositoryName: "acme/app" },
+      effectiveRole: "viewer",
+    });
+    expect(capped.allowed).toBe(false);
+    expect(capped.code).toBe("insufficient_role");
+
+    const removed = can({
+      principal: tokenWithStoredAdmin,
+      action: "read",
+      resource: { type: "repository", orgId: "orgA", repositoryName: "acme/app" },
+      effectiveRole: null,
+    });
+    expect(removed.allowed).toBe(false);
+    expect(removed.code).toBe("insufficient_role");
+
+    const scopeLess = can({
+      principal: { ...tokenRobot, role: "admin" },
+      action: "write",
+      resource: { type: "repository", orgId: "orgA", repositoryName: "x/y" },
+      effectiveRole: "viewer",
+    });
+    expect(scopeLess.allowed).toBe(false);
+    expect(scopeLess.code).toBe("insufficient_role");
+  });
 });
 
 describe("can() — user", () => {

@@ -9,7 +9,7 @@ import {
   roleBindings,
   users,
 } from "@hootifactory/db";
-import { effectiveRoleFor } from "./authorize";
+import { authorize, effectiveRoleFor } from "./authorize";
 import { hashPassword, verifyPassword } from "./password";
 import type { Principal } from "./principal";
 import { issueRegistryToken, registryJwks, verifyRegistryToken } from "./registry-jwt";
@@ -69,6 +69,27 @@ describe("api tokens (DB)", () => {
     expect(await resolveToken(secret)).toBeNull();
   });
 
+  test("owner-backed tokens stop resolving when the owner is disabled", async () => {
+    const [owner] = await db
+      .insert(users)
+      .values({
+        email: `${crypto.randomUUID()}@test.dev`,
+        username: `disabled-${crypto.randomUUID().slice(0, 8)}`,
+      })
+      .returning();
+    await db.insert(memberships).values({ orgId, userId: owner!.id, role: "developer" });
+    const { secret } = await createApiToken({
+      orgId,
+      ownerUserId: owner!.id,
+      name: "disabled-owner",
+    });
+
+    expect(await resolveToken(secret)).not.toBeNull();
+    await db.update(users).set({ isActive: false }).where(eq(users.id, owner!.id));
+    expect(await resolveToken(secret)).toBeNull();
+    await db.delete(users).where(eq(users.id, owner!.id));
+  });
+
   test("garbage secret resolves to null", async () => {
     expect(await resolveToken("hoot_not-a-real-token")).toBeNull();
     expect(await resolveToken("totally-bogus")).toBeNull();
@@ -116,6 +137,50 @@ describe("api tokens (DB)", () => {
         repositoryName: repo!.name,
       }),
     ).resolves.toBe("viewer");
+  });
+
+  test("authorize applies owner role caps to token stored roles", async () => {
+    const [repo] = await db
+      .insert(repositories)
+      .values({
+        orgId,
+        name: `repo-${crypto.randomUUID().slice(0, 8)}`,
+        format: "npm",
+        mountPath: `npm/test-${crypto.randomUUID().slice(0, 8)}`,
+        storagePrefix: `${orgId}/auth-test`,
+      })
+      .returning();
+    const { token } = await createApiToken({
+      orgId,
+      ownerUserId: userId,
+      name: "repo-capped-authorize",
+      scopes: [{ repository: repo!.name, actions: ["read", "write"] }],
+      role: "owner",
+    });
+    await db.insert(roleBindings).values({
+      orgId,
+      userId,
+      repositoryId: repo!.id,
+      role: "viewer",
+    });
+
+    const principal: Principal = {
+      kind: "token",
+      tokenId: token.id,
+      orgId,
+      ownerUserId: userId,
+      scopes: token.scopes,
+      role: token.role,
+      isRobot: false,
+    };
+    const decision = await authorize(principal, "write", {
+      type: "repository",
+      orgId,
+      repositoryId: repo!.id,
+      repositoryName: repo!.name,
+    });
+    expect(decision.allowed).toBe(false);
+    expect(decision.code).toBe("insufficient_role");
   });
 
   test("token-scoped repo bindings override a token's org role", async () => {

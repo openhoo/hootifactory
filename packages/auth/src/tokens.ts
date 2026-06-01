@@ -1,4 +1,4 @@
-import { apiTokens, db, eq, type TokenScope } from "@hootifactory/db";
+import { apiTokens, db, eq, type TokenScope, users } from "@hootifactory/db";
 import type { RoleName } from "./permissions";
 import type { Principal } from "./principal";
 
@@ -72,6 +72,14 @@ export async function resolveToken(secret: string): Promise<Principal | null> {
   const [row] = await db.select().from(apiTokens).where(eq(apiTokens.tokenHash, hash)).limit(1);
   if (!row || row.revokedAt) return null;
   if (row.expiresAt && row.expiresAt.getTime() < Date.now()) return null;
+  if (row.ownerUserId) {
+    const [owner] = await db
+      .select({ isActive: users.isActive })
+      .from(users)
+      .where(eq(users.id, row.ownerUserId))
+      .limit(1);
+    if (!owner?.isActive) return null;
+  }
 
   // best-effort last-used bookkeeping. `.catch()` both executes the lazy Drizzle
   // query (a bare `void db.update(...)` is never sent) and swallows transient
