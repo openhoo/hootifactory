@@ -153,6 +153,15 @@ uiRouter.post("/orgs", async (c) => {
       .returning();
     if (!org) return c.json({ error: "failed to create org" }, 500);
     await db.insert(memberships).values({ orgId: org.id, userId: p.userId, role: "owner" });
+    void writeAudit({
+      orgId: org.id,
+      action: "org.create",
+      result: "success",
+      resourceType: "org",
+      resourceId: org.id,
+      principal: p,
+      detail: { slug: org.slug },
+    }).catch(() => {});
     return c.json({ org }, 201);
   } catch (err) {
     if (isUniqueViolation(err)) {
@@ -315,6 +324,15 @@ uiRouter.post("/repositories/:repoId/members", async (c) => {
   }
 
   await addVirtualMember(guard.repo.id, body.memberRepoId, body.position ?? 0);
+  void writeAudit({
+    orgId: guard.repo.orgId,
+    action: "repository.member.add",
+    result: "success",
+    resourceType: "repository",
+    resourceId: guard.repo.id,
+    principal: c.get("principal"),
+    detail: { memberRepoId: member.id, memberName: member.name, position: body.position ?? 0 },
+  }).catch(() => {});
   return c.json({ ok: true }, 201);
 });
 
@@ -336,6 +354,15 @@ uiRouter.post("/repositories/:repoId/upstreams", async (c) => {
     return c.json({ error: err instanceof Error ? err.message : "invalid upstream url" }, 400);
   }
   await addUpstream(guard.repo.id, body.url, body.priority ?? 0);
+  void writeAudit({
+    orgId: guard.repo.orgId,
+    action: "repository.upstream.add",
+    result: "success",
+    resourceType: "repository",
+    resourceId: guard.repo.id,
+    principal: c.get("principal"),
+    detail: { url: body.url, priority: body.priority ?? 0 },
+  }).catch(() => {});
   return c.json({ ok: true }, 201);
 });
 
@@ -361,6 +388,19 @@ uiRouter.post("/orgs/:orgId/scan-policies", async (c) => {
       blockOnSeverity: body.blockOnSeverity ?? null,
     })
     .returning();
+  void writeAudit({
+    orgId,
+    action: "scan_policy.create",
+    result: "success",
+    resourceType: "scan_policy",
+    resourceId: row?.id,
+    principal: c.get("principal"),
+    detail: {
+      repositoryPattern: body.repositoryPattern ?? "*",
+      mode: body.mode,
+      blockOnSeverity: body.blockOnSeverity ?? null,
+    },
+  }).catch(() => {});
   return c.json({ policy: row }, 201);
 });
 
@@ -481,6 +521,14 @@ uiRouter.post("/orgs/:orgId/quota", async (c) => {
       usedStorageBytes: Number(agg?.used ?? 0),
     });
   }
+  void writeAudit({
+    orgId,
+    action: "quota.set",
+    result: "success",
+    resourceType: "quota",
+    principal: c.get("principal"),
+    detail: { maxStorageBytes: body?.maxStorageBytes ?? null },
+  }).catch(() => {});
   return c.json({ ok: true });
 });
 
@@ -493,6 +541,15 @@ uiRouter.post("/repositories/:repoId/retention/apply", async (c) => {
     return c.json({ error: "keepLastN must be a positive integer" }, 400);
   }
   const pruned = await applyRetention(guard.repo.id, keepLastN);
+  void writeAudit({
+    orgId: guard.repo.orgId,
+    action: "retention.apply",
+    result: "success",
+    resourceType: "repository",
+    resourceId: guard.repo.id,
+    principal: c.get("principal"),
+    detail: { keepLastN, pruned },
+  }).catch(() => {});
   return c.json({ pruned });
 });
 
