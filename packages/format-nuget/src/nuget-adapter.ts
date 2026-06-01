@@ -54,9 +54,8 @@ function compareNugetVersions(a: string, b: string): number {
 
 /**
  * NuGet v3. The consumption surface (service index + flat container) is
- * spec-compliant. Push accepts the .nupkg via PUT with id+version query params
- * (pragmatic for environments without the dotnet CLI; nuspec auto-extraction
- * is a follow-up).
+ * spec-compliant. Push accepts the .nupkg via PUT and derives id/version from
+ * the nuspec when clients do not provide query parameters.
  */
 export class NugetAdapter implements FormatAdapter {
   readonly format = "nuget" as const;
