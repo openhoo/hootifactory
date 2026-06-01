@@ -38,6 +38,8 @@ export class RegistryError extends Error {
 export const Errors = {
   blobUnknown: (detail?: unknown) =>
     new RegistryError(404, "BLOB_UNKNOWN", "blob unknown to registry", detail),
+  blobUploadInvalid: (detail?: unknown) =>
+    new RegistryError(416, "BLOB_UPLOAD_INVALID", "blob upload invalid", detail),
   blobUploadUnknown: (detail?: unknown) =>
     new RegistryError(404, "BLOB_UPLOAD_UNKNOWN", "blob upload unknown to registry", detail),
   manifestUnknown: (detail?: unknown) =>

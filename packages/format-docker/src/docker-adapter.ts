@@ -50,6 +50,36 @@ const INDEX_MEDIA_TYPES = new Set<string>([
   OCI_MEDIA_TYPES.dockerManifestListV2,
 ]);
 
+function parseContentRange(value: string | null): { start: number; end: number } | null {
+  if (!value) return null;
+  const match = /^(?:bytes\s+)?(\d+)-(\d+)(?:\/(?:\d+|\*))?$/.exec(value.trim());
+  if (!match)
+    throw Errors.blobUploadInvalid({ reason: "invalid content-range", contentRange: value });
+  const start = Number(match[1]);
+  const end = Number(match[2]);
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || end < start) {
+    throw Errors.blobUploadInvalid({ reason: "invalid content-range", contentRange: value });
+  }
+  return { start, end };
+}
+
+function validateContentRange(req: Request, expectedStart: number, chunkLength: number): void {
+  const contentRange = req.headers.get("content-range");
+  if (!contentRange) return;
+  if (chunkLength === 0) {
+    throw Errors.blobUploadInvalid({ reason: "content-range with empty chunk", contentRange });
+  }
+  const range = parseContentRange(contentRange);
+  const expectedEnd = expectedStart + chunkLength - 1;
+  if (!range || range.start !== expectedStart || range.end !== expectedEnd) {
+    throw Errors.blobUploadInvalid({
+      reason: "content-range does not match upload offset",
+      expected: `${expectedStart}-${expectedEnd}`,
+      got: contentRange,
+    });
+  }
+}
+
 /**
  * The CAS blob digests an image manifest references (its config + layers). Index
  * / manifest-list manifests reference sub-manifests (not blobs) and yield [].
@@ -564,6 +594,27 @@ export class DockerAdapter implements FormatAdapter {
     return s ?? null;
   }
 
+  private async loadOpenSession(uuid: string, ctx: RepoContext) {
+    const s = await this.loadSession(uuid, ctx);
+    if (!s) throw Errors.blobUploadUnknown({ uuid });
+    if (s.state !== "open") throw Errors.blobUploadUnknown({ uuid, state: s.state });
+    if (s.expiresAt.getTime() <= Date.now()) {
+      await ctx.blobs.deleteKey(s.storageKey).catch(() => {});
+      await ctx.db
+        .update(uploadSessions)
+        .set({ state: "aborted" })
+        .where(
+          and(
+            eq(uploadSessions.id, uuid),
+            eq(uploadSessions.repositoryId, ctx.repo.id),
+            eq(uploadSessions.state, "open"),
+          ),
+        );
+      throw Errors.blobUploadUnknown({ uuid, reason: "expired" });
+    }
+    return s;
+  }
+
   /**
    * True when `digest` is a layer/config referenced ONLY by blocked manifests in
    * this repo (so serving it would leak content from a quarantined/blocked image).
@@ -599,14 +650,20 @@ export class DockerAdapter implements FormatAdapter {
     // S3 multipart streaming (Phase 4 hardening).
     const existing =
       session.offsetBytes > 0 ? await ctx.blobs.bytesAtKey(session.storageKey) : new Uint8Array(0);
+    if (existing.length !== session.offsetBytes) {
+      throw Errors.blobUploadInvalid({
+        reason: "staging offset mismatch",
+        expected: session.offsetBytes,
+        actual: existing.length,
+      });
+    }
     const combined = chunk.length ? concat(existing, chunk) : existing;
     await ctx.blobs.putAtKey(session.storageKey, combined);
     return combined.length;
   }
 
   private async uploadStatus(image: string, uuid: string, ctx: RepoContext): Promise<Response> {
-    const s = await this.loadSession(uuid, ctx);
-    if (!s) throw Errors.blobUploadUnknown({ uuid });
+    const s = await this.loadOpenSession(uuid, ctx);
     return new Response(null, {
       status: 204,
       headers: {
@@ -623,14 +680,20 @@ export class DockerAdapter implements FormatAdapter {
     req: Request,
     ctx: RepoContext,
   ): Promise<Response> {
-    const s = await this.loadSession(uuid, ctx);
-    if (!s) throw Errors.blobUploadUnknown({ uuid });
     const chunk = await bodyBytes(req);
+    const s = await this.loadOpenSession(uuid, ctx);
+    validateContentRange(req, s.offsetBytes, chunk.length);
     const offset = await this.appendChunk(s, chunk, ctx);
     await ctx.db
       .update(uploadSessions)
       .set({ offsetBytes: offset })
-      .where(eq(uploadSessions.id, uuid));
+      .where(
+        and(
+          eq(uploadSessions.id, uuid),
+          eq(uploadSessions.repositoryId, ctx.repo.id),
+          eq(uploadSessions.state, "open"),
+        ),
+      );
     return new Response(null, {
       status: 202,
       headers: {
@@ -648,15 +711,23 @@ export class DockerAdapter implements FormatAdapter {
     req: Request,
     ctx: RepoContext,
   ): Promise<Response> {
-    const s = await this.loadSession(uuid, ctx);
-    if (!s) throw Errors.blobUploadUnknown({ uuid });
     const url = new URL(req.url);
     const digest = url.searchParams.get("digest");
-    if (!digest) throw Errors.digestInvalid({ reason: "missing digest" });
+    if (!digest || !isValidDigest(digest)) throw Errors.digestInvalid({ reason: "missing digest" });
 
     const chunk = await bodyBytes(req);
-    await this.appendChunk(s, chunk, ctx);
-    const full = await ctx.blobs.bytesAtKey(s.storageKey);
+    const s = await this.loadOpenSession(uuid, ctx);
+    validateContentRange(req, s.offsetBytes, chunk.length);
+    const existing =
+      s.offsetBytes > 0 ? await ctx.blobs.bytesAtKey(s.storageKey) : new Uint8Array(0);
+    if (existing.length !== s.offsetBytes) {
+      throw Errors.blobUploadInvalid({
+        reason: "staging offset mismatch",
+        expected: s.offsetBytes,
+        actual: existing.length,
+      });
+    }
+    const full = chunk.length ? concat(existing, chunk) : existing;
     if (computeDigest(full) !== digest) {
       throw Errors.digestInvalid({ expected: digest, got: computeDigest(full) });
     }
@@ -665,7 +736,13 @@ export class DockerAdapter implements FormatAdapter {
     await ctx.db
       .update(uploadSessions)
       .set({ state: "committed", offsetBytes: full.length })
-      .where(eq(uploadSessions.id, uuid));
+      .where(
+        and(
+          eq(uploadSessions.id, uuid),
+          eq(uploadSessions.repositoryId, ctx.repo.id),
+          eq(uploadSessions.state, "open"),
+        ),
+      );
 
     return new Response(null, {
       status: 201,
@@ -679,7 +756,7 @@ export class DockerAdapter implements FormatAdapter {
 
   private async cancelUpload(uuid: string, ctx: RepoContext): Promise<Response> {
     const s = await this.loadSession(uuid, ctx);
-    if (s) {
+    if (s && s.state === "open") {
       await ctx.blobs.deleteKey(s.storageKey).catch(() => {});
       await ctx.db.delete(uploadSessions).where(eq(uploadSessions.id, uuid));
     }

@@ -82,6 +82,40 @@ async function uploadBlob(
   return digest;
 }
 
+async function startUpload(
+  ctx: APIRequestContext,
+  mountPath: string,
+  image: string,
+): Promise<{ uuid: string; path: string }> {
+  const res = await ctx.post(`/${mountPath}/${image}/blobs/uploads`);
+  expect(res.status()).toBe(202);
+  const uuid = res.headers()["docker-upload-uuid"];
+  expect(uuid).toBeTruthy();
+  expect(res.headers().range).toBe("0-0");
+  return { uuid, path: `/${mountPath}/${image}/blobs/uploads/${uuid}` };
+}
+
+function expireUploadSession(uuid: string): void {
+  execFileSync(
+    "bun",
+    [
+      "-e",
+      [
+        'import { db, eq, uploadSessions } from "@hootifactory/db";',
+        "await db",
+        "  .update(uploadSessions)",
+        "  .set({ expiresAt: new Date(Date.now() - 1000) })",
+        "  .where(eq(uploadSessions.id, process.env.UPLOAD_UUID));",
+      ].join("\n"),
+    ],
+    {
+      env: { ...process.env, DATABASE_URL: TEST_DATABASE_URL, UPLOAD_UUID: uuid },
+      stdio: "pipe",
+      encoding: "utf8",
+    },
+  );
+}
+
 async function putManifest(
   ctx: APIRequestContext,
   mountPath: string,
@@ -279,5 +313,78 @@ test.describe("docker registry protocol authorization", () => {
       headers: { authorization: `Bearer ${appJwt}` },
     });
     expect(stillThere.status()).toBe(200);
+  });
+
+  test("resumable uploads enforce offsets, digest retries, and session state", async ({
+    baseURL,
+  }) => {
+    const owner = await setupOwner(baseURL!);
+    const repo = (
+      await (
+        await createRepo(owner.ctx, owner.orgId, { name: "containers", format: "docker" })
+      ).json()
+    ).repository as { mountPath: string };
+
+    const upload = await startUpload(owner.ctx, repo.mountPath, "resumable");
+    const first = Buffer.from("hello");
+    const firstPatch = await owner.ctx.patch(upload.path, {
+      headers: { "content-type": "application/octet-stream", "content-range": "0-4" },
+      data: first,
+    });
+    expect(firstPatch.status()).toBe(202);
+    expect(firstPatch.headers().range).toBe("0-4");
+
+    const badRange = await owner.ctx.patch(upload.path, {
+      headers: { "content-type": "application/octet-stream", "content-range": "0-2" },
+      data: Buffer.from("bad"),
+    });
+    expect(badRange.status()).toBe(416);
+    expect((await badRange.json()).errors[0].code).toBe("BLOB_UPLOAD_INVALID");
+
+    const statusAfterBadRange = await owner.ctx.get(upload.path);
+    expect(statusAfterBadRange.status()).toBe(204);
+    expect(statusAfterBadRange.headers().range).toBe("0-4");
+
+    const second = Buffer.from(" world");
+    const badDigest = await owner.ctx.put(`${upload.path}?digest=${sha256("wrong")}`, {
+      headers: { "content-type": "application/octet-stream", "content-range": "5-10" },
+      data: second,
+    });
+    expect(badDigest.status()).toBe(400);
+    expect((await badDigest.json()).errors[0].code).toBe("DIGEST_INVALID");
+
+    const statusAfterBadDigest = await owner.ctx.get(upload.path);
+    expect(statusAfterBadDigest.status()).toBe(204);
+    expect(statusAfterBadDigest.headers().range).toBe("0-4");
+
+    const full = Buffer.concat([first, second]);
+    const digest = sha256(full);
+    const completed = await owner.ctx.put(`${upload.path}?digest=${digest}`, {
+      headers: { "content-type": "application/octet-stream", "content-range": "5-10" },
+      data: second,
+    });
+    expect(completed.status()).toBe(201);
+    expect(completed.headers()["docker-content-digest"]).toBe(digest);
+
+    const blob = await owner.ctx.get(`/${repo.mountPath}/resumable/blobs/${digest}`);
+    expect(blob.status()).toBe(200);
+    expect(Buffer.from(await blob.body()).toString("utf8")).toBe("hello world");
+
+    const statusAfterCommit = await owner.ctx.get(upload.path);
+    expect(statusAfterCommit.status()).toBe(404);
+    expect((await statusAfterCommit.json()).errors[0].code).toBe("BLOB_UPLOAD_UNKNOWN");
+
+    const patchAfterCommit = await owner.ctx.patch(upload.path, {
+      headers: { "content-type": "application/octet-stream", "content-range": "11-11" },
+      data: Buffer.from("!"),
+    });
+    expect(patchAfterCommit.status()).toBe(404);
+    expect((await patchAfterCommit.json()).errors[0].code).toBe("BLOB_UPLOAD_UNKNOWN");
+
+    const expired = await startUpload(owner.ctx, repo.mountPath, "expired");
+    expireUploadSession(expired.uuid);
+    const expiredStatus = await owner.ctx.get(expired.path);
+    expect(expiredStatus.status()).toBe(404);
+    expect((await expiredStatus.json()).errors[0].code).toBe("BLOB_UPLOAD_UNKNOWN");
   });
 });
