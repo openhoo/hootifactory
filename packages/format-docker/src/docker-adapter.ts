@@ -80,6 +80,10 @@ function validateContentRange(req: Request, expectedStart: number, chunkLength: 
   }
 }
 
+function packageVersionDigestEquals(digest: string) {
+  return sql`jsonb_extract_path_text((${packageVersions.metadata} #>> '{}')::jsonb, ${"digest"}) = ${digest}`;
+}
+
 /**
  * The CAS blob digests an image manifest references (its config + layers). Index
  * / manifest-list manifests reference sub-manifests (not blobs) and yield [].
@@ -149,7 +153,7 @@ export class DockerAdapter implements FormatAdapter {
       case "tagsList":
         return this.tagsList(image, req, ctx);
       case "referrers":
-        return this.referrers(match.params.digest ?? "", ctx);
+        return this.referrers(image, match.params.digest ?? "", ctx);
       case "headManifest":
         return this.getManifest(image, match.params.reference ?? "", ctx, true);
       case "getManifest":
@@ -201,6 +205,7 @@ export class DockerAdapter implements FormatAdapter {
       req.headers.get("content-type") || (parsed.mediaType as string) || OCI_MEDIA_TYPES.manifestV1;
     const config = parsed.config as { digest?: string } | undefined;
     const subject = parsed.subject as { digest?: string } | undefined;
+    const subjectDigest = typeof subject?.digest === "string" ? subject.digest : null;
 
     // Reject an image manifest that references blobs not yet uploaded to this repo.
     const referencedBlobs = manifestBlobDigests(raw);
@@ -226,6 +231,15 @@ export class DockerAdapter implements FormatAdapter {
       name: image,
     });
 
+    if (subjectDigest) {
+      if (
+        !isValidDigest(subjectDigest) ||
+        !(await this.resolveManifest(image, subjectDigest, ctx))
+      ) {
+        throw Errors.manifestUnknown({ reference: subjectDigest });
+      }
+    }
+
     const [manifest] = await ctx.db
       .insert(ociManifests)
       .values({
@@ -233,14 +247,14 @@ export class DockerAdapter implements FormatAdapter {
         digest,
         mediaType,
         artifactType: (parsed.artifactType as string) ?? null,
-        subjectDigest: subject?.digest ?? null,
+        subjectDigest,
         raw,
         sizeBytes: bytes.length,
         configDigest: config?.digest ?? null,
       })
       .onConflictDoUpdate({
         target: [ociManifests.repositoryId, ociManifests.digest],
-        set: { raw, mediaType, sizeBytes: bytes.length, subjectDigest: subject?.digest ?? null },
+        set: { raw, mediaType, sizeBytes: bytes.length, subjectDigest },
       })
       .returning({ id: ociManifests.id });
 
@@ -369,16 +383,36 @@ export class DockerAdapter implements FormatAdapter {
     if (reference.startsWith("sha256:")) {
       const scoped = await this.resolveManifest(image, reference, ctx);
       if (!scoped) throw Errors.manifestUnknown({ reference });
-      // Read the manifest first so its now-unreferenced layer/config blobs can be released.
-      const [m] = await ctx.db
-        .select({ raw: ociManifests.raw })
-        .from(ociManifests)
-        .where(and(eq(ociManifests.repositoryId, ctx.repo.id), eq(ociManifests.digest, reference)))
+
+      const [pkg] = await ctx.db
+        .select({ id: packages.id })
+        .from(packages)
+        .where(and(eq(packages.repositoryId, ctx.repo.id), eq(packages.name, image)))
         .limit(1);
+      if (!pkg) throw Errors.manifestUnknown({ reference });
+
       await ctx.db
-        .delete(ociManifests)
-        .where(and(eq(ociManifests.repositoryId, ctx.repo.id), eq(ociManifests.digest, reference)));
-      if (m) await this.releaseManifestBlobs(ctx, image, manifestBlobDigests(m.raw));
+        .delete(ociTags)
+        .where(and(eq(ociTags.packageId, pkg.id), eq(ociTags.manifestId, scoped.id)));
+      await ctx.db
+        .update(packageVersions)
+        .set({ deletedAt: new Date() })
+        .where(
+          and(
+            eq(packageVersions.packageId, pkg.id),
+            isNull(packageVersions.deletedAt),
+            packageVersionDigestEquals(reference),
+          ),
+        );
+
+      if (!(await this.manifestHasLiveAssociations(ctx, scoped.id, reference))) {
+        await ctx.db
+          .delete(ociManifests)
+          .where(
+            and(eq(ociManifests.repositoryId, ctx.repo.id), eq(ociManifests.digest, reference)),
+          );
+      }
+      await this.releaseManifestBlobs(ctx, image, manifestBlobDigests(scoped.raw));
     } else {
       // Tag delete only removes the mutable pointer; the manifest + its blobs remain.
       const [pkg] = await ctx.db
@@ -402,16 +436,66 @@ export class DockerAdapter implements FormatAdapter {
     digests: string[],
   ): Promise<void> {
     if (digests.length === 0) return;
-    const remaining = await ctx.db
-      .select({ raw: ociManifests.raw })
-      .from(ociManifests)
-      .where(eq(ociManifests.repositoryId, ctx.repo.id));
+    const remaining = await this.liveManifestRowsForImage(ctx, image);
     const stillUsed = new Set<string>();
     for (const r of remaining) for (const d of manifestBlobDigests(r.raw)) stillUsed.add(d);
     for (const digest of digests) {
       if (stillUsed.has(digest)) continue;
       await releaseBlobRef(ctx, { digest, kind: "oci_layer", scope: image });
     }
+  }
+
+  private async liveManifestRowsForImage(
+    ctx: RepoContext,
+    image: string,
+  ): Promise<{ raw: string }[]> {
+    const [pkg] = await ctx.db
+      .select({ id: packages.id })
+      .from(packages)
+      .where(and(eq(packages.repositoryId, ctx.repo.id), eq(packages.name, image)))
+      .limit(1);
+    if (!pkg) return [];
+
+    const tagRows = await ctx.db
+      .select({ digest: ociManifests.digest })
+      .from(ociTags)
+      .innerJoin(ociManifests, eq(ociTags.manifestId, ociManifests.id))
+      .where(eq(ociTags.packageId, pkg.id));
+    const versionRows = await ctx.db
+      .select({ metadata: packageVersions.metadata })
+      .from(packageVersions)
+      .where(and(eq(packageVersions.packageId, pkg.id), isNull(packageVersions.deletedAt)));
+    const digests = new Set(tagRows.map((r) => r.digest));
+    for (const row of versionRows) {
+      const digest = (row.metadata as { digest?: unknown }).digest;
+      if (typeof digest === "string") digests.add(digest);
+    }
+    if (digests.size === 0) return [];
+    return ctx.db
+      .select({ raw: ociManifests.raw })
+      .from(ociManifests)
+      .where(
+        and(eq(ociManifests.repositoryId, ctx.repo.id), inArray(ociManifests.digest, [...digests])),
+      );
+  }
+
+  private async manifestHasLiveAssociations(
+    ctx: RepoContext,
+    manifestId: string,
+    digest: string,
+  ): Promise<boolean> {
+    const [tag] = await ctx.db
+      .select({ id: ociTags.id })
+      .from(ociTags)
+      .where(eq(ociTags.manifestId, manifestId))
+      .limit(1);
+    if (tag) return true;
+    const [version] = await ctx.db
+      .select({ id: packageVersions.id })
+      .from(packageVersions)
+      .where(and(isNull(packageVersions.deletedAt), packageVersionDigestEquals(digest)))
+      .limit(1);
+    return Boolean(version);
   }
 
   // ── tags ───────────────────────────────────────────────────────────────
@@ -450,23 +534,39 @@ export class DockerAdapter implements FormatAdapter {
   }
 
   // ── referrers ──────────────────────────────────────────────────────────
-  private async referrers(digest: string, ctx: RepoContext): Promise<Response> {
+  private referrersResponse(
+    manifests: {
+      mediaType: string;
+      digest: string;
+      size: number;
+      artifactType?: string;
+    }[],
+  ): Response {
+    return new Response(
+      JSON.stringify({ schemaVersion: 2, mediaType: OCI_MEDIA_TYPES.imageIndexV1, manifests }),
+      { status: 200, headers: { "content-type": OCI_MEDIA_TYPES.imageIndexV1 } },
+    );
+  }
+
+  private async referrers(image: string, digest: string, ctx: RepoContext): Promise<Response> {
+    if (!(await this.resolveManifest(image, digest, ctx))) return this.referrersResponse([]);
     const rows = await ctx.db
       .select()
       .from(ociManifests)
       .where(
         and(eq(ociManifests.repositoryId, ctx.repo.id), eq(ociManifests.subjectDigest, digest)),
       );
-    const manifests = rows.map((m) => ({
-      mediaType: m.mediaType,
-      digest: m.digest,
-      size: m.sizeBytes,
-      artifactType: m.artifactType ?? undefined,
-    }));
-    return new Response(
-      JSON.stringify({ schemaVersion: 2, mediaType: OCI_MEDIA_TYPES.imageIndexV1, manifests }),
-      { status: 200, headers: { "content-type": OCI_MEDIA_TYPES.imageIndexV1 } },
-    );
+    const manifests = [];
+    for (const m of rows) {
+      if (!(await this.resolveManifest(image, m.digest, ctx))) continue;
+      manifests.push({
+        mediaType: m.mediaType,
+        digest: m.digest,
+        size: m.sizeBytes,
+        artifactType: m.artifactType ?? undefined,
+      });
+    }
+    return this.referrersResponse(manifests);
   }
 
   // ── blobs ──────────────────────────────────────────────────────────────

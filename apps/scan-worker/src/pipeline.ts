@@ -148,22 +148,24 @@ export async function processScan(artifactId: string): Promise<void> {
   async function scanOciManifestReferences(
     digest: string,
     seen = new Set<string>(),
-  ): Promise<void> {
-    if (seen.has(digest)) return;
+  ): Promise<number | null> {
+    if (seen.has(digest)) return 0;
     seen.add(digest);
     const [manifest] = await db
       .select({ raw: ociManifests.raw })
       .from(ociManifests)
       .where(and(eq(ociManifests.repositoryId, repoId), eq(ociManifests.digest, digest)))
       .limit(1);
-    if (!manifest) return;
+    if (!manifest) return null;
     const refs = ociManifestReferences(manifest.raw);
+    let referenceCount = refs.blobs.length + refs.manifests.length;
     for (const blobDigest of refs.blobs) {
       await scanStoredBytes(blobDigest);
     }
     for (const manifestDigest of refs.manifests) {
-      await scanOciManifestReferences(manifestDigest, seen);
+      referenceCount += (await scanOciManifestReferences(manifestDigest, seen)) ?? 0;
     }
+    return referenceCount;
   }
 
   async function isDeletedPackageVersion(): Promise<boolean> {
@@ -184,8 +186,12 @@ export async function processScan(artifactId: string): Promise<void> {
   }
 
   const scannedDirectBytes = await scanStoredBytes(art.digest);
+  let scannedOciManifest = false;
+  let ociReferenceCount = 0;
   if (!scannedDirectBytes && OCI_FORMATS.has(repoFormat)) {
-    await scanOciManifestReferences(art.digest);
+    const refs = await scanOciManifestReferences(art.digest);
+    scannedOciManifest = refs !== null;
+    ociReferenceCount = refs ?? 0;
   }
   if (!scannedBytePayload && Object.keys(deps).length === 0) {
     if (await isDeletedPackageVersion()) {
@@ -194,6 +200,16 @@ export async function processScan(artifactId: string): Promise<void> {
         .set({
           state: "clean",
           policyDecision: { skipped: "package_version_deleted", findings: 0 },
+        })
+        .where(eq(artifacts.id, art.id));
+      return;
+    }
+    if (scannedOciManifest && ociReferenceCount === 0) {
+      await db
+        .update(artifacts)
+        .set({
+          state: "clean",
+          policyDecision: { skipped: "oci_manifest_no_scannable_payload", findings: 0 },
         })
         .where(eq(artifacts.id, art.id));
       return;

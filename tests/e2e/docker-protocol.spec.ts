@@ -12,6 +12,8 @@ function sha256(bytes: Buffer | string): string {
   return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 }
 
+const ARTIFACT_MANIFEST_MEDIA_TYPE = "application/vnd.oci.artifact.manifest.v1+json";
+
 function basic(secret: string): string {
   return `Basic ${Buffer.from(`token:${secret}`).toString("base64")}`;
 }
@@ -143,6 +145,37 @@ async function putManifest(
   const digest = sha256(manifest);
   const res = await ctx.put(`/${mountPath}/${image}/manifests/${tag}`, {
     headers: { "content-type": OCI_MEDIA_TYPES.manifestV1 },
+    data: manifest,
+  });
+  expect(res.status()).toBe(201);
+  expect(res.headers()["docker-content-digest"]).toBe(digest);
+  return digest;
+}
+
+function referrerManifest(subjectDigest: string): string {
+  return JSON.stringify({
+    schemaVersion: 2,
+    mediaType: ARTIFACT_MANIFEST_MEDIA_TYPE,
+    artifactType: "application/vnd.hootifactory.test.sbom",
+    subject: {
+      mediaType: OCI_MEDIA_TYPES.manifestV1,
+      digest: subjectDigest,
+      size: 0,
+    },
+  });
+}
+
+async function putReferrer(
+  ctx: APIRequestContext,
+  mountPath: string,
+  image: string,
+  tag: string,
+  subjectDigest: string,
+): Promise<string> {
+  const manifest = referrerManifest(subjectDigest);
+  const digest = sha256(manifest);
+  const res = await ctx.put(`/${mountPath}/${image}/manifests/${tag}`, {
+    headers: { "content-type": ARTIFACT_MANIFEST_MEDIA_TYPE },
     data: manifest,
   });
   expect(res.status()).toBe(201);
@@ -313,6 +346,123 @@ test.describe("docker registry protocol authorization", () => {
       headers: { authorization: `Bearer ${appJwt}` },
     });
     expect(stillThere.status()).toBe(200);
+  });
+
+  test("manifest referrers and digest deletes stay scoped to the requested image", async ({
+    baseURL,
+  }) => {
+    const owner = await setupOwner(baseURL!);
+    const repo = (
+      await (
+        await createRepo(owner.ctx, owner.orgId, { name: "containers", format: "docker" })
+      ).json()
+    ).repository as { mountPath: string };
+
+    const appConfigDigest = await uploadBlob(owner.ctx, repo.mountPath, "app", Buffer.from("{}"));
+    const appLayerDigest = await uploadBlob(
+      owner.ctx,
+      repo.mountPath,
+      "app",
+      Buffer.from("layer-app"),
+    );
+    const appDigest = await putManifest(
+      owner.ctx,
+      repo.mountPath,
+      "app",
+      "1.0",
+      appConfigDigest,
+      appLayerDigest,
+    );
+    const appReferrerDigest = await putReferrer(
+      owner.ctx,
+      repo.mountPath,
+      "app",
+      "sbom",
+      appDigest,
+    );
+
+    const appReferrers = await owner.ctx.get(`/${repo.mountPath}/app/referrers/${appDigest}`);
+    expect(appReferrers.status()).toBe(200);
+    expect(((await appReferrers.json()) as { manifests: { digest: string }[] }).manifests).toEqual(
+      expect.arrayContaining([expect.objectContaining({ digest: appReferrerDigest })]),
+    );
+
+    const crossReferrer = await owner.ctx.put(`/${repo.mountPath}/other/manifests/sbom`, {
+      headers: { "content-type": ARTIFACT_MANIFEST_MEDIA_TYPE },
+      data: referrerManifest(appDigest),
+    });
+    expect(crossReferrer.status()).toBe(404);
+    expect((await crossReferrer.json()).errors[0].code).toBe("MANIFEST_UNKNOWN");
+
+    const otherReferrers = await owner.ctx.get(`/${repo.mountPath}/other/referrers/${appDigest}`);
+    expect(otherReferrers.status()).toBe(200);
+    expect(((await otherReferrers.json()) as { manifests: unknown[] }).manifests).toEqual([]);
+
+    const otherConfigDigest = await uploadBlob(
+      owner.ctx,
+      repo.mountPath,
+      "other",
+      Buffer.from("{}"),
+    );
+    const otherLayerDigest = await uploadBlob(
+      owner.ctx,
+      repo.mountPath,
+      "other",
+      Buffer.from("shared-layer"),
+    );
+    const sharedAppConfigDigest = await uploadBlob(
+      owner.ctx,
+      repo.mountPath,
+      "app-shared",
+      Buffer.from("{}"),
+    );
+    const sharedAppLayerDigest = await uploadBlob(
+      owner.ctx,
+      repo.mountPath,
+      "app-shared",
+      Buffer.from("shared-layer"),
+    );
+    const sharedAppDigest = await putManifest(
+      owner.ctx,
+      repo.mountPath,
+      "app-shared",
+      "1.0",
+      sharedAppConfigDigest,
+      sharedAppLayerDigest,
+    );
+    const sharedOtherDigest = await putManifest(
+      owner.ctx,
+      repo.mountPath,
+      "other",
+      "1.0",
+      otherConfigDigest,
+      otherLayerDigest,
+    );
+    expect(sharedOtherDigest).toBe(sharedAppDigest);
+
+    const deleted = await owner.ctx.delete(
+      `/${repo.mountPath}/app-shared/manifests/${sharedAppDigest}`,
+    );
+    expect(deleted.status()).toBe(202);
+
+    const appSharedAfterDelete = await owner.ctx.get(`/${repo.mountPath}/app-shared/manifests/1.0`);
+    expect(appSharedAfterDelete.status()).toBe(404);
+    expect((await appSharedAfterDelete.json()).errors[0].code).toBe("MANIFEST_UNKNOWN");
+
+    const otherAfterDelete = await owner.ctx.get(`/${repo.mountPath}/other/manifests/1.0`);
+    expect(otherAfterDelete.status()).toBe(200);
+    expect(otherAfterDelete.headers()["docker-content-digest"]).toBe(sharedOtherDigest);
+
+    const appSharedBlobAfterDelete = await owner.ctx.get(
+      `/${repo.mountPath}/app-shared/blobs/${sharedAppLayerDigest}`,
+    );
+    expect(appSharedBlobAfterDelete.status()).toBe(404);
+    expect((await appSharedBlobAfterDelete.json()).errors[0].code).toBe("BLOB_UNKNOWN");
+
+    const otherBlobAfterDelete = await owner.ctx.get(
+      `/${repo.mountPath}/other/blobs/${otherLayerDigest}`,
+    );
+    expect(otherBlobAfterDelete.status()).toBe(200);
   });
 
   test("resumable uploads enforce offsets, digest retries, and session state", async ({
