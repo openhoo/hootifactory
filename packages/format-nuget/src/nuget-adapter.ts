@@ -22,6 +22,63 @@ interface NugetVersionMeta {
   listed?: boolean;
 }
 
+const CRLF = new TextEncoder().encode("\r\n");
+const HEADER_END = new TextEncoder().encode("\r\n\r\n");
+
+function indexOfBytes(haystack: Uint8Array, needle: Uint8Array, from = 0): number {
+  if (needle.length === 0) return from;
+  for (let i = from; i <= haystack.length - needle.length; i++) {
+    let ok = true;
+    for (let j = 0; j < needle.length; j++) {
+      if (haystack[i + j] !== needle[j]) {
+        ok = false;
+        break;
+      }
+    }
+    if (ok) return i;
+  }
+  return -1;
+}
+
+function multipartBoundary(contentType: string): string | null {
+  const boundary = contentType.match(/(?:^|;)\s*boundary=(?:"([^"]+)"|([^;]+))/i);
+  return boundary?.[1] ?? boundary?.[2]?.trim() ?? null;
+}
+
+function extractMultipartFile(contentType: string, body: Uint8Array): Uint8Array | null {
+  const boundary = multipartBoundary(contentType);
+  if (!boundary) return null;
+
+  const marker = new TextEncoder().encode(`--${boundary}`);
+  const delimiter = new TextEncoder().encode(`\r\n--${boundary}`);
+  let cursor = indexOfBytes(body, marker);
+  const decoder = new TextDecoder();
+
+  while (cursor >= 0) {
+    cursor += marker.length;
+    if (body[cursor] === 45 && body[cursor + 1] === 45) return null;
+    if (indexOfBytes(body, CRLF, cursor) !== cursor) return null;
+    cursor += CRLF.length;
+
+    const headerEnd = indexOfBytes(body, HEADER_END, cursor);
+    if (headerEnd < 0) return null;
+    const headers = decoder.decode(body.subarray(cursor, headerEnd)).toLowerCase();
+    const dataStart = headerEnd + HEADER_END.length;
+    const next = indexOfBytes(body, delimiter, dataStart);
+    if (next < 0) return null;
+    if (
+      headers.includes("content-disposition:") &&
+      headers.includes("filename") &&
+      next >= dataStart
+    ) {
+      return body.subarray(dataStart, next);
+    }
+    cursor = next + CRLF.length;
+  }
+
+  return null;
+}
+
 /** NuGet version normalization: drop a zero 4th segment + build metadata, lowercase prerelease. */
 function normalizeNugetVersion(v: string): string {
   let s = v.trim();
@@ -261,14 +318,10 @@ export class NugetAdapter implements FormatAdapter {
     let bytes: Uint8Array;
     const ct = req.headers.get("content-type") ?? "";
     if (ct.includes("multipart/form-data")) {
-      const form = await req.formData();
-      const file =
-        form.get("package") ??
-        form.get("content") ??
-        [...form.values()].find((v) => v instanceof File);
-      if (!(file instanceof File))
-        return Response.json({ error: "missing package" }, { status: 400 });
-      bytes = new Uint8Array(await file.arrayBuffer());
+      const body = new Uint8Array(await req.arrayBuffer());
+      const file = extractMultipartFile(ct, body);
+      if (!file) return Response.json({ error: "missing package" }, { status: 400 });
+      bytes = file;
     } else {
       bytes = new Uint8Array(await req.arrayBuffer());
     }
