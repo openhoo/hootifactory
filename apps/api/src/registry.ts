@@ -114,6 +114,13 @@ function allSearchResultsRequest(req: Request): Request {
   return new Request(url.toString(), { method: req.method, headers: req.headers });
 }
 
+function appendBearerChallengeError(
+  header: string,
+  error?: "invalid_token" | "insufficient_scope",
+) {
+  return error ? `${header},error="${error}"` : header;
+}
+
 async function dispatchVirtualSearch(
   adapter: FormatAdapter,
   match: RouteMatch,
@@ -253,7 +260,10 @@ export async function handleRegistryRequest(c: Context<AppEnv>): Promise<Respons
     match = matchRoute(routes, "GET", rest);
     fellBackToGet = Boolean(match);
   }
-  if (!match) throw Errors.notFound({ path: rest });
+  if (!match) {
+    if (repo.mountPath.startsWith("v2/")) throw Errors.nameUnknown({ path: rest });
+    throw Errors.notFound({ path: rest });
+  }
 
   const principal = c.get("principal");
   if (principal.kind === "registryToken" && !OCI_BEARER_FORMATS.has(repo.format)) {
@@ -268,7 +278,12 @@ export async function handleRegistryRequest(c: Context<AppEnv>): Promise<Respons
 
   if (!decision.allowed) {
     const status = httpStatusForDenial(decision);
-    if (status === 401 && adapter.authChallenge) {
+    const bearerError =
+      c.get("registryAuthFailure") ??
+      (principal.kind === "registryToken" && decision.code === "insufficient_scope"
+        ? "insufficient_scope"
+        : undefined);
+    if ((status === 401 || bearerError === "insufficient_scope") && adapter.authChallenge) {
       const challenge = adapter.authChallenge(perm, ctx);
       return new Response(
         JSON.stringify({
@@ -276,7 +291,10 @@ export async function handleRegistryRequest(c: Context<AppEnv>): Promise<Respons
         }),
         {
           status: challenge.status,
-          headers: { "www-authenticate": challenge.header, "content-type": "application/json" },
+          headers: {
+            "www-authenticate": appendBearerChallengeError(challenge.header, bearerError),
+            "content-type": "application/json",
+          },
         },
       );
     }

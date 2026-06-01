@@ -23,12 +23,28 @@ function parseContentLength(value: string | undefined): number | "invalid" | nul
   return Number.isSafeInteger(parsed) ? parsed : "invalid";
 }
 
+function registryPathname(url: string): string | null {
+  const pathname = new URL(url).pathname;
+  return pathname === "/v2" || pathname === "/v2/" || pathname.startsWith("/v2/") ? pathname : null;
+}
+
 app.use("*", async (c, next) => {
   const contentLength = parseContentLength(c.req.header("content-length"));
+  const registryPath = registryPathname(c.req.url);
   if (contentLength === "invalid") {
+    if (registryPath) {
+      return new RegistryError(400, "SIZE_INVALID", "invalid content-length").toResponse();
+    }
     return c.json({ errors: [{ code: "BAD_REQUEST", message: "invalid content-length" }] }, 400);
   }
   if (contentLength != null && contentLength > env.REGISTRY_MAX_UPLOAD_BYTES) {
+    if (registryPath) {
+      return new RegistryError(
+        413,
+        registryPath.includes("/manifests/") ? "MANIFEST_INVALID" : "SIZE_INVALID",
+        `request body exceeds ${env.REGISTRY_MAX_UPLOAD_BYTES} bytes`,
+      ).toResponse();
+    }
     return c.json(
       {
         errors: [
@@ -96,6 +112,8 @@ app.route("/token", tokenRouter);
 // OCI version check — exact paths only; deeper /v2/<name>/... falls through.
 app.get("/v2", v2VersionCheck);
 app.get("/v2/", v2VersionCheck);
+app.on("HEAD", "/v2", v2VersionCheck);
+app.on("HEAD", "/v2/", v2VersionCheck);
 
 // Everything else is registry traffic.
 app.all("*", (c) => handleRegistryRequest(c));

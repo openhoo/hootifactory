@@ -9,6 +9,8 @@ export type OciErrorCode =
   | "MANIFEST_UNKNOWN"
   | "NAME_INVALID"
   | "NAME_UNKNOWN"
+  | "TAG_INVALID"
+  | "PAGINATION_NUMBER_INVALID"
   | "SIZE_INVALID"
   | "UNAUTHORIZED"
   | "DENIED"
@@ -57,6 +59,10 @@ export const Errors = {
     new RegistryError(404, "NAME_UNKNOWN", "repository name not known to registry", detail),
   nameInvalid: (detail?: unknown) =>
     new RegistryError(400, "NAME_INVALID", "invalid repository name", detail),
+  tagInvalid: (detail?: unknown) =>
+    new RegistryError(400, "TAG_INVALID", "manifest tag did not match URI", detail),
+  paginationNumberInvalid: (detail?: unknown) =>
+    new RegistryError(400, "PAGINATION_NUMBER_INVALID", "invalid number of results", detail),
   digestInvalid: (detail?: unknown) =>
     new RegistryError(
       400,

@@ -22,6 +22,7 @@ describe("Docker adapter contract", () => {
     expect(handlers).toContain("startUpload");
     expect(handlers).toContain("patchUpload");
     expect(handlers).toContain("getBlob");
+    expect(handlers).toContain("deleteBlob");
   });
 
   test("maps HTTP methods to registry permissions and bearer challenges", () => {

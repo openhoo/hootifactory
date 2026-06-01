@@ -29,7 +29,12 @@ import {
   uploadSessions,
 } from "@hootifactory/db";
 import { computeDigest, isValidDigest, stagingKey } from "@hootifactory/storage";
-import { OCI_MEDIA_TYPES, ociManifestReferences } from "@hootifactory/types";
+import {
+  OCI_MEDIA_TYPES,
+  type OciDescriptor,
+  type OciManifest,
+  ociManifestReferences,
+} from "@hootifactory/types";
 
 function concat(a: Uint8Array, b: Uint8Array): Uint8Array {
   const out = new Uint8Array(a.length + b.length);
@@ -50,8 +55,169 @@ const UPLOAD_CONTROL_HANDLERS = new Set([
   "putUpload",
   "cancelUpload",
 ]);
+const OCI_ARTIFACT_MANIFEST_MEDIA_TYPE = "application/vnd.oci.artifact.manifest.v1+json";
+const SUPPORTED_MANIFEST_MEDIA_TYPES = new Set<string>([
+  OCI_MEDIA_TYPES.manifestV1,
+  OCI_MEDIA_TYPES.imageIndexV1,
+  OCI_MEDIA_TYPES.dockerManifestV2,
+  OCI_MEDIA_TYPES.dockerManifestListV2,
+  OCI_ARTIFACT_MANIFEST_MEDIA_TYPE,
+]);
+const IMAGE_MANIFEST_MEDIA_TYPES = new Set<string>([
+  OCI_MEDIA_TYPES.manifestV1,
+  OCI_MEDIA_TYPES.dockerManifestV2,
+]);
+const IMAGE_INDEX_MEDIA_TYPES = new Set<string>([
+  OCI_MEDIA_TYPES.imageIndexV1,
+  OCI_MEDIA_TYPES.dockerManifestListV2,
+]);
+const TAG_RE = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$/;
+const NAME_RE =
+  /^[a-z0-9]+(?:(?:\.|_|__|-+)[a-z0-9]+)*(?:\/[a-z0-9]+(?:(?:\.|_|__|-+)[a-z0-9]+)*)*$/;
 
 type Tx = Parameters<Parameters<RepoContext["db"]["transaction"]>[0]>[0];
+type ManifestReference = { kind: "digest" | "tag"; value: string };
+
+function assertImageName(name: string): void {
+  if (!NAME_RE.test(name)) throw Errors.nameInvalid({ name });
+}
+
+function parseReference(reference: string): ManifestReference {
+  if (isValidDigest(reference)) return { kind: "digest", value: reference };
+  if (reference.startsWith("sha256:")) throw Errors.digestInvalid({ reference });
+  if (!TAG_RE.test(reference)) throw Errors.tagInvalid({ reference });
+  return { kind: "tag", value: reference };
+}
+
+function assertTag(tag: string): void {
+  if (!TAG_RE.test(tag)) throw Errors.tagInvalid({ tag });
+}
+
+function normalizeMediaType(value: string | null | undefined): string | null {
+  const mediaType = value?.split(";")[0]?.trim().toLowerCase();
+  return mediaType || null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function validateDescriptor(value: unknown, field: string): OciDescriptor {
+  if (!isRecord(value)) throw Errors.manifestInvalid({ reason: `${field} must be a descriptor` });
+  if (typeof value.mediaType !== "string" || value.mediaType.length === 0) {
+    throw Errors.manifestInvalid({ reason: `${field}.mediaType is required` });
+  }
+  if (typeof value.digest !== "string" || !isValidDigest(value.digest)) {
+    throw Errors.digestInvalid({ reason: `${field}.digest is invalid`, digest: value.digest });
+  }
+  if (typeof value.size !== "number" || !Number.isSafeInteger(value.size) || value.size < 0) {
+    throw Errors.sizeInvalid({ reason: `${field}.size is invalid`, size: value.size });
+  }
+  return value as unknown as OciDescriptor;
+}
+
+function validateDescriptorArray(value: unknown, field: string): OciDescriptor[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) throw Errors.manifestInvalid({ reason: `${field} must be an array` });
+  return value.map((descriptor, i) => validateDescriptor(descriptor, `${field}[${i}]`));
+}
+
+function manifestMediaType(req: Request, parsed: OciManifest): string {
+  const contentType = normalizeMediaType(req.headers.get("content-type"));
+  const bodyMediaType =
+    typeof parsed.mediaType === "string" ? normalizeMediaType(parsed.mediaType) : null;
+  const mediaType = contentType ?? bodyMediaType;
+  if (!mediaType) throw Errors.manifestInvalid({ reason: "manifest media type is required" });
+  if (!SUPPORTED_MANIFEST_MEDIA_TYPES.has(mediaType)) {
+    throw Errors.unsupported({ reason: "unsupported manifest media type", mediaType });
+  }
+  if (bodyMediaType && bodyMediaType !== mediaType) {
+    throw Errors.manifestInvalid({
+      reason: "content-type does not match manifest mediaType",
+      contentType: mediaType,
+      mediaType: bodyMediaType,
+    });
+  }
+  return mediaType;
+}
+
+function validateManifest(parsed: OciManifest, mediaType: string): void {
+  if (parsed.schemaVersion !== 2) {
+    throw Errors.manifestInvalid({ reason: "schemaVersion must be 2" });
+  }
+  if (IMAGE_MANIFEST_MEDIA_TYPES.has(mediaType)) {
+    validateDescriptor(parsed.config, "config");
+    if (!Array.isArray(parsed.layers)) {
+      throw Errors.manifestInvalid({ reason: "layers must be an array" });
+    }
+    validateDescriptorArray(parsed.layers, "layers");
+    return;
+  }
+  if (IMAGE_INDEX_MEDIA_TYPES.has(mediaType)) {
+    if (!Array.isArray(parsed.manifests)) {
+      throw Errors.manifestInvalid({ reason: "manifests must be an array" });
+    }
+    validateDescriptorArray(parsed.manifests, "manifests");
+    return;
+  }
+  if (mediaType === OCI_ARTIFACT_MANIFEST_MEDIA_TYPE) {
+    if (parsed.artifactType !== undefined && typeof parsed.artifactType !== "string") {
+      throw Errors.manifestInvalid({ reason: "artifactType must be a string" });
+    }
+    validateDescriptorArray(parsed.blobs, "blobs");
+    return;
+  }
+}
+
+function acceptsManifestMediaType(req: Request, mediaType: string): boolean {
+  const accept = req.headers.get("accept");
+  if (!accept) return true;
+  for (const raw of accept.split(",")) {
+    const [typePart, ...params] = raw.split(";");
+    const accepted = normalizeMediaType(typePart);
+    if (!accepted) continue;
+    const q = params
+      .map((p) => p.trim())
+      .find((p) => p.startsWith("q="))
+      ?.slice(2);
+    if (q !== undefined && Number(q) <= 0) continue;
+    if (accepted === "*/*" || accepted === "application/json") return true;
+    if (accepted.endsWith("/*") && mediaType.startsWith(`${accepted.slice(0, -1)}`)) return true;
+    if (accepted === mediaType) return true;
+  }
+  return false;
+}
+
+function parseManifestRaw(raw: string): OciManifest {
+  try {
+    return JSON.parse(raw) as OciManifest;
+  } catch {
+    return { schemaVersion: 2 };
+  }
+}
+
+function referrerArtifactType(manifest: OciManifest, mediaType: string): string | undefined {
+  if (typeof manifest.artifactType === "string" && manifest.artifactType.length > 0) {
+    return manifest.artifactType;
+  }
+  if (
+    IMAGE_MANIFEST_MEDIA_TYPES.has(mediaType) &&
+    typeof manifest.config?.mediaType === "string" &&
+    manifest.config.mediaType.length > 0
+  ) {
+    return manifest.config.mediaType;
+  }
+  return undefined;
+}
+
+function manifestAnnotations(manifest: OciManifest): Record<string, string> | undefined {
+  if (!isRecord(manifest.annotations)) return undefined;
+  const annotations: Record<string, string> = {};
+  for (const [key, value] of Object.entries(manifest.annotations)) {
+    if (typeof value === "string") annotations[key] = value;
+  }
+  return Object.keys(annotations).length > 0 ? annotations : undefined;
+}
 
 function parseContentRange(value: string | null): { start: number; end: number } | null {
   if (!value) return null;
@@ -132,6 +298,10 @@ function manifestBlobDigests(raw: string): string[] {
   return ociManifestReferences(raw).blobs;
 }
 
+function manifestManifestDigests(raw: string): string[] {
+  return ociManifestReferences(raw).manifests;
+}
+
 export class DockerAdapter implements FormatAdapter {
   readonly format = "docker" as const;
   readonly capabilities = {
@@ -156,6 +326,7 @@ export class DockerAdapter implements FormatAdapter {
       { method: "DELETE", pattern: "/:name+/blobs/uploads/:uuid", handlerId: "cancelUpload" },
       { method: "HEAD", pattern: "/:name+/blobs/:digest", handlerId: "headBlob" },
       { method: "GET", pattern: "/:name+/blobs/:digest", handlerId: "getBlob" },
+      { method: "DELETE", pattern: "/:name+/blobs/:digest", handlerId: "deleteBlob" },
     ];
   }
 
@@ -184,15 +355,16 @@ export class DockerAdapter implements FormatAdapter {
 
   async handle(match: RouteMatch, req: Request, ctx: RepoContext): Promise<Response> {
     const image = match.params.name ?? "";
+    assertImageName(this.fullName(ctx, image));
     switch (match.entry.handlerId) {
       case "tagsList":
         return this.tagsList(image, req, ctx);
       case "referrers":
-        return this.referrers(image, match.params.digest ?? "", ctx);
+        return this.referrers(image, match.params.digest ?? "", req, ctx);
       case "headManifest":
-        return this.getManifest(image, match.params.reference ?? "", ctx, true);
+        return this.getManifest(image, match.params.reference ?? "", req, ctx, true);
       case "getManifest":
-        return this.getManifest(image, match.params.reference ?? "", ctx, false);
+        return this.getManifest(image, match.params.reference ?? "", req, ctx, false);
       case "putManifest":
         return this.putManifest(image, match.params.reference ?? "", req, ctx);
       case "deleteManifest":
@@ -211,6 +383,8 @@ export class DockerAdapter implements FormatAdapter {
         return this.getBlob(image, match.params.digest ?? "", req, ctx, true);
       case "getBlob":
         return this.getBlob(image, match.params.digest ?? "", req, ctx, false);
+      case "deleteBlob":
+        return this.deleteBlob(image, match.params.digest ?? "", ctx);
       default:
         throw Errors.notFound();
     }
@@ -223,24 +397,25 @@ export class DockerAdapter implements FormatAdapter {
     req: Request,
     ctx: RepoContext,
   ): Promise<Response> {
+    const ref = parseReference(reference);
     const bytes = await bodyBytes(req);
     const digest = computeDigest(bytes);
     // If the client addressed the manifest by digest, it must match the content.
-    if (reference.startsWith("sha256:") && reference !== digest) {
+    if (ref.kind === "digest" && ref.value !== digest) {
       throw Errors.digestInvalid({ expected: reference, got: digest });
     }
     const raw = new TextDecoder().decode(bytes);
-    let parsed: Record<string, unknown> = {};
+    let parsed: OciManifest;
     try {
-      parsed = JSON.parse(raw);
+      parsed = JSON.parse(raw) as OciManifest;
     } catch {
       throw Errors.manifestInvalid();
     }
-    const mediaType =
-      req.headers.get("content-type") || (parsed.mediaType as string) || OCI_MEDIA_TYPES.manifestV1;
-    const config = parsed.config as { digest?: string } | undefined;
-    const subject = parsed.subject as { digest?: string } | undefined;
-    const subjectDigest = typeof subject?.digest === "string" ? subject.digest : null;
+    const mediaType = manifestMediaType(req, parsed);
+    validateManifest(parsed, mediaType);
+    const config = parsed.config;
+    const subjectDigest = typeof parsed.subject?.digest === "string" ? parsed.subject.digest : null;
+    if (parsed.subject) validateDescriptor(parsed.subject, "subject");
 
     // Reject an image manifest that references blobs not yet uploaded to this repo.
     const referencedBlobs = manifestBlobDigests(raw);
@@ -266,13 +441,16 @@ export class DockerAdapter implements FormatAdapter {
       name: image,
     });
 
-    if (subjectDigest) {
-      if (
-        !isValidDigest(subjectDigest) ||
-        !(await this.resolveManifest(image, subjectDigest, ctx))
-      ) {
-        throw Errors.manifestUnknown({ reference: subjectDigest });
+    const referencedManifests = manifestManifestDigests(raw);
+    if (referencedManifests.length > 0) {
+      const missing: string[] = [];
+      for (const manifestDigest of referencedManifests) {
+        if (!isValidDigest(manifestDigest)) {
+          throw Errors.digestInvalid({ reason: "manifest descriptor digest is invalid" });
+        }
+        if (!(await this.resolveManifest(image, manifestDigest, ctx))) missing.push(manifestDigest);
       }
+      if (missing.length > 0) throw Errors.manifestBlobUnknown({ missing });
     }
 
     const [manifest] = await ctx.db
@@ -281,7 +459,7 @@ export class DockerAdapter implements FormatAdapter {
         repositoryId: ctx.repo.id,
         digest,
         mediaType,
-        artifactType: (parsed.artifactType as string) ?? null,
+        artifactType: typeof parsed.artifactType === "string" ? parsed.artifactType : null,
         subjectDigest,
         raw,
         sizeBytes: bytes.length,
@@ -289,36 +467,49 @@ export class DockerAdapter implements FormatAdapter {
       })
       .onConflictDoUpdate({
         target: [ociManifests.repositoryId, ociManifests.digest],
-        set: { raw, mediaType, sizeBytes: bytes.length, subjectDigest },
+        set: {
+          raw,
+          mediaType,
+          artifactType: typeof parsed.artifactType === "string" ? parsed.artifactType : null,
+          sizeBytes: bytes.length,
+          subjectDigest,
+          configDigest: config?.digest ?? null,
+        },
       })
       .returning({ id: ociManifests.id });
 
     // Tag (mutable pointer) + a UI-visible version when reference is not a digest.
     // Digest-addressed pushes still record the image->digest ownership so a
     // scoped token for another image cannot later fetch the manifest by digest.
-    if (!reference.startsWith("sha256:")) {
-      await ctx.db
-        .insert(ociTags)
-        .values({
-          repositoryId: ctx.repo.id,
+    const url = new URL(req.url);
+    const acceptedTags =
+      ref.kind === "tag" ? [ref.value] : [...new Set(url.searchParams.getAll("tag"))];
+    for (const tag of acceptedTags) assertTag(tag);
+    if (acceptedTags.length > 0) {
+      for (const tag of acceptedTags) {
+        await ctx.db
+          .insert(ociTags)
+          .values({
+            repositoryId: ctx.repo.id,
+            packageId: pkg.id,
+            tag,
+            manifestId: manifest!.id,
+          })
+          .onConflictDoUpdate({
+            target: [ociTags.packageId, ociTags.tag],
+            set: { manifestId: manifest!.id },
+          });
+        await upsertPackageVersion(ctx, {
           packageId: pkg.id,
-          tag: reference,
-          manifestId: manifest!.id,
-        })
-        .onConflictDoUpdate({
-          target: [ociTags.packageId, ociTags.tag],
-          set: { manifestId: manifest!.id },
+          version: tag,
+          metadata: { digest, mediaType, manifest: parsed },
+          sizeBytes: bytes.length,
         });
-      await upsertPackageVersion(ctx, {
-        packageId: pkg.id,
-        version: reference,
-        metadata: { digest, mediaType, manifest: parsed },
-        sizeBytes: bytes.length,
-      });
+      }
     } else {
       await upsertPackageVersion(ctx, {
         packageId: pkg.id,
-        version: reference,
+        version: ref.value,
         metadata: { digest, mediaType, manifest: parsed },
         sizeBytes: bytes.length,
       });
@@ -327,16 +518,21 @@ export class DockerAdapter implements FormatAdapter {
     await ctx.enqueueScan({
       digest,
       name: image,
-      version: reference.startsWith("sha256:") ? undefined : reference,
+      version: acceptedTags[0],
       mediaType,
     });
 
+    const headers: Record<string, string> = {
+      location: `${ctx.baseUrl}/${ctx.repo.mountPath}/${image}/manifests/${digest}`,
+      "docker-content-digest": digest,
+    };
+    if (subjectDigest) headers["oci-subject"] = subjectDigest;
+    if (ref.kind === "digest" && acceptedTags.length > 0) {
+      headers["oci-tag"] = acceptedTags.join(", ");
+    }
     return new Response(null, {
       status: 201,
-      headers: {
-        location: `${ctx.baseUrl}/${ctx.repo.mountPath}/${image}/manifests/${digest}`,
-        "docker-content-digest": digest,
-      },
+      headers,
     });
   }
 
@@ -394,13 +590,22 @@ export class DockerAdapter implements FormatAdapter {
   private async getManifest(
     image: string,
     reference: string,
+    req: Request,
     ctx: RepoContext,
     headOnly: boolean,
   ): Promise<Response> {
+    parseReference(reference);
     const m = await this.resolveManifest(image, reference, ctx);
     if (!m) throw Errors.manifestUnknown({ reference });
     if (await isArtifactBlocked(ctx, m.digest))
       throw Errors.denied({ reason: "blocked by scan policy" });
+    if (!acceptsManifestMediaType(req, m.mediaType)) {
+      throw Errors.manifestUnknown({
+        reference,
+        reason: "requested manifest media type is not acceptable",
+        mediaType: m.mediaType,
+      });
+    }
     const headers = {
       "content-type": m.mediaType,
       "docker-content-digest": m.digest,
@@ -415,7 +620,8 @@ export class DockerAdapter implements FormatAdapter {
     reference: string,
     ctx: RepoContext,
   ): Promise<Response> {
-    if (reference.startsWith("sha256:")) {
+    const ref = parseReference(reference);
+    if (ref.kind === "digest") {
       const scoped = await this.resolveManifest(image, reference, ctx);
       if (!scoped) throw Errors.manifestUnknown({ reference });
 
@@ -455,11 +661,12 @@ export class DockerAdapter implements FormatAdapter {
         .from(packages)
         .where(and(eq(packages.repositoryId, ctx.repo.id), eq(packages.name, image)))
         .limit(1);
-      if (pkg) {
-        await ctx.db
-          .delete(ociTags)
-          .where(and(eq(ociTags.packageId, pkg.id), eq(ociTags.tag, reference)));
-      }
+      if (!pkg) throw Errors.manifestUnknown({ reference });
+      const deleted = await ctx.db
+        .delete(ociTags)
+        .where(and(eq(ociTags.packageId, pkg.id), eq(ociTags.tag, reference)))
+        .returning({ id: ociTags.id });
+      if (deleted.length === 0) throw Errors.manifestUnknown({ reference });
     }
     return new Response(null, { status: 202 });
   }
@@ -528,7 +735,14 @@ export class DockerAdapter implements FormatAdapter {
     const [version] = await ctx.db
       .select({ id: packageVersions.id })
       .from(packageVersions)
-      .where(and(isNull(packageVersions.deletedAt), packageVersionDigestEquals(digest)))
+      .innerJoin(packages, eq(packageVersions.packageId, packages.id))
+      .where(
+        and(
+          eq(packages.repositoryId, ctx.repo.id),
+          isNull(packageVersions.deletedAt),
+          packageVersionDigestEquals(digest),
+        ),
+      )
       .limit(1);
     return Boolean(version);
   }
@@ -549,16 +763,19 @@ export class DockerAdapter implements FormatAdapter {
     const url = new URL(req.url);
     // `last` is a cursor: return tags strictly after it (lexically).
     const last = url.searchParams.get("last");
-    if (last) tags = tags.filter((t) => t > last);
+    if (last) {
+      assertTag(last);
+      tags = tags.filter((t) => t > last);
+    }
     // `n` is a page size: absent => all; present (incl. 0) => at most n.
     const nRaw = url.searchParams.get("n");
     let truncated = false;
     if (nRaw !== null) {
+      if (!/^\d+$/.test(nRaw)) throw Errors.paginationNumberInvalid({ n: nRaw });
       const n = Number(nRaw);
-      if (Number.isFinite(n) && n >= 0) {
-        truncated = tags.length > n;
-        tags = tags.slice(0, n);
-      }
+      if (!Number.isSafeInteger(n)) throw Errors.paginationNumberInvalid({ n: nRaw });
+      truncated = tags.length > n;
+      tags = tags.slice(0, n);
     }
     const headers: Record<string, string> = { "content-type": "application/json" };
     if (truncated && tags.length > 0) {
@@ -575,16 +792,24 @@ export class DockerAdapter implements FormatAdapter {
       digest: string;
       size: number;
       artifactType?: string;
+      annotations?: Record<string, string>;
     }[],
+    headers: Record<string, string> = {},
   ): Response {
     return new Response(
       JSON.stringify({ schemaVersion: 2, mediaType: OCI_MEDIA_TYPES.imageIndexV1, manifests }),
-      { status: 200, headers: { "content-type": OCI_MEDIA_TYPES.imageIndexV1 } },
+      { status: 200, headers: { "content-type": OCI_MEDIA_TYPES.imageIndexV1, ...headers } },
     );
   }
 
-  private async referrers(image: string, digest: string, ctx: RepoContext): Promise<Response> {
-    if (!(await this.resolveManifest(image, digest, ctx))) return this.referrersResponse([]);
+  private async referrers(
+    image: string,
+    digest: string,
+    req: Request,
+    ctx: RepoContext,
+  ): Promise<Response> {
+    if (!isValidDigest(digest)) throw Errors.digestInvalid({ digest });
+    const artifactTypeFilter = new URL(req.url).searchParams.get("artifactType");
     const rows = await ctx.db
       .select()
       .from(ociManifests)
@@ -594,14 +819,31 @@ export class DockerAdapter implements FormatAdapter {
     const manifests = [];
     for (const m of rows) {
       if (!(await this.resolveManifest(image, m.digest, ctx))) continue;
-      manifests.push({
+      const parsed = parseManifestRaw(m.raw);
+      const artifactType = referrerArtifactType(parsed, m.mediaType);
+      if (artifactTypeFilter && artifactType !== artifactTypeFilter) continue;
+      const descriptor: {
+        mediaType: string;
+        digest: string;
+        size: number;
+        artifactType?: string;
+        annotations?: Record<string, string>;
+      } = {
         mediaType: m.mediaType,
         digest: m.digest,
         size: m.sizeBytes,
-        artifactType: m.artifactType ?? undefined,
+      };
+      if (artifactType) descriptor.artifactType = artifactType;
+      const annotations = manifestAnnotations(parsed);
+      if (annotations) descriptor.annotations = annotations;
+      manifests.push({
+        ...descriptor,
       });
     }
-    return this.referrersResponse(manifests);
+    const headers: Record<string, string> = artifactTypeFilter
+      ? { "oci-filters-applied": "artifactType" }
+      : {};
+    return this.referrersResponse(manifests, headers);
   }
 
   // ── blobs ──────────────────────────────────────────────────────────────
@@ -612,6 +854,7 @@ export class DockerAdapter implements FormatAdapter {
     ctx: RepoContext,
     headOnly: boolean,
   ): Promise<Response> {
+    if (!isValidDigest(digest)) throw Errors.digestInvalid({ digest });
     const [ref] = await ctx.db
       .select({ id: blobRefs.id })
       .from(blobRefs)
@@ -636,6 +879,7 @@ export class DockerAdapter implements FormatAdapter {
       "content-length": String(stat.size),
       "content-type": "application/octet-stream",
     };
+    if (headOnly) return new Response(null, { status: 200, headers });
     let range: { start: number; end: number } | null = null;
     try {
       range = parseBlobRange(req.headers.get("range"), stat.size);
@@ -655,7 +899,6 @@ export class DockerAdapter implements FormatAdapter {
     if (range) {
       headers["content-range"] = `bytes ${range.start}-${range.end}/${stat.size}`;
       headers["content-length"] = String(range.end - range.start + 1);
-      if (headOnly) return new Response(null, { status: 206, headers });
       const body = await new Response(
         ctx.blobs.getRange(digest, range.start, range.end + 1),
       ).arrayBuffer();
@@ -664,8 +907,28 @@ export class DockerAdapter implements FormatAdapter {
         headers,
       });
     }
-    if (headOnly) return new Response(null, { status: 200, headers });
     return new Response(ctx.blobs.get(digest), { status: 200, headers });
+  }
+
+  private async deleteBlob(image: string, digest: string, ctx: RepoContext): Promise<Response> {
+    if (!isValidDigest(digest)) throw Errors.digestInvalid({ digest });
+    const [ref] = await ctx.db
+      .select({ id: blobRefs.id })
+      .from(blobRefs)
+      .where(
+        and(
+          eq(blobRefs.repositoryId, ctx.repo.id),
+          eq(blobRefs.scope, image),
+          eq(blobRefs.digest, digest),
+        ),
+      )
+      .limit(1);
+    if (!ref) throw Errors.blobUnknown({ digest });
+    await releaseBlobRef(ctx, { digest, kind: "oci_layer", scope: image });
+    return new Response(null, {
+      status: 202,
+      headers: { "docker-content-digest": digest, "content-length": "0" },
+    });
   }
 
   private async startUpload(image: string, req: Request, ctx: RepoContext): Promise<Response> {
@@ -707,6 +970,7 @@ export class DockerAdapter implements FormatAdapter {
             headers: {
               location: `${ctx.baseUrl}/${ctx.repo.mountPath}/${image}/blobs/${mount}`,
               "docker-content-digest": mount,
+              "content-length": "0",
             },
           });
         }
@@ -715,6 +979,7 @@ export class DockerAdapter implements FormatAdapter {
 
     // monolithic POST with ?digest=
     if (digest) {
+      if (!isValidDigest(digest)) throw Errors.digestInvalid({ digest });
       const bytes = await bodyBytes(req);
       if (computeDigest(bytes) !== digest) throw Errors.digestInvalid();
       await storeBlobWithRef(ctx, { data: bytes, kind: "oci_layer", scope: image });
@@ -723,6 +988,7 @@ export class DockerAdapter implements FormatAdapter {
         headers: {
           location: `${ctx.baseUrl}/${ctx.repo.mountPath}/${image}/blobs/${digest}`,
           "docker-content-digest": digest,
+          "content-length": "0",
         },
       });
     }
@@ -952,7 +1218,7 @@ export class DockerAdapter implements FormatAdapter {
             eq(uploadSessions.state, "open"),
           ),
         );
-      return { storageKey: s.storageKey };
+      return { size: full.length, storageKey: s.storageKey };
     });
     await ctx.blobs.deleteKey(committed.storageKey).catch(() => {});
 
@@ -962,25 +1228,25 @@ export class DockerAdapter implements FormatAdapter {
         location: `${ctx.baseUrl}/${ctx.repo.mountPath}/${image}/blobs/${digest}`,
         "docker-content-digest": digest,
         "content-length": "0",
+        "content-range": `0-${Math.max(0, committed.size - 1)}`,
+        range: `0-${Math.max(0, committed.size - 1)}`,
       },
     });
   }
 
   private async cancelUpload(image: string, uuid: string, ctx: RepoContext): Promise<Response> {
     await ctx.db.transaction(async (tx) => {
-      const s = await this.loadSessionForUpdateTx(image, uuid, ctx, tx);
-      if (s && s.state === "open") {
-        await ctx.blobs.deleteKey(s.storageKey).catch(() => {});
-        await tx
-          .delete(uploadSessions)
-          .where(
-            and(
-              eq(uploadSessions.id, uuid),
-              eq(uploadSessions.repositoryId, ctx.repo.id),
-              eq(uploadSessions.scope, image),
-            ),
-          );
-      }
+      const s = await this.loadOpenSessionForUpdateTx(image, uuid, ctx, tx);
+      await ctx.blobs.deleteKey(s.storageKey).catch(() => {});
+      await tx
+        .delete(uploadSessions)
+        .where(
+          and(
+            eq(uploadSessions.id, uuid),
+            eq(uploadSessions.repositoryId, ctx.repo.id),
+            eq(uploadSessions.scope, image),
+          ),
+        );
     });
     return new Response(null, { status: 204 });
   }

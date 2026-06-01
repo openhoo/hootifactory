@@ -19,6 +19,11 @@ function invalidCredentials(): never {
   throw Errors.unauthorized("invalid authorization credentials");
 }
 
+function isRegistryPath(url: string): boolean {
+  const pathname = new URL(url).pathname;
+  return pathname === "/v2" || pathname === "/v2/" || pathname.startsWith("/v2/");
+}
+
 async function userPrincipalById(userId: string): Promise<Principal | null> {
   const [u] = await db
     .select({ id: users.id, username: users.username, isActive: users.isActive })
@@ -76,6 +81,11 @@ export async function authenticate(c: Context<AppEnv>): Promise<Principal> {
             access: verified.access,
           };
         } catch {
+          if (isRegistryPath(c.req.url)) {
+            c.set("authSource", "authorization");
+            c.set("registryAuthFailure", "invalid_token");
+            return { kind: "anonymous" };
+          }
           invalidCredentials();
         }
       }

@@ -152,16 +152,20 @@ async function putManifest(
   return digest;
 }
 
-function referrerManifest(subjectDigest: string): string {
+function referrerManifest(
+  subjectDigest: string,
+  opts: { artifactType?: string; annotations?: Record<string, string> } = {},
+): string {
   return JSON.stringify({
     schemaVersion: 2,
     mediaType: ARTIFACT_MANIFEST_MEDIA_TYPE,
-    artifactType: "application/vnd.hootifactory.test.sbom",
+    artifactType: opts.artifactType ?? "application/vnd.hootifactory.test.sbom",
     subject: {
       mediaType: OCI_MEDIA_TYPES.manifestV1,
       digest: subjectDigest,
       size: 0,
     },
+    annotations: opts.annotations,
   });
 }
 
@@ -267,7 +271,27 @@ test.describe("docker registry protocol authorization", () => {
     const repoNameOnlyManifest = await anon.get(`/${repo.mountPath}/app/manifests/1.0`, {
       headers: { authorization: `Bearer ${repoNameOnlyJwt}` },
     });
-    expect(repoNameOnlyManifest.status()).toBe(403);
+    expect(repoNameOnlyManifest.status()).toBe(401);
+    expect(repoNameOnlyManifest.headers()["www-authenticate"]).toContain(
+      `scope="repository:${owner.orgSlug}/containers/app:pull"`,
+    );
+    expect(repoNameOnlyManifest.headers()["www-authenticate"]).toContain(
+      'error="insufficient_scope"',
+    );
+
+    const wrongService = await anon.get(
+      `/token?service=wrong&scope=${encodeURIComponent(
+        `repository:${owner.orgSlug}/containers/app:pull`,
+      )}`,
+      { headers: { authorization: basic(repoNameOnlySecret) } },
+    );
+    expect(wrongService.status()).toBe(401);
+
+    const invalidBearer = await anon.head(`/${repo.mountPath}/app/manifests/1.0`, {
+      headers: { authorization: "Bearer not-a-registry-token" },
+    });
+    expect(invalidBearer.status()).toBe(401);
+    expect(invalidBearer.headers()["www-authenticate"]).toContain('error="invalid_token"');
 
     const appSecret = (
       await (
@@ -363,6 +387,111 @@ test.describe("docker registry protocol authorization", () => {
     expect(stillThere.status()).toBe(200);
   });
 
+  test("manifest references, media types, and Accept negotiation follow OCI rules", async ({
+    baseURL,
+  }) => {
+    const owner = await setupOwner(baseURL!);
+    const repo = (
+      await (
+        await createRepo(owner.ctx, owner.orgId, { name: "containers", format: "docker" })
+      ).json()
+    ).repository as { mountPath: string };
+
+    const configDigest = await uploadBlob(owner.ctx, repo.mountPath, "strict", Buffer.from("{}"));
+    const layerDigest = await uploadBlob(
+      owner.ctx,
+      repo.mountPath,
+      "strict",
+      Buffer.from("layer-strict"),
+    );
+    const manifest = JSON.stringify({
+      schemaVersion: 2,
+      mediaType: OCI_MEDIA_TYPES.manifestV1,
+      config: {
+        mediaType: OCI_MEDIA_TYPES.configV1,
+        digest: configDigest,
+        size: Buffer.byteLength("{}"),
+      },
+      layers: [
+        {
+          mediaType: OCI_MEDIA_TYPES.layerTarGzip,
+          digest: layerDigest,
+          size: Buffer.byteLength("layer-strict"),
+        },
+      ],
+    });
+    const put = await owner.ctx.put(`/${repo.mountPath}/strict/manifests/v1`, {
+      headers: { "content-type": `${OCI_MEDIA_TYPES.manifestV1}; charset=utf-8` },
+      data: manifest,
+    });
+    expect(put.status()).toBe(201);
+
+    const accepted = await owner.ctx.get(`/${repo.mountPath}/strict/manifests/v1`, {
+      headers: { accept: OCI_MEDIA_TYPES.manifestV1 },
+    });
+    expect(accepted.status()).toBe(200);
+    expect(accepted.headers()["content-type"]).toBe(OCI_MEDIA_TYPES.manifestV1);
+
+    const unacceptable = await owner.ctx.get(`/${repo.mountPath}/strict/manifests/v1`, {
+      headers: { accept: OCI_MEDIA_TYPES.imageIndexV1 },
+    });
+    expect(unacceptable.status()).toBe(404);
+    expect((await unacceptable.json()).errors[0].code).toBe("MANIFEST_UNKNOWN");
+
+    const badTag = await owner.ctx.put(`/${repo.mountPath}/strict/manifests/bad:tag`, {
+      headers: { "content-type": OCI_MEDIA_TYPES.manifestV1 },
+      data: manifest,
+    });
+    expect(badTag.status()).toBe(400);
+    expect((await badTag.json()).errors[0].code).toBe("TAG_INVALID");
+
+    const badDigestRef = await owner.ctx.get(`/${repo.mountPath}/strict/manifests/sha256:abc`);
+    expect(badDigestRef.status()).toBe(400);
+    expect((await badDigestRef.json()).errors[0].code).toBe("DIGEST_INVALID");
+
+    const unsupported = await owner.ctx.put(`/${repo.mountPath}/strict/manifests/text`, {
+      headers: { "content-type": "text/plain" },
+      data: manifest,
+    });
+    expect(unsupported.status()).toBe(400);
+    expect((await unsupported.json()).errors[0].code).toBe("UNSUPPORTED");
+
+    const unknownChild = JSON.stringify({
+      schemaVersion: 2,
+      mediaType: OCI_MEDIA_TYPES.imageIndexV1,
+      manifests: [
+        {
+          mediaType: OCI_MEDIA_TYPES.manifestV1,
+          digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          size: 123,
+        },
+      ],
+    });
+    const rejectedIndex = await owner.ctx.put(`/${repo.mountPath}/strict/manifests/index`, {
+      headers: { "content-type": OCI_MEDIA_TYPES.imageIndexV1 },
+      data: unknownChild,
+    });
+    expect(rejectedIndex.status()).toBe(404);
+    expect((await rejectedIndex.json()).errors[0].code).toBe("MANIFEST_BLOB_UNKNOWN");
+
+    const missingTagDelete = await owner.ctx.delete(`/${repo.mountPath}/strict/manifests/missing`);
+    expect(missingTagDelete.status()).toBe(404);
+    expect((await missingTagDelete.json()).errors[0].code).toBe("MANIFEST_UNKNOWN");
+
+    const zeroTags = await owner.ctx.get(`/${repo.mountPath}/strict/tags/list?n=0`);
+    expect(zeroTags.status()).toBe(200);
+    expect((await zeroTags.json()).tags).toEqual([]);
+    expect(zeroTags.headers().link).toBeUndefined();
+
+    const invalidTagPage = await owner.ctx.get(`/${repo.mountPath}/strict/tags/list?n=-1`);
+    expect(invalidTagPage.status()).toBe(400);
+    expect((await invalidTagPage.json()).errors[0].code).toBe("PAGINATION_NUMBER_INVALID");
+
+    const invalidLast = await owner.ctx.get(`/${repo.mountPath}/strict/tags/list?last=bad:tag`);
+    expect(invalidLast.status()).toBe(400);
+    expect((await invalidLast.json()).errors[0].code).toBe("TAG_INVALID");
+  });
+
   test("manifest referrers and digest deletes stay scoped to the requested image", async ({
     baseURL,
   }) => {
@@ -402,16 +531,62 @@ test.describe("docker registry protocol authorization", () => {
       expect.arrayContaining([expect.objectContaining({ digest: appReferrerDigest })]),
     );
 
+    const futureSubject = sha256("future subject manifest");
+    const earlyType = "application/vnd.hootifactory.test.early";
+    const earlyReferrer = referrerManifest(futureSubject, {
+      artifactType: earlyType,
+      annotations: { "org.opencontainers.image.title": "early-referrer" },
+    });
+    const earlyDigest = sha256(earlyReferrer);
+    const earlyPut = await owner.ctx.put(`/${repo.mountPath}/pre/manifests/sbom`, {
+      headers: { "content-type": ARTIFACT_MANIFEST_MEDIA_TYPE },
+      data: earlyReferrer,
+    });
+    expect(earlyPut.status()).toBe(201);
+    expect(earlyPut.headers()["oci-subject"]).toBe(futureSubject);
+
+    const invalidReferrers = await owner.ctx.get(`/${repo.mountPath}/pre/referrers/sha256:bad`);
+    expect(invalidReferrers.status()).toBe(400);
+    expect((await invalidReferrers.json()).errors[0].code).toBe("DIGEST_INVALID");
+
+    const filteredReferrers = await owner.ctx.get(
+      `/${repo.mountPath}/pre/referrers/${futureSubject}?artifactType=${encodeURIComponent(
+        earlyType,
+      )}`,
+    );
+    expect(filteredReferrers.status()).toBe(200);
+    expect(filteredReferrers.headers()["oci-filters-applied"]).toBe("artifactType");
+    expect(await filteredReferrers.json()).toMatchObject({
+      manifests: [
+        {
+          artifactType: earlyType,
+          digest: earlyDigest,
+          annotations: { "org.opencontainers.image.title": "early-referrer" },
+        },
+      ],
+    });
+
+    const filteredMiss = await owner.ctx.get(
+      `/${repo.mountPath}/pre/referrers/${futureSubject}?artifactType=application%2Fmissing`,
+    );
+    expect(filteredMiss.status()).toBe(200);
+    expect(((await filteredMiss.json()) as { manifests: unknown[] }).manifests).toEqual([]);
+
+    const crossBody = referrerManifest(appDigest, {
+      artifactType: "application/vnd.hootifactory.test.other",
+    });
+    const crossDigest = sha256(crossBody);
     const crossReferrer = await owner.ctx.put(`/${repo.mountPath}/other/manifests/sbom`, {
       headers: { "content-type": ARTIFACT_MANIFEST_MEDIA_TYPE },
-      data: referrerManifest(appDigest),
+      data: crossBody,
     });
-    expect(crossReferrer.status()).toBe(404);
-    expect((await crossReferrer.json()).errors[0].code).toBe("MANIFEST_UNKNOWN");
+    expect(crossReferrer.status()).toBe(201);
 
     const otherReferrers = await owner.ctx.get(`/${repo.mountPath}/other/referrers/${appDigest}`);
     expect(otherReferrers.status()).toBe(200);
-    expect(((await otherReferrers.json()) as { manifests: unknown[] }).manifests).toEqual([]);
+    expect(
+      ((await otherReferrers.json()) as { manifests: { digest: string }[] }).manifests,
+    ).toEqual(expect.arrayContaining([expect.objectContaining({ digest: crossDigest })]));
 
     const otherConfigDigest = await uploadBlob(
       owner.ctx,
@@ -557,9 +732,9 @@ test.describe("docker registry protocol authorization", () => {
     expect(Buffer.from(await suffix.body()).toString("utf8")).toBe("cdef");
 
     const rangeHead = await owner.ctx.head(path, { headers: { range: "bytes=1-3" } });
-    expect(rangeHead.status()).toBe(206);
-    expect(rangeHead.headers()["content-range"]).toBe(`bytes 1-3/${bytes.length}`);
-    expect(rangeHead.headers()["content-length"]).toBe("3");
+    expect(rangeHead.status()).toBe(200);
+    expect(rangeHead.headers()["content-range"]).toBeUndefined();
+    expect(rangeHead.headers()["content-length"]).toBe(String(bytes.length));
 
     const outOfBounds = await owner.ctx.get(path, { headers: { range: "bytes=999-" } });
     expect(outOfBounds.status()).toBe(416);
@@ -568,6 +743,18 @@ test.describe("docker registry protocol authorization", () => {
     const multiRange = await owner.ctx.get(path, { headers: { range: "bytes=0-1,3-4" } });
     expect(multiRange.status()).toBe(416);
     expect(multiRange.headers()["content-range"]).toBe(`bytes */${bytes.length}`);
+
+    const malformedDigest = await owner.ctx.get(`/${repo.mountPath}/ranges/blobs/sha256:bad`);
+    expect(malformedDigest.status()).toBe(400);
+    expect((await malformedDigest.json()).errors[0].code).toBe("DIGEST_INVALID");
+
+    const deleted = await owner.ctx.delete(path);
+    expect(deleted.status()).toBe(202);
+    expect(deleted.headers()["docker-content-digest"]).toBe(digest);
+
+    const afterDelete = await owner.ctx.get(path);
+    expect(afterDelete.status()).toBe(404);
+    expect((await afterDelete.json()).errors[0].code).toBe("BLOB_UNKNOWN");
   });
 
   test("resumable uploads enforce offsets, digest retries, and session state", async ({
@@ -598,7 +785,8 @@ test.describe("docker registry protocol authorization", () => {
     const readOnlyStatus = await anon.get(upload.path, {
       headers: { authorization: `Bearer ${readJwt}` },
     });
-    expect(readOnlyStatus.status()).toBe(403);
+    expect(readOnlyStatus.status()).toBe(401);
+    expect(readOnlyStatus.headers()["www-authenticate"]).toContain('error="insufficient_scope"');
 
     const wrongImagePath = `/${repo.mountPath}/other-image/blobs/uploads/${upload.uuid}`;
     const wrongImageStatus = await owner.ctx.get(wrongImagePath);
@@ -651,6 +839,8 @@ test.describe("docker registry protocol authorization", () => {
     });
     expect(completed.status()).toBe(201);
     expect(completed.headers()["docker-content-digest"]).toBe(digest);
+    expect(completed.headers()["content-range"]).toBe("0-10");
+    expect(completed.headers().range).toBe("0-10");
 
     const blob = await owner.ctx.get(`/${repo.mountPath}/resumable/blobs/${digest}`);
     expect(blob.status()).toBe(200);
@@ -666,6 +856,10 @@ test.describe("docker registry protocol authorization", () => {
     });
     expect(patchAfterCommit.status()).toBe(404);
     expect((await patchAfterCommit.json()).errors[0].code).toBe("BLOB_UPLOAD_UNKNOWN");
+
+    const cancelAfterCommit = await owner.ctx.delete(upload.path);
+    expect(cancelAfterCommit.status()).toBe(404);
+    expect((await cancelAfterCommit.json()).errors[0].code).toBe("BLOB_UPLOAD_UNKNOWN");
 
     const expired = await startUpload(owner.ctx, repo.mountPath, "expired");
     expireUploadSession(expired.uuid);

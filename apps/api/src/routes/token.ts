@@ -26,6 +26,21 @@ async function handleToken(c: Context<AppEnv>): Promise<Response> {
     .getAll("scope")
     .flatMap((s) => s.split(" "))
     .filter(Boolean);
+  const service = url.searchParams.get("service");
+
+  if ((scopeList.length > 0 || service !== null) && service !== REGISTRY_TOKEN_SERVICE) {
+    return c.json(
+      {
+        errors: [
+          {
+            code: "UNAUTHORIZED",
+            message: `invalid token service '${service ?? ""}'`,
+          },
+        ],
+      },
+      401,
+    );
+  }
 
   const access: RegistryAccess[] = [];
   for (const scope of scopeList) {
