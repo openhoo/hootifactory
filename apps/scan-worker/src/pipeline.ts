@@ -346,4 +346,14 @@ export async function recordScanFailure(artifactId: string, err: unknown): Promi
       ],
       set: { status: "failed", error: message, finishedAt: new Date() },
     });
+  await db
+    .update(artifacts)
+    .set({
+      policyDecision: {
+        scanStatus: "failed",
+        error: message,
+        failedAt: new Date().toISOString(),
+      },
+    })
+    .where(eq(artifacts.id, art.id));
 }

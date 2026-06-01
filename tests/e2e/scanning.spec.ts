@@ -58,11 +58,18 @@ async function pollArtifact(
   repoId: string,
   name: string,
   timeoutMs = 60_000,
-): Promise<{ id: string; state: string }> {
+): Promise<{ id: string; state: string; policyDecision: Record<string, unknown> | null }> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const res = await ctx.get(`/api/repositories/${repoId}/artifacts`);
-    const body = (await res.json()) as { artifacts: { id: string; name: string; state: string }[] };
+    const body = (await res.json()) as {
+      artifacts: {
+        id: string;
+        name: string;
+        state: string;
+        policyDecision: Record<string, unknown> | null;
+      }[];
+    };
     const found = body.artifacts.find((a) => a.name === name);
     if (found && found.state !== "pending") return found;
     await new Promise((r) => setTimeout(r, 400));
@@ -443,6 +450,15 @@ test.describe("scanning + policy gates", () => {
     expect(rows[0]).toMatchObject({
       artifactId: art.id,
       status: "failed",
+      error: "forced scan failure",
+    });
+    const listed = (
+      (await (await owner.ctx.get(`/api/repositories/${repo.id}/artifacts`)).json()) as {
+        artifacts: { id: string; policyDecision: Record<string, unknown> | null }[];
+      }
+    ).artifacts.find((artifact) => artifact.id === art.id);
+    expect(listed?.policyDecision).toMatchObject({
+      scanStatus: "failed",
       error: "forced scan failure",
     });
   });
