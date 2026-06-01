@@ -17,6 +17,7 @@
     "test:integration": "bun run --filter \"@hootifactory/*\" --parallel --elide-lines=0 test:integration",
     "test:all": "bun run test:unit && bun run test:integration",
     "test:e2e": "playwright test",
+    "test:e2e:clients": "playwright test tests/e2e/*-cli.spec.ts",
     "e2e:install": "playwright install chromium",
     "typecheck": "bun run --filter '*' typecheck",
     "lint": "biome check .",

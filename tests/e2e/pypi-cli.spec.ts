@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   existsSync,
@@ -12,6 +11,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { APIRequestContext } from "@playwright/test";
 import { expect, test } from "@playwright/test";
+import {
+  dockerReachableUrl,
+  dockerRun,
+  ensureDockerAvailable,
+  pythonClientImage,
+} from "./docker-clients";
 import { anonContext, createRepo, createToken, setupOwner } from "./helpers";
 
 // Builds a minimal valid wheel with Python's stdlib (no setuptools / no network).
@@ -36,46 +41,21 @@ with zipfile.ZipFile(whl, "w", zipfile.ZIP_DEFLATED) as z:
 print(whl)
 `;
 
-function pythonAvailable(): boolean {
-  try {
-    execFileSync("python3", ["--version"], { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function commandAvailable(command: string, args: string[]): boolean {
-  try {
-    execFileSync(command, args, { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 function run(command: string, args: string[], cwd: string): string {
-  try {
-    return execFileSync(command, args, {
-      cwd,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-      env: {
-        ...process.env,
-        PYTHON_KEYRING_BACKEND: "keyring.backends.null.Keyring",
-        TWINE_NON_INTERACTIVE: "1",
-      },
-    });
-  } catch (err) {
-    const e = err as { stdout?: string; stderr?: string };
-    throw new Error(`${command} ${args.join(" ")} failed:\n${e.stdout ?? ""}\n${e.stderr ?? ""}`);
-  }
+  return dockerRun(pythonClientImage(), [command, ...args], {
+    cwd,
+    env: {
+      PIP_CACHE_DIR: join(cwd, ".pip-cache"),
+      PYTHON_KEYRING_BACKEND: "keyring.backends.null.Keyring",
+      TWINE_NON_INTERACTIVE: "1",
+    },
+  });
 }
 
 function buildWheel(work: string, pkg: string, ver: string): { bytes: Buffer; name: string } {
   const builder = join(work, "build_wheel.py");
   writeFileSync(builder, WHEEL_BUILDER);
-  const whlPath = execFileSync("python3", [builder, work, pkg, ver], { encoding: "utf8" }).trim();
+  const whlPath = run("python", [builder, work, pkg, ver], work).trim();
   return { bytes: readFileSync(whlPath), name: whlPath.split("/").pop()! };
 }
 
@@ -112,8 +92,8 @@ async function uploadWheel(input: {
   });
 }
 
-test.describe("pypi registry (real pip)", () => {
-  test.skip(!pythonAvailable(), "python3 not available");
+test.describe("pypi registry (Dockerized real pip/twine)", () => {
+  test.beforeAll(ensureDockerAvailable);
 
   test("upload wheel -> simple index -> pip install", async ({ baseURL }) => {
     test.setTimeout(180_000);
@@ -133,7 +113,6 @@ test.describe("pypi registry (real pip)", () => {
     const sha256 = createHash("sha256").update(whl.bytes).digest("hex");
     const auth = await anonContext(baseURL!);
 
-    // upload through the legacy route used by twine-style clients
     const uploadRes = await uploadWheel({
       ctx: auth,
       mountPath: `pypi/${owner.orgSlug}/${repo}`,
@@ -148,7 +127,6 @@ test.describe("pypi registry (real pip)", () => {
     expect(root.status()).toBe(200);
     expect(await root.text()).toContain(`<a href="${pkg}/">${pkg}</a>`);
 
-    // simple index lists the file + hash
     const simple = await owner.ctx.get(`/pypi/${owner.orgSlug}/${repo}/simple/${pkg}/`);
     expect(simple.status()).toBe(200);
     const html = await simple.text();
@@ -177,40 +155,29 @@ test.describe("pypi registry (real pip)", () => {
     });
     expect(mismatch.status()).toBe(400);
 
-    // pip install from our index into a target dir
     const target = mkdtempSync(join(tmpdir(), "hoot-pipt-"));
-    const host = new URL(baseURL!).host;
+    const host = new URL(dockerReachableUrl(baseURL!)).host;
     const indexUrl = `http://__token__:${secret}@${host}/pypi/${owner.orgSlug}/${repo}/simple/`;
-    try {
-      execFileSync(
-        "pip",
-        [
-          "install",
-          "--index-url",
-          indexUrl,
-          "--trusted-host",
-          host.split(":")[0]!,
-          "--no-cache-dir",
-          "--no-deps",
-          "--target",
-          target,
-          `${pkg}==${ver}`,
-        ],
-        { stdio: "pipe", encoding: "utf8" },
-      );
-    } catch (err) {
-      const e = err as { stdout?: string; stderr?: string };
-      throw new Error(`pip install failed:\n${e.stdout ?? ""}\n${e.stderr ?? ""}`);
-    }
+    run(
+      "pip",
+      [
+        "install",
+        "--index-url",
+        indexUrl,
+        "--trusted-host",
+        host.split(":")[0]!,
+        "--no-cache-dir",
+        "--no-deps",
+        "--target",
+        target,
+        `${pkg}==${ver}`,
+      ],
+      work,
+    );
     expect(existsSync(join(target, pkg, "__init__.py"))).toBe(true);
   });
 
   test("python build -> twine upload -> pip install", async ({ baseURL }) => {
-    test.skip(!commandAvailable("twine", ["--version"]), "twine not available");
-    test.skip(
-      !commandAvailable("python3", ["-m", "build", "--version"]),
-      "python build module not available",
-    );
     test.setTimeout(180_000);
     const owner = await setupOwner(baseURL!);
     const repo = "pypitwine";
@@ -241,7 +208,7 @@ where = ["src"]
     );
     writeFileSync(join(work, "src", pkg, "__init__.py"), `VALUE = ${JSON.stringify(pkg)}\n`);
 
-    run("python3", ["-m", "build", "--wheel", "--no-isolation"], work);
+    run("python", ["-m", "build", "--wheel", "--no-isolation"], work);
     const dist = join(work, "dist");
     const wheel = readdirSync(dist).find((name) => name.endsWith(".whl"));
     if (!wheel) throw new Error("python build did not produce a wheel");
@@ -251,7 +218,7 @@ where = ["src"]
       [
         "upload",
         "--repository-url",
-        `${baseURL}/pypi/${owner.orgSlug}/${repo}/legacy/`,
+        `${dockerReachableUrl(baseURL!)}/pypi/${owner.orgSlug}/${repo}/legacy/`,
         "--username",
         "__token__",
         "--password",
@@ -268,7 +235,7 @@ where = ["src"]
     expect(await simple.text()).toContain(wheel);
 
     const target = mkdtempSync(join(tmpdir(), "hoot-twine-install-"));
-    const host = new URL(baseURL!).host;
+    const host = new URL(dockerReachableUrl(baseURL!)).host;
     const indexUrl = `http://__token__:${secret}@${host}/pypi/${owner.orgSlug}/${repo}/simple/`;
     run(
       "pip",

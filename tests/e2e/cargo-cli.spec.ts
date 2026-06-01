@@ -1,31 +1,12 @@
-import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
+import { CLI_IMAGES, dockerReachableUrl, dockerRun, ensureDockerAvailable } from "./docker-clients";
 import { createRepo, createToken, setupOwner } from "./helpers";
 
-function available(cmd: string, args: string[]): boolean {
-  try {
-    execFileSync(cmd, args, { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 function cargo(args: string[], cwd: string, env: NodeJS.ProcessEnv): string {
-  try {
-    return execFileSync("cargo", args, {
-      cwd,
-      env,
-      stdio: "pipe",
-      encoding: "utf8",
-    });
-  } catch (err) {
-    const e = err as { stdout?: Buffer | string; stderr?: Buffer | string };
-    throw new Error(`cargo ${args.join(" ")} failed:\n${e.stdout ?? ""}\n${e.stderr ?? ""}`);
-  }
+  return dockerRun(CLI_IMAGES.cargo, ["cargo", ...args], { cwd, env });
 }
 
 function writeCargoConfig(dir: string, registryUrl: string): void {
@@ -37,8 +18,8 @@ function writeCargoConfig(dir: string, registryUrl: string): void {
   );
 }
 
-test.describe("cargo sparse registry (real cargo)", () => {
-  test.skip(!available("cargo", ["--version"]), "cargo missing");
+test.describe("cargo sparse registry (Dockerized real cargo)", () => {
+  test.beforeAll(ensureDockerAvailable);
 
   test("cargo publish -> cargo fetch from custom sparse registry", async ({ baseURL }) => {
     test.setTimeout(180_000);
@@ -55,10 +36,10 @@ test.describe("cargo sparse registry (real cargo)", () => {
     const token = (await (await createToken(owner.ctx, owner.orgId, { name: "cargo" })).json())
       .secret as string;
 
-    const registryUrl = `${baseURL}/${repo.mountPath}/`;
+    const registryUrl = `${dockerReachableUrl(baseURL!)}/${repo.mountPath}/`;
     const cargoHome = mkdtempSync(join(tmpdir(), "hoot-cargo-home-"));
     const env = {
-      ...process.env,
+      HOME: cargoHome,
       CARGO_HOME: cargoHome,
       CARGO_REGISTRIES_HOOTI_TOKEN: token,
       CARGO_TARGET_DIR: join(cargoHome, "target"),
@@ -138,10 +119,10 @@ test.describe("cargo sparse registry (real cargo)", () => {
     const token = (await (await createToken(owner.ctx, owner.orgId, { name: "cargo" })).json())
       .secret as string;
 
-    const registryUrl = `${baseURL}/${repo.mountPath}/`;
+    const registryUrl = `${dockerReachableUrl(baseURL!)}/${repo.mountPath}/`;
     const cargoHome = mkdtempSync(join(tmpdir(), "hoot-cargo-deps-home-"));
     const env = {
-      ...process.env,
+      HOME: cargoHome,
       CARGO_HOME: cargoHome,
       CARGO_REGISTRIES_HOOTI_TOKEN: token,
       CARGO_TARGET_DIR: join(cargoHome, "target"),

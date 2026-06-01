@@ -1,40 +1,15 @@
-import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
+import { CLI_IMAGES, dockerReachableUrl, dockerRun, ensureDockerAvailable } from "./docker-clients";
 import { createRepo, createToken, setupOwner } from "./helpers";
 
-const ORAS_CANDIDATES = [process.env.ORAS_BIN, "/home/wakemeup/.local/bin/oras", "oras"].filter(
-  (candidate): candidate is string => Boolean(candidate),
-);
-
-function resolveOras(): string | null {
-  for (const candidate of ORAS_CANDIDATES) {
-    try {
-      execFileSync(candidate, ["version"], { stdio: "ignore" });
-      return candidate;
-    } catch {
-      // Try the next candidate.
-    }
-  }
-  return null;
-}
-
-const oras = resolveOras();
-
 function runOras(args: string[], cwd: string): string {
-  try {
-    return execFileSync(oras!, args, {
-      cwd,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, ORAS_CACHE: join(cwd, ".oras-cache") },
-    });
-  } catch (err) {
-    const e = err as { stdout?: string; stderr?: string };
-    throw new Error(`oras ${args.join(" ")} failed:\n${e.stdout ?? ""}\n${e.stderr ?? ""}`);
-  }
+  return dockerRun(CLI_IMAGES.oras, args, {
+    cwd,
+    env: { ORAS_CACHE: join(cwd, ".oras-cache") },
+  });
 }
 
 function digestFrom(output: string): string {
@@ -43,12 +18,12 @@ function digestFrom(output: string): string {
   return digest!;
 }
 
-test.describe("oci registry (real ORAS)", () => {
-  test.skip(!oras, "oras CLI not available");
+test.describe("oci registry (Dockerized real ORAS)", () => {
+  test.beforeAll(ensureDockerAvailable);
 
   test("oras push -> pull -> attach -> discover round-trips OCI artifacts", async ({ baseURL }) => {
     test.setTimeout(180_000);
-    const host = new URL(baseURL!).host;
+    const host = new URL(dockerReachableUrl(baseURL!)).host;
     const owner = await setupOwner(baseURL!);
     expect(
       (await createRepo(owner.ctx, owner.orgId, { name: "artifacts", format: "oci" })).status(),

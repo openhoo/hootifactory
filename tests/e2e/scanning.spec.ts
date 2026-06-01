@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { OCI_MEDIA_TYPES } from "@hootifactory/types";
 import { type APIRequestContext, expect, test } from "@playwright/test";
+import { dockerNpm, dockerReachableUrl, ensureDockerAvailable } from "./docker-clients";
 import { createRepo, createToken, setupOwner } from "./helpers";
 
 const EICAR = "X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*";
@@ -14,12 +15,7 @@ const TEST_DATABASE_URL =
   "postgres://hootifactory:hootifactory@localhost:5432/hootifactory_test";
 
 function npm(args: string[], cwd: string): void {
-  execFileSync("npm", args, {
-    cwd,
-    stdio: "pipe",
-    encoding: "utf8",
-    env: { ...process.env, npm_config_cache: mkdtempSync(join(tmpdir(), "npmc-")) },
-  });
+  dockerNpm(args, cwd);
 }
 
 function npmrc(registry: string, token: string): string {
@@ -33,7 +29,7 @@ function publish(
   pkgName: string,
   deps: Record<string, string>,
 ): void {
-  const registry = `${baseURL}/${mountPath}/`;
+  const registry = `${dockerReachableUrl(baseURL)}/${mountPath}/`;
   const dir = mkdtempSync(join(tmpdir(), "pub-"));
   writeFileSync(
     join(dir, "package.json"),
@@ -45,7 +41,7 @@ function publish(
 }
 
 function install(baseURL: string, mountPath: string, token: string, spec: string): string {
-  const registry = `${baseURL}/${mountPath}/`;
+  const registry = `${dockerReachableUrl(baseURL)}/${mountPath}/`;
   const dir = mkdtempSync(join(tmpdir(), "ins-"));
   writeFileSync(join(dir, ".npmrc"), npmrc(registry, token));
   writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "consumer", version: "1.0.0" }));
@@ -286,6 +282,8 @@ async function putOciArtifactManifest(
 }
 
 test.describe("scanning + policy gates", () => {
+  test.beforeAll(ensureDockerAvailable);
+
   test("scan policy API rejects invalid modes, severities, and repository patterns", async ({
     baseURL,
   }) => {

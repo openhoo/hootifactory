@@ -3,8 +3,8 @@
 A self-hostable, **multi-format artifact & package manager** — an open-source alternative to JFrog Artifactory + Harbor + a standalone scanner, in one tool.
 
 - **Formats:** npm, Docker, OCI, PyPI, Helm, Go, Cargo, NuGet (8 total). npm,
-  Docker, PyPI, Helm, Go and Cargo are verified end-to-end against their real
-  clients; NuGet protocol coverage uses a real `.nupkg` artifact.
+  Docker, OCI, PyPI, Helm, Go, Cargo and NuGet are verified end-to-end against
+  Dockerized real clients.
 - **Repository kinds:** hosted, remote (pull-through proxy/cache), virtual (group/aggregate).
 - **Supply-chain security:** dependency/malware scanning (heuristic + optional
   Syft/Grype/Trivy/OSV/ClamAV), policy gates (audit / enforce) that quarantine or
@@ -20,8 +20,9 @@ bun run test             # unit tests across every workspace package/app
 bun run test:integration # service-backed Bun tests, e.g. DB/MinIO integration
 bun run test:all         # unit + integration
 bun run e2e:install      # one-time: Playwright chromium
-bun run test:e2e         # 58 Playwright e2e — drives real npm/docker/pip/helm/go/cargo clients,
+bun run test:e2e         # Playwright e2e — drives Dockerized npm/docker/oras/pip/helm/go/cargo/dotnet clients,
                          # the browser UI, proxy/virtual repos, scanning+policy gates, governance
+bun run test:e2e:clients # real-client specs only; Docker supplies the external package-manager CLIs
 ```
 
 Unit tests are regular Bun `*.test.{ts,tsx}` or `*.spec.{ts,tsx}` files. Name

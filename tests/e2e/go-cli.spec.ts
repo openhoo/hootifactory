@@ -1,8 +1,14 @@
-import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
+import {
+  CLI_IMAGES,
+  dockerReachableUrl,
+  dockerRun,
+  ensureDockerAvailable,
+  pythonClientImage,
+} from "./docker-clients";
 import { createRepo, setupOwner } from "./helpers";
 
 const ZIP_BUILDER = `
@@ -15,22 +21,15 @@ with zipfile.ZipFile(out, "w") as z:
 print(out)
 `;
 
-function available(cmd: string, args: string[]): boolean {
-  try {
-    execFileSync(cmd, args, { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 function buildZip(moduleName: string, version: string): Buffer {
   const work = mkdtempSync(join(tmpdir(), "hoot-go-"));
   const builder = join(work, "build_zip.py");
   writeFileSync(builder, ZIP_BUILDER);
-  const zipPath = execFileSync("python3", [builder, join(work, "m.zip"), moduleName, version], {
-    encoding: "utf8",
-  }).trim();
+  const zipPath = dockerRun(
+    pythonClientImage(),
+    ["python", builder, join(work, "m.zip"), moduleName, version],
+    { cwd: work },
+  ).trim();
   return readFileSync(zipPath);
 }
 
@@ -52,7 +51,7 @@ async function uploadModule(
 function goEnv(baseURL: string, mountPath: string): NodeJS.ProcessEnv {
   const goCache = mkdtempSync(join(tmpdir(), "gocache-"));
   return {
-    ...process.env,
+    HOME: goCache,
     GOPROXY: `${baseURL}/${mountPath}`,
     GOSUMDB: "off",
     GOFLAGS: "-mod=mod",
@@ -63,11 +62,12 @@ function goEnv(baseURL: string, mountPath: string): NodeJS.ProcessEnv {
   };
 }
 
-test.describe("go module proxy (real go)", () => {
-  test.skip(
-    !available("go", ["version"]) || !available("python3", ["--version"]),
-    "go/python3 missing",
-  );
+function go(args: string[], cwd: string, env: NodeJS.ProcessEnv): string {
+  return dockerRun(CLI_IMAGES.go, ["go", ...args], { cwd, env });
+}
+
+test.describe("go module proxy (Dockerized real go)", () => {
+  test.beforeAll(ensureDockerAvailable);
 
   test("upload module -> go mod download via GOPROXY", async ({ baseURL }) => {
     test.setTimeout(180_000);
@@ -95,14 +95,9 @@ test.describe("go module proxy (real go)", () => {
     // go mod download against our GOPROXY
     const consumer = mkdtempSync(join(tmpdir(), "hoot-goc-"));
     writeFileSync(join(consumer, "go.mod"), "module hoot.test/consumer\n\ngo 1.20\n");
-    const env = goEnv(baseURL!, repo.mountPath);
+    const env = goEnv(dockerReachableUrl(baseURL!), repo.mountPath);
     try {
-      const out = execFileSync("go", ["mod", "download", "-x", `${moduleName}@${version}`], {
-        cwd: consumer,
-        env,
-        stdio: "pipe",
-        encoding: "utf8",
-      });
+      const out = go(["mod", "download", "-x", `${moduleName}@${version}`], consumer, env);
       expect(typeof out).toBe("string");
     } catch (err) {
       const e = err as { stdout?: string; stderr?: string };
@@ -135,12 +130,11 @@ test.describe("go module proxy (real go)", () => {
 
     const consumer = mkdtempSync(join(tmpdir(), "hoot-goc-latest-"));
     writeFileSync(join(consumer, "go.mod"), "module hoot.test/consumer\n\ngo 1.20\n");
-    const out = execFileSync("go", ["mod", "download", "-json", `${moduleName}@latest`], {
-      cwd: consumer,
-      env: goEnv(baseURL!, repo.mountPath),
-      stdio: "pipe",
-      encoding: "utf8",
-    });
+    const out = go(
+      ["mod", "download", "-json", `${moduleName}@latest`],
+      consumer,
+      goEnv(dockerReachableUrl(baseURL!), repo.mountPath),
+    );
     expect(JSON.parse(out).Version).toBe("v1.1.0");
   });
 });

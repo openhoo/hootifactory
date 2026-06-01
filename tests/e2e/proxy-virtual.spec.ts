@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
@@ -6,20 +5,11 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
+import { dockerNpm, dockerReachableUrl, ensureDockerAvailable } from "./docker-clients";
 import { createRepo, createToken, setupOwner } from "./helpers";
 
 function npm(args: string[], cwd: string): void {
-  try {
-    execFileSync("npm", args, {
-      cwd,
-      stdio: "pipe",
-      encoding: "utf8",
-      env: { ...process.env, npm_config_cache: mkdtempSync(join(tmpdir(), "npmc-")) },
-    });
-  } catch (err) {
-    const e = err as { stdout?: string; stderr?: string };
-    throw new Error(`npm ${args.join(" ")} failed:\n${e.stdout ?? ""}\n${e.stderr ?? ""}`);
-  }
+  dockerNpm(args, cwd);
 }
 
 function npmrc(registry: string, token: string): string {
@@ -27,7 +17,7 @@ function npmrc(registry: string, token: string): string {
 }
 
 function publish(baseURL: string, mountPath: string, token: string, pkgName: string): void {
-  const registry = `${baseURL}/${mountPath}/`;
+  const registry = `${dockerReachableUrl(baseURL)}/${mountPath}/`;
   const dir = mkdtempSync(join(tmpdir(), "pub-"));
   writeFileSync(
     join(dir, "package.json"),
@@ -53,7 +43,7 @@ function publishSucceeds(
 }
 
 function installAll(baseURL: string, mountPath: string, token: string, specs: string[]): string {
-  const registry = `${baseURL}/${mountPath}/`;
+  const registry = `${dockerReachableUrl(baseURL)}/${mountPath}/`;
   const dir = mkdtempSync(join(tmpdir(), "ins-"));
   writeFileSync(join(dir, ".npmrc"), npmrc(registry, token));
   writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "consumer", version: "1.0.0" }));
@@ -222,7 +212,9 @@ async function pollArtifact(
   throw new Error(`artifact ${name} was not scanned within ${timeoutMs}ms`);
 }
 
-test.describe("virtual + proxy repositories (real npm)", () => {
+test.describe("virtual + proxy repositories (Dockerized real npm)", () => {
+  test.beforeAll(ensureDockerAvailable);
+
   test("virtual repo aggregates two member repos", async ({ baseURL }) => {
     test.setTimeout(120_000);
     const owner = await setupOwner(baseURL!);

@@ -1,41 +1,26 @@
-import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
+import { CLI_IMAGES, dockerReachableUrl, dockerRun, ensureDockerAvailable } from "./docker-clients";
 import { createRepo, createToken, setupOwner } from "./helpers";
 
-function dotnetAvailable(): boolean {
-  try {
-    execFileSync("dotnet", ["--info"], { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 function runDotnet(args: string[], cwd: string): string {
-  try {
-    return execFileSync("dotnet", args, {
-      cwd,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-      env: {
-        ...process.env,
-        DOTNET_CLI_TELEMETRY_OPTOUT: "1",
-        DOTNET_NOLOGO: "1",
-        DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "1",
-        NUGET_PACKAGES: join(cwd, ".nuget-packages"),
-      },
-    });
-  } catch (err) {
-    const e = err as { stdout?: string; stderr?: string };
-    throw new Error(`dotnet ${args.join(" ")} failed:\n${e.stdout ?? ""}\n${e.stderr ?? ""}`);
-  }
+  return dockerRun(CLI_IMAGES.dotnet, ["dotnet", ...args], {
+    cwd,
+    env: {
+      DOTNET_CLI_HOME: join(cwd, ".dotnet-home"),
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1",
+      DOTNET_NOLOGO: "1",
+      DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "1",
+      HOME: cwd,
+      NUGET_PACKAGES: join(cwd, ".nuget-packages"),
+    },
+  });
 }
 
-test.describe("nuget registry (real dotnet)", () => {
-  test.skip(!dotnetAvailable(), "dotnet CLI not available");
+test.describe("nuget registry (Dockerized real dotnet)", () => {
+  test.beforeAll(ensureDockerAvailable);
 
   test("dotnet pack -> nuget push -> restore from v3 source", async ({ baseURL }) => {
     test.setTimeout(180_000);
@@ -56,7 +41,18 @@ test.describe("nuget registry (real dotnet)", () => {
     const packageId = `Hoot.Dotnet${id}`;
     const version = "1.2.3";
     const work = mkdtempSync(join(tmpdir(), "hoot-nuget-"));
-    const source = `${baseURL}/${repo.mountPath}/v3/index.json`;
+    const source = `${dockerReachableUrl(baseURL!)}/${repo.mountPath}/v3/index.json`;
+    writeFileSync(
+      join(work, "NuGet.Config"),
+      `<?xml version="1.0" encoding="utf-8"?>
+<configuration>
+  <packageSources>
+    <clear />
+    <add key="hootifactory" value="${source}" allowInsecureConnections="true" />
+  </packageSources>
+</configuration>
+`,
+    );
 
     runDotnet(["new", "classlib", "-n", packageId, "--no-restore"], work);
     const project = join(work, packageId, `${packageId}.csproj`);
@@ -80,19 +76,7 @@ test.describe("nuget registry (real dotnet)", () => {
 
     let invalidKeyFailed = false;
     try {
-      runDotnet(
-        [
-          "nuget",
-          "push",
-          nupkg,
-          "--api-key",
-          `${secret}x`,
-          "--source",
-          source,
-          "--allow-insecure-connections",
-        ],
-        work,
-      );
+      runDotnet(["nuget", "push", nupkg, "--api-key", `${secret}x`, "--source", source], work);
     } catch {
       invalidKeyFailed = true;
     }
@@ -103,19 +87,7 @@ test.describe("nuget registry (real dotnet)", () => {
       (await owner.ctx.get(`/${repo.mountPath}/v3-flatcontainer/${lower}/index.json`)).status(),
     ).toBe(404);
 
-    runDotnet(
-      [
-        "nuget",
-        "push",
-        nupkg,
-        "--api-key",
-        secret,
-        "--source",
-        source,
-        "--allow-insecure-connections",
-      ],
-      work,
-    );
+    runDotnet(["nuget", "push", nupkg, "--api-key", secret, "--source", source], work);
 
     const versions = await (
       await owner.ctx.get(`/${repo.mountPath}/v3-flatcontainer/${lower}/index.json`)
@@ -129,17 +101,6 @@ test.describe("nuget registry (real dotnet)", () => {
       ).status(),
     ).toBe(200);
 
-    writeFileSync(
-      join(work, "NuGet.Config"),
-      `<?xml version="1.0" encoding="utf-8"?>
-<configuration>
-  <packageSources>
-    <clear />
-    <add key="hootifactory" value="${source}" allowInsecureConnections="true" />
-  </packageSources>
-</configuration>
-`,
-    );
     runDotnet(["new", "classlib", "-n", "Consumer", "--no-restore"], work);
     const consumer = join(work, "Consumer", "Consumer.csproj");
     runDotnet(["add", consumer, "package", packageId, "--version", version], work);
@@ -169,7 +130,7 @@ test.describe("nuget registry (real dotnet)", () => {
     const mainId = `Hoot.WithDependency${id}`;
     const version = "1.0.0";
     const work = mkdtempSync(join(tmpdir(), "hoot-nuget-deps-"));
-    const source = `${baseURL}/${repo.mountPath}/v3/index.json`;
+    const source = `${dockerReachableUrl(baseURL!)}/${repo.mountPath}/v3/index.json`;
 
     writeFileSync(
       join(work, "NuGet.Config"),
@@ -202,19 +163,7 @@ test.describe("nuget registry (real dotnet)", () => {
     );
     const depNupkg = join(work, "packages", `${depId}.${version}.nupkg`);
     expect(existsSync(depNupkg)).toBe(true);
-    runDotnet(
-      [
-        "nuget",
-        "push",
-        depNupkg,
-        "--api-key",
-        secret,
-        "--source",
-        source,
-        "--allow-insecure-connections",
-      ],
-      work,
-    );
+    runDotnet(["nuget", "push", depNupkg, "--api-key", secret, "--source", source], work);
 
     runDotnet(["new", "classlib", "-n", mainId, "--no-restore"], work);
     const mainProject = join(work, mainId, `${mainId}.csproj`);
@@ -235,19 +184,7 @@ test.describe("nuget registry (real dotnet)", () => {
     );
     const mainNupkg = join(work, "packages", `${mainId}.${version}.nupkg`);
     expect(existsSync(mainNupkg)).toBe(true);
-    runDotnet(
-      [
-        "nuget",
-        "push",
-        mainNupkg,
-        "--api-key",
-        secret,
-        "--source",
-        source,
-        "--allow-insecure-connections",
-      ],
-      work,
-    );
+    runDotnet(["nuget", "push", mainNupkg, "--api-key", secret, "--source", source], work);
 
     const registration = await (
       await owner.ctx.get(`/${repo.mountPath}/v3/registrations/${mainId.toLowerCase()}/index.json`)

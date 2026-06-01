@@ -1,9 +1,9 @@
-import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type APIRequestContext, type APIResponse, expect, test } from "@playwright/test";
+import { dockerNpm, dockerReachableUrl, ensureDockerAvailable } from "./docker-clients";
 import { createRepo, createToken, setupOwner, uniq } from "./helpers";
 
 function sha256(bytes: Buffer | string): string {
@@ -17,7 +17,7 @@ function publish(
   pkgName: string,
   version: string,
 ): { ok: boolean } {
-  const registry = `${baseURL}/${mountPath}/`;
+  const registry = `${dockerReachableUrl(baseURL)}/${mountPath}/`;
   const dir = mkdtempSync(join(tmpdir(), "pub-"));
   writeFileSync(
     join(dir, "package.json"),
@@ -29,11 +29,7 @@ function publish(
     `registry=${registry}\n${registry.replace(/^https?:/, "")}:_authToken=${token}\n`,
   );
   try {
-    execFileSync("npm", ["publish", "--registry", registry], {
-      cwd: dir,
-      stdio: "pipe",
-      env: { ...process.env, npm_config_cache: mkdtempSync(join(tmpdir(), "npmc-")) },
-    });
+    dockerNpm(["publish", "--registry", registry], dir);
     return { ok: true };
   } catch {
     return { ok: false };
@@ -54,6 +50,8 @@ async function uploadOciBlob(
 }
 
 test.describe("governance: quotas + retention", () => {
+  test.beforeAll(ensureDockerAvailable);
+
   test("storage quota rejects malformed limits", async ({ baseURL }) => {
     const owner = await setupOwner(baseURL!);
     for (const data of [

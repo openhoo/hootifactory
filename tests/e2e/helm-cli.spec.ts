@@ -1,70 +1,68 @@
-import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
+import { CLI_IMAGES, dockerReachableUrl, dockerRun, ensureDockerAvailable } from "./docker-clients";
 import { createRepo, setupOwner } from "./helpers";
 
-function sh(cmd: string, args: string[], cwd?: string): string {
-  try {
-    return execFileSync(cmd, args, { cwd, stdio: "pipe", encoding: "utf8" });
-  } catch (err) {
-    const e = err as { stdout?: string; stderr?: string };
-    throw new Error(`${cmd} ${args.join(" ")} failed:\n${e.stdout ?? ""}\n${e.stderr ?? ""}`);
-  }
+function helm(args: string[], cwd: string, helmHome: string): string {
+  return dockerRun(CLI_IMAGES.helm, args, {
+    cwd,
+    env: {
+      HELM_CACHE_HOME: join(helmHome, ".cache", "helm"),
+      HELM_CONFIG_HOME: join(helmHome, ".config", "helm"),
+      HELM_DATA_HOME: join(helmHome, ".local", "share", "helm"),
+      HOME: helmHome,
+    },
+  });
 }
 
-function helmAvailable(): boolean {
-  try {
-    execFileSync("helm", ["version", "--short"], { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-test.describe("helm registry (real CLI, OCI)", () => {
-  test.skip(!helmAvailable(), "helm not available");
+test.describe("helm registry (Dockerized real CLI, OCI)", () => {
+  test.beforeAll(ensureDockerAvailable);
 
   test("helm package -> push -> pull (OCI)", async ({ baseURL }) => {
     test.setTimeout(180_000);
-    const host = new URL(baseURL!).host;
+    const host = new URL(dockerReachableUrl(baseURL!)).host;
     const owner = await setupOwner(baseURL!);
     expect(
       (await createRepo(owner.ctx, owner.orgId, { name: "charts", format: "helm" })).status(),
     ).toBe(201);
 
     const work = mkdtempSync(join(tmpdir(), "hoot-helm-"));
-    sh("helm", ["create", "mychart"], work);
-    sh("helm", ["package", join(work, "mychart"), "-d", work]);
+    const helmHome = mkdtempSync(join(tmpdir(), "hoot-helm-home-"));
+    helm(["create", "mychart"], work, helmHome);
+    helm(["package", join(work, "mychart"), "-d", work], work, helmHome);
 
-    sh("helm", [
-      "registry",
-      "login",
-      host,
-      "-u",
-      owner.username,
-      "-p",
-      owner.password,
-      "--plain-http",
-    ]);
-    sh("helm", [
-      "push",
-      join(work, "mychart-0.1.0.tgz"),
-      `oci://${host}/${owner.orgSlug}/charts`,
-      "--plain-http",
-    ]);
+    helm(
+      ["registry", "login", host, "-u", owner.username, "-p", owner.password, "--plain-http"],
+      work,
+      helmHome,
+    );
+    helm(
+      [
+        "push",
+        join(work, "mychart-0.1.0.tgz"),
+        `oci://${host}/${owner.orgSlug}/charts`,
+        "--plain-http",
+      ],
+      work,
+      helmHome,
+    );
 
     const pullDir = mkdtempSync(join(tmpdir(), "hoot-helm-pull-"));
-    sh("helm", [
-      "pull",
-      `oci://${host}/${owner.orgSlug}/charts/mychart`,
-      "--version",
-      "0.1.0",
-      "--plain-http",
-      "-d",
-      pullDir,
-    ]);
+    helm(
+      [
+        "pull",
+        `oci://${host}/${owner.orgSlug}/charts/mychart`,
+        "--version",
+        "0.1.0",
+        "--plain-http",
+        "-d",
+        pullDir,
+      ],
+      work,
+      helmHome,
+    );
     expect(existsSync(join(pullDir, "mychart-0.1.0.tgz"))).toBe(true);
 
     // tag is visible via the registry API
@@ -73,7 +71,7 @@ test.describe("helm registry (real CLI, OCI)", () => {
     expect((await tags.json()).tags).toContain("0.1.0");
 
     try {
-      sh("helm", ["registry", "logout", host, "--plain-http"]);
+      helm(["registry", "logout", host, "--plain-http"], work, helmHome);
     } catch {
       /* ignore */
     }
