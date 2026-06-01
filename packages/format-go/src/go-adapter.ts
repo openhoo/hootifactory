@@ -49,6 +49,69 @@ function compareSemver(a: string, b: string): number {
   return 0;
 }
 
+function readU16(view: DataView, offset: number): number {
+  return view.getUint16(offset, true);
+}
+
+function readU32(view: DataView, offset: number): number {
+  return view.getUint32(offset, true);
+}
+
+function findZipEndOfCentralDirectory(view: DataView): number {
+  const min = Math.max(0, view.byteLength - 65_557);
+  for (let offset = view.byteLength - 22; offset >= min; offset--) {
+    if (readU32(view, offset) === 0x06054b50) return offset;
+  }
+  return -1;
+}
+
+function hasUnsafeZipPath(name: string): boolean {
+  const path = name.endsWith("/") ? name.slice(0, -1) : name;
+  if (!path || path.startsWith("/") || path.includes("\\")) return true;
+  return path.split("/").some((part) => !part || part === "." || part === "..");
+}
+
+function validateGoModuleZip(
+  bytes: Uint8Array,
+  moduleName: string,
+  version: string,
+): string | null {
+  if (bytes.byteLength < 22) return "zip payload is too short";
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const eocd = findZipEndOfCentralDirectory(view);
+  if (eocd < 0) return "zip end of central directory not found";
+
+  const entries = readU16(view, eocd + 10);
+  const centralSize = readU32(view, eocd + 12);
+  const centralOffset = readU32(view, eocd + 16);
+  if (entries < 1) return "zip has no entries";
+  if (centralOffset + centralSize > bytes.byteLength) return "zip central directory is truncated";
+
+  const prefix = `${moduleName}@${version}/`;
+  const decoder = new TextDecoder();
+  let pos = centralOffset;
+  let hasGoMod = false;
+  for (let i = 0; i < entries; i++) {
+    if (pos + 46 > bytes.byteLength || readU32(view, pos) !== 0x02014b50) {
+      return "zip central directory entry is invalid";
+    }
+    const nameLen = readU16(view, pos + 28);
+    const extraLen = readU16(view, pos + 30);
+    const commentLen = readU16(view, pos + 32);
+    const nameStart = pos + 46;
+    const nameEnd = nameStart + nameLen;
+    if (nameEnd > bytes.byteLength) return "zip filename is truncated";
+    const name = decoder.decode(bytes.subarray(nameStart, nameEnd));
+    if (hasUnsafeZipPath(name)) return "zip contains an unsafe path";
+    if (!name.startsWith(prefix)) return "zip entries must be rooted at module@version";
+    if (name === `${prefix}go.mod`) hasGoMod = true;
+    pos = nameEnd + extraLen + commentLen;
+  }
+  if (pos > centralOffset + centralSize) return "zip central directory exceeds declared size";
+  if (!hasGoMod) return "zip is missing go.mod";
+  return null;
+}
+
 /** Go @latest: highest release version; only fall back to a prerelease if no release exists. */
 function pickLatest(versions: string[]): string | undefined {
   if (versions.length === 0) return undefined;
@@ -224,6 +287,10 @@ export class GoAdapter implements FormatAdapter {
       .where(and(eq(packageVersions.packageId, pkg.id), eq(packageVersions.version, version)))
       .limit(1);
     if (existing) return Response.json({ error: "version already exists" }, { status: 409 });
+
+    const zipError = validateGoModuleZip(zipBytes, moduleName, version);
+    if (zipError)
+      return Response.json({ error: `invalid module zip: ${zipError}` }, { status: 400 });
 
     const stored = await storeBlobWithRef(ctx, {
       data: zipBytes,

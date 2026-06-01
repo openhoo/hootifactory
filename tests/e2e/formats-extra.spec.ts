@@ -121,6 +121,19 @@ function createNupkg(pkgId: string, version: string): Buffer {
   ]);
 }
 
+function createGoModuleZip(moduleName: string, version: string, marker: string): Buffer {
+  return createStoredZip([
+    {
+      name: `${moduleName}@${version}/go.mod`,
+      data: `module ${moduleName}\n\ngo 1.20\n`,
+    },
+    {
+      name: `${moduleName}@${version}/lib.go`,
+      data: `package lib\n\nconst Marker = ${JSON.stringify(marker)}\n`,
+    },
+  ]);
+}
+
 function basicToken(secret: string): string {
   return `Basic ${Buffer.from(`__token__:${secret}`).toString("base64")}`;
 }
@@ -335,8 +348,7 @@ test.describe("go module proxy (protocol)", () => {
     ).repository as { id: string; mountPath: string };
 
     const moduleName = `hoot.test/mod${Date.now().toString(36)}`;
-    const zip = new TextEncoder().encode("not-a-real-zip");
-    const upload = (version: string, bytes = zip) =>
+    const upload = (version: string, bytes = createGoModuleZip(moduleName, version, version)) =>
       owner.ctx.put(`/${repo.mountPath}/${moduleName}/@v/${version}`, {
         multipart: {
           mod: `module ${moduleName}\n\ngo 1.20\n`,
@@ -349,7 +361,10 @@ test.describe("go module proxy (protocol)", () => {
     expect((await owner.ctx.head(`/${repo.mountPath}/${moduleName}/@v/v1.0.0.zip`)).status()).toBe(
       200,
     );
-    expect((await upload("v1.0.0", new TextEncoder().encode("mutated"))).status()).toBe(409);
+    expect(
+      (await upload("v1.0.0", createGoModuleZip(moduleName, "v1.0.0", "mutated"))).status(),
+    ).toBe(409);
+    expect((await upload("v1.0.2", new TextEncoder().encode("not-a-real-zip"))).status()).toBe(400);
     expect((await upload("v1.0.1")).status()).toBe(200);
 
     const pruned = await (
@@ -365,7 +380,9 @@ test.describe("go module proxy (protocol)", () => {
     expect((await owner.ctx.get(`/${repo.mountPath}/${moduleName}/@v/v1.0.0.zip`)).status()).toBe(
       404,
     );
-    expect((await upload("v1.0.0", new TextEncoder().encode("resurrected"))).status()).toBe(409);
+    expect(
+      (await upload("v1.0.0", createGoModuleZip(moduleName, "v1.0.0", "resurrected"))).status(),
+    ).toBe(409);
   });
 });
 
