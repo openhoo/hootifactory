@@ -1,9 +1,14 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, test } from "@playwright/test";
+import { type APIRequestContext, type APIResponse, expect, test } from "@playwright/test";
 import { createRepo, createToken, setupOwner } from "./helpers";
+
+function sha256(bytes: Buffer | string): string {
+  return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+}
 
 function publish(
   baseURL: string,
@@ -35,6 +40,19 @@ function publish(
   }
 }
 
+async function uploadOciBlob(
+  ctx: APIRequestContext,
+  mountPath: string,
+  image: string,
+  bytes: Buffer,
+): Promise<APIResponse> {
+  const digest = sha256(bytes);
+  return ctx.post(`/${mountPath}/${image}/blobs/uploads?digest=${digest}`, {
+    headers: { "content-type": "application/octet-stream" },
+    data: bytes,
+  });
+}
+
 test.describe("governance: quotas + retention", () => {
   test("storage quota blocks publishes over the limit", async ({ baseURL }) => {
     test.setTimeout(120_000);
@@ -58,6 +76,41 @@ test.describe("governance: quotas + retention", () => {
 
     const quota = await (await owner.ctx.get(`/api/orgs/${owner.orgId}/quota`)).json();
     expect(quota.usedStorageBytes).toBeGreaterThan(0);
+  });
+
+  test("storage quota is charged per org even when CAS bytes dedupe globally", async ({
+    baseURL,
+  }) => {
+    const first = await setupOwner(baseURL!);
+    const second = await setupOwner(baseURL!);
+    const firstRepo = (
+      await (
+        await createRepo(first.ctx, first.orgId, { name: "quota-oci", format: "docker" })
+      ).json()
+    ).repository as { mountPath: string };
+    const secondRepo = (
+      await (
+        await createRepo(second.ctx, second.orgId, { name: "quota-oci", format: "docker" })
+      ).json()
+    ).repository as { mountPath: string };
+    const bytes = Buffer.from("shared quota payload that is larger than ten bytes");
+
+    const firstUpload = await uploadOciBlob(first.ctx, firstRepo.mountPath, "app", bytes);
+    expect(firstUpload.status()).toBe(201);
+
+    await second.ctx.post(`/api/orgs/${second.orgId}/quota`, { data: { maxStorageBytes: 10 } });
+    const blocked = await uploadOciBlob(second.ctx, secondRepo.mountPath, "app", bytes);
+    expect(blocked.status()).toBe(403);
+    expect((await blocked.json()).errors[0].message).toBe("storage quota exceeded");
+
+    await second.ctx.post(`/api/orgs/${second.orgId}/quota`, {
+      data: { maxStorageBytes: 1_000_000 },
+    });
+    const allowed = await uploadOciBlob(second.ctx, secondRepo.mountPath, "app", bytes);
+    expect(allowed.status()).toBe(201);
+
+    const quota = await (await second.ctx.get(`/api/orgs/${second.orgId}/quota`)).json();
+    expect(quota.usedStorageBytes).toBe(bytes.byteLength);
   });
 
   test("retention prunes old versions", async ({ baseURL }) => {

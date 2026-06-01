@@ -7,6 +7,7 @@ import {
   isNull,
   packageVersions,
   quotas,
+  repositories,
   scanPolicies,
   sql,
   versionTags,
@@ -23,13 +24,20 @@ type Tx = Parameters<Parameters<RepoContext["db"]["transaction"]>[0]>[0];
  * when a quota row with a max is set). Taking the lock serializes concurrent
  * uploads for the org so the check + the usage bump cannot race.
  */
-async function assertStorageQuotaTx(tx: Tx, orgId: string, addBytes: number): Promise<void> {
+async function lockOrgQuotaTx(tx: Tx, orgId: string) {
   const [q] = await tx
     .select({ used: quotas.usedStorageBytes, max: quotas.maxStorageBytes })
     .from(quotas)
     .where(and(eq(quotas.orgId, orgId), isNull(quotas.repositoryId)))
     .for("update")
     .limit(1);
+  return q ?? null;
+}
+
+function assertStorageQuotaRowAllows(
+  q: { used: number; max: number | null } | null,
+  addBytes: number,
+): void {
   if (q?.max != null && q.used + addBytes > q.max) {
     throw Errors.quotaExceeded({ max: q.max, used: q.used, requested: addBytes });
   }
@@ -45,6 +53,20 @@ async function assertStorageQuota(ctx: RepoContext, addBytes: number): Promise<v
   if (q?.max != null && q.used + addBytes > q.max) {
     throw Errors.quotaExceeded({ max: q.max, used: q.used, requested: addBytes });
   }
+}
+
+async function orgAlreadyReferencesDigestTx(
+  tx: Tx,
+  orgId: string,
+  digest: string,
+): Promise<boolean> {
+  const [ref] = await tx
+    .select({ id: blobRefs.id })
+    .from(blobRefs)
+    .innerJoin(repositories, eq(blobRefs.repositoryId, repositories.id))
+    .where(and(eq(repositories.orgId, orgId), eq(blobRefs.digest, digest)))
+    .limit(1);
+  return Boolean(ref);
 }
 
 /** Adjust org used-storage by `delta` bytes, clamped at zero. */
@@ -107,20 +129,30 @@ export interface StoredBlob {
  * ref_count and (opt-in) storage quota transactionally. A duplicate
  * (kind, repo, scope, digest) is a no-op ref.
  *
- * Quota accounting is authoritative and atomic: storage is charged exactly when
- * THIS transaction creates the global blobs row (driven off the INSERT, not a
- * racy pre-tx S3 `exists()` check), and the quota row is row-locked so
- * concurrent uploads cannot collectively exceed the limit or double-count.
+ * Quota accounting is authoritative and atomic: each org is charged once per
+ * distinct digest it references. The quota row is row-locked before the
+ * org-reference check so concurrent uploads cannot collectively exceed the
+ * limit or double-count a digest already referenced by that org.
  */
 export async function storeBlobWithRef(
   ctx: RepoContext,
   opts: { data: Uint8Array; mediaType?: string; kind: BlobRefKind; scope: string },
 ): Promise<StoredBlob> {
   const digest = computeDigest(opts.data);
-  // Cheap, best-effort fast-fail so a clearly-over-quota upload never touches S3.
-  if (!(await ctx.blobs.exists(digest))) await assertStorageQuota(ctx, opts.data.byteLength);
+  const [existingOrgRef] = await ctx.db
+    .select({ id: blobRefs.id })
+    .from(blobRefs)
+    .innerJoin(repositories, eq(blobRefs.repositoryId, repositories.id))
+    .where(and(eq(repositories.orgId, ctx.repo.orgId), eq(blobRefs.digest, digest)))
+    .limit(1);
+  // Cheap, best-effort fast-fail so a clearly-over-quota org write never touches S3.
+  if (!existingOrgRef) await assertStorageQuota(ctx, opts.data.byteLength);
   const put = await ctx.blobs.put(opts.data);
   await ctx.db.transaction(async (tx) => {
+    const quota = await lockOrgQuotaTx(tx, ctx.repo.orgId);
+    const chargeOrg = !(await orgAlreadyReferencesDigestTx(tx, ctx.repo.orgId, put.digest));
+    if (chargeOrg) assertStorageQuotaRowAllows(quota, put.size);
+
     const created = await tx
       .insert(blobs)
       .values({
@@ -133,11 +165,7 @@ export async function storeBlobWithRef(
       })
       .onConflictDoNothing()
       .returning({ digest: blobs.digest });
-    if (created.length > 0) {
-      // Brand-new global blob → charge storage (authoritative, in-tx, row-locked).
-      await assertStorageQuotaTx(tx, ctx.repo.orgId, put.size);
-      await adjustStorageUsedTx(tx, ctx.repo.orgId, put.size);
-    } else {
+    if (created.length === 0) {
       // Existing blob: revive it if a prior delete/cascade left it pending_delete,
       // so a GC sweep can't reap bytes that are being referenced again.
       await tx
@@ -160,6 +188,7 @@ export async function storeBlobWithRef(
         .update(blobs)
         .set({ refCount: sql`${blobs.refCount} + 1` })
         .where(eq(blobs.digest, put.digest));
+      if (chargeOrg) await adjustStorageUsedTx(tx, ctx.repo.orgId, put.size);
     }
   });
   return put;
@@ -167,60 +196,54 @@ export async function storeBlobWithRef(
 
 /**
  * Release one repo-scoped blob reference. The AFTER DELETE trigger on blob_refs
- * decrements ref_count (and marks the blob pending_delete at zero); this then
- * reclaims storage + the CAS object once the LAST global reference is gone.
+ * decrements ref_count (and marks the blob pending_delete at zero). Storage
+ * quota is refunded when the org no longer references the digest; CAS bytes are
+ * deleted only when the LAST global reference is gone.
  * Idempotent: releasing a non-existent ref is a no-op.
- *
- * Note: storage is refunded to ctx.repo.orgId. With cross-org dedup the charging
- * and refunding org can differ; per-org quotas are opt-in/best-effort by design.
  */
 export async function releaseBlobRef(
   ctx: RepoContext,
   ref: { digest: string; kind: BlobRefKind; scope: string },
 ): Promise<void> {
-  const deleted = await ctx.db
-    .delete(blobRefs)
-    .where(
-      and(
-        eq(blobRefs.digest, ref.digest),
-        eq(blobRefs.kind, ref.kind),
-        eq(blobRefs.repositoryId, ctx.repo.id),
-        eq(blobRefs.scope, ref.scope),
-      ),
-    )
-    .returning({ id: blobRefs.id });
-  if (deleted.length === 0) return;
-  const [b] = await ctx.db
-    .select({ refCount: blobs.refCount })
-    .from(blobs)
-    .where(eq(blobs.digest, ref.digest))
-    .limit(1);
-  if (!b || b.refCount > 0) return;
-  if (await collectBlob(ctx, ref.digest)) {
-    await ctx.blobs.delete(ref.digest).catch(() => {});
-  }
-}
-
-/**
- * Hard-delete an unreferenced blob (ref_count 0) and refund its storage, in one
- * transaction. Returns true when the row was removed (so the caller can delete
- * the CAS object). The ref_count=0 guard + the ON DELETE RESTRICT FK make this a
- * no-op if the blob became referenced again concurrently.
- */
-async function collectBlob(ctx: RepoContext, digest: string): Promise<boolean> {
+  let deleteCas = false;
   try {
-    return await ctx.db.transaction(async (tx) => {
+    await ctx.db.transaction(async (tx) => {
+      const deleted = await tx
+        .delete(blobRefs)
+        .where(
+          and(
+            eq(blobRefs.digest, ref.digest),
+            eq(blobRefs.kind, ref.kind),
+            eq(blobRefs.repositoryId, ctx.repo.id),
+            eq(blobRefs.scope, ref.scope),
+          ),
+        )
+        .returning({ id: blobRefs.id });
+      if (deleted.length === 0) return;
+
+      const [b] = await tx
+        .select({ refCount: blobs.refCount, size: blobs.sizeBytes })
+        .from(blobs)
+        .where(eq(blobs.digest, ref.digest))
+        .limit(1);
+      if (!b) return;
+
+      if (!(await orgAlreadyReferencesDigestTx(tx, ctx.repo.orgId, ref.digest))) {
+        await adjustStorageUsedTx(tx, ctx.repo.orgId, -b.size);
+      }
+
       const rows = await tx
         .delete(blobs)
-        .where(and(eq(blobs.digest, digest), eq(blobs.refCount, 0)))
-        .returning({ size: blobs.sizeBytes });
-      if (rows.length === 0) return false;
-      await adjustStorageUsedTx(tx, ctx.repo.orgId, -(rows[0]?.size ?? 0));
-      return true;
+        .where(and(eq(blobs.digest, ref.digest), eq(blobs.refCount, 0)))
+        .returning({ digest: blobs.digest });
+      deleteCas = rows.length > 0;
     });
   } catch {
     // A concurrent re-reference (FK RESTRICT) — leave the blob for a later pass.
-    return false;
+    deleteCas = false;
+  }
+  if (deleteCas) {
+    await ctx.blobs.delete(ref.digest).catch(() => {});
   }
 }
 
@@ -244,13 +267,16 @@ export async function releaseRepoDigestTx(
     .from(blobs)
     .where(eq(blobs.digest, opts.digest))
     .limit(1);
-  if (!b || b.refCount > 0) return null;
+  if (!b) return null;
+  if (!(await orgAlreadyReferencesDigestTx(tx, opts.orgId, opts.digest))) {
+    await adjustStorageUsedTx(tx, opts.orgId, -b.size);
+  }
+  if (b.refCount > 0) return null;
   const rows = await tx
     .delete(blobs)
     .where(and(eq(blobs.digest, opts.digest), eq(blobs.refCount, 0)))
-    .returning({ size: blobs.sizeBytes });
+    .returning({ digest: blobs.digest });
   if (rows.length === 0) return null;
-  await adjustStorageUsedTx(tx, opts.orgId, -(rows[0]?.size ?? b.size));
   return opts.digest;
 }
 
