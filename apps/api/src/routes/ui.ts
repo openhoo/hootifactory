@@ -1,8 +1,10 @@
 import {
+  type Action,
   authorize,
   createApiToken,
   patternMatches,
   ROLE_RANK,
+  type RoleName,
   resolveUserRole,
   revokeToken,
   roleAllows,
@@ -64,8 +66,51 @@ function isPolicyMode(value: unknown): value is "audit" | "enforce" {
   return value === "audit" || value === "enforce";
 }
 
+function isTokenType(value: unknown): value is "personal" | "robot" {
+  return value === "personal" || value === "robot";
+}
+
+function isRoleName(value: unknown): value is RoleName {
+  return value === "viewer" || value === "developer" || value === "admin" || value === "owner";
+}
+
+function isAction(value: unknown): value is Action {
+  return value === "read" || value === "write" || value === "delete" || value === "admin";
+}
+
 function isSeverity(value: unknown): value is Severity {
   return typeof value === "string" && value in SEVERITY_ORDER;
+}
+
+type ParsedTokenScope = { repository: string; actions: Action[] };
+
+function parseTokenScopes(value: unknown): { scopes: ParsedTokenScope[] } | { error: string } {
+  if (value == null) return { scopes: [] };
+  if (!Array.isArray(value)) return { error: "scopes must be an array" };
+  const scopes: ParsedTokenScope[] = [];
+  for (const scope of value) {
+    if (!scope || typeof scope !== "object" || Array.isArray(scope)) {
+      return { error: "each scope must be an object" };
+    }
+    const record = scope as { repository?: unknown; actions?: unknown };
+    if (
+      typeof record.repository !== "string" ||
+      record.repository.length === 0 ||
+      record.repository.length > 512
+    ) {
+      return { error: "scope repository must be a non-empty string" };
+    }
+    if (!Array.isArray(record.actions) || record.actions.length === 0) {
+      return { error: "scope actions must be a non-empty array" };
+    }
+    const actions: Action[] = [];
+    for (const action of record.actions) {
+      if (!isAction(action)) return { error: `unsupported scope action '${String(action)}'` };
+      if (!actions.includes(action)) actions.push(action);
+    }
+    scopes.push({ repository: record.repository, actions });
+  }
+  return { scopes };
 }
 
 function scopeMayTargetRepo(pattern: string, repo: { name: string; mountPath: string }): boolean {
@@ -521,17 +566,23 @@ uiRouter.post("/orgs/:orgId/quota", async (c) => {
   if (!decision.allowed) {
     return c.json({ error: decision.reason }, decision.code === "unauthenticated" ? 401 : 403);
   }
-  const body = (await c.req.json().catch(() => null)) as { maxStorageBytes?: number } | null;
+  const body = (await c.req.json().catch(() => null)) as { maxStorageBytes?: unknown } | null;
+  const maxStorageBytes = body?.maxStorageBytes ?? null;
+  if (
+    maxStorageBytes != null &&
+    (typeof maxStorageBytes !== "number" ||
+      !Number.isSafeInteger(maxStorageBytes) ||
+      maxStorageBytes < 0)
+  ) {
+    return c.json({ error: "maxStorageBytes must be a non-negative integer or null" }, 400);
+  }
   const [existing] = await db
     .select({ id: quotas.id })
     .from(quotas)
     .where(and(eq(quotas.orgId, orgId), isNull(quotas.repositoryId)))
     .limit(1);
   if (existing) {
-    await db
-      .update(quotas)
-      .set({ maxStorageBytes: body?.maxStorageBytes ?? null })
-      .where(eq(quotas.id, existing.id));
+    await db.update(quotas).set({ maxStorageBytes }).where(eq(quotas.id, existing.id));
   } else {
     // Backfill usedStorageBytes from the physical bytes the org's repos already
     // reference, so a quota created after data exists isn't under-counted.
@@ -543,7 +594,7 @@ uiRouter.post("/orgs/:orgId/quota", async (c) => {
       );
     await db.insert(quotas).values({
       orgId,
-      maxStorageBytes: body?.maxStorageBytes ?? null,
+      maxStorageBytes,
       usedStorageBytes: Number(agg?.used ?? 0),
     });
   }
@@ -553,7 +604,7 @@ uiRouter.post("/orgs/:orgId/quota", async (c) => {
     result: "success",
     resourceType: "quota",
     principal: c.get("principal"),
-    detail: { maxStorageBytes: body?.maxStorageBytes ?? null },
+    detail: { maxStorageBytes },
   }).catch(() => {});
   return c.json({ ok: true });
 });
@@ -729,21 +780,38 @@ uiRouter.post("/orgs/:orgId/tokens", async (c) => {
   if (!decision.allowed) return c.json({ error: decision.reason }, 403);
 
   const body = (await c.req.json().catch(() => null)) as {
-    name?: string;
-    type?: "personal" | "robot";
-    scopes?: { repository: string; actions: ("read" | "write" | "delete" | "admin")[] }[];
-    role?: "viewer" | "developer" | "admin" | "owner";
-    expiresAt?: string | null;
+    name?: unknown;
+    type?: unknown;
+    scopes?: unknown;
+    role?: unknown;
+    expiresAt?: unknown;
   } | null;
-  if (!body?.name) return c.json({ error: "name required" }, 400);
-  const hasScopes = (body.scopes?.length ?? 0) > 0;
-  const requestedRole = body.role ?? (hasScopes ? undefined : "developer");
-  const expiresAt =
-    body.expiresAt === null
-      ? null
-      : body.expiresAt
-        ? new Date(body.expiresAt)
-        : new Date(Date.now() + 90 * 24 * 60 * 60 * 1000);
+  if (typeof body?.name !== "string" || body.name.trim().length === 0) {
+    return c.json({ error: "name required" }, 400);
+  }
+  const tokenName = body.name.trim();
+  const tokenType = body.type ?? "personal";
+  if (!isTokenType(tokenType)) {
+    return c.json({ error: `unsupported token type '${String(body.type)}'` }, 400);
+  }
+  const parsedScopes = parseTokenScopes(body.scopes);
+  if ("error" in parsedScopes) return c.json({ error: parsedScopes.error }, 400);
+  const rawRole = body.role;
+  if (rawRole != null && !isRoleName(rawRole)) {
+    return c.json({ error: `unsupported token role '${String(rawRole)}'` }, 400);
+  }
+  const hasScopes = parsedScopes.scopes.length > 0;
+  const requestedRole = rawRole ?? (hasScopes ? undefined : "developer");
+  let expiresAt: Date | null;
+  if (body.expiresAt === null) {
+    expiresAt = null;
+  } else if (body.expiresAt === undefined) {
+    expiresAt = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000);
+  } else if (typeof body.expiresAt === "string") {
+    expiresAt = new Date(body.expiresAt);
+  } else {
+    return c.json({ error: "expiresAt must be an ISO timestamp or null" }, 400);
+  }
   if (expiresAt && Number.isNaN(expiresAt.getTime())) {
     return c.json({ error: "expiresAt must be an ISO timestamp or null" }, 400);
   }
@@ -756,7 +824,7 @@ uiRouter.post("/orgs/:orgId/tokens", async (c) => {
     return c.json({ error: "cannot grant a role above your own" }, 403);
   }
   const orgRepos =
-    requestedRole || body.scopes?.length
+    requestedRole || parsedScopes.scopes.length
       ? await db
           .select({
             id: repositories.id,
@@ -777,7 +845,7 @@ uiRouter.post("/orgs/:orgId/tokens", async (c) => {
       }
     }
   }
-  for (const scope of body.scopes ?? []) {
+  for (const scope of parsedScopes.scopes) {
     for (const action of scope.actions) {
       if (!creatorRole || !roleAllows(creatorRole, action)) {
         return c.json({ error: `cannot grant scope action '${action}' beyond your role` }, 403);
@@ -802,9 +870,9 @@ uiRouter.post("/orgs/:orgId/tokens", async (c) => {
   const { token, secret } = await createApiToken({
     orgId,
     ownerUserId: p.userId,
-    name: body.name,
-    type: body.type,
-    scopes: body.scopes,
+    name: tokenName,
+    type: tokenType,
+    scopes: parsedScopes.scopes,
     role: requestedRole,
     expiresAt,
   });

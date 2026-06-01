@@ -127,6 +127,22 @@ test.describe("api tokens", () => {
     expect(after.status()).toBe(401);
   });
 
+  test("create rejects malformed token payloads", async ({ baseURL }) => {
+    const owner = await setupOwner(baseURL!);
+    for (const data of [
+      { name: "bad-type", type: "magic" },
+      { name: "bad-role", role: "superuser" },
+      { name: "bad-scopes", scopes: "repo" },
+      { name: "bad-actions-shape", scopes: [{ repository: "repo", actions: "read" }] },
+      { name: "bad-repository", scopes: [{ repository: "", actions: ["read"] }] },
+      { name: "bad-action", scopes: [{ repository: "repo", actions: ["execute"] }] },
+      { name: "bad-expiry", expiresAt: 42 },
+    ]) {
+      const res = await createToken(owner.ctx, owner.orgId, data);
+      expect(res.status()).toBe(400);
+    }
+  });
+
   test("org admins can inventory tokens owned by other users", async ({ baseURL }) => {
     const owner = await setupOwner(baseURL!);
     const admin = await setupOwner(baseURL!);

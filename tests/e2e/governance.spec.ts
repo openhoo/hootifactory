@@ -54,6 +54,25 @@ async function uploadOciBlob(
 }
 
 test.describe("governance: quotas + retention", () => {
+  test("storage quota rejects malformed limits", async ({ baseURL }) => {
+    const owner = await setupOwner(baseURL!);
+    for (const data of [
+      { maxStorageBytes: -1 },
+      { maxStorageBytes: 1.5 },
+      { maxStorageBytes: "1000" },
+    ]) {
+      const res = await owner.ctx.post(`/api/orgs/${owner.orgId}/quota`, { data });
+      expect(res.status()).toBe(400);
+    }
+
+    const unset = await owner.ctx.post(`/api/orgs/${owner.orgId}/quota`, {
+      data: { maxStorageBytes: null },
+    });
+    expect(unset.status()).toBe(200);
+    const quota = await (await owner.ctx.get(`/api/orgs/${owner.orgId}/quota`)).json();
+    expect(quota.maxStorageBytes).toBeNull();
+  });
+
   test("storage quota blocks publishes over the limit", async ({ baseURL }) => {
     test.setTimeout(120_000);
     const owner = await setupOwner(baseURL!);
