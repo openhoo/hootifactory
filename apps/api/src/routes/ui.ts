@@ -8,6 +8,7 @@ import {
   roleAllows,
   writeAudit,
 } from "@hootifactory/auth";
+import { env } from "@hootifactory/config";
 import {
   addUpstream,
   addVirtualMember,
@@ -129,6 +130,9 @@ uiRouter.get("/orgs", async (c) => {
 });
 
 uiRouter.post("/orgs", async (c) => {
+  if (!env.AUTH_ALLOW_ORG_CREATION) {
+    return c.json({ error: "org creation is disabled" }, 403);
+  }
   const p = c.get("principal");
   if (p.kind !== "user") return c.json({ error: "login required" }, 401);
   const body = (await c.req.json().catch(() => null)) as {

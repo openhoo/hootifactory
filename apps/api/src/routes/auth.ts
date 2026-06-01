@@ -10,6 +10,10 @@ import type { AppEnv } from "../types";
 export const authRouter = new Hono<AppEnv>();
 
 authRouter.post("/register", async (c) => {
+  if (!env.AUTH_ALLOW_REGISTRATION) {
+    return c.json({ error: "registration is disabled" }, 403);
+  }
+
   const body = (await c.req.json().catch(() => null)) as {
     username?: string;
     email?: string;

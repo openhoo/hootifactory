@@ -60,6 +60,8 @@ const EnvSchema = z
 
     // Auth
     SESSION_SECRET: z.string().min(16).default("dev-session-secret-change-me-please-32chars"),
+    AUTH_ALLOW_REGISTRATION: boolish.optional(),
+    AUTH_ALLOW_ORG_CREATION: boolish.optional(),
     REGISTRY_JWT_PRIVATE_KEY: z.string().optional(),
     REGISTRY_JWT_PUBLIC_KEY: z.string().optional(),
     REGISTRY_JWT_TTL: z.coerce.number().int().positive().default(300),
@@ -105,7 +107,14 @@ const EnvSchema = z
           "REGISTRY_JWT_PRIVATE_KEY and REGISTRY_JWT_PUBLIC_KEY are required when NODE_ENV=production",
       });
     }
-  });
+  })
+  .transform((v) =>
+    Object.freeze({
+      ...v,
+      AUTH_ALLOW_REGISTRATION: v.AUTH_ALLOW_REGISTRATION ?? v.NODE_ENV !== "production",
+      AUTH_ALLOW_ORG_CREATION: v.AUTH_ALLOW_ORG_CREATION ?? v.NODE_ENV !== "production",
+    }),
+  );
 
 export type Env = z.infer<typeof EnvSchema>;
 
