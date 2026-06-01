@@ -1,4 +1,5 @@
 import {
+  createPackageVersion,
   Errors,
   type FormatAdapter,
   findOrCreatePackage,
@@ -9,8 +10,8 @@ import {
   type RepoContext,
   type RouteEntry,
   type RouteMatch,
+  releaseBlobRef,
   storeBlobWithRef,
-  upsertPackageVersion,
 } from "@hootifactory/core";
 import { and, eq, isNull, packages, packageVersions } from "@hootifactory/db";
 import { computeDigest, digestHex } from "@hootifactory/storage";
@@ -24,6 +25,16 @@ interface PypiFileMeta {
   size: number;
   filetype?: string;
 }
+
+type PypiVersionMetadata = {
+  name?: string;
+  requiresPython?: string;
+  files?: PypiFileMeta[];
+};
+
+type AddPypiFileResult =
+  | { ok: true; versionId: string }
+  | { ok: false; reason: "file_exists" | "version_exists" };
 
 function normalizeFilenameVersionToken(version: string): string {
   return version.toLowerCase().replace(/[-_.]+/g, "_");
@@ -253,16 +264,27 @@ export class PypiAdapter implements FormatAdapter {
       filetype,
     };
 
-    const existingFiles =
-      (existing?.metadata as { files?: PypiFileMeta[] } | undefined)?.files ?? [];
-    const files = [...existingFiles.filter((f) => f.filename !== filename), fileMeta];
-
-    await upsertPackageVersion(ctx, {
+    const added = await this.addFileToVersion(ctx, {
       packageId: pkg.id,
       version,
-      metadata: { name: rawName, requiresPython, files },
-      sizeBytes: bytes.length,
+      rawName,
+      requiresPython,
+      fileMeta,
     });
+    if (!added.ok) {
+      if (stored.refCreated) {
+        await releaseBlobRef(ctx, { digest: stored.digest, kind: "pypi_file", scope: filename });
+      }
+      return Response.json(
+        {
+          message:
+            added.reason === "file_exists"
+              ? "File already exists."
+              : "Release version already exists.",
+        },
+        { status: 409 },
+      );
+    }
 
     await ctx.enqueueScan({
       digest: stored.digest,
@@ -273,4 +295,75 @@ export class PypiAdapter implements FormatAdapter {
 
     return new Response(null, { status: 200 });
   }
+
+  private async addFileToVersion(
+    ctx: RepoContext,
+    opts: {
+      packageId: string;
+      version: string;
+      rawName: string;
+      requiresPython?: string;
+      fileMeta: PypiFileMeta;
+    },
+  ): Promise<AddPypiFileResult> {
+    const created = await createPackageVersion(ctx, {
+      packageId: opts.packageId,
+      version: opts.version,
+      metadata: {
+        name: opts.rawName,
+        requiresPython: opts.requiresPython,
+        files: [opts.fileMeta],
+      },
+      sizeBytes: opts.fileMeta.size,
+    });
+    if (created) return { ok: true, versionId: created };
+
+    return ctx.db.transaction(async (tx) => {
+      const [row] = await tx
+        .select({
+          id: packageVersions.id,
+          metadata: packageVersions.metadata,
+          deletedAt: packageVersions.deletedAt,
+        })
+        .from(packageVersions)
+        .where(
+          and(
+            eq(packageVersions.packageId, opts.packageId),
+            eq(packageVersions.version, opts.version),
+          ),
+        )
+        .for("update")
+        .limit(1);
+      if (!row?.id || row.deletedAt) return { ok: false, reason: "version_exists" as const };
+
+      const metadata = normalizePypiVersionMetadata(row.metadata);
+      if ((metadata.files ?? []).some((f) => f.filename === opts.fileMeta.filename)) {
+        return { ok: false, reason: "file_exists" as const };
+      }
+
+      const files = [...(metadata.files ?? []), opts.fileMeta];
+      await tx
+        .update(packageVersions)
+        .set({
+          metadata: {
+            ...metadata,
+            name: metadata.name ?? opts.rawName,
+            requiresPython: metadata.requiresPython ?? opts.requiresPython,
+            files,
+          },
+          sizeBytes: files.reduce((sum, file) => sum + file.size, 0),
+        })
+        .where(eq(packageVersions.id, row.id));
+      return { ok: true, versionId: row.id };
+    });
+  }
+}
+
+function normalizePypiVersionMetadata(value: unknown): PypiVersionMetadata {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const metadata = value as PypiVersionMetadata;
+  return {
+    ...metadata,
+    files: Array.isArray(metadata.files) ? metadata.files : [],
+  };
 }
