@@ -66,9 +66,13 @@ function sha512Integrity(bytes: Buffer): string {
 async function startNpmUpstream(input: {
   name: string;
   advertisedBytes: Buffer;
+  includeHashes?: boolean;
+  redirectTarballTo?: string;
   servedBytes: Buffer;
-}): Promise<{ url: string; close: () => Promise<void> }> {
+}): Promise<{ url: string; requests: string[]; close: () => Promise<void> }> {
+  const requests: string[] = [];
   const server = createServer((req, res) => {
+    requests.push(req.url ?? "/");
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
     const tarballPath = `/${input.name}/-/${input.name}-1.0.0.tgz`;
     if (url.pathname === `/${input.name}`) {
@@ -81,11 +85,14 @@ async function startNpmUpstream(input: {
             "1.0.0": {
               name: input.name,
               version: "1.0.0",
-              dist: {
-                tarball: `${base}${tarballPath}`,
-                shasum: sha1hex(input.advertisedBytes),
-                integrity: sha512Integrity(input.advertisedBytes),
-              },
+              dist:
+                input.includeHashes === false
+                  ? { tarball: `${base}${tarballPath}` }
+                  : {
+                      tarball: `${base}${tarballPath}`,
+                      shasum: sha1hex(input.advertisedBytes),
+                      integrity: sha512Integrity(input.advertisedBytes),
+                    },
             },
           },
           "dist-tags": { latest: "1.0.0" },
@@ -94,6 +101,12 @@ async function startNpmUpstream(input: {
       return;
     }
     if (url.pathname === tarballPath) {
+      if (input.redirectTarballTo) {
+        res.statusCode = 302;
+        res.setHeader("location", input.redirectTarballTo);
+        res.end();
+        return;
+      }
       res.setHeader("content-type", "application/octet-stream");
       res.end(input.servedBytes);
       return;
@@ -105,6 +118,7 @@ async function startNpmUpstream(input: {
   const address = server.address() as AddressInfo;
   return {
     url: `http://127.0.0.1:${address.port}`,
+    requests,
     close: () => new Promise<void>((resolve) => (server as Server).close(() => resolve())),
   };
 }
@@ -371,6 +385,82 @@ test.describe("virtual + proxy repositories (Dockerized real npm)", () => {
       expect(tarball.status()).toBe(404);
     } finally {
       await upstream.close();
+    }
+  });
+
+  test("proxy repo rejects unverifiable tarballs and path-shaped package names", async ({
+    baseURL,
+  }) => {
+    const owner = await setupOwner(baseURL!);
+    const proxy = (
+      await repoFrom(
+        await createRepo(owner.ctx, owner.orgId, {
+          name: "npm-proxy-unverified",
+          format: "npm",
+          kind: "proxy",
+        }),
+      )
+    ).repository;
+    const pkg = `nohash${Date.now().toString(36)}`;
+    const upstream = await startNpmUpstream({
+      name: pkg,
+      advertisedBytes: Buffer.from("unhashed tarball"),
+      servedBytes: Buffer.from("unhashed tarball"),
+      includeHashes: false,
+    });
+    try {
+      await owner.ctx.post(`/api/repositories/${proxy.id}/upstreams`, {
+        data: { url: `${upstream.url}/` },
+      });
+
+      const packument = await owner.ctx.get(`/${proxy.mountPath}/${pkg}`);
+      expect(packument.status()).toBe(404);
+
+      const traversing = await owner.ctx.get(`/${proxy.mountPath}/bad%2fname`);
+      expect(traversing.status()).toBe(400);
+      expect(upstream.requests).not.toContain("/bad%2Fname");
+    } finally {
+      await upstream.close();
+    }
+  });
+
+  test("proxy repo rejects tarball redirects away from the configured upstream host", async ({
+    baseURL,
+  }) => {
+    const owner = await setupOwner(baseURL!);
+    const proxy = (
+      await repoFrom(
+        await createRepo(owner.ctx, owner.orgId, {
+          name: "npm-proxy-redirect",
+          format: "npm",
+          kind: "proxy",
+        }),
+      )
+    ).repository;
+    const pkg = `redirectpkg${Date.now().toString(36)}`;
+    const bytes = Buffer.from("redirected tarball");
+    const redirected = await startNpmUpstream({
+      name: `${pkg}-redirected`,
+      advertisedBytes: bytes,
+      servedBytes: bytes,
+    });
+    const upstream = await startNpmUpstream({
+      name: pkg,
+      advertisedBytes: bytes,
+      servedBytes: bytes,
+      redirectTarballTo: `${redirected.url}/${pkg}-redirected/-/${pkg}-redirected-1.0.0.tgz`,
+    });
+    try {
+      await owner.ctx.post(`/api/repositories/${proxy.id}/upstreams`, {
+        data: { url: `${upstream.url}/` },
+      });
+
+      const packument = await owner.ctx.get(`/${proxy.mountPath}/${pkg}`);
+      expect(packument.status()).toBe(404);
+      expect(redirected.requests).toEqual([]);
+    } finally {
+      await upstream.close();
+      await redirected.close();
     }
   });
 

@@ -47,10 +47,26 @@ function basename(name: string): string {
   return i >= 0 ? name.slice(i + 1) : name;
 }
 
+function packagePath(name: string): string {
+  return encodeURIComponent(name);
+}
+
 /** npm package-name rules (subset): optional scope, url-safe, ≤214 chars. */
 function isValidNpmName(name: string): boolean {
   if (!name || name.length > 214) return false;
   return /^(@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/.test(name);
+}
+
+function isValidNpmVersion(version: string): boolean {
+  return /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(
+    version,
+  );
+}
+
+function isValidDistTag(tag: string): boolean {
+  if (!tag || tag.length > 214) return false;
+  if (!/^[A-Za-z][A-Za-z0-9._~-]*$/.test(tag)) return false;
+  return !isValidNpmVersion(tag);
 }
 
 const INTEGRITY_ALGORITHMS = new Set(["sha1", "sha256", "sha384", "sha512"]);
@@ -69,6 +85,12 @@ function upstreamDistMatchesBytes(
   dist: { integrity?: string; shasum?: string },
   data: Uint8Array,
 ): boolean {
+  if (
+    (typeof dist.integrity !== "string" || !dist.integrity.trim()) &&
+    (typeof dist.shasum !== "string" || !dist.shasum.trim())
+  ) {
+    return false;
+  }
   if (typeof dist.integrity === "string" && dist.integrity.trim()) {
     const tokens = dist.integrity.trim().split(/\s+/);
     if (!tokens.some((token) => integrityTokenMatches(token, data))) return false;
@@ -85,6 +107,25 @@ interface NpmDist {
   shasum: string;
   integrity: string;
   size: number;
+}
+
+interface PublishVersion {
+  version: string;
+  manifest: Record<string, unknown>;
+  tarball: Buffer;
+}
+
+function decodeBase64(data: unknown): Buffer | null {
+  if (typeof data !== "string") return null;
+  const normalized = data.replace(/\s+/g, "");
+  if (!normalized || normalized.length % 4 === 1) return null;
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(normalized)) return null;
+  const decoded = Buffer.from(normalized, "base64");
+  if (!decoded.length) return null;
+  if (decoded.toString("base64").replace(/=+$/, "") !== normalized.replace(/=+$/, "")) {
+    return null;
+  }
+  return decoded;
 }
 
 export class NpmAdapter implements FormatAdapter {
@@ -171,6 +212,8 @@ export class NpmAdapter implements FormatAdapter {
   }
 
   private async packument(name: string, ctx: RepoContext): Promise<Response> {
+    if (!isValidNpmName(name))
+      return Response.json({ error: "invalid package name" }, { status: 400 });
     const pkg = await this.findPackage(ctx, name);
     if (!pkg) return Response.json({ error: "Not found" }, { status: 404 });
     const versions = await this.liveVersions(ctx, pkg.id);
@@ -179,6 +222,8 @@ export class NpmAdapter implements FormatAdapter {
   }
 
   private async tarball(name: string, filename: string, ctx: RepoContext): Promise<Response> {
+    if (!isValidNpmName(name))
+      return Response.json({ error: "invalid package name" }, { status: 400 });
     const pkg = await this.findPackage(ctx, name);
     if (!pkg) return Response.json({ error: "Not found" }, { status: 404 });
     const versions = await this.liveVersions(ctx, pkg.id);
@@ -212,17 +257,87 @@ export class NpmAdapter implements FormatAdapter {
       return Response.json({ error: "package name in body does not match URL" }, { status: 400 });
     }
 
-    const scope = name.startsWith("@") ? (name.split("/")[0] ?? null) : null;
-    const pkg = await findOrCreatePackage({
-      orgId: ctx.repo.orgId,
-      repositoryId: ctx.repo.id,
-      name,
-      namespace: scope,
-    });
-
     const attachments = body._attachments ?? {};
     const versions = body.versions ?? {};
     const base = basename(name);
+    const publishVersions: PublishVersion[] = [];
+    for (const [ver, manifestRaw] of Object.entries(versions)) {
+      if (!isValidNpmVersion(ver)) {
+        return Response.json({ error: "invalid package version" }, { status: 400 });
+      }
+      if (!manifestRaw || typeof manifestRaw !== "object" || Array.isArray(manifestRaw)) {
+        return Response.json({ error: "invalid version manifest" }, { status: 400 });
+      }
+      const manifest = { ...(manifestRaw as Record<string, unknown>) };
+      if (manifest.name !== undefined && manifest.name !== name) {
+        return Response.json(
+          { error: "version manifest name does not match URL" },
+          { status: 400 },
+        );
+      }
+      if (manifest.version !== undefined && manifest.version !== ver) {
+        return Response.json(
+          { error: "version manifest version does not match version key" },
+          { status: 400 },
+        );
+      }
+      manifest.name = name;
+      manifest.version = ver;
+      const attKey =
+        [`${name}-${ver}.tgz`, `${base}-${ver}.tgz`].find((k) => attachments[k]) ?? undefined;
+      if (!attKey) {
+        return Response.json({ error: `missing tarball attachment for ${ver}` }, { status: 400 });
+      }
+      const tarball = decodeBase64(attachments[attKey]?.data);
+      if (!tarball) {
+        return Response.json({ error: `invalid tarball attachment for ${ver}` }, { status: 400 });
+      }
+      publishVersions.push({ version: ver, manifest, tarball });
+    }
+    if (!publishVersions.length) {
+      return Response.json({ error: "publish payload must include a version" }, { status: 400 });
+    }
+
+    const distTags = { ...(body["dist-tags"] ?? {}) };
+    if (body["dist-tags"] === undefined && publishVersions.length === 1) {
+      distTags.latest = publishVersions[0]!.version;
+    }
+    const publishVersionSet = new Set(publishVersions.map((v) => v.version));
+    const existingPkg = await this.findPackage(ctx, name);
+    const existingTagVersionIds = new Map<string, string>();
+    for (const [tag, ver] of Object.entries(distTags)) {
+      if (!isValidDistTag(tag)) {
+        return Response.json({ error: "invalid dist-tag" }, { status: 400 });
+      }
+      if (typeof ver !== "string" || !isValidNpmVersion(ver)) {
+        return Response.json(
+          { error: `dist-tag ${tag} points to an invalid version` },
+          { status: 400 },
+        );
+      }
+      if (!publishVersionSet.has(ver)) {
+        const existingVersionId = existingPkg
+          ? await this.versionId(ctx, existingPkg.id, ver)
+          : null;
+        if (!existingVersionId) {
+          return Response.json(
+            { error: `dist-tag ${tag} points to an unknown version` },
+            { status: 400 },
+          );
+        }
+        existingTagVersionIds.set(ver, existingVersionId);
+      }
+    }
+
+    const scope = name.startsWith("@") ? (name.split("/")[0] ?? null) : null;
+    const pkg =
+      existingPkg ??
+      (await findOrCreatePackage({
+        orgId: ctx.repo.orgId,
+        repositoryId: ctx.repo.id,
+        name,
+        namespace: scope,
+      }));
     const versionIds = new Map<string, string>();
 
     // Any version row, including a retention tombstone, reserves the npm version.
@@ -234,18 +349,13 @@ export class NpmAdapter implements FormatAdapter {
       .where(eq(packageVersions.packageId, pkg.id));
     const usedSet = new Set(used.map((v) => v.version));
 
-    for (const [ver, manifestRaw] of Object.entries(versions)) {
+    for (const { version: ver, manifest, tarball } of publishVersions) {
       if (usedSet.has(ver)) {
         return Response.json(
           { error: `cannot publish over the previously published version ${ver}` },
           { status: 403 },
         );
       }
-      const manifest = { ...(manifestRaw as Record<string, unknown>) };
-      const attKey =
-        [`${name}-${ver}.tgz`, `${base}-${ver}.tgz`].find((k) => attachments[k]) ?? undefined;
-      if (!attKey) continue;
-      const tarball = Buffer.from(attachments[attKey]!.data, "base64");
       const shasum = sha1hex(tarball);
       const integrity = `sha512-${sha512b64(tarball)}`;
       const filename = `${base}-${ver}.tgz`;
@@ -255,7 +365,7 @@ export class NpmAdapter implements FormatAdapter {
         scope: `${name}@${ver}`,
         mediaType: "application/octet-stream",
       });
-      const tarballUrl = `${ctx.baseUrl}/${ctx.repo.mountPath}/${name}/-/${filename}`;
+      const tarballUrl = `${ctx.baseUrl}/${ctx.repo.mountPath}/${packagePath(name)}/-/${filename}`;
       manifest.dist = {
         ...((manifest.dist as Record<string, unknown>) ?? {}),
         tarball: tarballUrl,
@@ -297,10 +407,10 @@ export class NpmAdapter implements FormatAdapter {
       });
     }
 
-    const distTags = body["dist-tags"] ?? {};
     for (const [tag, ver] of Object.entries(distTags)) {
-      const versionId = versionIds.get(ver) ?? (await this.versionId(ctx, pkg.id, ver));
-      if (versionId) await setDistTag(ctx, pkg.id, tag, versionId);
+      const versionId = versionIds.get(ver) ?? existingTagVersionIds.get(ver);
+      if (!versionId) throw new Error(`validated npm dist-tag ${tag} lost version ${ver}`);
+      await setDistTag(ctx, pkg.id, tag, versionId);
     }
     if (distTags.latest) {
       await ctx.db
@@ -328,6 +438,8 @@ export class NpmAdapter implements FormatAdapter {
   }
 
   private async distTagsList(name: string, ctx: RepoContext): Promise<Response> {
+    if (!isValidNpmName(name))
+      return Response.json({ error: "invalid package name" }, { status: 400 });
     const pkg = await this.findPackage(ctx, name);
     if (!pkg) return Response.json({}, { status: 404 });
     return Response.json(await this.distTags(ctx, pkg.id));
@@ -339,33 +451,46 @@ export class NpmAdapter implements FormatAdapter {
     req: Request,
     ctx: RepoContext,
   ): Promise<Response> {
+    if (!isValidNpmName(name))
+      return Response.json({ error: "invalid package name" }, { status: 400 });
     const pkg = await this.findPackage(ctx, name);
     if (!pkg) return Response.json({ error: "Not found" }, { status: 404 });
+    if (!isValidDistTag(tag)) return Response.json({ error: "invalid dist-tag" }, { status: 400 });
     const version = (await req.text()).replace(/^"|"$/g, "").trim();
     const versionId = await this.versionId(ctx, pkg.id, version);
     if (!versionId) return Response.json({ error: "version not found" }, { status: 404 });
     await setDistTag(ctx, pkg.id, tag, versionId);
+    if (tag === "latest") {
+      await ctx.db.update(packages).set({ latestVersion: version }).where(eq(packages.id, pkg.id));
+    }
     return Response.json({ ok: true });
   }
 
   private async distTagDelete(name: string, tag: string, ctx: RepoContext): Promise<Response> {
+    if (!isValidNpmName(name))
+      return Response.json({ error: "invalid package name" }, { status: 400 });
     const pkg = await this.findPackage(ctx, name);
     if (!pkg) return Response.json({ error: "Not found" }, { status: 404 });
+    if (!isValidDistTag(tag)) return Response.json({ error: "invalid dist-tag" }, { status: 400 });
     await ctx.db
       .delete(versionTags)
       .where(and(eq(versionTags.packageId, pkg.id), eq(versionTags.tag, tag)));
+    if (tag === "latest") {
+      await ctx.db.update(packages).set({ latestVersion: null }).where(eq(packages.id, pkg.id));
+    }
     return Response.json({ ok: true });
   }
 
   /** Pull-through: mirror an upstream package (all versions) into this proxy repo. */
   async proxyIngest(pkgName: string, upstreamBase: string, ctx: RepoContext): Promise<boolean> {
+    if (!isValidNpmName(pkgName)) return false;
     let upstreamHost = "";
     try {
       upstreamHost = new URL(upstreamBase).host;
     } catch {
       return false;
     }
-    const url = `${upstreamBase.replace(/\/$/, "")}/${pkgName.replace("/", "%2f")}`;
+    const url = `${upstreamBase.replace(/\/$/, "")}/${packagePath(pkgName)}`;
     // safeFetch rejects private/loopback/metadata hosts and re-validates redirects.
     const res = await safeFetch(url, { headers: { accept: "application/json" } }).catch(() => null);
     if (!res?.ok) return false;
@@ -377,6 +502,7 @@ export class NpmAdapter implements FormatAdapter {
     let pkg: Awaited<ReturnType<typeof findOrCreatePackage>> | null = null;
     const base = basename(pkgName);
     for (const [ver, manifestRaw] of Object.entries(packument.versions ?? {})) {
+      if (!isValidNpmVersion(ver)) continue;
       const manifest = { ...manifestRaw } as Record<string, unknown>;
       const dist0 = manifest.dist as { integrity?: string; shasum?: string; tarball?: string };
       const tarballUrl = dist0?.tarball;
@@ -386,7 +512,7 @@ export class NpmAdapter implements FormatAdapter {
       let tRes: Response | null = null;
       try {
         if (new URL(tarballUrl).host !== upstreamHost) continue;
-        tRes = await safeFetch(tarballUrl);
+        tRes = await safeFetch(tarballUrl, { allowedHosts: [upstreamHost] });
       } catch {
         continue;
       }
@@ -399,6 +525,19 @@ export class NpmAdapter implements FormatAdapter {
         name: pkgName,
         namespace: scope,
       });
+      const [existingVersion] = await ctx.db
+        .select({ metadata: packageVersions.metadata })
+        .from(packageVersions)
+        .where(
+          and(
+            eq(packageVersions.packageId, pkg.id),
+            eq(packageVersions.version, ver),
+            isNull(packageVersions.deletedAt),
+          ),
+        )
+        .limit(1);
+      const previousDigest = (existingVersion?.metadata as { dist?: NpmDist } | undefined)?.dist
+        ?.blobDigest;
       const shasum = sha1hex(tarball);
       const integrity = `sha512-${sha512b64(tarball)}`;
       const filename = `${base}-${ver}.tgz`;
@@ -410,7 +549,7 @@ export class NpmAdapter implements FormatAdapter {
       });
       manifest.dist = {
         ...(dist0 ?? {}),
-        tarball: `${ctx.baseUrl}/${ctx.repo.mountPath}/${pkgName}/-/${filename}`,
+        tarball: `${ctx.baseUrl}/${ctx.repo.mountPath}/${packagePath(pkgName)}/-/${filename}`,
         shasum,
         integrity,
       };
@@ -423,6 +562,13 @@ export class NpmAdapter implements FormatAdapter {
         },
         sizeBytes: tarball.length,
       });
+      if (previousDigest && previousDigest !== stored.digest) {
+        await releaseBlobRef(ctx, {
+          digest: previousDigest,
+          kind: "npm_tarball",
+          scope: `${pkgName}@${ver}`,
+        });
+      }
       await ctx.enqueueScan({
         digest: stored.digest,
         name: pkgName,
@@ -432,6 +578,7 @@ export class NpmAdapter implements FormatAdapter {
     }
     if (!pkg) return false;
     for (const [tag, ver] of Object.entries(packument["dist-tags"] ?? {})) {
+      if (!isValidDistTag(tag)) continue;
       const vid = await this.versionId(ctx, pkg.id, ver);
       if (vid) await setDistTag(ctx, pkg.id, tag, vid);
     }

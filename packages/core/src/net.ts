@@ -83,6 +83,8 @@ export async function assertPublicResolvedUrl(
 }
 
 export interface SafeFetchOptions extends RequestInit {
+  /** Optional host allowlist (host includes port) enforced on the initial URL and every redirect. */
+  allowedHosts?: string[];
   /** Max redirect hops to follow (each re-validated). Default 3. */
   maxHops?: number;
   /** Per-request timeout in ms. Default 30s. */
@@ -97,9 +99,13 @@ export interface SafeFetchOptions extends RequestInit {
  * server into an internal/metadata address. Applies a timeout on each hop.
  */
 export async function safeFetch(raw: string, opts: SafeFetchOptions = {}): Promise<Response> {
-  const { maxHops = 3, timeoutMs = 30_000, lookupHost, ...init } = opts;
+  const { allowedHosts, maxHops = 3, timeoutMs = 30_000, lookupHost, ...init } = opts;
+  const allowedHostSet = allowedHosts ? new Set(allowedHosts) : null;
   let url = assertPublicHttpUrl(raw);
   for (let hop = 0; hop <= maxHops; hop++) {
+    if (allowedHostSet && !allowedHostSet.has(url.host)) {
+      throw new Error(`redirected to disallowed host: ${url.host}`);
+    }
     await assertPublicResolvedUrl(url, { lookupHost });
     const res = await fetch(url, {
       ...init,

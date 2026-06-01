@@ -84,7 +84,7 @@ test.describe("npm registry (Dockerized real CLI)", () => {
     writeFileSync(join(pubDir, "index.js"), `module.exports = ${JSON.stringify(pkgName)};\n`);
     writeFileSync(join(pubDir, ".npmrc"), npmrc);
 
-    npm(["whoami", "--registry", registry], pubDir);
+    expect(npm(["whoami", "--registry", registry], pubDir).trim()).toBe("token");
     npm(["publish", "--registry", registry, "--access", "public"], pubDir);
     npm(["dist-tag", "add", `${pkgName}@1.0.0`, "beta", "--registry", registry], pubDir);
     const tags = npm(["dist-tag", "ls", pkgName, "--registry", registry], pubDir);
@@ -104,5 +104,93 @@ test.describe("npm registry (Dockerized real CLI)", () => {
     const afterRm = npm(["dist-tag", "ls", pkgName, "--registry", registry], pubDir);
     expect(afterRm).toContain("latest: 1.0.0");
     expect(afterRm).not.toContain("beta:");
+    let removedTagFailed = false;
+    try {
+      npm(["view", `${pkgName}@beta`, "version", "--registry", registry], pubDir);
+    } catch {
+      removedTagFailed = true;
+    }
+    expect(removedTagFailed).toBe(true);
+  });
+
+  test("publish --tag preserves latest while beta resolves a newer version", async ({
+    baseURL,
+  }) => {
+    test.setTimeout(120_000);
+
+    const owner = await setupOwner(baseURL!);
+    const repoName = "npmrepo-publish-tag";
+    expect(
+      (await createRepo(owner.ctx, owner.orgId, { name: repoName, format: "npm" })).status(),
+    ).toBe(201);
+    const secret = (await (await createToken(owner.ctx, owner.orgId, { name: "npm-tag" })).json())
+      .secret as string;
+
+    const registry = `${dockerReachableUrl(baseURL!)}/npm/${owner.orgSlug}/${repoName}/`;
+    const npmrc = [
+      `registry=${registry}`,
+      `${registry.replace(/^https?:/, "")}:_authToken=${secret}`,
+      "",
+    ].join("\n");
+    const pkgName = `tagged-pkg-${Date.now().toString(36)}`;
+
+    const pubDir = mkdtempSync(join(tmpdir(), "hoot-npm-tagged-"));
+    writeFileSync(
+      join(pubDir, "package.json"),
+      JSON.stringify({ name: pkgName, version: "1.0.0", description: "tagged", main: "index.js" }),
+    );
+    writeFileSync(join(pubDir, "index.js"), "module.exports = 'stable';\n");
+    writeFileSync(join(pubDir, ".npmrc"), npmrc);
+
+    npm(["publish", "--registry", registry], pubDir);
+
+    writeFileSync(
+      join(pubDir, "package.json"),
+      JSON.stringify({ name: pkgName, version: "1.1.0", description: "tagged", main: "index.js" }),
+    );
+    writeFileSync(join(pubDir, "index.js"), "module.exports = 'beta';\n");
+    npm(["publish", "--tag", "beta", "--registry", registry], pubDir);
+
+    let duplicateFailed = false;
+    try {
+      npm(["publish", "--tag", "beta", "--registry", registry], pubDir);
+    } catch {
+      duplicateFailed = true;
+    }
+    expect(duplicateFailed).toBe(true);
+
+    const packument = await (
+      await owner.ctx.get(`/npm/${owner.orgSlug}/${repoName}/${pkgName}`)
+    ).json();
+    expect(packument["dist-tags"].latest).toBe("1.0.0");
+    expect(packument["dist-tags"].beta).toBe("1.1.0");
+
+    const view = JSON.parse(
+      npm(["view", `${pkgName}@beta`, "--json", "--registry", registry], pubDir),
+    ) as { name: string; version: string; dist: { integrity: string } };
+    expect(view).toMatchObject({ name: pkgName, version: "1.1.0" });
+    expect(view.dist.integrity).toMatch(/^sha512-/);
+
+    const stableDir = mkdtempSync(join(tmpdir(), "hoot-npm-stable-ins-"));
+    writeFileSync(join(stableDir, ".npmrc"), npmrc);
+    writeFileSync(
+      join(stableDir, "package.json"),
+      JSON.stringify({ name: "consumer", version: "1.0.0" }),
+    );
+    npm(["install", pkgName, "--registry", registry, "--no-audit", "--no-fund"], stableDir);
+    expect(readFileSync(join(stableDir, "node_modules", pkgName, "index.js"), "utf8")).toContain(
+      "stable",
+    );
+
+    const betaDir = mkdtempSync(join(tmpdir(), "hoot-npm-beta-ins-"));
+    writeFileSync(join(betaDir, ".npmrc"), npmrc);
+    writeFileSync(
+      join(betaDir, "package.json"),
+      JSON.stringify({ name: "consumer", version: "1.0.0" }),
+    );
+    npm(["install", `${pkgName}@beta`, "--registry", registry, "--no-audit", "--no-fund"], betaDir);
+    expect(readFileSync(join(betaDir, "node_modules", pkgName, "index.js"), "utf8")).toContain(
+      "beta",
+    );
   });
 });
