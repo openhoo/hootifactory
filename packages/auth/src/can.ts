@@ -42,6 +42,14 @@ export function can({ principal, action, resource, effectiveRole }: CanInput): D
     if (principal.scopes.length > 0) {
       const name = resource.repositoryName;
       if (name && scopeGrants(principal.scopes, name, action)) {
+        const role = effectiveRole ?? principal.role ?? null;
+        if (!role || !roleAllows(role, action)) {
+          return {
+            allowed: false,
+            code: "insufficient_role",
+            reason: `token role does not grant '${action}'`,
+          };
+        }
         return { allowed: true };
       }
       return {

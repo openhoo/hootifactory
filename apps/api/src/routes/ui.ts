@@ -1,6 +1,7 @@
 import {
   authorize,
   createApiToken,
+  patternMatches,
   ROLE_RANK,
   resolveUserRole,
   revokeToken,
@@ -512,10 +513,42 @@ uiRouter.post("/orgs/:orgId/tokens", async (c) => {
   if (body.role && (!creatorRole || ROLE_RANK[body.role] > ROLE_RANK[creatorRole])) {
     return c.json({ error: "cannot grant a role above your own" }, 403);
   }
+  const orgRepos =
+    body.role || body.scopes?.length
+      ? await db
+          .select({ id: repositories.id, name: repositories.name })
+          .from(repositories)
+          .where(eq(repositories.orgId, orgId))
+      : [];
+  if (body.role) {
+    for (const repo of orgRepos) {
+      const repoRole = await resolveUserRole(p.userId, orgId, repo.id);
+      if (!repoRole || ROLE_RANK[body.role] > ROLE_RANK[repoRole]) {
+        return c.json(
+          { error: `cannot grant role '${body.role}' on repository '${repo.name}'` },
+          403,
+        );
+      }
+    }
+  }
   for (const scope of body.scopes ?? []) {
     for (const action of scope.actions) {
       if (!creatorRole || !roleAllows(creatorRole, action)) {
         return c.json({ error: `cannot grant scope action '${action}' beyond your role` }, 403);
+      }
+    }
+    for (const repo of orgRepos) {
+      if (!patternMatches(scope.repository, repo.name)) continue;
+      const repoRole = await resolveUserRole(p.userId, orgId, repo.id);
+      for (const action of scope.actions) {
+        if (!repoRole || !roleAllows(repoRole, action)) {
+          return c.json(
+            {
+              error: `cannot grant scope action '${action}' on repository '${repo.name}'`,
+            },
+            403,
+          );
+        }
       }
     }
   }

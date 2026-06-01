@@ -1,6 +1,17 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { db, eq, organizations, users } from "@hootifactory/db";
+import {
+  apiTokens,
+  db,
+  eq,
+  memberships,
+  organizations,
+  repositories,
+  roleBindings,
+  users,
+} from "@hootifactory/db";
+import { effectiveRoleFor } from "./authorize";
 import { hashPassword, verifyPassword } from "./password";
+import type { Principal } from "./principal";
 import { issueRegistryToken, registryJwks, verifyRegistryToken } from "./registry-jwt";
 import { createSession, resolveSession, revokeSession } from "./sessions";
 import { createApiToken, resolveToken, revokeToken } from "./tokens";
@@ -22,6 +33,7 @@ beforeAll(async () => {
     })
     .returning();
   userId = u!.id;
+  await db.insert(memberships).values({ orgId, userId, role: "owner" });
 });
 
 afterAll(async () => {
@@ -53,6 +65,100 @@ describe("api tokens (DB)", () => {
   test("garbage secret resolves to null", async () => {
     expect(await resolveToken("hoot_not-a-real-token")).toBeNull();
     expect(await resolveToken("totally-bogus")).toBeNull();
+  });
+
+  test("owner-backed token roles are capped by repo-scoped owner bindings", async () => {
+    const [repo] = await db
+      .insert(repositories)
+      .values({
+        orgId,
+        name: `repo-${crypto.randomUUID().slice(0, 8)}`,
+        format: "npm",
+        mountPath: `npm/test-${crypto.randomUUID().slice(0, 8)}`,
+        storagePrefix: `${orgId}/auth-test`,
+      })
+      .returning();
+    const { token } = await createApiToken({
+      orgId,
+      ownerUserId: userId,
+      name: "repo-capped",
+      scopes: [{ repository: repo!.name, actions: ["read", "write"] }],
+      role: "owner",
+    });
+    await db.insert(roleBindings).values({
+      orgId,
+      userId,
+      repositoryId: repo!.id,
+      role: "viewer",
+    });
+
+    const principal: Principal = {
+      kind: "token",
+      tokenId: token.id,
+      orgId,
+      ownerUserId: userId,
+      scopes: token.scopes,
+      role: token.role,
+      isRobot: false,
+    };
+    await expect(
+      effectiveRoleFor(principal, {
+        type: "repository",
+        orgId,
+        repositoryId: repo!.id,
+        repositoryName: repo!.name,
+      }),
+    ).resolves.toBe("viewer");
+  });
+
+  test("token-scoped repo bindings override a token's org role", async () => {
+    const [repo] = await db
+      .insert(repositories)
+      .values({
+        orgId,
+        name: `repo-${crypto.randomUUID().slice(0, 8)}`,
+        format: "npm",
+        mountPath: `npm/test-${crypto.randomUUID().slice(0, 8)}`,
+        storagePrefix: `${orgId}/auth-test`,
+      })
+      .returning();
+    const [token] = await db
+      .insert(apiTokens)
+      .values({
+        orgId,
+        ownerUserId: null,
+        name: "robot-bound",
+        type: "robot",
+        tokenHash: crypto.randomUUID().replaceAll("-", ""),
+        tokenPrefix: "hoot_test",
+        scopes: [],
+        role: "admin",
+      })
+      .returning();
+    await db.insert(roleBindings).values({
+      orgId,
+      tokenId: token!.id,
+      repositoryId: repo!.id,
+      role: "viewer",
+    });
+
+    const principal: Principal = {
+      kind: "token",
+      tokenId: token!.id,
+      orgId,
+      ownerUserId: null,
+      scopes: [],
+      role: "admin",
+      isRobot: true,
+    };
+    await expect(
+      effectiveRoleFor(principal, {
+        type: "repository",
+        orgId,
+        repositoryId: repo!.id,
+        repositoryName: repo!.name,
+      }),
+    ).resolves.toBe("viewer");
   });
 });
 

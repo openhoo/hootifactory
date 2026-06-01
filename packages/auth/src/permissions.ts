@@ -27,3 +27,8 @@ export function roleAllows(role: RoleName, action: Action): boolean {
 export function maxRole(a: RoleName, b: RoleName): RoleName {
   return ROLE_RANK[a] >= ROLE_RANK[b] ? a : b;
 }
+
+/** Pick the lower-privilege of two roles. */
+export function minRole(a: RoleName, b: RoleName): RoleName {
+  return ROLE_RANK[a] <= ROLE_RANK[b] ? a : b;
+}

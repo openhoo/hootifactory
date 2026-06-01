@@ -1,5 +1,45 @@
+import { execFileSync } from "node:child_process";
 import { type APIRequestContext, expect, test } from "@playwright/test";
 import { anonContext, createRepo, createToken, setupOwner, uniq } from "./helpers";
+
+const TEST_DATABASE_URL =
+  process.env.E2E_DATABASE_URL ??
+  "postgres://hootifactory:hootifactory@localhost:5432/hootifactory_test";
+
+function insertRoleBinding(input: {
+  orgId: string;
+  userId: string;
+  repositoryId: string;
+  role: "viewer" | "developer" | "admin" | "owner";
+}): void {
+  execFileSync(
+    "bun",
+    [
+      "-e",
+      [
+        'import { db, roleBindings } from "@hootifactory/db";',
+        "await db.insert(roleBindings).values({",
+        "  orgId: process.env.ORG_ID,",
+        "  userId: process.env.USER_ID,",
+        "  repositoryId: process.env.REPOSITORY_ID,",
+        "  role: process.env.ROLE,",
+        "});",
+      ].join("\n"),
+    ],
+    {
+      env: {
+        ...process.env,
+        DATABASE_URL: TEST_DATABASE_URL,
+        ORG_ID: input.orgId,
+        USER_ID: input.userId,
+        REPOSITORY_ID: input.repositoryId,
+        ROLE: input.role,
+      },
+      stdio: "pipe",
+      encoding: "utf8",
+    },
+  );
+}
 
 async function publishRawNpm(ctx: APIRequestContext, mountPath: string, pkgName: string) {
   const filename = `${pkgName}-1.0.0.tgz`;
@@ -131,5 +171,50 @@ test.describe("api tokens", () => {
       headers: { authorization: `Bearer ${wrongSecret}` },
     });
     expect(denied.status()).toBe(403);
+  });
+
+  test("repo-scoped demotion prevents minting write tokens for that repo", async ({ baseURL }) => {
+    const owner = await setupOwner(baseURL!);
+    const me = (await (await owner.ctx.get("/api/me")).json()) as {
+      principal: { userId: string };
+    };
+    const repoName = uniq("demoted-repo");
+    const repo = (
+      await (await createRepo(owner.ctx, owner.orgId, { name: repoName, format: "npm" })).json()
+    ).repository as { id: string; name: string; mountPath: string };
+    insertRoleBinding({
+      orgId: owner.orgId,
+      userId: me.principal.userId,
+      repositoryId: repo.id,
+      role: "viewer",
+    });
+
+    const blockedPkgName = uniq("demoted-pkg");
+    const directWrite = await owner.ctx.put(`/${repo.mountPath}/${blockedPkgName}`, {
+      data: {
+        name: blockedPkgName,
+        versions: { "1.0.0": { name: blockedPkgName, version: "1.0.0" } },
+        _attachments: {
+          [`${blockedPkgName}-1.0.0.tgz`]: { data: Buffer.from("blocked").toString("base64") },
+        },
+        "dist-tags": { latest: "1.0.0" },
+      },
+    });
+    expect(directWrite.status()).toBe(403);
+
+    const scopedWrite = await createToken(owner.ctx, owner.orgId, {
+      name: "repo-writer",
+      scopes: [{ repository: repo.name, actions: ["write"] }],
+    });
+    expect(scopedWrite.status()).toBe(403);
+    expect(await scopedWrite.json()).toMatchObject({
+      error: `cannot grant scope action 'write' on repository '${repo.name}'`,
+    });
+
+    const roleToken = await createToken(owner.ctx, owner.orgId, {
+      name: "role-writer",
+      role: "developer",
+    });
+    expect(roleToken.status()).toBe(403);
   });
 });

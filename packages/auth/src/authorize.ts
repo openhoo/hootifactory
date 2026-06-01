@@ -1,6 +1,6 @@
 import { and, db, eq, isNull, memberships, roleBindings } from "@hootifactory/db";
 import { can } from "./can";
-import { type Action, maxRole, type RoleName } from "./permissions";
+import { type Action, maxRole, minRole, type RoleName } from "./permissions";
 import type { Decision, Principal, ResourceRef } from "./principal";
 
 /**
@@ -54,10 +54,51 @@ export async function effectiveRoleFor(
     return resolveUserRole(principal.userId, resource.orgId, resource.repositoryId);
   }
   if (principal.kind === "token") {
-    if (principal.role) return principal.role;
-    if (principal.ownerUserId && resource.orgId) {
-      return resolveUserRole(principal.ownerUserId, resource.orgId, resource.repositoryId);
+    if (!resource.orgId) return principal.role;
+
+    let role: RoleName | null = null;
+    if (principal.tokenId) {
+      const [repoBinding] = resource.repositoryId
+        ? await db
+            .select({ role: roleBindings.role })
+            .from(roleBindings)
+            .where(
+              and(
+                eq(roleBindings.tokenId, principal.tokenId),
+                eq(roleBindings.repositoryId, resource.repositoryId),
+              ),
+            )
+            .limit(1)
+        : [];
+      if (repoBinding) role = repoBinding.role;
+
+      if (!role) {
+        const [orgBinding] = await db
+          .select({ role: roleBindings.role })
+          .from(roleBindings)
+          .where(
+            and(
+              eq(roleBindings.tokenId, principal.tokenId),
+              eq(roleBindings.orgId, resource.orgId),
+              isNull(roleBindings.repositoryId),
+            ),
+          )
+          .limit(1);
+        if (orgBinding) role = orgBinding.role;
+      }
     }
+
+    role ??= principal.role;
+    if (principal.ownerUserId) {
+      const ownerRole = await resolveUserRole(
+        principal.ownerUserId,
+        resource.orgId,
+        resource.repositoryId,
+      );
+      if (!role) return ownerRole;
+      return ownerRole ? minRole(role, ownerRole) : null;
+    }
+    return role;
   }
   return null;
 }

@@ -103,6 +103,7 @@ describe("can() — token org boundary", () => {
       principal: tokenScoped,
       action: "write",
       resource: { type: "repository", orgId: "orgA", repositoryName: "acme/app" },
+      effectiveRole: "developer",
     });
     expect(ok.allowed).toBe(true);
 
@@ -139,6 +140,16 @@ describe("can() — token org boundary", () => {
     });
     expect(d.allowed).toBe(false);
     expect(d.code).toBe("insufficient_scope");
+  });
+  test("scoped token cannot exceed its effective role", () => {
+    const d = can({
+      principal: tokenScoped,
+      action: "write",
+      resource: { type: "repository", orgId: "orgA", repositoryName: "acme/app" },
+      effectiveRole: "viewer",
+    });
+    expect(d.allowed).toBe(false);
+    expect(d.code).toBe("insufficient_role");
   });
 });
 
