@@ -447,6 +447,58 @@ test.describe("nuget v3 (protocol)", () => {
 });
 
 test.describe("pypi simple API (protocol)", () => {
+  test("rejects uploaded filenames that disagree with package metadata", async ({ baseURL }) => {
+    const owner = await setupOwner(baseURL!);
+    const repo = (
+      await (
+        await createRepo(owner.ctx, owner.orgId, {
+          name: "pypi-name-check",
+          format: "pypi",
+          visibility: "public",
+        })
+      ).json()
+    ).repository as { mountPath: string };
+    const secret = (
+      await (await createToken(owner.ctx, owner.orgId, { name: "pypi-name-check" })).json()
+    ).secret as string;
+    const anon = await anonContext(baseURL!);
+    const id = Date.now().toString(36);
+    const pkg = `hootpyname${id}`;
+
+    const wrongVersion = await uploadPypiFile({
+      ctx: anon,
+      mountPath: repo.mountPath,
+      secret,
+      pkg,
+      version: "1.0.0",
+      filename: `${pkg}-9.9.9-py3-none-any.whl`,
+      bytes: Buffer.from("wrong version wheel"),
+    });
+    expect(wrongVersion.status()).toBe(400);
+
+    const wrongProject = await uploadPypiFile({
+      ctx: anon,
+      mountPath: repo.mountPath,
+      secret,
+      pkg,
+      version: "1.0.0",
+      filename: `other_${id}-1.0.0-py3-none-any.whl`,
+      bytes: Buffer.from("wrong project wheel"),
+    });
+    expect(wrongProject.status()).toBe(400);
+
+    const valid = await uploadPypiFile({
+      ctx: anon,
+      mountPath: repo.mountPath,
+      secret,
+      pkg,
+      version: "1.0.0",
+      filename: `${pkg}-1.0.0-py3-none-any.whl`,
+      bytes: Buffer.from("matching wheel"),
+    });
+    expect(valid.status()).toBe(200);
+  });
+
   test("upload, retention, and tombstoned release republish rejection", async ({ baseURL }) => {
     const owner = await setupOwner(baseURL!);
     const repo = (

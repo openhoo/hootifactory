@@ -25,6 +25,35 @@ interface PypiFileMeta {
   filetype?: string;
 }
 
+function normalizeFilenameVersionToken(version: string): string {
+  return version.toLowerCase().replace(/[-_.]+/g, "_");
+}
+
+function filenameVersionMatches(declared: string, fromFilename: string): boolean {
+  return (
+    declared.toLowerCase() === fromFilename.toLowerCase() ||
+    normalizeFilenameVersionToken(declared) === normalizeFilenameVersionToken(fromFilename)
+  );
+}
+
+function parsePypiFilename(filename: string): { name: string; version: string } | null {
+  if (filename.endsWith(".whl")) {
+    const parts = filename.slice(0, -".whl".length).split("-");
+    if (parts.length < 5 || !parts[0] || !parts[1]) return null;
+    return { name: parts[0], version: parts[1] };
+  }
+
+  const sourceBase = filename.endsWith(".tar.gz")
+    ? filename.slice(0, -".tar.gz".length)
+    : filename.endsWith(".zip")
+      ? filename.slice(0, -".zip".length)
+      : null;
+  if (!sourceBase) return null;
+  const sep = sourceBase.lastIndexOf("-");
+  if (sep <= 0 || sep === sourceBase.length - 1) return null;
+  return { name: sourceBase.slice(0, sep), version: sourceBase.slice(sep + 1) };
+}
+
 export class PypiAdapter implements FormatAdapter {
   readonly format = "pypi" as const;
   readonly capabilities = {
@@ -168,6 +197,17 @@ export class PypiAdapter implements FormatAdapter {
     const name = normalizeName(rawName);
     const bytes = new Uint8Array(await content.arrayBuffer());
     const filename = content.name;
+    const filenameIdentity = parsePypiFilename(filename);
+    if (
+      !filenameIdentity ||
+      normalizeName(filenameIdentity.name) !== name ||
+      !filenameVersionMatches(version, filenameIdentity.version)
+    ) {
+      return Response.json(
+        { message: "filename does not match submitted package name and version" },
+        { status: 400 },
+      );
+    }
 
     // PyPI files are immutable: reject a re-upload of an existing filename,
     // including files hidden by retention.
