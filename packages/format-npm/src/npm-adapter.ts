@@ -1,3 +1,4 @@
+import { env } from "@hootifactory/config";
 import {
   createPackageVersion,
   Errors,
@@ -20,6 +21,7 @@ import {
 } from "@hootifactory/core";
 import {
   and,
+  count,
   desc,
   eq,
   isNull,
@@ -105,7 +107,7 @@ const NpmTarballFilenameSchema = z
 const NpmSearchQuerySchema = z.strictObject({
   text: z.string().max(256).default(""),
   from: z.coerce.number().int().min(0).max(10_000).default(0),
-  size: z.coerce.number().int().min(0).max(100).default(20),
+  size: z.coerce.number().int().min(0).max(10_000).default(20),
 });
 const NpmPublishManifestSchema = z.looseObject({
   name: z.string().optional(),
@@ -207,6 +209,38 @@ function ifNoneMatch(req: Request, etag: string): boolean {
     .some((v) => v === "*" || v === etag || v === `W/${etag}`);
 }
 
+async function responseBytes(res: Response, maxBytes: number): Promise<Uint8Array | null> {
+  const declared = Number(res.headers.get("content-length") ?? 0);
+  if (declared > maxBytes) return null;
+  const reader = res.body?.getReader();
+  if (!reader) return new Uint8Array(0);
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => {});
+      return null;
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out;
+}
+
+async function responseJson<T>(res: Response, maxBytes: number): Promise<T | null> {
+  const bytes = await responseBytes(res, maxBytes);
+  if (!bytes) return null;
+  return JSON.parse(new TextDecoder().decode(bytes)) as T;
+}
+
 export class NpmAdapter implements FormatAdapter {
   readonly format = "npm" as const;
   readonly capabilities = {
@@ -250,7 +284,16 @@ export class NpmAdapter implements FormatAdapter {
       case "ping":
         return Response.json({});
       case "whoami":
-        return Response.json({ username: ctx.principal.kind === "user" ? "user" : "token" });
+        return Response.json({
+          username:
+            ctx.principal.kind === "user"
+              ? ctx.principal.username
+              : ctx.principal.kind === "token"
+                ? `token:${ctx.principal.tokenId}`
+                : ctx.principal.kind === "registryToken"
+                  ? ctx.principal.subject
+                  : "anonymous",
+        });
       case "search":
         return this.searchHandler(req, ctx);
       case "auditBulk":
@@ -616,10 +659,11 @@ export class NpmAdapter implements FormatAdapter {
     // safeFetch rejects private/loopback/metadata hosts and re-validates redirects.
     const res = await safeFetch(url, { headers: { accept: "application/json" } }).catch(() => null);
     if (!res?.ok) return false;
-    const packument = (await res.json()) as {
+    const packument = await responseJson<{
       versions?: Record<string, Record<string, unknown>>;
       "dist-tags"?: Record<string, string>;
-    };
+    }>(res, Math.min(env.REGISTRY_MAX_UPLOAD_BYTES, 10 * 1024 * 1024));
+    if (!packument) return false;
     const scope = pkgName.startsWith("@") ? (pkgName.split("/")[0] ?? null) : null;
     let pkg = await this.findPackage(ctx, pkgName);
     const base = basename(pkgName);
@@ -673,7 +717,8 @@ export class NpmAdapter implements FormatAdapter {
         continue;
       }
       if (!tRes.ok) continue;
-      const tarball = new Uint8Array(await tRes.arrayBuffer());
+      const tarball = await responseBytes(tRes, env.REGISTRY_MAX_UPLOAD_BYTES);
+      if (!tarball) continue;
       if (!upstreamDistMatchesBytes(dist0, tarball)) continue;
       pkg ??= await findOrCreatePackage({
         orgId: ctx.repo.orgId,
@@ -757,16 +802,12 @@ export class NpmAdapter implements FormatAdapter {
       },
       { code: "PAGINATION_NUMBER_INVALID", message: "invalid search query" },
     );
-    const rows = await ctx.db
-      .select()
-      .from(packages)
-      .where(
-        and(
-          eq(packages.repositoryId, ctx.repo.id),
-          text ? like(packages.name, `%${text}%`) : sql`true`,
-        ),
-      )
-      .limit(Math.max(from + size, 100));
+    const where = and(
+      eq(packages.repositoryId, ctx.repo.id),
+      text ? like(packages.name, `%${text}%`) : sql`true`,
+    );
+    const totalRows = await ctx.db.select({ value: count() }).from(packages).where(where);
+    const rows = await ctx.db.select().from(packages).where(where).limit(size).offset(from);
 
     const objects: Record<string, unknown>[] = [];
     for (const p of rows) {
@@ -799,8 +840,8 @@ export class NpmAdapter implements FormatAdapter {
     }
 
     return Response.json({
-      objects: objects.slice(from, from + size),
-      total: objects.length,
+      objects,
+      total: totalRows[0]?.value ?? 0,
       time: new Date().toISOString(),
     });
   }

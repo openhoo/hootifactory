@@ -27,7 +27,12 @@ type Tx = Parameters<Parameters<RepoContext["db"]["transaction"]>[0]>[0];
  */
 async function lockOrgQuotaTx(tx: Tx, orgId: string) {
   const [q] = await tx
-    .select({ used: quotas.usedStorageBytes, max: quotas.maxStorageBytes })
+    .select({
+      used: quotas.usedStorageBytes,
+      max: quotas.maxStorageBytes,
+      usedArtifacts: quotas.usedArtifacts,
+      maxArtifacts: quotas.maxArtifacts,
+    })
     .from(quotas)
     .where(and(eq(quotas.orgId, orgId), isNull(quotas.repositoryId)))
     .for("update")
@@ -41,6 +46,19 @@ function assertStorageQuotaRowAllows(
 ): void {
   if (q?.max != null && q.used + addBytes > q.max) {
     throw Errors.quotaExceeded({ max: q.max, used: q.used, requested: addBytes });
+  }
+}
+
+function assertArtifactQuotaRowAllows(
+  q: { usedArtifacts: number; maxArtifacts: number | null } | null,
+  addArtifacts: number,
+): void {
+  if (q?.maxArtifacts != null && q.usedArtifacts + addArtifacts > q.maxArtifacts) {
+    throw Errors.quotaExceeded({
+      maxArtifacts: q.maxArtifacts,
+      usedArtifacts: q.usedArtifacts,
+      requestedArtifacts: addArtifacts,
+    });
   }
 }
 
@@ -75,6 +93,13 @@ async function adjustStorageUsedTx(tx: Tx, orgId: string, delta: number): Promis
   await tx
     .update(quotas)
     .set({ usedStorageBytes: sql`GREATEST(0, ${quotas.usedStorageBytes} + ${delta})` })
+    .where(and(eq(quotas.orgId, orgId), isNull(quotas.repositoryId)));
+}
+
+async function adjustArtifactsUsedTx(tx: Tx, orgId: string, delta: number): Promise<void> {
+  await tx
+    .update(quotas)
+    .set({ usedArtifacts: sql`GREATEST(0, ${quotas.usedArtifacts} + ${delta})` })
     .where(and(eq(quotas.orgId, orgId), isNull(quotas.repositoryId)));
 }
 
@@ -168,6 +193,63 @@ export async function storeBlobWithRef(
     if (created.length === 0) {
       // Existing blob: revive it if a prior delete/cascade left it pending_delete,
       // so a GC sweep can't reap bytes that are being referenced again.
+      await tx
+        .update(blobs)
+        .set({ state: "active", pendingSince: null })
+        .where(and(eq(blobs.digest, put.digest), eq(blobs.state, "pending_delete")));
+    }
+    const refRows = await tx
+      .insert(blobRefs)
+      .values({
+        digest: put.digest,
+        kind: opts.kind,
+        repositoryId: ctx.repo.id,
+        scope: opts.scope,
+      })
+      .onConflictDoNothing()
+      .returning({ id: blobRefs.id });
+    if (refRows.length > 0) {
+      refCreated = true;
+      await tx
+        .update(blobs)
+        .set({ refCount: sql`${blobs.refCount} + 1` })
+        .where(eq(blobs.digest, put.digest));
+      if (chargeOrg) await adjustStorageUsedTx(tx, ctx.repo.orgId, put.size);
+    }
+  });
+  return { ...put, refCreated };
+}
+
+export async function storeBlobStreamWithRef(
+  ctx: RepoContext,
+  opts: {
+    data: ReadableStream<Uint8Array>;
+    expectedDigest?: string;
+    mediaType?: string;
+    kind: BlobRefKind;
+    scope: string;
+  },
+): Promise<StoredBlob> {
+  const put = await ctx.blobs.putStream(opts.data, opts.expectedDigest);
+  let refCreated = false;
+  await ctx.db.transaction(async (tx) => {
+    const quota = await lockOrgQuotaTx(tx, ctx.repo.orgId);
+    const chargeOrg = !(await orgAlreadyReferencesDigestTx(tx, ctx.repo.orgId, put.digest));
+    if (chargeOrg) assertStorageQuotaRowAllows(quota, put.size);
+
+    const created = await tx
+      .insert(blobs)
+      .values({
+        digest: put.digest,
+        sizeBytes: put.size,
+        storageKey: ctx.blobs.blobKey(put.digest),
+        mediaType: opts.mediaType ?? null,
+        refCount: 0,
+        state: "active",
+      })
+      .onConflictDoNothing()
+      .returning({ digest: blobs.digest });
+    if (created.length === 0) {
       await tx
         .update(blobs)
         .set({ state: "active", pendingSince: null })
@@ -348,23 +430,39 @@ export async function upsertPackageVersion(
   },
 ): Promise<string> {
   const publisher = publisherOf(ctx);
-  const [row] = await ctx.db
-    .insert(packageVersions)
-    .values({
-      orgId: ctx.repo.orgId,
-      packageId: opts.packageId,
-      version: opts.version,
-      metadata: opts.metadata,
-      sizeBytes: opts.sizeBytes,
-      ...publisher,
-    })
-    .onConflictDoUpdate({
-      target: [packageVersions.packageId, packageVersions.version],
-      set: { metadata: opts.metadata, sizeBytes: opts.sizeBytes, deletedAt: null },
-    })
-    .returning({ id: packageVersions.id });
-  if (!row) throw new Error("failed to upsert package version");
-  return row.id;
+  return ctx.db.transaction(async (tx) => {
+    const [existing] = await tx
+      .select({ id: packageVersions.id })
+      .from(packageVersions)
+      .where(
+        and(
+          eq(packageVersions.packageId, opts.packageId),
+          eq(packageVersions.version, opts.version),
+        ),
+      )
+      .for("update")
+      .limit(1);
+    const quota = await lockOrgQuotaTx(tx, ctx.repo.orgId);
+    if (!existing) assertArtifactQuotaRowAllows(quota, 1);
+    const [row] = await tx
+      .insert(packageVersions)
+      .values({
+        orgId: ctx.repo.orgId,
+        packageId: opts.packageId,
+        version: opts.version,
+        metadata: opts.metadata,
+        sizeBytes: opts.sizeBytes,
+        ...publisher,
+      })
+      .onConflictDoUpdate({
+        target: [packageVersions.packageId, packageVersions.version],
+        set: { metadata: opts.metadata, sizeBytes: opts.sizeBytes, deletedAt: null },
+      })
+      .returning({ id: packageVersions.id });
+    if (!row) throw new Error("failed to upsert package version");
+    if (!existing) await adjustArtifactsUsedTx(tx, ctx.repo.orgId, 1);
+    return row.id;
+  });
 }
 
 export async function upsertPackageVersionWithBlobRef(
@@ -391,6 +489,18 @@ export async function upsertPackageVersionWithBlobRef(
 
   await ctx.db.transaction(async (tx) => {
     const quota = await lockOrgQuotaTx(tx, ctx.repo.orgId);
+    const [existingVersion] = await tx
+      .select({ id: packageVersions.id })
+      .from(packageVersions)
+      .where(
+        and(
+          eq(packageVersions.packageId, opts.packageId),
+          eq(packageVersions.version, opts.version),
+        ),
+      )
+      .for("update")
+      .limit(1);
+    if (!existingVersion) assertArtifactQuotaRowAllows(quota, 1);
     const previousDigest =
       opts.blob.previousDigest && opts.blob.previousDigest !== put.digest
         ? opts.blob.previousDigest
@@ -484,6 +594,7 @@ export async function upsertPackageVersionWithBlobRef(
       .returning({ id: packageVersions.id });
     if (!versionRow) throw new Error("failed to upsert package version");
     versionId = versionRow.id;
+    if (!existingVersion) await adjustArtifactsUsedTx(tx, ctx.repo.orgId, 1);
 
     if (previousDigest) {
       const rows = await tx
@@ -510,19 +621,25 @@ export async function createPackageVersion(
   },
 ): Promise<string | null> {
   const publisher = publisherOf(ctx);
-  const [row] = await ctx.db
-    .insert(packageVersions)
-    .values({
-      orgId: ctx.repo.orgId,
-      packageId: opts.packageId,
-      version: opts.version,
-      metadata: opts.metadata,
-      sizeBytes: opts.sizeBytes,
-      ...publisher,
-    })
-    .onConflictDoNothing()
-    .returning({ id: packageVersions.id });
-  return row?.id ?? null;
+  return ctx.db.transaction(async (tx) => {
+    const quota = await lockOrgQuotaTx(tx, ctx.repo.orgId);
+    assertArtifactQuotaRowAllows(quota, 1);
+    const [row] = await tx
+      .insert(packageVersions)
+      .values({
+        orgId: ctx.repo.orgId,
+        packageId: opts.packageId,
+        version: opts.version,
+        metadata: opts.metadata,
+        sizeBytes: opts.sizeBytes,
+        ...publisher,
+      })
+      .onConflictDoNothing()
+      .returning({ id: packageVersions.id });
+    if (!row) return null;
+    await adjustArtifactsUsedTx(tx, ctx.repo.orgId, 1);
+    return row.id;
+  });
 }
 
 export async function setDistTag(

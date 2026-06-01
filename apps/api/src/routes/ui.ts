@@ -91,6 +91,7 @@ const ScanPolicyBodySchema = z.strictObject({
 
 const QuotaBodySchema = z.strictObject({
   maxStorageBytes: z.number().int().safe().min(0).nullable().optional(),
+  maxArtifacts: z.number().int().safe().min(0).nullable().optional(),
 });
 
 const RetentionBodySchema = z.strictObject({
@@ -597,26 +598,38 @@ uiRouter.post("/orgs/:orgId/quota", async (c) => {
   const parsedBody = await validateJsonBody(c, QuotaBodySchema, "invalid quota request");
   if (!parsedBody.ok) return parsedBody.response;
   const maxStorageBytes = parsedBody.data.maxStorageBytes ?? null;
+  const maxArtifacts = parsedBody.data.maxArtifacts ?? null;
+  // Backfill usage from the physical bytes/artifacts the org's repos already
+  // reference, so quota updates after data exists aren't under-counted.
+  const [agg] = await db
+    .select({ used: sql<number>`coalesce(sum(${blobs.sizeBytes}), 0)` })
+    .from(blobs)
+    .where(
+      sql`${blobs.digest} in (select distinct ${blobRefs.digest} from ${blobRefs} join ${repositories} on ${blobRefs.repositoryId} = ${repositories.id} where ${repositories.orgId} = ${orgId})`,
+    );
+  const [artifactAgg] = await db
+    .select({ used: count() })
+    .from(packageVersions)
+    .where(eq(packageVersions.orgId, orgId));
+  const usedStorageBytes = Number(agg?.used ?? 0);
+  const usedArtifacts = artifactAgg?.used ?? 0;
   const [existing] = await db
     .select({ id: quotas.id })
     .from(quotas)
     .where(and(eq(quotas.orgId, orgId), isNull(quotas.repositoryId)))
     .limit(1);
   if (existing) {
-    await db.update(quotas).set({ maxStorageBytes }).where(eq(quotas.id, existing.id));
+    await db
+      .update(quotas)
+      .set({ maxStorageBytes, maxArtifacts, usedStorageBytes, usedArtifacts })
+      .where(eq(quotas.id, existing.id));
   } else {
-    // Backfill usedStorageBytes from the physical bytes the org's repos already
-    // reference, so a quota created after data exists isn't under-counted.
-    const [agg] = await db
-      .select({ used: sql<number>`coalesce(sum(${blobs.sizeBytes}), 0)` })
-      .from(blobs)
-      .where(
-        sql`${blobs.digest} in (select distinct ${blobRefs.digest} from ${blobRefs} join ${repositories} on ${blobRefs.repositoryId} = ${repositories.id} where ${repositories.orgId} = ${orgId})`,
-      );
     await db.insert(quotas).values({
       orgId,
       maxStorageBytes,
-      usedStorageBytes: Number(agg?.used ?? 0),
+      maxArtifacts,
+      usedStorageBytes,
+      usedArtifacts,
     });
   }
   void writeAudit({

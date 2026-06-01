@@ -109,10 +109,11 @@ async function processScanInner(artifactId: string): Promise<void> {
     format: repo.format,
   });
 
-  // Gather dependencies (npm) from the stored version manifest.
+  // Gather declared dependencies from supported package metadata.
   let deps: Record<string, string> = {};
+  let osvEcosystem = "npm";
   await withSpan("scan.collect_dependencies", { "registry.format": repo.format }, async (span) => {
-    if (repo.format === "npm" && art.name && art.version) {
+    if (art.name && art.version) {
       const [pkg] = await db
         .select({ id: packages.id })
         .from(packages)
@@ -126,10 +127,37 @@ async function processScanInner(artifactId: string): Promise<void> {
             and(eq(packageVersions.packageId, pkg.id), eq(packageVersions.version, art.version)),
           )
           .limit(1);
-        const manifest = (pv?.metadata as { manifest?: Record<string, unknown> })?.manifest as
-          | { dependencies?: Record<string, string>; devDependencies?: Record<string, string> }
-          | undefined;
-        deps = { ...(manifest?.dependencies ?? {}), ...(manifest?.devDependencies ?? {}) };
+        const metadata = (pv?.metadata ?? {}) as Record<string, unknown>;
+        if (repo.format === "npm") {
+          const manifest = metadata.manifest as
+            | { dependencies?: Record<string, string>; devDependencies?: Record<string, string> }
+            | undefined;
+          deps = { ...(manifest?.dependencies ?? {}), ...(manifest?.devDependencies ?? {}) };
+          osvEcosystem = "npm";
+        } else if (repo.format === "cargo") {
+          const index = metadata.index as { deps?: { name?: string; req?: string }[] } | undefined;
+          deps = Object.fromEntries(
+            (index?.deps ?? []).filter((d) => d.name && d.req).map((d) => [d.name!, d.req!]),
+          );
+          osvEcosystem = "crates.io";
+        } else if (repo.format === "nuget") {
+          const groups = metadata.dependencyGroups as
+            | { dependencies?: { id?: string; range?: string }[] }[]
+            | undefined;
+          deps = Object.fromEntries(
+            (groups ?? [])
+              .flatMap((g) => g.dependencies ?? [])
+              .filter((d) => d.id && d.range)
+              .map((d) => [d.id!, d.range!]),
+          );
+          osvEcosystem = "NuGet";
+        } else if (repo.format === "go") {
+          const mod = typeof metadata.mod === "string" ? metadata.mod : "";
+          deps = Object.fromEntries(
+            [...mod.matchAll(/^\s*require\s+([^\s]+)\s+([^\s]+)\s*$/gm)].map((m) => [m[1]!, m[2]!]),
+          );
+          osvEcosystem = "Go";
+        }
       }
     }
     span.setAttribute("scan.dependencies.count", Object.keys(deps).length);
@@ -185,6 +213,7 @@ async function processScanInner(artifactId: string): Promise<void> {
         trivyServerUrl: env.TRIVY_SERVER_URL,
         clamavRestUrl: env.CLAMAV_REST_URL,
         cliRuntime: env.SCANNER_CLI_RUNTIME,
+        timeoutMs: env.SCANNER_TIMEOUT_MS,
         dockerCommand: env.SCANNER_DOCKER_COMMAND,
         grypeImage: env.GRYPE_IMAGE,
         syftImage: env.SYFT_IMAGE,
@@ -210,6 +239,7 @@ async function processScanInner(artifactId: string): Promise<void> {
         } catch (err) {
           addSpanEvent("scan.external_failed", { "error.message": String(err) });
           logger.error("external scanner failed", { error: err });
+          throw err;
         } finally {
           if (dir) await rm(dir, { recursive: true, force: true }).catch(() => {});
         }
@@ -315,12 +345,14 @@ async function processScanInner(artifactId: string): Promise<void> {
     }
     throw new Error(`no scannable bytes available for artifact ${art.digest}`);
   }
-  if (process.env.SCANNER_OSV === "true") {
+  if (env.SCANNER_OSV) {
     await withSpan(
       "scan.osv_dependencies",
       { "scan.osv.api_url": env.OSV_API_URL },
       async (span) => {
-        const osvFindings = await osvScanDependencies("npm", deps, env.OSV_API_URL);
+        const osvFindings = await osvScanDependencies(osvEcosystem, deps, env.OSV_API_URL, {
+          timeoutMs: env.SCANNER_TIMEOUT_MS,
+        });
         found.push(...osvFindings);
         span.setAttribute("scan.findings.count", osvFindings.length);
       },
@@ -362,6 +394,7 @@ async function processScanInner(artifactId: string): Promise<void> {
               trivyServerUrl: env.TRIVY_SERVER_URL,
               clamavRestUrl: env.CLAMAV_REST_URL,
               cliRuntime: env.SCANNER_CLI_RUNTIME,
+              timeoutMs: env.SCANNER_TIMEOUT_MS,
               dockerCommand: env.SCANNER_DOCKER_COMMAND,
               grypeImage: env.GRYPE_IMAGE,
               syftImage: env.SYFT_IMAGE,

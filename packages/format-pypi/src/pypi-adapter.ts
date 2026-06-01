@@ -201,7 +201,7 @@ export class PypiAdapter implements FormatAdapter {
       for (const f of fileList) {
         files.push({
           filename: f.filename,
-          url: `${ctx.baseUrl}/${ctx.repo.mountPath}/files/${f.filename}`,
+          url: `${ctx.baseUrl}/${ctx.repo.mountPath}/files/${encodeURIComponent(f.filename)}`,
           sha256: f.sha256,
           requiresPython: f.requiresPython,
         });

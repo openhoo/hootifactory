@@ -8,6 +8,7 @@ export type EmailJob =
       to: string;
       resetUrl: string;
       expiresAt: string;
+      deliveryKey?: string;
     }
   | {
       template: "oidc_link";
@@ -15,6 +16,7 @@ export type EmailJob =
       linkUrl: string;
       providerName: string;
       expiresAt: string;
+      deliveryKey?: string;
     };
 
 export interface RenderedEmail {
@@ -116,6 +118,7 @@ export async function sendEmail(job: EmailJob): Promise<void> {
       subject: message.subject,
       text: message.text,
       html: message.html,
+      messageId: job.deliveryKey ? `<${job.deliveryKey}@hootifactory.local>` : undefined,
     });
     span.setAttribute("email.message_id", info.messageId ?? "");
     span.setAttribute("email.accepted_count", info.accepted?.length ?? 0);

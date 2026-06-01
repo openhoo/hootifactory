@@ -211,6 +211,8 @@ const EnvSchema = z
 
     // Scanning (Phase 3)
     SCANNER_ENABLED: boolish.default(false),
+    SCANNER_OSV: boolish.default(false),
+    SCANNER_TIMEOUT_MS: z.coerce.number().int().positive().default(120_000),
     SCANNER_CLI_RUNTIME: z.enum(["auto", "docker", "host", "disabled"]).default("docker"),
     SCANNER_DOCKER_COMMAND: z.string().default("docker"),
     SYFT_IMAGE: z.string().default("anchore/syft:latest"),

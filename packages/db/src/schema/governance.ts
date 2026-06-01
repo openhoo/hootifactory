@@ -36,6 +36,7 @@ export const quotas = pgTable(
     // A partial unique index enforces a single org-level row (repositoryId IS NULL) —
     // a plain unique index treats NULLs as distinct and would allow duplicates.
     uniqueIndex("quotas_org_uq").on(t.orgId).where(sql`${t.repositoryId} is null`),
+    index("quotas_repository_idx").on(t.repositoryId),
   ],
 );
 
@@ -57,7 +58,10 @@ export const retentionPolicies = pgTable(
     action: text().notNull().default("delete"),
     ...timestamps(),
   },
-  (t) => [index("retention_policies_org_idx").on(t.orgId)],
+  (t) => [
+    index("retention_policies_org_idx").on(t.orgId),
+    index("retention_policies_repository_idx").on(t.repositoryId),
+  ],
 );
 
 /** Append-only audit trail. */
@@ -80,5 +84,7 @@ export const auditLog = pgTable(
   (t) => [
     index("audit_log_org_created_idx").on(t.orgId, t.createdAt),
     index("audit_log_action_idx").on(t.action),
+    index("audit_log_actor_user_idx").on(t.actorUserId),
+    index("audit_log_actor_token_idx").on(t.actorTokenId),
   ],
 );

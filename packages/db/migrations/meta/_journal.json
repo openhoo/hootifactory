@@ -50,6 +50,20 @@
       "when": 1780331167098,
       "tag": "0006_sleepy_sunfire",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1780336574686,
+      "tag": "0007_wise_ironclad",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1780337389815,
+      "tag": "0008_goofy_zarek",
+      "breakpoints": true
     }
   ]
 }

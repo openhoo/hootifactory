@@ -127,7 +127,10 @@ async function adapterResponse(
         return response;
       } catch (err) {
         if (isRegistryMiss(err)) {
-          const response = err.toResponse();
+          const response =
+            adapter.format === "npm"
+              ? Response.json({ error: err.message }, { status: err.status })
+              : err.toResponse();
           span.setAttribute("http.response.status_code", response.status);
           span.addEvent("registry.adapter.miss", {
             "registry.error.code": err.code,
@@ -162,7 +165,7 @@ function searchWindow(req: Request): { from: number; size: number } {
 function allSearchResultsRequest(req: Request): Request {
   const url = new URL(req.url);
   url.searchParams.set("from", "0");
-  url.searchParams.set("size", "100");
+  url.searchParams.set("size", "10000");
   return new Request(url.toString(), { method: req.method, headers: req.headers });
 }
 
@@ -226,7 +229,9 @@ async function dispatchVirtualSearch(
             if (res.status >= 400) return;
             const body = (await res.json().catch(() => null)) as {
               objects?: Array<{ package?: { name?: unknown } }>;
+              total?: number;
             } | null;
+            memberSpan.setAttribute("registry.virtual.member_total", body?.total ?? 0);
             for (const object of body?.objects ?? []) {
               const name = object.package?.name;
               if (typeof name !== "string" || seen.has(name)) continue;
@@ -376,7 +381,13 @@ async function dispatchProxy(
       const local = await adapterResponse(adapter, match, req, ctx);
       if (local.status < 400) return local;
 
-      if (!upstream) return local;
+      const proxyError = async (response: Response) =>
+        new Response(await response.text(), {
+          status: response.status,
+          headers: { "content-type": "text/plain; charset=utf-8" },
+        });
+
+      if (!upstream) return proxyError(local);
 
       // Format-aware mirror (npm packument -> ingest tarballs), then retry locally.
       // Do not fall back to transparent passthrough: returning upstream bytes
@@ -401,7 +412,7 @@ async function dispatchProxy(
         );
         if (ok) return adapterResponse(adapter, match, req, ctx);
       }
-      return local;
+      return proxyError(local);
     },
   );
 }

@@ -52,6 +52,7 @@ async function main(): Promise<void> {
     trivyServerUrl: env.TRIVY_SERVER_URL,
     clamavRestUrl: env.CLAMAV_REST_URL,
     cliRuntime: env.SCANNER_CLI_RUNTIME,
+    timeoutMs: env.SCANNER_TIMEOUT_MS,
     dockerCommand: env.SCANNER_DOCKER_COMMAND,
     grypeImage: env.GRYPE_IMAGE,
     syftImage: env.SYFT_IMAGE,

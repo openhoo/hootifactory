@@ -64,5 +64,10 @@ export function isValidProjectName(name: string): boolean {
 }
 
 export function isSafeDistributionFilename(filename: string): boolean {
-  return Boolean(filename) && !filename.includes("/") && !filename.includes("\\");
+  return (
+    Boolean(filename) &&
+    /^[A-Za-z0-9][A-Za-z0-9._+!-]*$/.test(filename) &&
+    !filename.includes("/") &&
+    !filename.includes("\\")
+  );
 }

@@ -46,7 +46,8 @@ const GoVersionSchema = z
   .string()
   .min(1)
   .max(256)
-  .regex(GO_VERSION_RE, "version must be a canonical Go semver");
+  .regex(GO_VERSION_RE, "version must be a canonical Go semver")
+  .refine((value) => parseSemver(value) != null, "version must be a canonical Go semver");
 const GoVersionFileSchema = z
   .string()
   .min(1)
@@ -57,10 +58,45 @@ const GoUploadFieldsSchema = z.strictObject({
   zip: z.custom<File>((value) => value instanceof File, { message: "missing zip" }),
 });
 
+function validPrerelease(pre: string): boolean {
+  return pre.split(".").every((part) => {
+    if (!/^[0-9A-Za-z-]+$/.test(part)) return false;
+    return !/^\d+$/.test(part) || /^(0|[1-9]\d*)$/.test(part);
+  });
+}
+
+function comparePrerelease(a: string, b: string): number {
+  const aa = a.split(".");
+  const bb = b.split(".");
+  const max = Math.max(aa.length, bb.length);
+  for (let i = 0; i < max; i++) {
+    const x = aa[i];
+    const y = bb[i];
+    if (x === undefined) return -1;
+    if (y === undefined) return 1;
+    const xn = /^\d+$/.test(x);
+    const yn = /^\d+$/.test(y);
+    if (xn && yn) {
+      const diff = Number(x) - Number(y);
+      if (diff !== 0) return diff;
+    } else if (xn !== yn) {
+      return xn ? -1 : 1;
+    } else if (x !== y) {
+      return x < y ? -1 : 1;
+    }
+  }
+  return 0;
+}
+
+function isPseudoVersion(v: string): boolean {
+  return /^v\d+\.\d+\.\d+-(?:0\.|[0-9A-Za-z.-]+\.)?0\.\d{14}-[0-9a-f]{12}$/i.test(v);
+}
+
 /** Split a vX.Y.Z[-pre] version into numeric parts + prerelease for comparison. */
 function parseSemver(v: string): { nums: number[]; pre: string | null } | null {
   const m = v.match(/^v(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?/);
   if (!m) return null;
+  if (m[4] && !validPrerelease(m[4])) return null;
   return { nums: [Number(m[1]), Number(m[2]), Number(m[3])], pre: m[4] ?? null };
 }
 
@@ -74,7 +110,7 @@ function compareSemver(a: string, b: string): number {
   // A release (no prerelease) outranks a prerelease of the same x.y.z.
   if (!pa.pre && pb.pre) return 1;
   if (pa.pre && !pb.pre) return -1;
-  if (pa.pre && pb.pre) return pa.pre < pb.pre ? -1 : pa.pre > pb.pre ? 1 : 0;
+  if (pa.pre && pb.pre) return comparePrerelease(pa.pre, pb.pre);
   return 0;
 }
 
@@ -281,9 +317,15 @@ export class GoAdapter implements FormatAdapter {
     const pkg = await this.findPackage(ctx, moduleName);
     if (!pkg) throw Errors.notFound();
     const rows = await this.versions(ctx, pkg.id);
-    return new Response(`${rows.map((r) => r.version).join("\n")}\n`, {
-      headers: { "content-type": "text/plain" },
-    });
+    return new Response(
+      `${rows
+        .map((r) => r.version)
+        .filter((v) => !isPseudoVersion(v))
+        .join("\n")}\n`,
+      {
+        headers: { "content-type": "text/plain" },
+      },
+    );
   }
 
   private async latest(moduleName: string, ctx: RepoContext): Promise<Response> {

@@ -1,3 +1,4 @@
+import { db, emailDeliveries, eq } from "@hootifactory/db";
 import { closeEmailTransport, type EmailJob, sendEmail } from "@hootifactory/email";
 import {
   initializeObservability,
@@ -14,6 +15,35 @@ import { QUEUES, stopBoss, work } from "@hootifactory/queue";
 initializeObservability({ serviceRole: "mail-worker" });
 
 type EmailSendJob = EmailJob & { telemetry?: TelemetryContextCarrier };
+
+async function sendEmailOnce(job: EmailSendJob): Promise<void> {
+  if (!job.deliveryKey) {
+    await sendEmail(job);
+    return;
+  }
+  const [claim] = await db
+    .insert(emailDeliveries)
+    .values({
+      deliveryKey: job.deliveryKey,
+      template: job.template,
+      recipient: job.to,
+    })
+    .onConflictDoNothing()
+    .returning({ id: emailDeliveries.id });
+  if (!claim) {
+    logger.info("email delivery skipped because delivery key was already claimed", {
+      deliveryKey: job.deliveryKey,
+      template: job.template,
+    });
+    return;
+  }
+  try {
+    await sendEmail(job);
+  } catch (err) {
+    await db.delete(emailDeliveries).where(eq(emailDeliveries.deliveryKey, job.deliveryKey));
+    throw err;
+  }
+}
 
 const workerBatchSize = Math.max(1, Number(process.env.MAIL_WORKER_BATCH_SIZE ?? 8) || 8);
 const pollingIntervalSeconds = Math.max(
@@ -68,7 +98,7 @@ async function main(): Promise<void> {
                   "email.template": job.data.template,
                 },
                 async () => {
-                  await sendEmail(job.data);
+                  await sendEmailOnce(job.data);
                 },
               );
             }

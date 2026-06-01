@@ -89,7 +89,8 @@ export function mapGroupsToOrgRoles(
 ): OidcGroupGrant[] {
   const byOrg = new Map<string, OidcGroupGrant>();
   for (const group of groups) {
-    for (const grant of groupMappings[group] ?? []) {
+    const grants = Object.hasOwn(groupMappings, group) ? groupMappings[group] : undefined;
+    for (const grant of grants ?? []) {
       const existing = byOrg.get(grant.org);
       if (!existing || ROLE_RANK[grant.role] > ROLE_RANK[existing.role]) {
         byOrg.set(grant.org, { org: grant.org, role: grant.role, groups: [group] });
@@ -359,6 +360,7 @@ export async function syncOidcUser(
 
     if (!user) {
       if (!input.email) throw new Error("oidc: email claim is required to create a user");
+      if (!input.emailVerified) throw new Error("oidc: email claim is not verified");
       const username = await uniqueUsername(
         input.username,
         input.email.split("@")[0] ?? input.subject,

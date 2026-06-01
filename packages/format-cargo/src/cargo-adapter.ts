@@ -34,7 +34,18 @@ const CargoCrateNameSchema = z
   .min(1)
   .max(64)
   .refine(isValidCargoCrateName, "invalid crate name");
-const CargoVersionSchema = z.string().min(1).max(256);
+function isValidSemver(version: string): boolean {
+  const match =
+    /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.exec(
+      version,
+    );
+  if (!match) return false;
+  return (match[4] ?? "")
+    .split(".")
+    .filter(Boolean)
+    .every((id) => !/^\d+$/.test(id) || /^(0|[1-9]\d*)$/.test(id));
+}
+const CargoVersionSchema = z.string().min(1).max(256).refine(isValidSemver, "invalid SemVer");
 const CargoIndexPathSchema = z
   .string()
   .min(1)
@@ -56,6 +67,8 @@ const CargoPublishMetadataSchema = z.looseObject({
   vers: CargoVersionSchema,
   deps: z.array(CargoDependencySchema).max(512).optional(),
   features: z.record(z.string(), z.array(z.string().min(1).max(128)).max(256)).optional(),
+  links: z.string().min(1).max(128).optional(),
+  rust_version: z.string().min(1).max(128).optional(),
 });
 
 function sha256hex(bytes: Uint8Array): string {
@@ -293,6 +306,8 @@ export class CargoAdapter implements FormatAdapter {
       cksum,
       features: meta.features ?? {},
       yanked: false,
+      ...(meta.links ? { links: meta.links } : {}),
+      ...(meta.rust_version ? { rust_version: meta.rust_version } : {}),
     };
     const versionId = await createPackageVersion(ctx, {
       packageId: pkg.id,

@@ -99,6 +99,20 @@ export const authEmailTokens = pgTable(
   ],
 );
 
+/** Durable idempotency ledger for at-least-once queued email delivery. */
+export const emailDeliveries = pgTable(
+  "email_deliveries",
+  {
+    id: primaryId(),
+    deliveryKey: varchar({ length: 256 }).notNull(),
+    template: varchar({ length: 64 }).notNull(),
+    recipient: varchar({ length: 320 }).notNull(),
+    sentAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    ...timestamps(),
+  },
+  (t) => [uniqueIndex("email_deliveries_delivery_key_uq").on(t.deliveryKey)],
+);
+
 /**
  * Repo-scoped (or org-wide when repositoryId is null) role assignments that
  * override org membership. Most-specific binding wins (resolved in code).

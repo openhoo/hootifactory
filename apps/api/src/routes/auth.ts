@@ -224,7 +224,13 @@ async function enqueueEmail(job: EmailJob): Promise<void> {
   await enqueue(
     QUEUES.emailSend,
     { ...job, telemetry: captureTelemetryContext() },
-    { retryLimit: 5, retryDelay: 30, retryBackoff: true },
+    {
+      retryLimit: 5,
+      retryDelay: 30,
+      retryBackoff: true,
+      singletonKey: job.deliveryKey,
+      singletonSeconds: job.deliveryKey ? 7 * 24 * 60 * 60 : undefined,
+    },
   );
 }
 
@@ -316,6 +322,7 @@ authRouter.get("/oidc/callback", async (c) => {
         linkUrl: publicUrl(`/api/auth/oidc/link/confirm?token=${encodeURIComponent(secret)}`),
         providerName: env.AUTH_OIDC_NAME,
         expiresAt: token.expiresAt.toISOString(),
+        deliveryKey: `oidc-link-${token.id}`,
       });
       addSpanEvent("auth.oidc_link_email_sent");
       logger.info("OIDC link confirmation email queued", { userId: err.userId });
@@ -448,6 +455,7 @@ authRouter.post("/password-reset/request", async (c) => {
         to: user.email,
         resetUrl: publicUrl(`/reset-password?token=${encodeURIComponent(secret)}`),
         expiresAt: token.expiresAt.toISOString(),
+        deliveryKey: `password-reset-${token.id}`,
       });
       logger.info("password reset email queued", { userId: user.id });
       void writeAudit({

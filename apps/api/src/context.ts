@@ -1,7 +1,7 @@
 import { type Action, authorize, type Principal, type ResourceRef } from "@hootifactory/auth";
 import { env } from "@hootifactory/config";
 import type { EnqueueScanInput, RepoContext, ResolvedRepo } from "@hootifactory/core";
-import { artifacts, db } from "@hootifactory/db";
+import { artifacts, db, eq } from "@hootifactory/db";
 import { addSpanEvent, captureTelemetryContext, withSpan } from "@hootifactory/observability";
 import { enqueue, QUEUES } from "@hootifactory/queue";
 import { blobStore } from "@hootifactory/storage";
@@ -57,11 +57,27 @@ export function buildRepoContext(repo: ResolvedRepo, principal: Principal): Repo
             span.setAttribute("artifact.id", artifact.id);
             // Bounded retry with backoff so a transient failure recovers but a
             // poisoned job can't retry-storm the queue.
-            await enqueue(
-              QUEUES.scanArtifact,
-              { artifactId: artifact.id, telemetry: captureTelemetryContext() },
-              { retryLimit: 5, retryDelay: 30, retryBackoff: true },
-            );
+            try {
+              await enqueue(
+                QUEUES.scanArtifact,
+                { artifactId: artifact.id, telemetry: captureTelemetryContext() },
+                { retryLimit: 5, retryDelay: 30, retryBackoff: true },
+              );
+            } catch (err) {
+              const message = err instanceof Error ? err.message : String(err);
+              await db
+                .update(artifacts)
+                .set({
+                  state: "quarantined",
+                  policyDecision: {
+                    scanStatus: "enqueue_failed",
+                    error: message.slice(0, 2000),
+                    failedAt: new Date().toISOString(),
+                  },
+                })
+                .where(eq(artifacts.id, artifact.id));
+              throw err;
+            }
             logger.debug("scan artifact enqueued", {
               artifactId: artifact.id,
               digest: input.digest,

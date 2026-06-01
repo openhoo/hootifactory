@@ -60,6 +60,9 @@ export const packageVersions = pgTable(
   (t) => [
     uniqueIndex("package_versions_pkg_version_uq").on(t.packageId, t.version),
     index("package_versions_live_idx").on(t.packageId).where(sql`${t.deletedAt} is null`),
+    index("package_versions_org_idx").on(t.orgId),
+    index("package_versions_published_by_user_idx").on(t.publishedByUserId),
+    index("package_versions_published_by_token_idx").on(t.publishedByTokenId),
   ],
 );
 
@@ -77,5 +80,8 @@ export const versionTags = pgTable(
       .references(() => packageVersions.id, { onDelete: "cascade" }),
     ...timestamps(),
   },
-  (t) => [uniqueIndex("version_tags_pkg_tag_uq").on(t.packageId, t.tag)],
+  (t) => [
+    uniqueIndex("version_tags_pkg_tag_uq").on(t.packageId, t.tag),
+    index("version_tags_version_idx").on(t.versionId),
+  ],
 );

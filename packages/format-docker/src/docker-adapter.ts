@@ -12,6 +12,7 @@ import {
   type RouteEntry,
   type RouteMatch,
   releaseBlobRef,
+  storeBlobStreamWithRef,
   storeBlobWithRef,
   upsertPackageVersion,
   z,
@@ -38,11 +39,59 @@ import {
   ociManifestReferences,
 } from "@hootifactory/types";
 
-function concat(a: Uint8Array, b: Uint8Array): Uint8Array {
-  const out = new Uint8Array(a.length + b.length);
-  out.set(a, 0);
-  out.set(b, a.length);
-  return out;
+interface UploadChunk {
+  key: string;
+  size: number;
+}
+
+interface UploadMultipartState {
+  chunks: UploadChunk[];
+}
+
+function uploadMultipartState(raw: string | null): UploadMultipartState {
+  if (!raw) return { chunks: [] };
+  try {
+    const parsed = JSON.parse(raw) as { chunks?: UploadChunk[] };
+    return {
+      chunks: Array.isArray(parsed.chunks)
+        ? parsed.chunks.filter((chunk) => chunk.key && chunk.size >= 0)
+        : [],
+    };
+  } catch {
+    return { chunks: [] };
+  }
+}
+
+function uploadChunkStream(
+  ctx: RepoContext,
+  chunks: UploadChunk[],
+  extra?: Uint8Array,
+): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    async start(controller) {
+      try {
+        for (const chunk of chunks) {
+          const bytes = await ctx.blobs.bytesAtKey(chunk.key);
+          if (bytes.byteLength !== chunk.size) {
+            throw Errors.blobUploadInvalid({
+              reason: "staging chunk size mismatch",
+              expected: chunk.size,
+              actual: bytes.byteLength,
+            });
+          }
+          controller.enqueue(bytes);
+        }
+        if (extra?.byteLength) controller.enqueue(extra);
+        controller.close();
+      } catch (err) {
+        controller.error(err);
+      }
+    },
+  });
+}
+
+async function deleteUploadChunks(ctx: RepoContext, chunks: UploadChunk[]): Promise<void> {
+  await Promise.all(chunks.map((chunk) => ctx.blobs.deleteKey(chunk.key).catch(() => {})));
 }
 
 async function bodyBytes(req: Request): Promise<Uint8Array> {
@@ -213,25 +262,6 @@ function validateManifest(parsed: OciManifest, mediaType: string): void {
     validateDescriptorArray(parsed.blobs, "blobs");
     return;
   }
-}
-
-function acceptsManifestMediaType(req: Request, mediaType: string): boolean {
-  const accept = req.headers.get("accept");
-  if (!accept) return true;
-  for (const raw of accept.split(",")) {
-    const [typePart, ...params] = raw.split(";");
-    const accepted = normalizeMediaType(typePart);
-    if (!accepted) continue;
-    const q = params
-      .map((p) => p.trim())
-      .find((p) => p.startsWith("q="))
-      ?.slice(2);
-    if (q !== undefined && Number(q) <= 0) continue;
-    if (accepted === "*/*" || accepted === "application/json") return true;
-    if (accepted.endsWith("/*") && mediaType.startsWith(`${accepted.slice(0, -1)}`)) return true;
-    if (accepted === mediaType) return true;
-  }
-  return false;
 }
 
 function parseManifestRaw(raw: string): OciManifest {
@@ -640,7 +670,7 @@ export class DockerAdapter implements FormatAdapter {
   private async getManifest(
     image: string,
     reference: string,
-    req: Request,
+    _req: Request,
     ctx: RepoContext,
     headOnly: boolean,
   ): Promise<Response> {
@@ -649,13 +679,6 @@ export class DockerAdapter implements FormatAdapter {
     if (!m) throw Errors.manifestUnknown({ reference });
     if (await isArtifactBlocked(ctx, m.digest))
       throw Errors.denied({ reason: "blocked by scan policy" });
-    if (!acceptsManifestMediaType(req, m.mediaType)) {
-      throw Errors.manifestUnknown({
-        reference,
-        reason: "requested manifest media type is not acceptable",
-        mediaType: m.mediaType,
-      });
-    }
     const headers = {
       "content-type": m.mediaType,
       "docker-content-digest": m.digest,
@@ -1141,6 +1164,7 @@ export class DockerAdapter implements FormatAdapter {
     if (s.state !== "open") throw Errors.blobUploadUnknown({ uuid, state: s.state });
     if (s.expiresAt.getTime() <= Date.now()) {
       await ctx.blobs.deleteKey(s.storageKey).catch(() => {});
+      await deleteUploadChunks(ctx, uploadMultipartState(s.multipart).chunks);
       await ctx.db
         .update(uploadSessions)
         .set({ state: "aborted" })
@@ -1163,6 +1187,7 @@ export class DockerAdapter implements FormatAdapter {
     if (s.state !== "open") throw Errors.blobUploadUnknown({ uuid, state: s.state });
     if (s.expiresAt.getTime() <= Date.now()) {
       await ctx.blobs.deleteKey(s.storageKey).catch(() => {});
+      await deleteUploadChunks(ctx, uploadMultipartState(s.multipart).chunks);
       await tx
         .update(uploadSessions)
         .set({ state: "aborted" })
@@ -1196,24 +1221,28 @@ export class DockerAdapter implements FormatAdapter {
   }
 
   private async appendChunk(
-    session: { storageKey: string; offsetBytes: number },
+    session: { id: string; storageKey: string; offsetBytes: number; multipart: string | null },
     chunk: Uint8Array,
     ctx: RepoContext,
-  ): Promise<number> {
-    // NOTE: read-modify-write; fine for v1 test images. Large layers should use
-    // S3 multipart streaming (Phase 4 hardening).
-    const existing =
-      session.offsetBytes > 0 ? await ctx.blobs.bytesAtKey(session.storageKey) : new Uint8Array(0);
-    if (existing.length !== session.offsetBytes) {
+  ): Promise<{ offset: number; multipart: string }> {
+    const state = uploadMultipartState(session.multipart);
+    const existing = state.chunks.reduce((sum, part) => sum + part.size, 0);
+    if (existing !== session.offsetBytes) {
       throw Errors.blobUploadInvalid({
         reason: "staging offset mismatch",
         expected: session.offsetBytes,
-        actual: existing.length,
+        actual: existing,
       });
     }
-    const combined = chunk.length ? concat(existing, chunk) : existing;
-    await ctx.blobs.putAtKey(session.storageKey, combined);
-    return combined.length;
+    if (chunk.length > 0) {
+      const key = `${session.storageKey}/chunks/${state.chunks.length}`;
+      await ctx.blobs.putAtKey(key, chunk);
+      state.chunks.push({ key, size: chunk.length });
+    }
+    return {
+      offset: state.chunks.reduce((sum, part) => sum + part.size, 0),
+      multipart: JSON.stringify(state),
+    };
   }
 
   private async uploadStatus(image: string, uuid: string, ctx: RepoContext): Promise<Response> {
@@ -1238,10 +1267,10 @@ export class DockerAdapter implements FormatAdapter {
     const offset = await ctx.db.transaction(async (tx) => {
       const s = await this.loadOpenSessionForUpdateTx(image, uuid, ctx, tx);
       validateContentRange(req, s.offsetBytes, chunk.length);
-      const nextOffset = await this.appendChunk(s, chunk, ctx);
+      const next = await this.appendChunk(s, chunk, ctx);
       await tx
         .update(uploadSessions)
-        .set({ offsetBytes: nextOffset })
+        .set({ offsetBytes: next.offset, multipart: next.multipart })
         .where(
           and(
             eq(uploadSessions.id, uuid),
@@ -1250,7 +1279,7 @@ export class DockerAdapter implements FormatAdapter {
             eq(uploadSessions.state, "open"),
           ),
         );
-      return nextOffset;
+      return next.offset;
     });
     return new Response(null, {
       status: 202,
@@ -1280,23 +1309,29 @@ export class DockerAdapter implements FormatAdapter {
     const committed = await ctx.db.transaction(async (tx) => {
       const s = await this.loadOpenSessionForUpdateTx(image, uuid, ctx, tx);
       validateContentRange(req, s.offsetBytes, chunk.length);
-      const existing =
-        s.offsetBytes > 0 ? await ctx.blobs.bytesAtKey(s.storageKey) : new Uint8Array(0);
-      if (existing.length !== s.offsetBytes) {
+      const state = uploadMultipartState(s.multipart);
+      const existing = state.chunks.reduce((sum, part) => sum + part.size, 0);
+      if (existing !== s.offsetBytes) {
         throw Errors.blobUploadInvalid({
           reason: "staging offset mismatch",
           expected: s.offsetBytes,
-          actual: existing.length,
+          actual: existing,
         });
       }
-      const full = chunk.length ? concat(existing, chunk) : existing;
-      if (computeDigest(full) !== digest) {
-        throw Errors.digestInvalid({ expected: digest, got: computeDigest(full) });
-      }
-      await storeBlobWithRef(ctx, { data: full, kind: "oci_layer", scope: image });
+      const stored = await storeBlobStreamWithRef(ctx, {
+        data: uploadChunkStream(ctx, state.chunks, chunk),
+        expectedDigest: digest,
+        kind: "oci_layer",
+        scope: image,
+      }).catch((err) => {
+        if (err instanceof Error && err.name === "InvalidDigestError") {
+          throw Errors.digestInvalid({ expected: digest, error: err.message });
+        }
+        throw err;
+      });
       await tx
         .update(uploadSessions)
-        .set({ state: "committed", offsetBytes: full.length })
+        .set({ state: "committed", offsetBytes: stored.size })
         .where(
           and(
             eq(uploadSessions.id, uuid),
@@ -1305,9 +1340,10 @@ export class DockerAdapter implements FormatAdapter {
             eq(uploadSessions.state, "open"),
           ),
         );
-      return { size: full.length, storageKey: s.storageKey };
+      return { size: stored.size, storageKey: s.storageKey, chunks: state.chunks };
     });
     await ctx.blobs.deleteKey(committed.storageKey).catch(() => {});
+    await deleteUploadChunks(ctx, committed.chunks);
 
     return new Response(null, {
       status: 201,
@@ -1325,6 +1361,7 @@ export class DockerAdapter implements FormatAdapter {
     await ctx.db.transaction(async (tx) => {
       const s = await this.loadOpenSessionForUpdateTx(image, uuid, ctx, tx);
       await ctx.blobs.deleteKey(s.storageKey).catch(() => {});
+      await deleteUploadChunks(ctx, uploadMultipartState(s.multipart).chunks);
       await tx
         .delete(uploadSessions)
         .where(

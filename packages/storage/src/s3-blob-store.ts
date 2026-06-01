@@ -1,3 +1,7 @@
+import { createWriteStream } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { env } from "@hootifactory/config";
 import { S3Client } from "bun";
 import { blobKey, computeDigest, InvalidDigestError } from "./digest";
@@ -11,6 +15,39 @@ import type { BlobData, BlobStat, BlobStore, PutResult } from "./types";
  */
 function isObjectMissing(err: unknown): boolean {
   return !!err && typeof err === "object" && (err as { code?: unknown }).code === "NoSuchKey";
+}
+
+async function streamToTempFile(
+  data: ReadableStream<Uint8Array>,
+): Promise<{ path: string; digest: string; size: number }> {
+  const dir = await mkdtemp(join(tmpdir(), "hootifactory-blob-"));
+  const path = join(dir, "payload");
+  const out = createWriteStream(path, { flags: "wx" });
+  const hasher = new Bun.CryptoHasher("sha256");
+  const reader = data.getReader();
+  let size = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      hasher.update(value);
+      size += value.byteLength;
+      if (!out.write(value)) {
+        await new Promise<void>((resolve, reject) => {
+          out.once("drain", resolve);
+          out.once("error", reject);
+        });
+      }
+    }
+    await new Promise<void>((resolve, reject) => {
+      out.end((err?: Error | null) => (err ? reject(err) : resolve()));
+    });
+    return { path, digest: `sha256:${hasher.digest("hex")}`, size };
+  } catch (err) {
+    out.destroy();
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
+    throw err;
+  }
 }
 
 export interface S3BlobStoreOptions {
@@ -88,6 +125,26 @@ export class S3BlobStore implements BlobStore {
     return { digest, size: bytes.byteLength, deduped: false };
   }
 
+  async putStream(data: ReadableStream<Uint8Array>, expectedDigest?: string): Promise<PutResult> {
+    const temp = await streamToTempFile(data);
+    const dir = temp.path.slice(0, temp.path.lastIndexOf("/"));
+    try {
+      if (expectedDigest && temp.digest !== expectedDigest) {
+        throw new InvalidDigestError(
+          `putStream mismatch: expected ${expectedDigest}, got ${temp.digest}`,
+        );
+      }
+      const key = this.blobKey(temp.digest);
+      if (await this.existsKey(key)) {
+        return { digest: temp.digest, size: temp.size, deduped: true };
+      }
+      await this.file(key).write(Bun.file(temp.path));
+      return { digest: temp.digest, size: temp.size, deduped: false };
+    } finally {
+      await rm(dir, { recursive: true, force: true }).catch(() => {});
+    }
+  }
+
   async delete(digest: string): Promise<void> {
     await this.deleteKey(this.blobKey(digest));
   }
@@ -129,17 +186,9 @@ export class S3BlobStore implements BlobStore {
   }
 
   async promoteToBlob(stagingKey: string, digest: string): Promise<void> {
-    // Buffers the staged object and verifies it hashes to `digest` before
-    // committing it under the content-addressed key — the CAS invariant must
-    // hold even for this raw-key promotion path.
-    const bytes = await this.bytesAtKey(stagingKey);
-    const actual = computeDigest(bytes);
-    if (actual !== digest) {
-      throw new InvalidDigestError(`promote mismatch: expected ${digest}, got ${actual}`);
-    }
     const key = this.blobKey(digest);
     if (await this.existsKey(key)) return; // idempotent dedup
-    await this.file(key).write(bytes);
+    await this.putStream(this.readKey(stagingKey), digest);
   }
 
   presignPutKey(key: string, expiresIn = 300): string {

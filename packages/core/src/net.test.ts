@@ -11,6 +11,9 @@ describe("SSRF URL guards", () => {
     expect(isPrivateHost("169.254.169.254")).toBe(true);
     expect(isPrivateHost("[::1]")).toBe(true);
     expect(isPrivateHost("::ffff:127.0.0.1")).toBe(true);
+    expect(isPrivateHost("[::ffff:a9fe:a9fe]")).toBe(true);
+    expect(isPrivateHost("fe81::1")).toBe(true);
+    expect(isPrivateHost("fec0::1")).toBe(true);
     expect(isPrivateHost("example.com")).toBe(false);
     expect(isPrivateHost("93.184.216.34")).toBe(false);
   });

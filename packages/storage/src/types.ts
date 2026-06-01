@@ -33,6 +33,8 @@ export interface BlobStore {
   getBytes(digest: string): Promise<Uint8Array>;
   /** Hash + dedup + store in-memory data. */
   put(data: Exclude<BlobData, ReadableStream<Uint8Array>>): Promise<PutResult>;
+  /** Hash + dedup + store streaming data without retaining the full payload in memory. */
+  putStream(data: ReadableStream<Uint8Array>, expectedDigest?: string): Promise<PutResult>;
   /** GC only — removes bytes from the CAS. */
   delete(digest: string): Promise<void>;
   presignGet(digest: string, expiresIn?: number): string;

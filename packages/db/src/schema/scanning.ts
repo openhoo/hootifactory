@@ -164,7 +164,10 @@ export const scanPolicies = pgTable(
     maxCvss: doublePrecision(),
     ...timestamps(),
   },
-  (t) => [index("scan_policies_org_idx").on(t.orgId)],
+  (t) => [
+    uniqueIndex("scan_policies_org_pattern_uq").on(t.orgId, t.repositoryPattern),
+    index("scan_policies_org_idx").on(t.orgId),
+  ],
 );
 
 export const osvCache = pgTable(

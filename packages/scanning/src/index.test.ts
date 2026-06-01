@@ -48,6 +48,9 @@ describe("heuristic scanning", () => {
     const calls: Parameters<typeof fetch>[] = [];
     globalThis.fetch = (async (...args: Parameters<typeof fetch>) => {
       calls.push(args);
+      if (String(args[0]).endsWith("/v1/vulns/GHSA-123")) {
+        return Response.json({ database_specific: { severity: "critical" } });
+      }
       return Response.json({
         results: [{ vulns: [{ id: "GHSA-123" }] }, { vulns: [] }],
       });
@@ -60,7 +63,7 @@ describe("heuristic scanning", () => {
         "https://osv.test",
       );
 
-      expect(calls).toHaveLength(1);
+      expect(calls).toHaveLength(2);
       const [url, init] = calls[0]!;
       expect(url).toBe("https://osv.test/v1/querybatch");
       expect(JSON.parse(String((init as RequestInit).body))).toEqual({
@@ -73,7 +76,7 @@ describe("heuristic scanning", () => {
         {
           type: "vuln",
           vulnId: "GHSA-123",
-          severity: "high",
+          severity: "critical",
           packageName: "vulnerable",
           packageVersion: "1.2.3",
           purl: "pkg:npm/vulnerable@1.2.3",

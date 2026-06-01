@@ -69,11 +69,7 @@ function extractMultipartFile(contentType: string, body: Uint8Array): Uint8Array
     const dataStart = headerEnd + HEADER_END.length;
     const next = indexOfBytes(body, delimiter, dataStart);
     if (next < 0) return null;
-    if (
-      headers.includes("content-disposition:") &&
-      headers.includes("filename") &&
-      next >= dataStart
-    ) {
+    if (headers.includes("content-disposition:") && next >= dataStart) {
       return body.subarray(dataStart, next);
     }
     cursor = next + CRLF.length;
@@ -84,6 +80,14 @@ function extractMultipartFile(contentType: string, body: Uint8Array): Uint8Array
 
 function validPrerelease(pre: string): boolean {
   return pre.split(".").every((part) => /^[0-9A-Za-z-]+$/.test(part));
+}
+
+function escapeXml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 /** NuGet version normalization: drop a zero 4th segment + build metadata, lowercase prerelease. */
@@ -122,7 +126,7 @@ const NugetFileSchema = z
   .string()
   .min(1)
   .max(512)
-  .regex(/^[^/\\]+\.nupkg$/i, "invalid NuGet package filename");
+  .regex(/^[^/\\]+\.(?:nupkg|nuspec)$/i, "invalid NuGet package filename");
 const NugetPublishQuerySchema = z.strictObject({
   id: NugetIdSchema.optional(),
   version: NugetVersionInputSchema.optional(),
@@ -147,7 +151,30 @@ function compareNugetVersions(a: string, b: string): number {
   }
   if (!pa.pre && pb.pre) return 1;
   if (pa.pre && !pb.pre) return -1;
-  if (pa.pre && pb.pre) return pa.pre < pb.pre ? -1 : pa.pre > pb.pre ? 1 : 0;
+  if (pa.pre && pb.pre) return comparePrerelease(pa.pre, pb.pre);
+  return 0;
+}
+
+function comparePrerelease(a: string, b: string): number {
+  const aa = a.split(".");
+  const bb = b.split(".");
+  const max = Math.max(aa.length, bb.length);
+  for (let i = 0; i < max; i++) {
+    const x = aa[i];
+    const y = bb[i];
+    if (x === undefined) return -1;
+    if (y === undefined) return 1;
+    const xn = /^(0|[1-9]\d*)$/.test(x);
+    const yn = /^(0|[1-9]\d*)$/.test(y);
+    if (xn && yn) {
+      const diff = Number(x) - Number(y);
+      if (diff !== 0) return diff;
+    } else if (xn !== yn) {
+      return xn ? -1 : 1;
+    } else if (x !== y) {
+      return x < y ? -1 : 1;
+    }
+  }
   return 0;
 }
 
@@ -168,6 +195,7 @@ export class NugetAdapter implements FormatAdapter {
   routes(): RouteEntry[] {
     return [
       { method: "GET", pattern: "/v3/index.json", handlerId: "serviceIndex" },
+      { method: "GET", pattern: "/v3/query", handlerId: "search" },
       { method: "PUT", pattern: "/v3/package", handlerId: "publish" },
       { method: "DELETE", pattern: "/v3/package/:id/:version", handlerId: "delete" },
       { method: "POST", pattern: "/v3/package/:id/:version", handlerId: "relist" },
@@ -195,8 +223,11 @@ export class NugetAdapter implements FormatAdapter {
             { "@id": `${base}/v3-flatcontainer/`, "@type": "PackageBaseAddress/3.0.0" },
             { "@id": `${base}/v3/package`, "@type": "PackagePublish/2.0.0" },
             { "@id": `${base}/v3/registrations/`, "@type": "RegistrationsBaseUrl/3.6.0" },
+            { "@id": `${base}/v3/query`, "@type": "SearchQueryService/3.5.0" },
           ],
         });
+      case "search":
+        return this.nugetSearch(req, base, ctx);
       case "publish":
         return this.publish(req, ctx);
       case "delete":
@@ -228,14 +259,20 @@ export class NugetAdapter implements FormatAdapter {
     return pkg ?? null;
   }
 
-  private async listVersions(ctx: RepoContext, packageId: string) {
+  private async listVersions(
+    ctx: RepoContext,
+    packageId: string,
+    opts: { includeUnlisted?: boolean } = {},
+  ) {
     const rows = await ctx.db
       .select({ version: packageVersions.version, metadata: packageVersions.metadata })
       .from(packageVersions)
       // Live versions only; sorted by SemVer so flat-container + registration bounds are correct.
       .where(and(eq(packageVersions.packageId, packageId), isNull(packageVersions.deletedAt)));
     return rows
-      .filter((r) => (r.metadata as unknown as NugetVersionMeta).listed !== false)
+      .filter(
+        (r) => opts.includeUnlisted || (r.metadata as unknown as NugetVersionMeta).listed !== false,
+      )
       .sort((a, b) => compareNugetVersions(a.version, b.version));
   }
 
@@ -246,7 +283,7 @@ export class NugetAdapter implements FormatAdapter {
     });
     const pkg = await this.findPkg(ctx, id);
     if (!pkg) return new Response("Not Found", { status: 404 });
-    const rows = await this.listVersions(ctx, pkg.id);
+    const rows = await this.listVersions(ctx, pkg.id, { includeUnlisted: true });
     if (rows.length === 0) return new Response("Not Found", { status: 404 });
     return Response.json({ versions: rows.map((r) => r.version) });
   }
@@ -258,7 +295,7 @@ export class NugetAdapter implements FormatAdapter {
     });
     const pkg = await this.findPkg(ctx, id);
     if (!pkg) return new Response("Not Found", { status: 404 });
-    const rows = await this.listVersions(ctx, pkg.id);
+    const rows = await this.listVersions(ctx, pkg.id, { includeUnlisted: true });
     const lower = id.toLowerCase();
     const registrationUrl = `${base}/v3/registrations/${lower}/index.json`;
     const items = rows.map((r) => {
@@ -281,7 +318,7 @@ export class NugetAdapter implements FormatAdapter {
           "@type": "PackageDetails",
           id,
           version: r.version,
-          listed: true,
+          listed: metadata.listed !== false,
           packageContent: content,
           ...(dependencyGroups.length > 0 ? { dependencyGroups } : {}),
         },
@@ -302,6 +339,37 @@ export class NugetAdapter implements FormatAdapter {
             },
           ];
     return Response.json({ count: pages.length, items: pages });
+  }
+
+  private async nugetSearch(req: Request, base: string, ctx: RepoContext): Promise<Response> {
+    const url = new URL(req.url);
+    const q = (url.searchParams.get("q") ?? "").trim().toLowerCase();
+    const skip = Math.max(0, Number(url.searchParams.get("skip") ?? 0) || 0);
+    const take = Math.min(100, Math.max(0, Number(url.searchParams.get("take") ?? 20) || 20));
+    const rows = await ctx.db
+      .select({ id: packages.id, name: packages.name })
+      .from(packages)
+      .where(eq(packages.repositoryId, ctx.repo.id));
+    const data = [];
+    for (const pkg of rows) {
+      if (q && !pkg.name.toLowerCase().includes(q)) continue;
+      const versions = await this.listVersions(ctx, pkg.id);
+      if (versions.length === 0) continue;
+      const latest = versions.at(-1)!;
+      const lower = pkg.name.toLowerCase();
+      data.push({
+        id: pkg.name,
+        version: latest.version,
+        versions: versions.map((v) => ({
+          version: v.version,
+          downloads: 0,
+          "@id": `${base}/v3/registrations/${lower}/${v.version}.json`,
+        })),
+        registration: `${base}/v3/registrations/${lower}/index.json`,
+        totalDownloads: 0,
+      });
+    }
+    return Response.json({ totalHits: data.length, data: data.slice(skip, skip + take) });
   }
 
   private async download(
@@ -328,7 +396,8 @@ export class NugetAdapter implements FormatAdapter {
     const norm = normalizeNugetVersion(version);
     if (!norm) throw Errors.notFound();
     // The filename segment must match the canonical {id}.{version}.nupkg this server builds.
-    const expected = `${id.toLowerCase()}.${norm}.nupkg`;
+    const ext = file.toLowerCase().endsWith(".nuspec") ? "nuspec" : "nupkg";
+    const expected = `${id.toLowerCase()}.${norm}.${ext}`;
     if (file && file.toLowerCase() !== expected) throw Errors.notFound();
     const [v] = await ctx.db
       .select({ metadata: packageVersions.metadata })
@@ -343,6 +412,12 @@ export class NugetAdapter implements FormatAdapter {
       .limit(1);
     const digest = (v?.metadata as unknown as NugetVersionMeta | undefined)?.nupkgDigest;
     if (!digest || !(await ctx.blobs.exists(digest))) throw Errors.notFound();
+    if (file.toLowerCase().endsWith(".nuspec")) {
+      return new Response(
+        `<?xml version="1.0" encoding="utf-8"?>\n<package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd"><metadata><id>${escapeXml(id)}</id><version>${escapeXml(norm)}</version></metadata></package>\n`,
+        { headers: { "content-type": "application/xml; charset=utf-8" } },
+      );
+    }
     if (await isArtifactBlocked(ctx, digest)) {
       return new Response("blocked by scan policy", { status: 403 });
     }

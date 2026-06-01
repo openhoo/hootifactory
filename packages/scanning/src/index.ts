@@ -87,6 +87,7 @@ export interface ScannerRuntimeOptions {
   trivyServerUrl?: string;
   clamavRestUrl?: string;
   cliRuntime?: ScannerCliRuntime;
+  timeoutMs?: number;
   dockerCommand?: string;
   syftImage?: string;
   grypeImage?: string;
@@ -180,6 +181,7 @@ export function dockerScannerRunArgs(input: {
 
 async function runScannerCli(input: {
   args: string[];
+  allowedExitCodes?: number[];
   dockerEntryPoint?: string;
   hostBins: string[];
   image: string;
@@ -200,14 +202,18 @@ async function runScannerCli(input: {
         target,
       })
     : input.args;
-  try {
-    const proc = Bun.spawn([command, ...args], { stdout: "pipe", stderr: "ignore" });
-    const text = await new Response(proc.stdout).text();
-    await proc.exited;
-    return text;
-  } catch {
-    return null;
+  const proc = Bun.spawn([command, ...args], {
+    stdout: "pipe",
+    stderr: "pipe",
+    signal: AbortSignal.timeout(input.options.timeoutMs ?? 120_000),
+  });
+  const text = await new Response(proc.stdout).text();
+  const stderr = await new Response(proc.stderr).text();
+  const exitCode = await proc.exited;
+  if (!(input.allowedExitCodes ?? [0]).includes(exitCode)) {
+    throw new Error(`${command} exited ${exitCode}: ${stderr.slice(0, 1000)}`);
   }
+  return text;
 }
 
 /** Detect which external scanner clients can be run. Docker-backed clients are the default. */
@@ -230,6 +236,7 @@ export async function osvScanDependencies(
   ecosystem: string,
   deps: Record<string, string> | undefined,
   apiUrl = "https://api.osv.dev",
+  options: { timeoutMs?: number } = {},
 ): Promise<NormalizedFinding[]> {
   const entries = Object.entries(deps ?? {});
   if (!entries.length) return [];
@@ -237,6 +244,7 @@ export async function osvScanDependencies(
     const res = await fetch(`${apiUrl}/v1/querybatch`, {
       method: "POST",
       headers: { "content-type": "application/json" },
+      signal: AbortSignal.timeout(options.timeoutMs ?? 30_000),
       body: JSON.stringify({
         queries: entries.map(([name, version]) => ({
           package: { ecosystem, name },
@@ -246,24 +254,48 @@ export async function osvScanDependencies(
     });
     if (!res.ok) return [];
     const data = (await res.json()) as { results?: { vulns?: { id: string }[] }[] };
+    const severityCache = new Map<string, Severity>();
+    async function osvSeverity(id: string): Promise<Severity> {
+      const cached = severityCache.get(id);
+      if (cached) return cached;
+      let severity: Severity = "high";
+      const detail = await fetch(`${apiUrl}/v1/vulns/${encodeURIComponent(id)}`, {
+        signal: AbortSignal.timeout(options.timeoutMs ?? 30_000),
+      }).catch(() => null);
+      if (detail?.ok) {
+        const vuln = (await detail.json().catch(() => null)) as {
+          database_specific?: { severity?: unknown };
+          severity?: { score?: unknown }[];
+        } | null;
+        severity = normalizeSeverity(
+          typeof vuln?.database_specific?.severity === "string"
+            ? vuln.database_specific.severity
+            : undefined,
+        );
+        for (const item of vuln?.severity ?? []) {
+          const parsed = normalizeSeverity(typeof item.score === "string" ? item.score : "");
+          if (parsed !== "unknown") severity = parsed;
+        }
+      }
+      severityCache.set(id, severity);
+      return severity;
+    }
     const out: NormalizedFinding[] = [];
-    (data.results ?? []).forEach((r, i) => {
+    for (let i = 0; i < (data.results ?? []).length; i++) {
+      const r = data.results?.[i];
       const entry = entries[i];
-      if (!entry) return;
+      if (!entry || !r) continue;
       for (const v of r.vulns ?? []) {
         out.push({
           type: "vuln",
           vulnId: v.id,
-          // OSV's querybatch returns only ids (no severity). Default a confirmed
-          // match to a conservative "high" so it is not silently non-blocking;
-          // a richer per-id severity lookup is a follow-up.
-          severity: "high",
+          severity: await osvSeverity(v.id),
           packageName: entry[0],
           packageVersion: stripRange(entry[1]),
           purl: `pkg:${ecosystem.toLowerCase()}/${entry[0]}@${stripRange(entry[1])}`,
         });
       }
-    });
+    }
     return out;
   } catch {
     return [];
@@ -276,34 +308,30 @@ export async function runGrypeIfAvailable(
   options: ScannerRuntimeOptions = {},
 ): Promise<NormalizedFinding[]> {
   if (!detectScanners(options).grype) return [];
-  try {
-    const resolvedTarget = resolve(target);
-    const text = await runScannerCli({
-      args: [resolvedTarget, "-o", "json"],
-      hostBins: ["grype"],
-      image: options.grypeImage ?? DEFAULT_SCANNER_IMAGES.grype,
-      options,
-      target: resolvedTarget,
-    });
-    if (!text) return [];
-    const data = JSON.parse(text) as {
-      matches?: {
-        vulnerability?: { id?: string; severity?: string; fix?: { versions?: string[] } };
-        artifact?: { name?: string; version?: string; purl?: string };
-      }[];
-    };
-    return (data.matches ?? []).map((m) => ({
-      type: "vuln" as const,
-      vulnId: m.vulnerability?.id,
-      severity: normalizeSeverity(m.vulnerability?.severity),
-      packageName: m.artifact?.name,
-      packageVersion: m.artifact?.version,
-      purl: m.artifact?.purl,
-      fixedVersion: m.vulnerability?.fix?.versions?.[0],
-    }));
-  } catch {
-    return [];
-  }
+  const resolvedTarget = resolve(target);
+  const text = await runScannerCli({
+    args: [resolvedTarget, "-o", "json"],
+    hostBins: ["grype"],
+    image: options.grypeImage ?? DEFAULT_SCANNER_IMAGES.grype,
+    options,
+    target: resolvedTarget,
+  });
+  if (!text) throw new Error("grype produced no output");
+  const data = JSON.parse(text) as {
+    matches?: {
+      vulnerability?: { id?: string; severity?: string; fix?: { versions?: string[] } };
+      artifact?: { name?: string; version?: string; purl?: string };
+    }[];
+  };
+  return (data.matches ?? []).map((m) => ({
+    type: "vuln" as const,
+    vulnId: m.vulnerability?.id,
+    severity: normalizeSeverity(m.vulnerability?.severity),
+    packageName: m.artifact?.name,
+    packageVersion: m.artifact?.version,
+    purl: m.artifact?.purl,
+    fixedVersion: m.vulnerability?.fix?.versions?.[0],
+  }));
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -362,20 +390,16 @@ export async function runTrivyIfAvailable(
       ? { trivyServerUrl: serverUrlOrOptions }
       : (serverUrlOrOptions ?? {});
   if (!detectScanners(options).trivy) return [];
-  try {
-    const resolvedTarget = resolve(target);
-    const text = await runScannerCli({
-      args: trivyFsArgs(resolvedTarget, options.trivyServerUrl),
-      hostBins: ["trivy"],
-      image: options.trivyImage ?? DEFAULT_SCANNER_IMAGES.trivy,
-      options,
-      target: resolvedTarget,
-    });
-    if (!text) return [];
-    return parseTrivyFindings(JSON.parse(text));
-  } catch {
-    return [];
-  }
+  const resolvedTarget = resolve(target);
+  const text = await runScannerCli({
+    args: trivyFsArgs(resolvedTarget, options.trivyServerUrl),
+    hostBins: ["trivy"],
+    image: options.trivyImage ?? DEFAULT_SCANNER_IMAGES.trivy,
+    options,
+    target: resolvedTarget,
+  });
+  if (!text) throw new Error("trivy produced no output");
+  return parseTrivyFindings(JSON.parse(text));
 }
 
 function clamAvFinding(name: string): NormalizedFinding {
@@ -429,34 +453,28 @@ export async function runClamAvIfAvailable(
       ? { clamavRestUrl: restUrlOrOptions }
       : (restUrlOrOptions ?? {});
   if (options.clamavRestUrl) {
-    try {
-      const res = await fetch(options.clamavRestUrl, {
-        method: "POST",
-        headers: { "content-type": "application/octet-stream" },
-        body: bytes,
-      });
-      if (!res.ok) return [];
-      return parseClamAvRestFindings(await res.json());
-    } catch {
-      return [];
-    }
+    const res = await fetch(options.clamavRestUrl, {
+      method: "POST",
+      headers: { "content-type": "application/octet-stream" },
+      signal: AbortSignal.timeout(options.timeoutMs ?? 120_000),
+      body: bytes,
+    });
+    if (!res.ok) throw new Error(`clamav REST returned ${res.status}`);
+    return parseClamAvRestFindings(await res.json());
   }
   if (!detectScanners(options).clamav) return [];
-  try {
-    const resolvedTarget = resolve(target);
-    const stdout = await runScannerCli({
-      args: ["--no-summary", resolvedTarget],
-      dockerEntryPoint: "clamscan",
-      hostBins: ["clamdscan", "clamscan"],
-      image: options.clamavImage ?? DEFAULT_SCANNER_IMAGES.clamav,
-      options,
-      target: resolvedTarget,
-    });
-    if (!stdout) return [];
-    return parseClamAvCliFindings(stdout);
-  } catch {
-    return [];
-  }
+  const resolvedTarget = resolve(target);
+  const stdout = await runScannerCli({
+    args: ["--no-summary", resolvedTarget],
+    allowedExitCodes: [0, 1],
+    dockerEntryPoint: "clamscan",
+    hostBins: ["clamdscan", "clamscan"],
+    image: options.clamavImage ?? DEFAULT_SCANNER_IMAGES.clamav,
+    options,
+    target: resolvedTarget,
+  });
+  if (!stdout) return [];
+  return parseClamAvCliFindings(stdout);
 }
 
 export async function runExternalScanners(
