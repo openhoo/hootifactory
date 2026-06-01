@@ -35,6 +35,20 @@ function publish(baseURL: string, mountPath: string, token: string, pkgName: str
   npm(["publish", "--registry", registry], dir);
 }
 
+function publishSucceeds(
+  baseURL: string,
+  mountPath: string,
+  token: string,
+  pkgName: string,
+): boolean {
+  try {
+    publish(baseURL, mountPath, token, pkgName);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function installAll(baseURL: string, mountPath: string, token: string, specs: string[]): string {
   const registry = `${baseURL}/${mountPath}/`;
   const dir = mkdtempSync(join(tmpdir(), "ins-"));
@@ -115,6 +129,7 @@ test.describe("virtual + proxy repositories (real npm)", () => {
     });
 
     const pkg = `up${Date.now().toString(36)}`;
+    expect(publishSucceeds(baseURL!, proxy.mountPath, token, `proxywrite${pkg}`)).toBe(false);
     publish(baseURL!, upstream.mountPath, token, pkg);
 
     const directTarballBeforeIngest = await owner.ctx.get(
@@ -129,6 +144,111 @@ test.describe("virtual + proxy repositories (real npm)", () => {
       `/${proxy.mountPath}/${pkg}/-/${pkg}-1.0.0.tgz`,
     );
     expect(localTarballAfterIngest.status()).toBe(200);
+  });
+
+  test("configuration rejects invalid virtual and proxy topology", async ({ baseURL }) => {
+    const owner = await setupOwner(baseURL!);
+    const other = await setupOwner(baseURL!);
+    const hosted = (
+      await repoFrom(await createRepo(owner.ctx, owner.orgId, { name: "top-host", format: "npm" }))
+    ).repository;
+    const goHosted = (
+      await repoFrom(await createRepo(owner.ctx, owner.orgId, { name: "top-go", format: "go" }))
+    ).repository;
+    const proxy = (
+      await repoFrom(
+        await createRepo(owner.ctx, owner.orgId, {
+          name: "top-proxy",
+          format: "npm",
+          kind: "proxy",
+        }),
+      )
+    ).repository;
+    const virtual = (
+      await repoFrom(
+        await createRepo(owner.ctx, owner.orgId, {
+          name: "top-virtual",
+          format: "npm",
+          kind: "virtual",
+        }),
+      )
+    ).repository;
+    const privateOther = (
+      await repoFrom(
+        await createRepo(other.ctx, other.orgId, { name: "top-private", format: "npm" }),
+      )
+    ).repository;
+
+    expect(
+      (
+        await owner.ctx.post(`/api/repositories/${hosted.id}/members`, {
+          data: { memberRepoId: hosted.id },
+        })
+      ).status(),
+    ).toBe(400);
+    expect(
+      (
+        await owner.ctx.post(`/api/repositories/${hosted.id}/upstreams`, {
+          data: { url: "https://registry.npmjs.org/" },
+        })
+      ).status(),
+    ).toBe(400);
+    expect(
+      (
+        await owner.ctx.post(`/api/repositories/${virtual.id}/upstreams`, {
+          data: { url: "https://registry.npmjs.org/" },
+        })
+      ).status(),
+    ).toBe(400);
+    expect(
+      (
+        await owner.ctx.post(`/api/repositories/${virtual.id}/members`, {
+          data: { memberRepoId: virtual.id },
+        })
+      ).status(),
+    ).toBe(400);
+    expect(
+      (
+        await owner.ctx.post(`/api/repositories/${virtual.id}/members`, {
+          data: { memberRepoId: goHosted.id },
+        })
+      ).status(),
+    ).toBe(400);
+    expect(
+      (
+        await owner.ctx.post(`/api/repositories/${virtual.id}/members`, {
+          data: { memberRepoId: proxy.id },
+        })
+      ).status(),
+    ).toBe(400);
+    expect(
+      (
+        await owner.ctx.post(`/api/repositories/${virtual.id}/members`, {
+          data: { memberRepoId: privateOther.id },
+        })
+      ).status(),
+    ).toBe(403);
+    expect(
+      (
+        await owner.ctx.post(`/api/repositories/${virtual.id}/members`, {
+          data: { memberRepoId: hosted.id, position: "first" },
+        })
+      ).status(),
+    ).toBe(400);
+    expect(
+      (
+        await owner.ctx.post(`/api/repositories/${proxy.id}/upstreams`, {
+          data: { url: "https://registry.npmjs.org/", priority: "first" },
+        })
+      ).status(),
+    ).toBe(400);
+    expect(
+      (
+        await owner.ctx.post(`/api/repositories/${virtual.id}/members`, {
+          data: { memberRepoId: hosted.id, position: 0 },
+        })
+      ).status(),
+    ).toBe(201);
   });
 });
 

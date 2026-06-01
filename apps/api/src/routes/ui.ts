@@ -39,11 +39,23 @@ import {
   scanPolicies,
   sql,
 } from "@hootifactory/db";
-import type { PackageFormat, Visibility } from "@hootifactory/types";
+import type { PackageFormat, RepoKind, Visibility } from "@hootifactory/types";
 import { type Context, Hono } from "hono";
 import type { AppEnv } from "../types";
 
 export const uiRouter = new Hono<AppEnv>();
+
+function isRepoKind(value: unknown): value is RepoKind {
+  return value === "hosted" || value === "proxy" || value === "virtual";
+}
+
+function isVisibility(value: unknown): value is Visibility {
+  return value === "private" || value === "public";
+}
+
+function isInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value);
+}
 
 uiRouter.get("/me", (c) => {
   const p = c.get("principal");
@@ -211,11 +223,44 @@ async function repoAdminGuard(c: Context<AppEnv>, repoId: string) {
 uiRouter.post("/repositories/:repoId/members", async (c) => {
   const guard = await repoAdminGuard(c, c.req.param("repoId"));
   if ("error" in guard) return guard.error;
+  if (guard.repo.kind !== "virtual") {
+    return c.json({ error: "members can only be added to virtual repositories" }, 400);
+  }
   const body = (await c.req.json().catch(() => null)) as {
     memberRepoId?: string;
     position?: number;
   } | null;
   if (!body?.memberRepoId) return c.json({ error: "memberRepoId required" }, 400);
+  if (body.position !== undefined && !isInteger(body.position)) {
+    return c.json({ error: "position must be an integer" }, 400);
+  }
+
+  const [member] = await db
+    .select()
+    .from(repositories)
+    .where(eq(repositories.id, body.memberRepoId))
+    .limit(1);
+  if (!member) return c.json({ error: "member repository not found" }, 404);
+  if (member.id === guard.repo.id) {
+    return c.json({ error: "virtual repositories cannot include themselves" }, 400);
+  }
+  if (member.format !== guard.repo.format) {
+    return c.json({ error: "virtual repository members must use the same format" }, 400);
+  }
+  if (member.kind !== "hosted") {
+    return c.json({ error: "virtual repository members must be hosted repositories" }, 400);
+  }
+  const memberDecision = await authorize(c.get("principal"), "read", {
+    type: "repository",
+    orgId: member.orgId,
+    repositoryId: member.id,
+    repositoryName: member.name,
+    visibility: member.visibility,
+  });
+  if (!memberDecision.allowed) {
+    return c.json({ error: "member repository is not readable" }, 403);
+  }
+
   await addVirtualMember(guard.repo.id, body.memberRepoId, body.position ?? 0);
   return c.json({ ok: true }, 201);
 });
@@ -223,8 +268,14 @@ uiRouter.post("/repositories/:repoId/members", async (c) => {
 uiRouter.post("/repositories/:repoId/upstreams", async (c) => {
   const guard = await repoAdminGuard(c, c.req.param("repoId"));
   if ("error" in guard) return guard.error;
+  if (guard.repo.kind !== "proxy") {
+    return c.json({ error: "upstreams can only be added to proxy repositories" }, 400);
+  }
   const body = (await c.req.json().catch(() => null)) as { url?: string; priority?: number } | null;
   if (!body?.url) return c.json({ error: "url required" }, 400);
+  if (body.priority !== undefined && !isInteger(body.priority)) {
+    return c.json({ error: "priority must be an integer" }, 400);
+  }
   // Reject private/loopback/metadata upstreams at configuration time (SSRF guard).
   try {
     assertPublicHttpUrl(body.url);
@@ -401,8 +452,8 @@ uiRouter.post("/orgs/:orgId/repositories", async (c) => {
   const body = (await c.req.json().catch(() => null)) as {
     name?: string;
     format?: PackageFormat;
-    kind?: "hosted" | "proxy" | "virtual";
-    visibility?: Visibility;
+    kind?: unknown;
+    visibility?: unknown;
     description?: string;
   } | null;
   if (!body?.name || !body?.format) {
@@ -419,6 +470,27 @@ uiRouter.post("/orgs/:orgId/repositories", async (c) => {
   if (!formatRegistry.has(body.format)) {
     return c.json({ error: `unsupported repository format '${body.format}'` }, 400);
   }
+  const kind = body.kind ?? "hosted";
+  if (!isRepoKind(kind)) {
+    return c.json({ error: `unsupported repository kind '${String(body.kind)}'` }, 400);
+  }
+  const visibility = body.visibility ?? "private";
+  if (!isVisibility(visibility)) {
+    return c.json({ error: `unsupported repository visibility '${String(body.visibility)}'` }, 400);
+  }
+  const adapter = formatRegistry.lookup(body.format);
+  if (kind === "proxy" && !adapter?.proxyIngest) {
+    return c.json(
+      { error: `proxy repositories are not supported for format '${body.format}'` },
+      400,
+    );
+  }
+  if (kind === "virtual" && !adapter?.capabilities.virtualizable) {
+    return c.json(
+      { error: `virtual repositories are not supported for format '${body.format}'` },
+      400,
+    );
+  }
   const [org] = await db
     .select({ slug: organizations.slug })
     .from(organizations)
@@ -432,8 +504,8 @@ uiRouter.post("/orgs/:orgId/repositories", async (c) => {
       orgSlug: org.slug,
       name: body.name,
       format: body.format,
-      kind: body.kind,
-      visibility: body.visibility,
+      kind,
+      visibility,
       description: body.description,
     });
     void writeAudit({

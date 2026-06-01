@@ -63,6 +63,45 @@ test.describe("repositories", () => {
     }
   });
 
+  test("invalid repository kind and visibility are rejected", async ({ baseURL }) => {
+    const owner = await setupOwner(baseURL!);
+
+    const kind = await createRepo(owner.ctx, owner.orgId, {
+      name: uniq("repo"),
+      format: "npm",
+      kind: "mirror",
+    });
+    expect(kind.status()).toBe(400);
+    expect(await kind.text()).toContain("unsupported repository kind");
+
+    const visibility = await createRepo(owner.ctx, owner.orgId, {
+      name: uniq("repo"),
+      format: "npm",
+      visibility: "internal",
+    });
+    expect(visibility.status()).toBe(400);
+    expect(await visibility.text()).toContain("unsupported repository visibility");
+  });
+
+  test("proxy repositories require a format with pull-through support", async ({ baseURL }) => {
+    const owner = await setupOwner(baseURL!);
+
+    const npmProxy = await createRepo(owner.ctx, owner.orgId, {
+      name: uniq("repo"),
+      format: "npm",
+      kind: "proxy",
+    });
+    expect(npmProxy.status()).toBe(201);
+
+    const dockerProxy = await createRepo(owner.ctx, owner.orgId, {
+      name: uniq("repo"),
+      format: "docker",
+      kind: "proxy",
+    });
+    expect(dockerProxy.status()).toBe(400);
+    expect(await dockerProxy.text()).toContain("proxy repositories are not supported");
+  });
+
   test("anonymous cannot create repo -> 401", async ({ baseURL }) => {
     const owner = await setupOwner(baseURL!);
     const anon = await anonContext(baseURL!);

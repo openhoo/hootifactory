@@ -122,8 +122,11 @@ async function dispatchProxy(
   req: Request,
   ctx: RepoContext,
 ): Promise<Response> {
+  if (!isRead(req.method))
+    throw Errors.unsupported({ reason: "writes are not allowed on proxy repositories" });
+
   const local = await adapterResponse(adapter, match, req, ctx);
-  if (local.status < 400 || !isRead(req.method)) return local;
+  if (local.status < 400) return local;
 
   const upstream = await loadUpstream(ctx.repo.id);
   if (!upstream) return local;
