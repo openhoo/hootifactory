@@ -117,11 +117,24 @@ export async function processScan(artifactId: string): Promise<void> {
 
   let scannedBytePayload = false;
   async function scanStoredBytes(digest: string): Promise<boolean> {
+    const stat = await blobStore.stat(digest);
+    if (!stat) return false;
+    if (stat.size > env.SCAN_MAX_BYTES) {
+      throw new Error(
+        `blob ${digest} exceeds SCAN_MAX_BYTES (${stat.size} > ${env.SCAN_MAX_BYTES})`,
+      );
+    }
+
     let bytes: Uint8Array;
     try {
       bytes = await blobStore.getBytes(digest);
     } catch {
       return false;
+    }
+    if (bytes.byteLength > env.SCAN_MAX_BYTES) {
+      throw new Error(
+        `blob ${digest} exceeds SCAN_MAX_BYTES (${bytes.byteLength} > ${env.SCAN_MAX_BYTES})`,
+      );
     }
     scannedBytePayload = true;
     found.push(...scanForMalware(bytes));

@@ -72,6 +72,11 @@ const EnvSchema = z
     TRIVY_SERVER_URL: z.string().optional(),
     OSV_API_URL: absoluteUrl.default("https://api.osv.dev"),
     SCAN_SCRATCH_DIR: z.string().default("./scratch"),
+    SCAN_MAX_BYTES: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(100 * 1024 * 1024),
   })
   .superRefine((v, ctx) => {
     // Fail fast (never silently boot) when a production deployment still carries a

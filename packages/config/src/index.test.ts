@@ -12,8 +12,10 @@ const prodSource = {
 
 describe("environment auth creation defaults", () => {
   test("development and test allow self-service creation by default", () => {
-    expect(loadEnv({ NODE_ENV: "development" }).AUTH_ALLOW_REGISTRATION).toBe(true);
-    expect(loadEnv({ NODE_ENV: "development" }).AUTH_ALLOW_ORG_CREATION).toBe(true);
+    const devEnv = loadEnv({ NODE_ENV: "development" });
+    expect(devEnv.AUTH_ALLOW_REGISTRATION).toBe(true);
+    expect(devEnv.AUTH_ALLOW_ORG_CREATION).toBe(true);
+    expect(devEnv.SCAN_MAX_BYTES).toBe(100 * 1024 * 1024);
     expect(loadEnv({ NODE_ENV: "test" }).AUTH_ALLOW_REGISTRATION).toBe(true);
     expect(loadEnv({ NODE_ENV: "test" }).AUTH_ALLOW_ORG_CREATION).toBe(true);
   });
