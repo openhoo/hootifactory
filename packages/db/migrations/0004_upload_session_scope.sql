@@ -1,0 +1,1 @@
+ALTER TABLE "upload_sessions" ADD COLUMN "scope" text DEFAULT '' NOT NULL;

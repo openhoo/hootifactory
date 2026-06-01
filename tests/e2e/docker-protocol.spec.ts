@@ -581,6 +581,37 @@ test.describe("docker registry protocol authorization", () => {
     ).repository as { mountPath: string };
 
     const upload = await startUpload(owner.ctx, repo.mountPath, "resumable");
+    const readSecret = (
+      await (
+        await createToken(owner.ctx, owner.orgId, {
+          name: "resumable-reader",
+          scopes: [{ repository: `${owner.orgSlug}/containers/resumable`, actions: ["read"] }],
+        })
+      ).json()
+    ).secret as string;
+    const anon = await anonContext(baseURL!);
+    const readJwt = await registryToken(
+      anon,
+      `repository:${owner.orgSlug}/containers/resumable:pull`,
+      readSecret,
+    );
+    const readOnlyStatus = await anon.get(upload.path, {
+      headers: { authorization: `Bearer ${readJwt}` },
+    });
+    expect(readOnlyStatus.status()).toBe(403);
+
+    const wrongImagePath = `/${repo.mountPath}/other-image/blobs/uploads/${upload.uuid}`;
+    const wrongImageStatus = await owner.ctx.get(wrongImagePath);
+    expect(wrongImageStatus.status()).toBe(404);
+    expect((await wrongImageStatus.json()).errors[0].code).toBe("BLOB_UPLOAD_UNKNOWN");
+
+    const wrongImagePatch = await owner.ctx.patch(wrongImagePath, {
+      headers: { "content-type": "application/octet-stream", "content-range": "0-2" },
+      data: Buffer.from("bad"),
+    });
+    expect(wrongImagePatch.status()).toBe(404);
+    expect((await wrongImagePatch.json()).errors[0].code).toBe("BLOB_UPLOAD_UNKNOWN");
+
     const first = Buffer.from("hello");
     const firstPatch = await owner.ctx.patch(upload.path, {
       headers: { "content-type": "application/octet-stream", "content-range": "0-4" },

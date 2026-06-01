@@ -43,6 +43,13 @@ async function bodyBytes(req: Request): Promise<Uint8Array> {
 }
 
 const UPLOAD_TTL_MS = 24 * 60 * 60 * 1000;
+const UPLOAD_CONTROL_HANDLERS = new Set([
+  "startUpload",
+  "uploadStatus",
+  "patchUpload",
+  "putUpload",
+  "cancelUpload",
+]);
 
 type Tx = Parameters<Parameters<RepoContext["db"]["transaction"]>[0]>[0];
 
@@ -158,8 +165,13 @@ export class DockerAdapter implements FormatAdapter {
   }
 
   requiredPermission(method: HttpMethod, match: RouteMatch, ctx: RepoContext): Permission {
-    const action =
-      method === "GET" || method === "HEAD" ? "read" : method === "DELETE" ? "delete" : "write";
+    const action = UPLOAD_CONTROL_HANDLERS.has(match.entry.handlerId)
+      ? "write"
+      : method === "GET" || method === "HEAD"
+        ? "read"
+        : method === "DELETE"
+          ? "delete"
+          : "write";
     return { action, repositoryName: this.fullName(ctx, match.params.name ?? "") };
   }
 
@@ -194,7 +206,7 @@ export class DockerAdapter implements FormatAdapter {
       case "putUpload":
         return this.putUpload(image, match.params.uuid ?? "", req, ctx);
       case "cancelUpload":
-        return this.cancelUpload(match.params.uuid ?? "", ctx);
+        return this.cancelUpload(image, match.params.uuid ?? "", ctx);
       case "headBlob":
         return this.getBlob(image, match.params.digest ?? "", req, ctx, true);
       case "getBlob":
@@ -721,6 +733,7 @@ export class DockerAdapter implements FormatAdapter {
     await ctx.db.insert(uploadSessions).values({
       id: uuid,
       repositoryId: ctx.repo.id,
+      scope: image,
       storageKey: key,
       offsetBytes: 0,
       state: "open",
@@ -737,29 +750,43 @@ export class DockerAdapter implements FormatAdapter {
     });
   }
 
-  private async loadSession(uuid: string, ctx: RepoContext) {
-    // Scope to the current repo so an upload session cannot be driven cross-repo.
+  private async loadSession(image: string, uuid: string, ctx: RepoContext) {
+    // Scope to the current repo and image so a leaked UUID cannot be driven
+    // through another repository path in the same tenant repo.
     const [s] = await ctx.db
       .select()
       .from(uploadSessions)
-      .where(and(eq(uploadSessions.id, uuid), eq(uploadSessions.repositoryId, ctx.repo.id)))
+      .where(
+        and(
+          eq(uploadSessions.id, uuid),
+          eq(uploadSessions.repositoryId, ctx.repo.id),
+          eq(uploadSessions.scope, image),
+        ),
+      )
       .limit(1);
     return s ?? null;
   }
 
-  private async loadSessionForUpdateTx(uuid: string, ctx: RepoContext, tx: Tx) {
-    // Scope to the current repo so an upload session cannot be driven cross-repo.
+  private async loadSessionForUpdateTx(image: string, uuid: string, ctx: RepoContext, tx: Tx) {
+    // Scope to the current repo and image so a leaked UUID cannot be driven
+    // through another repository path in the same tenant repo.
     const [s] = await tx
       .select()
       .from(uploadSessions)
-      .where(and(eq(uploadSessions.id, uuid), eq(uploadSessions.repositoryId, ctx.repo.id)))
+      .where(
+        and(
+          eq(uploadSessions.id, uuid),
+          eq(uploadSessions.repositoryId, ctx.repo.id),
+          eq(uploadSessions.scope, image),
+        ),
+      )
       .for("update")
       .limit(1);
     return s ?? null;
   }
 
-  private async loadOpenSession(uuid: string, ctx: RepoContext) {
-    const s = await this.loadSession(uuid, ctx);
+  private async loadOpenSession(image: string, uuid: string, ctx: RepoContext) {
+    const s = await this.loadSession(image, uuid, ctx);
     if (!s) throw Errors.blobUploadUnknown({ uuid });
     if (s.state !== "open") throw Errors.blobUploadUnknown({ uuid, state: s.state });
     if (s.expiresAt.getTime() <= Date.now()) {
@@ -771,6 +798,7 @@ export class DockerAdapter implements FormatAdapter {
           and(
             eq(uploadSessions.id, uuid),
             eq(uploadSessions.repositoryId, ctx.repo.id),
+            eq(uploadSessions.scope, image),
             eq(uploadSessions.state, "open"),
           ),
         );
@@ -779,8 +807,8 @@ export class DockerAdapter implements FormatAdapter {
     return s;
   }
 
-  private async loadOpenSessionForUpdateTx(uuid: string, ctx: RepoContext, tx: Tx) {
-    const s = await this.loadSessionForUpdateTx(uuid, ctx, tx);
+  private async loadOpenSessionForUpdateTx(image: string, uuid: string, ctx: RepoContext, tx: Tx) {
+    const s = await this.loadSessionForUpdateTx(image, uuid, ctx, tx);
     if (!s) throw Errors.blobUploadUnknown({ uuid });
     if (s.state !== "open") throw Errors.blobUploadUnknown({ uuid, state: s.state });
     if (s.expiresAt.getTime() <= Date.now()) {
@@ -792,6 +820,7 @@ export class DockerAdapter implements FormatAdapter {
           and(
             eq(uploadSessions.id, uuid),
             eq(uploadSessions.repositoryId, ctx.repo.id),
+            eq(uploadSessions.scope, image),
             eq(uploadSessions.state, "open"),
           ),
         );
@@ -838,7 +867,7 @@ export class DockerAdapter implements FormatAdapter {
   }
 
   private async uploadStatus(image: string, uuid: string, ctx: RepoContext): Promise<Response> {
-    const s = await this.loadOpenSession(uuid, ctx);
+    const s = await this.loadOpenSession(image, uuid, ctx);
     return new Response(null, {
       status: 204,
       headers: {
@@ -857,7 +886,7 @@ export class DockerAdapter implements FormatAdapter {
   ): Promise<Response> {
     const chunk = await bodyBytes(req);
     const offset = await ctx.db.transaction(async (tx) => {
-      const s = await this.loadOpenSessionForUpdateTx(uuid, ctx, tx);
+      const s = await this.loadOpenSessionForUpdateTx(image, uuid, ctx, tx);
       validateContentRange(req, s.offsetBytes, chunk.length);
       const nextOffset = await this.appendChunk(s, chunk, ctx);
       await tx
@@ -867,6 +896,7 @@ export class DockerAdapter implements FormatAdapter {
           and(
             eq(uploadSessions.id, uuid),
             eq(uploadSessions.repositoryId, ctx.repo.id),
+            eq(uploadSessions.scope, image),
             eq(uploadSessions.state, "open"),
           ),
         );
@@ -895,7 +925,7 @@ export class DockerAdapter implements FormatAdapter {
 
     const chunk = await bodyBytes(req);
     const committed = await ctx.db.transaction(async (tx) => {
-      const s = await this.loadOpenSessionForUpdateTx(uuid, ctx, tx);
+      const s = await this.loadOpenSessionForUpdateTx(image, uuid, ctx, tx);
       validateContentRange(req, s.offsetBytes, chunk.length);
       const existing =
         s.offsetBytes > 0 ? await ctx.blobs.bytesAtKey(s.storageKey) : new Uint8Array(0);
@@ -918,6 +948,7 @@ export class DockerAdapter implements FormatAdapter {
           and(
             eq(uploadSessions.id, uuid),
             eq(uploadSessions.repositoryId, ctx.repo.id),
+            eq(uploadSessions.scope, image),
             eq(uploadSessions.state, "open"),
           ),
         );
@@ -935,12 +966,20 @@ export class DockerAdapter implements FormatAdapter {
     });
   }
 
-  private async cancelUpload(uuid: string, ctx: RepoContext): Promise<Response> {
+  private async cancelUpload(image: string, uuid: string, ctx: RepoContext): Promise<Response> {
     await ctx.db.transaction(async (tx) => {
-      const s = await this.loadSessionForUpdateTx(uuid, ctx, tx);
+      const s = await this.loadSessionForUpdateTx(image, uuid, ctx, tx);
       if (s && s.state === "open") {
         await ctx.blobs.deleteKey(s.storageKey).catch(() => {});
-        await tx.delete(uploadSessions).where(eq(uploadSessions.id, uuid));
+        await tx
+          .delete(uploadSessions)
+          .where(
+            and(
+              eq(uploadSessions.id, uuid),
+              eq(uploadSessions.repositoryId, ctx.repo.id),
+              eq(uploadSessions.scope, image),
+            ),
+          );
       }
     });
     return new Response(null, { status: 204 });

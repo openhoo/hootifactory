@@ -118,6 +118,8 @@ export const uploadSessions = pgTable(
     repositoryId: uuid()
       .notNull()
       .references(() => repositories.id, { onDelete: "cascade" }),
+    /** Image/repository path that owns this upload session. */
+    scope: text().notNull().default(""),
     storageKey: text().notNull(),
     offsetBytes: bigint({ mode: "number" }).notNull().default(0),
     state: uploadStateEnum().notNull().default("open"),
