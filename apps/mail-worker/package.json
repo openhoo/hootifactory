@@ -1,0 +1,20 @@
+{
+  "name": "@hootifactory/mail-worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --watch src/worker.ts",
+    "start": "bun src/worker.ts",
+    "test": "bun run test:unit",
+    "test:unit": "bun run ../../scripts/package-tests.ts unit",
+    "test:integration": "bun run ../../scripts/package-tests.ts integration",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@hootifactory/config": "workspace:*",
+    "@hootifactory/email": "workspace:*",
+    "@hootifactory/observability": "workspace:*",
+    "@hootifactory/queue": "workspace:*"
+  }
+}

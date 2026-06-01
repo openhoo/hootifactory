@@ -11,7 +11,12 @@ import {
   users,
 } from "@hootifactory/db";
 import { authorize, effectiveRoleFor, resolveUserRole } from "./authorize";
-import { OIDC_PROVIDER, syncOidcUser } from "./oidc";
+import {
+  consumeAuthEmailToken,
+  createAuthEmailToken,
+  resetPasswordWithToken,
+} from "./email-tokens";
+import { OIDC_PROVIDER, OidcEmailLinkRequiredError, syncOidcUser } from "./oidc";
 import { hashPassword, verifyPassword } from "./password";
 import type { Principal } from "./principal";
 import { issueRegistryToken, registryJwks, verifyRegistryToken } from "./registry-jwt";
@@ -285,6 +290,49 @@ describe("sessions (DB)", () => {
   });
 });
 
+describe("auth email tokens (DB)", () => {
+  test("password reset tokens are single-use and revoke existing sessions", async () => {
+    const oldPassword = "old-password";
+    const newPassword = "new-password";
+    const [user] = await db
+      .insert(users)
+      .values({
+        email: `${crypto.randomUUID()}@reset.test`,
+        username: `reset-${crypto.randomUUID().slice(0, 8)}`,
+        passwordHash: await hashPassword(oldPassword),
+      })
+      .returning();
+    cleanupUserIds.push(user!.id);
+    const session = await createSession(user!.id);
+    const { secret } = await createAuthEmailToken({
+      purpose: "password_reset",
+      userId: user!.id,
+      email: user!.email,
+      ttlSeconds: 60,
+    });
+
+    await expect(resetPasswordWithToken(secret, newPassword)).resolves.toEqual({
+      userId: user!.id,
+    });
+    await expect(resolveSession(session.secret)).resolves.toBeNull();
+
+    const [updated] = await db.select().from(users).where(eq(users.id, user!.id)).limit(1);
+    expect(await verifyPassword(newPassword, updated!.passwordHash!)).toBe(true);
+    await expect(resetPasswordWithToken(secret, "another-password")).resolves.toBeNull();
+  });
+
+  test("expired auth email tokens do not consume", async () => {
+    const { secret } = await createAuthEmailToken({
+      purpose: "oidc_link",
+      userId,
+      email: `${crypto.randomUUID()}@reset.test`,
+      ttlSeconds: -1,
+    });
+
+    await expect(consumeAuthEmailToken("oidc_link", secret)).resolves.toBeNull();
+  });
+});
+
 describe("OIDC user sync (DB)", () => {
   test("auto-provisions a mapped user and grants org access", async () => {
     const email = `${crypto.randomUUID()}@oidc.test`;
@@ -310,7 +358,7 @@ describe("OIDC user sync (DB)", () => {
     expect(identity?.email).toBe(email);
   });
 
-  test("links an existing local user only when email is verified", async () => {
+  test("requires confirmation before linking an existing local email", async () => {
     const email = `${crypto.randomUUID()}@oidc.test`;
     const [local] = await db
       .insert(users)
@@ -318,7 +366,7 @@ describe("OIDC user sync (DB)", () => {
       .returning();
     cleanupUserIds.push(local!.id);
 
-    const linked = await syncOidcUser({
+    const input: Parameters<typeof syncOidcUser>[0] = {
       issuer: "https://idp.test",
       subject: crypto.randomUUID(),
       email,
@@ -327,13 +375,17 @@ describe("OIDC user sync (DB)", () => {
       displayName: "Linked User",
       groups: ["admins"],
       grants: [{ org: orgSlug, role: "owner", groups: ["admins"] }],
-    });
+    };
+
+    await expect(syncOidcUser(input)).rejects.toBeInstanceOf(OidcEmailLinkRequiredError);
+
+    const linked = await syncOidcUser(input, { allowExistingEmailLink: true });
 
     expect(linked.id).toBe(local!.id);
     await expect(resolveUserRole(local!.id, orgId)).resolves.toBe("owner");
   });
 
-  test("denies unverified email conflicts", async () => {
+  test("email confirmation can link an unverified-idp email conflict", async () => {
     const email = `${crypto.randomUUID()}@oidc.test`;
     const [local] = await db
       .insert(users)
@@ -341,8 +393,8 @@ describe("OIDC user sync (DB)", () => {
       .returning();
     cleanupUserIds.push(local!.id);
 
-    await expect(
-      syncOidcUser({
+    const linked = await syncOidcUser(
+      {
         issuer: "https://idp.test",
         subject: crypto.randomUUID(),
         email,
@@ -351,8 +403,11 @@ describe("OIDC user sync (DB)", () => {
         displayName: "Conflict User",
         groups: ["developers"],
         grants: [{ org: orgSlug, role: "developer", groups: ["developers"] }],
-      }),
-    ).rejects.toThrow(/email must be verified/);
+      },
+      { allowExistingEmailLink: true },
+    );
+
+    expect(linked.id).toBe(local!.id);
   });
 
   test("reconciles stale OIDC grants without deleting local memberships", async () => {

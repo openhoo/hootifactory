@@ -276,6 +276,20 @@ export interface SyncedOidcUser {
   username: string;
 }
 
+export interface SyncOidcUserOptions {
+  allowExistingEmailLink?: boolean;
+}
+
+export class OidcEmailLinkRequiredError extends Error {
+  constructor(
+    public readonly userId: string,
+    public readonly email: string,
+  ) {
+    super("oidc: email link confirmation required");
+    this.name = "OidcEmailLinkRequiredError";
+  }
+}
+
 function normalizeUsername(value: string | null, fallback: string): string {
   const base = (value || fallback)
     .toLowerCase()
@@ -299,7 +313,10 @@ async function uniqueUsername(value: string | null, fallback: string): Promise<s
   return `${base.slice(0, 80)}-${crypto.randomUUID().slice(0, 12)}`;
 }
 
-export async function syncOidcUser(input: SyncOidcUserInput): Promise<SyncedOidcUser> {
+export async function syncOidcUser(
+  input: SyncOidcUserInput,
+  options: SyncOidcUserOptions = {},
+): Promise<SyncedOidcUser> {
   if (input.grants.length === 0) throw new Error("oidc: no mapped groups");
   const mappedSlugs = [...new Set(input.grants.map((grant) => grant.org))];
   const orgRows = await db
@@ -331,8 +348,11 @@ export async function syncOidcUser(input: SyncOidcUserInput): Promise<SyncedOidc
 
     if (!user && input.email) {
       const [existing] = await tx.select().from(users).where(eq(users.email, input.email)).limit(1);
-      if (existing && !input.emailVerified) {
-        throw new Error("oidc: email must be verified to link an existing user");
+      if (existing && !existing.isActive) {
+        throw new Error("oidc: existing user is disabled");
+      }
+      if (existing && !options.allowExistingEmailLink) {
+        throw new OidcEmailLinkRequiredError(existing.id, existing.email);
       }
       user = existing ?? null;
     }

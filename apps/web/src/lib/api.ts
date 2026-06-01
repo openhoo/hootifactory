@@ -81,6 +81,10 @@ export const api = {
     req("POST", "/api/auth/login", { username, password }),
   register: (username: string, email: string, password: string) =>
     req("POST", "/api/auth/register", { username, email, password }),
+  requestPasswordReset: (email: string) =>
+    req<{ ok: true }>("POST", "/api/auth/password-reset/request", { email }),
+  confirmPasswordReset: (token: string, password: string) =>
+    req<{ ok: true }>("POST", "/api/auth/password-reset/confirm", { token, password }),
   logout: () => req("POST", "/api/auth/logout"),
   orgs: () => req<{ orgs: Org[] }>("GET", "/api/orgs"),
   createOrg: (slug: string, displayName: string) =>

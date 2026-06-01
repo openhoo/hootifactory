@@ -81,6 +81,7 @@ bun run db:migrate
 bun run db:seed             # creates a demo org + admin user + token
 bun run dev                 # api on :3000
 bun run dev:web             # web on :5173 (proxies /v2 + /api -> api)
+bun run dev:mail            # queued email worker; Mailpit UI is on :8025
 ```
 
 See `docs/` and the architecture plan for details.

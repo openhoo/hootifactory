@@ -1,8 +1,12 @@
 import {
+  consumeAuthEmailToken,
+  createAuthEmailToken,
   createOidcAuthorizationRequest,
   createSession,
   hashPassword,
+  OidcEmailLinkRequiredError,
   type OidcProviderConfig,
+  resetPasswordWithToken,
   resolveOidcCallbackClaims,
   revokeSession,
   safeOidcReturnTo,
@@ -13,13 +17,16 @@ import {
 } from "@hootifactory/auth";
 import { env } from "@hootifactory/config";
 import { isUniqueViolation, z } from "@hootifactory/core";
-import { db, users } from "@hootifactory/db";
+import { and, db, eq, externalIdentities, users } from "@hootifactory/db";
+import type { EmailJob } from "@hootifactory/email";
 import {
   addSpanEvent,
+  captureTelemetryContext,
   logger,
   setActiveSpanAttributes,
   withSpan,
 } from "@hootifactory/observability";
+import { enqueue, QUEUES } from "@hootifactory/queue";
 import { type Context, Hono } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { authenticateUserPassword, SESSION_COOKIE } from "../middleware/authenticate";
@@ -35,6 +42,7 @@ interface LoginThrottleBucket {
 }
 
 const loginFailures = new Map<string, LoginThrottleBucket>();
+const passwordResetRequests = new Map<string, LoginThrottleBucket>();
 
 const RegisterBodySchema = z.strictObject({
   username: z.string().trim().min(1).max(128),
@@ -48,6 +56,39 @@ const LoginBodySchema = z.strictObject({
   password: z.string().min(1).max(1024),
 });
 
+const PasswordResetRequestBodySchema = z.strictObject({
+  email: z.email().max(320),
+});
+
+const PasswordResetConfirmBodySchema = z.strictObject({
+  token: z.string().min(16).max(512),
+  password: z.string().min(8).max(1024),
+});
+
+const OidcGrantSchema = z.strictObject({
+  org: z.string().min(1),
+  role: z.enum(["viewer", "developer", "admin", "owner"]),
+  groups: z.array(z.string()),
+});
+
+const OidcLinkMetadataSchema = z.strictObject({
+  returnTo: z.string().min(1),
+  claims: z.strictObject({
+    issuer: z.string().min(1),
+    subject: z.string().min(1),
+    email: z.string().nullable(),
+    emailVerified: z.boolean(),
+    username: z.string().nullable(),
+    displayName: z.string().nullable(),
+    groups: z.array(z.string()),
+    grants: z.array(OidcGrantSchema),
+  }),
+});
+
+const ConfirmLinkQuerySchema = z.strictObject({
+  token: z.string().min(16).max(512),
+});
+
 function clientIp(c: Context<AppEnv>): string {
   return (
     c.req.header("x-forwarded-for")?.split(",")[0]?.trim() || c.req.header("x-real-ip") || "unknown"
@@ -58,15 +99,37 @@ function loginThrottleKey(username: string, ip: string): string {
   return `${username.trim().toLowerCase()}\0${ip}`;
 }
 
-function currentLoginBucket(key: string, now = Date.now()): LoginThrottleBucket {
-  const existing = loginFailures.get(key);
+function passwordResetThrottleKey(email: string, ip: string): string {
+  return `${email.trim().toLowerCase()}\0${ip}`;
+}
+
+function currentThrottleBucket(
+  buckets: Map<string, LoginThrottleBucket>,
+  key: string,
+  windowSeconds: number,
+  now = Date.now(),
+): LoginThrottleBucket {
+  const existing = buckets.get(key);
   if (existing && existing.resetAt > now) return existing;
   const fresh = {
     count: 0,
-    resetAt: now + env.AUTH_LOGIN_WINDOW_SECONDS * 1000,
+    resetAt: now + windowSeconds * 1000,
   };
-  loginFailures.set(key, fresh);
+  buckets.set(key, fresh);
   return fresh;
+}
+
+function currentLoginBucket(key: string, now = Date.now()): LoginThrottleBucket {
+  return currentThrottleBucket(loginFailures, key, env.AUTH_LOGIN_WINDOW_SECONDS, now);
+}
+
+function currentPasswordResetBucket(key: string, now = Date.now()): LoginThrottleBucket {
+  return currentThrottleBucket(
+    passwordResetRequests,
+    key,
+    env.AUTH_PASSWORD_RESET_WINDOW_SECONDS,
+    now,
+  );
 }
 
 function retryAfterSeconds(bucket: LoginThrottleBucket, now = Date.now()): number {
@@ -83,6 +146,20 @@ function loginIsThrottled(
 
 function recordLoginFailure(key: string): LoginThrottleBucket {
   const bucket = currentLoginBucket(key);
+  bucket.count += 1;
+  return bucket;
+}
+
+function passwordResetIsThrottled(
+  key: string,
+): { throttled: false } | { throttled: true; retryAfter: number } {
+  const bucket = currentPasswordResetBucket(key);
+  if (bucket.count < env.AUTH_PASSWORD_RESET_MAX_ATTEMPTS) return { throttled: false };
+  return { throttled: true, retryAfter: retryAfterSeconds(bucket) };
+}
+
+function recordPasswordResetRequest(key: string): LoginThrottleBucket {
+  const bucket = currentPasswordResetBucket(key);
   bucket.count += 1;
   return bucket;
 }
@@ -134,6 +211,23 @@ function loginRedirect(error = "sso_failed"): string {
   return `/login?error=${encodeURIComponent(error)}`;
 }
 
+function loginNoticeRedirect(notice: string): string {
+  return `/login?notice=${encodeURIComponent(notice)}`;
+}
+
+function publicUrl(path: string): string {
+  return new URL(path, `${env.APP_PUBLIC_URL}/`).href;
+}
+
+async function enqueueEmail(job: EmailJob): Promise<void> {
+  if (!env.EMAIL_ENABLED) return;
+  await enqueue(
+    QUEUES.emailSend,
+    { ...job, telemetry: captureTelemetryContext() },
+    { retryLimit: 5, retryDelay: 30, retryBackoff: true },
+  );
+}
+
 authRouter.get("/methods", (c) =>
   c.json({
     password: true,
@@ -171,8 +265,9 @@ authRouter.get("/oidc/callback", async (c) => {
   deleteCookie(c, OIDC_STATE_COOKIE, { path: "/api/auth/oidc" });
   if (!state) return c.redirect(loginRedirect("sso_state"));
 
+  let claims: Awaited<ReturnType<typeof resolveOidcCallbackClaims>> | null = null;
   try {
-    const claims = await resolveOidcCallbackClaims(config, browserFacingUrl(c), state);
+    claims = await resolveOidcCallbackClaims(config, browserFacingUrl(c), state);
     const user = await syncOidcUser(claims);
     const { secret, expiresAt } = await createSession(user.id, {
       ip: c.req.header("x-forwarded-for") ?? undefined,
@@ -201,6 +296,38 @@ authRouter.get("/oidc/callback", async (c) => {
     }).catch(() => {});
     return c.redirect(state.returnTo);
   } catch (err) {
+    if (claims && err instanceof OidcEmailLinkRequiredError) {
+      if (!env.EMAIL_ENABLED) {
+        logger.warn("OIDC link confirmation required but email is disabled", {
+          userId: err.userId,
+        });
+        return c.redirect(loginRedirect("sso_link_unavailable"));
+      }
+      const { token, secret } = await createAuthEmailToken({
+        purpose: "oidc_link",
+        userId: err.userId,
+        email: err.email,
+        ttlSeconds: env.AUTH_OIDC_LINK_TTL_SECONDS,
+        metadata: { claims, returnTo: state.returnTo },
+      });
+      await enqueueEmail({
+        template: "oidc_link",
+        to: err.email,
+        linkUrl: publicUrl(`/api/auth/oidc/link/confirm?token=${encodeURIComponent(secret)}`),
+        providerName: env.AUTH_OIDC_NAME,
+        expiresAt: token.expiresAt.toISOString(),
+      });
+      addSpanEvent("auth.oidc_link_email_sent");
+      logger.info("OIDC link confirmation email queued", { userId: err.userId });
+      void writeAudit({
+        action: "auth.oidc_link_email",
+        result: "success",
+        resourceType: "user",
+        resourceId: err.userId,
+        detail: { issuer: claims.issuer, subject: claims.subject },
+      }).catch(() => {});
+      return c.redirect(loginNoticeRedirect("sso_link_email"));
+    }
     const message = err instanceof Error ? err.message : String(err);
     addSpanEvent("auth.oidc_login_failed", { "auth.failure": message });
     logger.warn("OIDC login failed", { error: message });
@@ -211,6 +338,161 @@ authRouter.get("/oidc/callback", async (c) => {
     }).catch(() => {});
     return c.redirect(loginRedirect());
   }
+});
+
+authRouter.get("/oidc/link/confirm", async (c) => {
+  const parsedQuery = ConfirmLinkQuerySchema.safeParse(c.req.query());
+  if (!parsedQuery.success) return c.redirect(loginRedirect("sso_link_invalid"));
+
+  const token = await consumeAuthEmailToken("oidc_link", parsedQuery.data.token);
+  if (!token) return c.redirect(loginRedirect("sso_link_invalid"));
+
+  const metadata = OidcLinkMetadataSchema.safeParse(token.metadata);
+  if (!metadata.success) return c.redirect(loginRedirect("sso_link_invalid"));
+  const { claims, returnTo } = metadata.data;
+
+  const [existingIdentity] = await db
+    .select({ userId: externalIdentities.userId })
+    .from(externalIdentities)
+    .where(
+      and(
+        eq(externalIdentities.provider, "oidc"),
+        eq(externalIdentities.issuer, claims.issuer),
+        eq(externalIdentities.subject, claims.subject),
+      ),
+    )
+    .limit(1);
+  if (existingIdentity && existingIdentity.userId !== token.userId) {
+    return c.redirect(loginRedirect("sso_link_invalid"));
+  }
+
+  try {
+    const user = await syncOidcUser(claims, { allowExistingEmailLink: true });
+    if (user.id !== token.userId) return c.redirect(loginRedirect("sso_link_invalid"));
+    const { secret, expiresAt } = await createSession(user.id, {
+      ip: c.req.header("x-forwarded-for") ?? undefined,
+      userAgent: c.req.header("user-agent") ?? undefined,
+    });
+    setCookie(c, SESSION_COOKIE, secret, {
+      httpOnly: true,
+      sameSite: "Lax",
+      path: "/",
+      secure: env.NODE_ENV === "production",
+      expires: expiresAt,
+    });
+    setActiveSpanAttributes({ "enduser.id": user.id, "auth.event": "oidc_link_confirm" });
+    logger.info("OIDC link confirmation succeeded", { userId: user.id, issuer: claims.issuer });
+    void writeAudit({
+      action: "auth.oidc_link_confirm",
+      result: "success",
+      resourceType: "user",
+      resourceId: user.id,
+      detail: { issuer: claims.issuer, subject: claims.subject },
+    }).catch(() => {});
+    return c.redirect(safeOidcReturnTo(returnTo));
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logger.warn("OIDC link confirmation failed", { error: message });
+    void writeAudit({
+      action: "auth.oidc_link_confirm",
+      result: "failure",
+      resourceType: "user",
+      resourceId: token.userId,
+      detail: { error: message },
+    }).catch(() => {});
+    return c.redirect(loginRedirect("sso_link_invalid"));
+  }
+});
+
+authRouter.post("/password-reset/request", async (c) => {
+  const parsedBody = await validateJsonBody(
+    c,
+    PasswordResetRequestBodySchema,
+    "invalid password reset request",
+  );
+  if (!parsedBody.ok) return parsedBody.response;
+  const email = parsedBody.data.email.toLowerCase();
+  const ip = clientIp(c);
+  const throttleKey = passwordResetThrottleKey(email, ip);
+  const throttle = passwordResetIsThrottled(throttleKey);
+  if (throttle.throttled) {
+    addSpanEvent("auth.password_reset_rate_limited", {
+      "auth.retry_after_seconds": throttle.retryAfter,
+    });
+    logger.warn("password reset request rejected by throttle", {
+      ip,
+      retryAfter: throttle.retryAfter,
+    });
+    return c.json({ error: "too many password reset requests, try again later" }, 429, {
+      "retry-after": String(throttle.retryAfter),
+    });
+  }
+  recordPasswordResetRequest(throttleKey);
+
+  if (!env.EMAIL_ENABLED) {
+    logger.debug("password reset request ignored because email is disabled");
+    return c.json({ ok: true });
+  }
+
+  const [user] = await db.select().from(users).where(eq(users.email, email)).limit(1);
+  if (user?.isActive && user.passwordHash) {
+    try {
+      const { token, secret } = await createAuthEmailToken({
+        purpose: "password_reset",
+        userId: user.id,
+        email: user.email,
+        ttlSeconds: env.AUTH_PASSWORD_RESET_TTL_SECONDS,
+      });
+      await enqueueEmail({
+        template: "password_reset",
+        to: user.email,
+        resetUrl: publicUrl(`/reset-password?token=${encodeURIComponent(secret)}`),
+        expiresAt: token.expiresAt.toISOString(),
+      });
+      logger.info("password reset email queued", { userId: user.id });
+      void writeAudit({
+        action: "auth.password_reset_email",
+        result: "success",
+        resourceType: "user",
+        resourceId: user.id,
+        ip,
+      }).catch(() => {});
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      addSpanEvent("auth.password_reset_email_failed", { "error.message": message });
+      logger.error("password reset email failed", { error: message });
+      void writeAudit({
+        action: "auth.password_reset_email",
+        result: "failure",
+        resourceType: "user",
+        resourceId: user.id,
+        ip,
+        detail: { error: message },
+      }).catch(() => {});
+    }
+  }
+
+  return c.json({ ok: true });
+});
+
+authRouter.post("/password-reset/confirm", async (c) => {
+  const parsedBody = await validateJsonBody(
+    c,
+    PasswordResetConfirmBodySchema,
+    "invalid password reset confirmation",
+  );
+  if (!parsedBody.ok) return parsedBody.response;
+  const reset = await resetPasswordWithToken(parsedBody.data.token, parsedBody.data.password);
+  if (!reset) return c.json({ error: "invalid or expired reset token" }, 400);
+  logger.info("password reset confirmed", { userId: reset.userId });
+  void writeAudit({
+    action: "auth.password_reset_confirm",
+    result: "success",
+    resourceType: "user",
+    resourceId: reset.userId,
+    ip: clientIp(c),
+  }).catch(() => {});
+  return c.json({ ok: true });
 });
 
 authRouter.post("/register", async (c) => {

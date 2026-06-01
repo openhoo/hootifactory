@@ -16,6 +16,7 @@
     "@hootifactory/config": "workspace:*",
     "@hootifactory/core": "workspace:*",
     "@hootifactory/db": "workspace:*",
+    "@hootifactory/email": "workspace:*",
     "@hootifactory/format-cargo": "workspace:*",
     "@hootifactory/format-docker": "workspace:*",
     "@hootifactory/format-go": "workspace:*",

@@ -7,6 +7,7 @@ describe("queue contracts", () => {
       scanArtifact: "scan.artifact",
       gcSweep: "gc.sweep",
       retentionApply: "retention.apply",
+      emailSend: "email.send",
     });
     expect(new Set(Object.values(QUEUES)).size).toBe(Object.keys(QUEUES).length);
   });

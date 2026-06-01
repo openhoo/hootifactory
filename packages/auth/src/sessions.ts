@@ -1,4 +1,4 @@
-import { db, eq, sessions } from "@hootifactory/db";
+import { and, db, eq, isNull, sessions } from "@hootifactory/db";
 
 function sha256hex(input: string): string {
   const h = new Bun.CryptoHasher("sha256");
@@ -46,4 +46,11 @@ export async function revokeSession(secret: string): Promise<void> {
     .update(sessions)
     .set({ revokedAt: new Date() })
     .where(eq(sessions.tokenHash, sha256hex(secret)));
+}
+
+export async function revokeSessionsForUser(userId: string): Promise<void> {
+  await db
+    .update(sessions)
+    .set({ revokedAt: new Date() })
+    .where(and(eq(sessions.userId, userId), isNull(sessions.revokedAt)));
 }

@@ -11,6 +11,7 @@
     "dev": "bun run --filter '@hootifactory/api' dev",
     "dev:web": "bun run --filter '@hootifactory/web' dev",
     "dev:worker": "bun run --filter '@hootifactory/scan-worker' dev",
+    "dev:mail": "bun run --filter '@hootifactory/mail-worker' dev",
     "build": "bun run --filter '@hootifactory/web' build",
     "test": "bun run test:unit",
     "test:unit": "bun run --filter \"@hootifactory/*\" --parallel --elide-lines=0 test:unit",

@@ -65,6 +65,19 @@ describe("request body guard", () => {
     expect(body.issues).toBeTruthy();
   });
 
+  test("password reset requests use a neutral response when email is disabled", async () => {
+    const response = await app.fetch(
+      new Request("http://localhost/api/auth/password-reset/request", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: "missing@example.test" }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ ok: true });
+  });
+
   test("rejects malformed OCI token query scopes before minting tokens", async () => {
     const response = await app.fetch(
       new Request("http://localhost/token?service=hootifactory&scope=repository:acme/app:execute"),

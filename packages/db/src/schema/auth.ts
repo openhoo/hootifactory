@@ -12,7 +12,7 @@ import {
   varchar,
 } from "drizzle-orm/pg-core";
 import { primaryId, timestamps } from "./_helpers";
-import { roleNameEnum, tokenTypeEnum } from "./enums";
+import { authEmailTokenPurposeEnum, roleNameEnum, tokenTypeEnum } from "./enums";
 import { repositories } from "./repositories";
 import { organizations, users } from "./tenancy";
 
@@ -71,6 +71,32 @@ export const sessions = pgTable(
     ...timestamps(),
   },
   (t) => [index("sessions_user_idx").on(t.userId)],
+);
+
+export interface AuthEmailTokenMetadata {
+  [key: string]: unknown;
+}
+
+/** One-time, email-delivered auth tokens. Only SHA-256 hashes are stored. */
+export const authEmailTokens = pgTable(
+  "auth_email_tokens",
+  {
+    id: primaryId(),
+    purpose: authEmailTokenPurposeEnum().notNull(),
+    userId: uuid()
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    email: varchar({ length: 320 }).notNull(),
+    tokenHash: varchar({ length: 64 }).notNull().unique(),
+    expiresAt: timestamp({ withTimezone: true }).notNull(),
+    consumedAt: timestamp({ withTimezone: true }),
+    metadata: jsonb().$type<AuthEmailTokenMetadata>().notNull().default({}),
+    ...timestamps(),
+  },
+  (t) => [
+    index("auth_email_tokens_user_purpose_idx").on(t.userId, t.purpose),
+    index("auth_email_tokens_expires_idx").on(t.expiresAt),
+  ],
 );
 
 /**

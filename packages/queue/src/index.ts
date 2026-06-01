@@ -6,6 +6,7 @@ export const QUEUES = {
   scanArtifact: "scan.artifact",
   gcSweep: "gc.sweep",
   retentionApply: "retention.apply",
+  emailSend: "email.send",
 } as const;
 
 let bossInstance: PgBoss | null = null;

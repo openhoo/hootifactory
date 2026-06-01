@@ -139,6 +139,7 @@ const EnvSchema = z
     // API server
     API_PORT: z.coerce.number().int().positive().default(3000),
     API_HOST: z.string().default("0.0.0.0"),
+    APP_PUBLIC_URL: absoluteUrl.default("http://localhost:3000"),
     REGISTRY_MAX_UPLOAD_BYTES: z.coerce
       .number()
       .int()
@@ -169,6 +170,22 @@ const EnvSchema = z
     AUTH_ALLOW_ORG_CREATION: boolish.optional(),
     AUTH_LOGIN_MAX_ATTEMPTS: z.coerce.number().int().positive().default(5),
     AUTH_LOGIN_WINDOW_SECONDS: z.coerce.number().int().positive().default(60),
+    AUTH_PASSWORD_RESET_TTL_SECONDS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(30 * 60),
+    AUTH_PASSWORD_RESET_MAX_ATTEMPTS: z.coerce.number().int().positive().default(3),
+    AUTH_PASSWORD_RESET_WINDOW_SECONDS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(5 * 60),
+    AUTH_OIDC_LINK_TTL_SECONDS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(15 * 60),
     AUTH_OIDC_ENABLED: boolish.default(false),
     AUTH_OIDC_NAME: z.string().trim().min(1).max(128).default("Single Sign-On"),
     AUTH_OIDC_ISSUER: optionalHttpUrl,
@@ -182,6 +199,15 @@ const EnvSchema = z
     REGISTRY_JWT_PRIVATE_KEY: z.string().optional(),
     REGISTRY_JWT_PUBLIC_KEY: z.string().optional(),
     REGISTRY_JWT_TTL: z.coerce.number().int().positive().default(300),
+
+    // Email
+    EMAIL_ENABLED: boolish.default(false),
+    EMAIL_FROM: z.string().trim().min(1).default("Hootifactory <noreply@localhost>"),
+    EMAIL_SMTP_HOST: optionalNonEmptyString,
+    EMAIL_SMTP_PORT: z.coerce.number().int().positive().default(1025),
+    EMAIL_SMTP_SECURE: boolish.default(false),
+    EMAIL_SMTP_USER: optionalNonEmptyString,
+    EMAIL_SMTP_PASSWORD: optionalNonEmptyString,
 
     // Scanning (Phase 3)
     SCANNER_ENABLED: boolish.default(false),
@@ -263,6 +289,13 @@ const EnvSchema = z
           message: "AUTH_OIDC_ISSUER must use https in production",
         });
       }
+    }
+    if (v.EMAIL_ENABLED && !v.EMAIL_SMTP_HOST) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["EMAIL_SMTP_HOST"],
+        message: "EMAIL_SMTP_HOST is required when EMAIL_ENABLED=true",
+      });
     }
   })
   .transform((v) =>

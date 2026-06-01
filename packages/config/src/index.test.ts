@@ -18,6 +18,9 @@ describe("environment auth creation defaults", () => {
     expect(devEnv.API_TRUSTED_ORIGINS).toEqual([]);
     expect(devEnv.AUTH_LOGIN_MAX_ATTEMPTS).toBe(5);
     expect(devEnv.AUTH_LOGIN_WINDOW_SECONDS).toBe(60);
+    expect(devEnv.AUTH_PASSWORD_RESET_TTL_SECONDS).toBe(30 * 60);
+    expect(devEnv.AUTH_OIDC_LINK_TTL_SECONDS).toBe(15 * 60);
+    expect(devEnv.EMAIL_ENABLED).toBe(false);
     expect(devEnv.REGISTRY_MAX_UPLOAD_BYTES).toBe(100 * 1024 * 1024);
     expect(devEnv.SCAN_MAX_BYTES).toBe(100 * 1024 * 1024);
     expect(devEnv.SCANNER_CLI_RUNTIME).toBe("docker");
@@ -84,6 +87,24 @@ describe("environment auth creation defaults", () => {
     expect(env.AUTH_LOGIN_WINDOW_SECONDS).toBe(120);
     expect(() => loadEnv({ AUTH_LOGIN_MAX_ATTEMPTS: "0" })).toThrow();
     expect(() => loadEnv({ AUTH_LOGIN_WINDOW_SECONDS: "-1" })).toThrow();
+  });
+
+  test("email configuration is validated when enabled", () => {
+    const env = loadEnv({
+      EMAIL_ENABLED: "true",
+      EMAIL_SMTP_HOST: "mailpit",
+      EMAIL_SMTP_PORT: "1025",
+      EMAIL_SMTP_SECURE: "false",
+      EMAIL_FROM: "Hootifactory <noreply@example.test>",
+      APP_PUBLIC_URL: "https://hoot.example.test/",
+    });
+    expect(env.EMAIL_ENABLED).toBe(true);
+    expect(env.EMAIL_SMTP_HOST).toBe("mailpit");
+    expect(env.EMAIL_SMTP_PORT).toBe(1025);
+    expect(env.APP_PUBLIC_URL).toBe("https://hoot.example.test");
+    expect(() => loadEnv({ EMAIL_ENABLED: "true" })).toThrow(/EMAIL_SMTP_HOST/);
+    expect(() => loadEnv({ EMAIL_SMTP_PORT: "0" })).toThrow();
+    expect(() => loadEnv({ APP_PUBLIC_URL: "notaurl" })).toThrow();
   });
 
   test("OIDC configuration is parsed when enabled", () => {

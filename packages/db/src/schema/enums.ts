@@ -22,6 +22,11 @@ export const roleNameEnum = pgEnum("role_name", ["viewer", "developer", "admin",
 
 export const tokenTypeEnum = pgEnum("token_type", ["personal", "robot"]);
 
+export const authEmailTokenPurposeEnum = pgEnum("auth_email_token_purpose", [
+  "password_reset",
+  "oidc_link",
+]);
+
 export const blobStateEnum = pgEnum("blob_state", ["active", "pending_delete"]);
 
 export const blobRefKindEnum = pgEnum("blob_ref_kind", [
