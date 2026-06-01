@@ -38,6 +38,7 @@ import {
   repositories,
   scanPolicies,
   sql,
+  users,
 } from "@hootifactory/db";
 import type { PackageFormat, RepoKind, Visibility } from "@hootifactory/types";
 import { type Context, Hono } from "hono";
@@ -88,9 +89,11 @@ function repositoryDto(repo: RepositoryRow) {
 
 type ApiTokenRow = typeof apiTokens.$inferSelect;
 
-function tokenDto(token: ApiTokenRow) {
+function tokenDto(token: ApiTokenRow, ownerUsername?: string | null) {
   return {
     id: token.id,
+    ownerUserId: token.ownerUserId,
+    ownerUsername: ownerUsername ?? null,
     name: token.name,
     prefix: token.tokenPrefix,
     type: token.type,
@@ -576,11 +579,19 @@ uiRouter.get("/orgs/:orgId/tokens", async (c) => {
   const orgId = c.req.param("orgId");
   const p = c.get("principal");
   if (p.kind !== "user") return c.json({ error: "login required" }, 401);
-  const decision = await authorize(p, "read", { type: "org", orgId });
-  if (!decision.allowed) return c.json({ error: decision.reason }, 403);
+  const adminDecision = await authorize(p, "admin", { type: "org", orgId });
+  const readDecision = adminDecision.allowed
+    ? adminDecision
+    : await authorize(p, "read", { type: "org", orgId });
+  if (!readDecision.allowed) return c.json({ error: readDecision.reason }, 403);
+  const where = adminDecision.allowed
+    ? eq(apiTokens.orgId, orgId)
+    : and(eq(apiTokens.orgId, orgId), eq(apiTokens.ownerUserId, p.userId));
   const rows = await db
     .select({
       id: apiTokens.id,
+      ownerUserId: apiTokens.ownerUserId,
+      ownerUsername: users.username,
       name: apiTokens.name,
       prefix: apiTokens.tokenPrefix,
       type: apiTokens.type,
@@ -592,7 +603,8 @@ uiRouter.get("/orgs/:orgId/tokens", async (c) => {
       createdAt: apiTokens.createdAt,
     })
     .from(apiTokens)
-    .where(and(eq(apiTokens.orgId, orgId), eq(apiTokens.ownerUserId, p.userId)))
+    .leftJoin(users, eq(apiTokens.ownerUserId, users.id))
+    .where(where)
     .orderBy(desc(apiTokens.createdAt));
   return c.json({ tokens: rows });
 });
@@ -718,5 +730,5 @@ uiRouter.post("/orgs/:orgId/tokens", async (c) => {
     principal: p,
     detail: { name: token.name, type: token.type },
   }).catch(() => {});
-  return c.json({ token: tokenDto(token), secret }, 201);
+  return c.json({ token: tokenDto(token, p.username), secret }, 201);
 });

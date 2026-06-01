@@ -859,10 +859,11 @@ function TokensPage() {
   });
 
   const tokens = tokensQ.data?.tokens ?? [];
+  const canSeeTokenOwners = selected?.role === "admin" || selected?.role === "owner";
 
   return (
     <div>
-      <PageTitle description="Personal and robot tokens for authenticating clients and CI.">
+      <PageTitle description="Org API tokens for authenticating clients and CI.">
         API Tokens
       </PageTitle>
 
@@ -916,8 +917,11 @@ function TokensPage() {
           <TableHeader>
             <TableRow className="hover:bg-transparent">
               <TableHead className="pl-4">Name</TableHead>
+              {canSeeTokenOwners && <TableHead>Owner</TableHead>}
               <TableHead>Prefix</TableHead>
               <TableHead>Type</TableHead>
+              <TableHead>Role</TableHead>
+              <TableHead>Expires</TableHead>
               <TableHead>Status</TableHead>
               <TableHead className="pr-4" />
             </TableRow>
@@ -926,10 +930,19 @@ function TokensPage() {
             {tokens.map((t) => (
               <TableRow key={t.id}>
                 <TableCell className="pl-4 font-medium">{t.name}</TableCell>
+                {canSeeTokenOwners && (
+                  <TableCell className="text-muted-foreground">
+                    {t.ownerUsername ?? t.ownerUserId?.slice(0, 8) ?? "system"}
+                  </TableCell>
+                )}
                 <TableCell className="font-mono text-xs text-muted-foreground">
                   {t.prefix}…
                 </TableCell>
                 <TableCell className="capitalize">{t.type}</TableCell>
+                <TableCell>{t.role ?? (t.scopes.length ? "scoped" : "inherited")}</TableCell>
+                <TableCell className="text-muted-foreground">
+                  {t.expiresAt ? new Date(t.expiresAt).toLocaleDateString() : "never"}
+                </TableCell>
                 <TableCell>
                   {t.revokedAt ? (
                     <Pill tone="danger">revoked</Pill>
@@ -953,7 +966,7 @@ function TokensPage() {
             ))}
             {!tokens.length && (
               <TableRow className="hover:bg-transparent">
-                <TableCell colSpan={5} className="p-0">
+                <TableCell colSpan={canSeeTokenOwners ? 8 : 7} className="p-0">
                   <EmptyState
                     icon={<KeyRound className="size-5" />}
                     title="No tokens yet"

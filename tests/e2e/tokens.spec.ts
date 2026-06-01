@@ -42,6 +42,38 @@ function insertRoleBinding(input: {
   );
 }
 
+function insertOrgRoleBinding(input: {
+  orgId: string;
+  userId: string;
+  role: "viewer" | "developer" | "admin" | "owner";
+}): void {
+  execFileSync(
+    "bun",
+    [
+      "-e",
+      [
+        'import { db, roleBindings } from "@hootifactory/db";',
+        "await db.insert(roleBindings).values({",
+        "  orgId: process.env.ORG_ID,",
+        "  userId: process.env.USER_ID,",
+        "  role: process.env.ROLE,",
+        "});",
+      ].join("\n"),
+    ],
+    {
+      env: {
+        ...process.env,
+        DATABASE_URL: TEST_DATABASE_URL,
+        ORG_ID: input.orgId,
+        USER_ID: input.userId,
+        ROLE: input.role,
+      },
+      stdio: "pipe",
+      encoding: "utf8",
+    },
+  );
+}
+
 function sha256(bytes: Buffer | string): string {
   return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 }
@@ -73,6 +105,7 @@ test.describe("api tokens", () => {
     expect(created.status()).toBe(201);
     const { token, secret } = await created.json();
     expect(secret).toMatch(/^hoot_/);
+    expect(token.ownerUsername).toBe(owner.username);
     expect(token.role).toBe("developer");
     expect(Date.parse(token.expiresAt)).toBeGreaterThan(Date.now());
 
@@ -83,6 +116,7 @@ test.describe("api tokens", () => {
     const list = await (await owner.ctx.get(`/api/orgs/${owner.orgId}/tokens`)).json();
     const listed = list.tokens.find((t: { id: string }) => t.id === token.id);
     expect(listed).toBeTruthy();
+    expect(listed.ownerUsername).toBe(owner.username);
     expect(listed.role).toBe("developer");
     expect(Date.parse(listed.expiresAt)).toBeGreaterThan(Date.now());
 
@@ -91,6 +125,49 @@ test.describe("api tokens", () => {
 
     const after = await anon.get("/api/me", { headers: { authorization: `Bearer ${secret}` } });
     expect(after.status()).toBe(401);
+  });
+
+  test("org admins can inventory tokens owned by other users", async ({ baseURL }) => {
+    const owner = await setupOwner(baseURL!);
+    const admin = await setupOwner(baseURL!);
+    const viewer = await setupOwner(baseURL!);
+    const adminMe = (await (await admin.ctx.get("/api/me")).json()) as {
+      principal: { userId: string };
+    };
+    const viewerMe = (await (await viewer.ctx.get("/api/me")).json()) as {
+      principal: { userId: string };
+    };
+    insertOrgRoleBinding({
+      orgId: owner.orgId,
+      userId: adminMe.principal.userId,
+      role: "admin",
+    });
+    insertOrgRoleBinding({
+      orgId: owner.orgId,
+      userId: viewerMe.principal.userId,
+      role: "viewer",
+    });
+
+    const { token } = await (
+      await createToken(owner.ctx, owner.orgId, { name: "owner-token" })
+    ).json();
+
+    const adminList = await admin.ctx.get(`/api/orgs/${owner.orgId}/tokens`);
+    expect(adminList.status()).toBe(200);
+    const adminBody = await adminList.json();
+    const listed = adminBody.tokens.find((t: { id: string }) => t.id === token.id);
+    expect(listed).toBeTruthy();
+    expect(listed.ownerUsername).toBe(owner.username);
+    expect(listed.ownerUserId).toBe(token.ownerUserId);
+    expect(listed.tokenHash).toBeUndefined();
+
+    const viewerList = await viewer.ctx.get(`/api/orgs/${owner.orgId}/tokens`);
+    expect(viewerList.status()).toBe(200);
+    const viewerBody = await viewerList.json();
+    expect(viewerBody.tokens.some((t: { id: string }) => t.id === token.id)).toBe(false);
+
+    const revoked = await admin.ctx.delete(`/api/orgs/${owner.orgId}/tokens/${token.id}`);
+    expect(revoked.status()).toBe(200);
   });
 
   test("scopes are reflected in the resolved principal", async ({ baseURL }) => {

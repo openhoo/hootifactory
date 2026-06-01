@@ -56,9 +56,14 @@ export interface Version {
 }
 export interface TokenInfo {
   id: string;
+  ownerUserId: string | null;
+  ownerUsername: string | null;
   name: string;
   prefix: string;
   type: string;
+  scopes: { repository: string; actions: string[] }[];
+  role: string | null;
+  expiresAt: string | null;
   revokedAt: string | null;
   lastUsedAt: string | null;
   createdAt: string;
