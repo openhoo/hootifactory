@@ -1,6 +1,14 @@
 import { expect, test } from "@playwright/test";
 import { anonContext, createRepo, createToken, setupOwner, uniq } from "./helpers";
 
+function expectRepositoryDto(repo: Record<string, unknown>) {
+  expect(repo.id).toBeTruthy();
+  expect(repo.name).toBeTruthy();
+  expect(repo.mountPath).toBeTruthy();
+  expect(repo).not.toHaveProperty("storagePrefix");
+  expect(repo).not.toHaveProperty("config");
+}
+
 test.describe("repositories", () => {
   test("create repos per format with correct mountPath", async ({ baseURL }) => {
     const owner = await setupOwner(baseURL!);
@@ -22,6 +30,7 @@ test.describe("repositories", () => {
       expect(repo.format).toBe(format);
       expect(repo.mountPath).toBe(`${seg}/${owner.orgSlug}/${name}`);
       expect(repo.visibility).toBe("private");
+      expectRepositoryDto(repo);
     }
   });
 
@@ -31,6 +40,29 @@ test.describe("repositories", () => {
     await createRepo(owner.ctx, owner.orgId, { name, format: "npm" });
     const list = await (await owner.ctx.get(`/api/orgs/${owner.orgId}/repositories`)).json();
     expect(list.repositories.some((r: { name: string }) => r.name === name)).toBe(true);
+    for (const repo of list.repositories) expectRepositoryDto(repo);
+  });
+
+  test("repository detail responses omit internal storage configuration", async ({ baseURL }) => {
+    const owner = await setupOwner(baseURL!);
+    const name = uniq("repo");
+    const created = await (
+      await createRepo(owner.ctx, owner.orgId, {
+        name,
+        format: "npm",
+        visibility: "public",
+      })
+    ).json();
+    const repo = created.repository as { id: string };
+    expectRepositoryDto(created.repository);
+
+    const ownerDetail = await (await owner.ctx.get(`/api/repositories/${repo.id}`)).json();
+    expectRepositoryDto(ownerDetail.repository);
+
+    const anon = await anonContext(baseURL!);
+    const anonDetail = await anon.get(`/api/repositories/${repo.id}`);
+    expect(anonDetail.status()).toBe(200);
+    expectRepositoryDto((await anonDetail.json()).repository);
   });
 
   test("duplicate repo name -> 409", async ({ baseURL }) => {

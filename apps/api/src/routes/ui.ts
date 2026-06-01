@@ -69,6 +69,23 @@ function scopeMayTargetRepo(pattern: string, repo: { name: string; mountPath: st
   return false;
 }
 
+type RepositoryRow = typeof repositories.$inferSelect;
+
+function repositoryDto(repo: RepositoryRow) {
+  return {
+    id: repo.id,
+    orgId: repo.orgId,
+    name: repo.name,
+    format: repo.format,
+    kind: repo.kind,
+    visibility: repo.visibility,
+    mountPath: repo.mountPath,
+    description: repo.description,
+    createdAt: repo.createdAt,
+    updatedAt: repo.updatedAt,
+  };
+}
+
 uiRouter.get("/me", (c) => {
   const p = c.get("principal");
   if (p.kind === "anonymous") return c.json({ authenticated: false }, 401);
@@ -128,7 +145,7 @@ uiRouter.get("/orgs/:orgId/repositories", async (c) => {
     return c.json({ error: decision.reason }, decision.code === "unauthenticated" ? 401 : 403);
   }
   const rows = await db.select().from(repositories).where(eq(repositories.orgId, orgId));
-  return c.json({ repositories: rows });
+  return c.json({ repositories: rows.map(repositoryDto) });
 });
 
 // ── content browsing ─────────────────────────────────────────────────────
@@ -153,7 +170,7 @@ uiRouter.get("/repositories/:repoId", async (c) => {
     .select({ value: count() })
     .from(packages)
     .where(eq(packages.repositoryId, repo.id));
-  return c.json({ repository: repo, packageCount: countRows[0]?.value ?? 0 });
+  return c.json({ repository: repositoryDto(repo), packageCount: countRows[0]?.value ?? 0 });
 });
 
 uiRouter.get("/repositories/:repoId/packages", async (c) => {
@@ -529,7 +546,7 @@ uiRouter.post("/orgs/:orgId/repositories", async (c) => {
       principal: c.get("principal"),
       detail: { name: repo.name, format: repo.format, kind: repo.kind },
     }).catch(() => {});
-    return c.json({ repository: repo }, 201);
+    return c.json({ repository: repositoryDto(repo) }, 201);
   } catch (err) {
     if (isUniqueViolation(err)) {
       return c.json({ error: `repository '${body.name}' already exists` }, 409);
