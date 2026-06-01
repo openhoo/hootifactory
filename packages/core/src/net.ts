@@ -4,18 +4,26 @@
  * by untrusted upstream JSON, so every such fetch must go through here.
  */
 
+import { lookup } from "node:dns/promises";
+import { isIP } from "node:net";
 import { isProduction } from "@hootifactory/config";
+
+export type HostLookup = (hostname: string) => Promise<{ address: string }[]>;
+
+const defaultLookup: HostLookup = (hostname) => lookup(hostname, { all: true, verbatim: true });
 
 /** Literal hosts that must never be fetched server-side (loopback, RFC1918, link-local, metadata, ULA). */
 export function isPrivateHost(hostname: string): boolean {
   const h = hostname.toLowerCase().replace(/^\[|\]$/g, ""); // strip IPv6 brackets
+  if (h.startsWith("::ffff:")) return isPrivateHost(h.slice("::ffff:".length));
   if (h === "localhost" || h.endsWith(".localhost")) return true;
   if (
     h === "::1" ||
     h === "::" ||
     h.startsWith("fe80:") ||
     h.startsWith("fc") ||
-    h.startsWith("fd")
+    h.startsWith("fd") ||
+    h.startsWith("ff")
   ) {
     return true;
   }
@@ -27,6 +35,9 @@ export function isPrivateHost(hostname: string): boolean {
     if (a === 169 && b === 254) return true; // link-local + cloud metadata (169.254.169.254)
     if (a === 192 && b === 168) return true; // private
     if (a === 172 && b >= 16 && b <= 31) return true; // private
+    if (a === 100 && b >= 64 && b <= 127) return true; // carrier-grade NAT
+    if (a === 198 && (b === 18 || b === 19)) return true; // benchmark networks
+    if (a >= 224) return true; // multicast/reserved
   }
   return false;
 }
@@ -51,11 +62,33 @@ export function assertPublicHttpUrl(raw: string): URL {
   return url;
 }
 
+export async function assertPublicResolvedUrl(
+  url: URL,
+  opts: { enforce?: boolean; lookupHost?: HostLookup } = {},
+): Promise<void> {
+  if (!(opts.enforce ?? isProduction)) return;
+  const hostname = url.hostname.replace(/^\[|\]$/g, "");
+  if (isPrivateHost(hostname)) {
+    throw new Error(`refusing to fetch a private/loopback/metadata host: ${url.hostname}`);
+  }
+  if (isIP(hostname) !== 0) return;
+  const addresses = await (opts.lookupHost ?? defaultLookup)(hostname);
+  if (addresses.length === 0) throw new Error(`could not resolve upstream host: ${hostname}`);
+  const blocked = addresses.find((a) => isPrivateHost(a.address));
+  if (blocked) {
+    throw new Error(
+      `refusing to fetch ${hostname}; DNS resolved to private/loopback/metadata address ${blocked.address}`,
+    );
+  }
+}
+
 export interface SafeFetchOptions extends RequestInit {
   /** Max redirect hops to follow (each re-validated). Default 3. */
   maxHops?: number;
   /** Per-request timeout in ms. Default 30s. */
   timeoutMs?: number;
+  /** Test hook for DNS-resolution SSRF checks. */
+  lookupHost?: HostLookup;
 }
 
 /**
@@ -64,9 +97,10 @@ export interface SafeFetchOptions extends RequestInit {
  * server into an internal/metadata address. Applies a timeout on each hop.
  */
 export async function safeFetch(raw: string, opts: SafeFetchOptions = {}): Promise<Response> {
-  const { maxHops = 3, timeoutMs = 30_000, ...init } = opts;
+  const { maxHops = 3, timeoutMs = 30_000, lookupHost, ...init } = opts;
   let url = assertPublicHttpUrl(raw);
   for (let hop = 0; hop <= maxHops; hop++) {
+    await assertPublicResolvedUrl(url, { lookupHost });
     const res = await fetch(url, {
       ...init,
       redirect: "manual",
