@@ -24,7 +24,7 @@ import {
 import {
   detectScanners,
   osvScanDependencies,
-  runGrypeIfAvailable,
+  runExternalScanners,
   scanDependencies,
   scanForMalware,
 } from "@hootifactory/scanning";
@@ -115,9 +115,12 @@ export async function processScan(artifactId: string): Promise<void> {
     }
     scannedBytePayload = true;
     found.push(...scanForMalware(bytes));
-    // Run installed external scanners (e.g. Grype) against a scratch copy.
-    const scanners = detectScanners();
-    if (scanners.grype) {
+    const scannerOptions = {
+      trivyServerUrl: env.TRIVY_SERVER_URL,
+      clamavRestUrl: env.CLAMAV_REST_URL,
+    };
+    const scanners = detectScanners(scannerOptions);
+    if (scanners.grype || scanners.trivy || scanners.clamav) {
       let dir: string | null = null;
       try {
         const base = env.SCAN_SCRATCH_DIR.replace(/\/+$/, "");
@@ -125,7 +128,7 @@ export async function processScan(artifactId: string): Promise<void> {
         dir = await mkdtemp(join(base, "scan-"));
         const path = join(dir, digest.replace(/[^a-z0-9]/gi, "_"));
         await Bun.write(path, bytes);
-        found.push(...(await runGrypeIfAvailable(path)));
+        found.push(...(await runExternalScanners(path, bytes, scannerOptions)));
       } catch (err) {
         console.error("[scan] external scanner failed", err);
       } finally {

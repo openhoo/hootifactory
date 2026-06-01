@@ -20,6 +20,8 @@ const absoluteUrl = z
   .url()
   .transform((s) => s.replace(/\/+$/, ""));
 
+const httpUrl = absoluteUrl.refine((s) => /^https?:\/\//.test(s), "must be an http(s) URL");
+
 /** Well-known dev-default secret values that must never reach production. */
 const DEV_DEFAULT_SECRETS = {
   SESSION_SECRET: "dev-session-secret-change-me-please-32chars",
@@ -68,8 +70,8 @@ const EnvSchema = z
 
     // Scanning (Phase 3)
     SCANNER_ENABLED: boolish.default(false),
-    CLAMAV_REST_URL: z.string().optional(),
-    TRIVY_SERVER_URL: z.string().optional(),
+    CLAMAV_REST_URL: httpUrl.optional(),
+    TRIVY_SERVER_URL: httpUrl.optional(),
     OSV_API_URL: absoluteUrl.default("https://api.osv.dev"),
     SCAN_SCRATCH_DIR: z.string().default("./scratch"),
     SCAN_MAX_BYTES: z.coerce

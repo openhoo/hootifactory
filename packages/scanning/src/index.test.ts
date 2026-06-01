@@ -1,5 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { osvScanDependencies, scanDependencies, scanForMalware } from "./index";
+import {
+  detectScanners,
+  osvScanDependencies,
+  parseClamAvRestFindings,
+  parseTrivyFindings,
+  runClamAvIfAvailable,
+  scanDependencies,
+  scanForMalware,
+  trivyFsArgs,
+} from "./index";
 
 const EICAR = "X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*";
 
@@ -69,6 +78,86 @@ describe("heuristic scanning", () => {
           purl: "pkg:npm/vulnerable@1.2.3",
         },
       ]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("maps Trivy JSON vulnerabilities and includes server-mode CLI args", () => {
+    expect(trivyFsArgs("/tmp/pkg", "http://trivy:4954")).toEqual([
+      "fs",
+      "--quiet",
+      "--format",
+      "json",
+      "--server",
+      "http://trivy:4954",
+      "/tmp/pkg",
+    ]);
+    expect(
+      parseTrivyFindings({
+        Results: [
+          {
+            Vulnerabilities: [
+              {
+                VulnerabilityID: "CVE-2026-0001",
+                Severity: "CRITICAL",
+                PkgName: "openssl",
+                InstalledVersion: "1.0.0",
+                FixedVersion: "1.0.1",
+                Title: "test vulnerability",
+                PkgIdentifier: { PURL: "pkg:apk/alpine/openssl@1.0.0" },
+              },
+            ],
+          },
+        ],
+      }),
+    ).toEqual([
+      {
+        type: "vuln",
+        vulnId: "CVE-2026-0001",
+        severity: "critical",
+        packageName: "openssl",
+        packageVersion: "1.0.0",
+        fixedVersion: "1.0.1",
+        title: "test vulnerability",
+        description: undefined,
+        purl: "pkg:apk/alpine/openssl@1.0.0",
+      },
+    ]);
+  });
+
+  test("maps ClamAV REST responses and treats configured REST as available", async () => {
+    expect(detectScanners({ clamavRestUrl: "http://clamav:3310/scan" }).clamav).toBe(true);
+    expect(parseClamAvRestFindings({ infected: true, viruses: ["Eicar-Test-Signature"] })).toEqual([
+      {
+        type: "malware",
+        severity: "critical",
+        vulnId: "CLAMAV:Eicar-Test-Signature",
+        title: "ClamAV detected Eicar-Test-Signature",
+      },
+    ]);
+
+    const originalFetch = globalThis.fetch;
+    const calls: Parameters<typeof fetch>[] = [];
+    globalThis.fetch = (async (...args: Parameters<typeof fetch>) => {
+      calls.push(args);
+      return Response.json({ infected: true, signature: "Rest-Malware" });
+    }) as unknown as typeof fetch;
+    try {
+      const bytes = new TextEncoder().encode("payload");
+      await expect(
+        runClamAvIfAvailable("/tmp/payload", bytes, "http://clamav/scan"),
+      ).resolves.toEqual([
+        {
+          type: "malware",
+          severity: "critical",
+          vulnId: "CLAMAV:Rest-Malware",
+          title: "ClamAV detected Rest-Malware",
+        },
+      ]);
+      expect(calls[0]?.[0]).toBe("http://clamav/scan");
+      expect((calls[0]?.[1] as RequestInit).method).toBe("POST");
+      expect((calls[0]?.[1] as RequestInit).body).toBe(bytes);
     } finally {
       globalThis.fetch = originalFetch;
     }

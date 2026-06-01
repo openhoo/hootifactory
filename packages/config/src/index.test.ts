@@ -35,4 +35,15 @@ describe("environment auth creation defaults", () => {
     expect(env.AUTH_ALLOW_REGISTRATION).toBe(true);
     expect(env.AUTH_ALLOW_ORG_CREATION).toBe(true);
   });
+
+  test("scanner endpoint URLs are validated and normalized", () => {
+    const env = loadEnv({
+      CLAMAV_REST_URL: "http://clamav:3310/scan/",
+      TRIVY_SERVER_URL: "http://trivy:4954/",
+    });
+    expect(env.CLAMAV_REST_URL).toBe("http://clamav:3310/scan");
+    expect(env.TRIVY_SERVER_URL).toBe("http://trivy:4954");
+    expect(() => loadEnv({ CLAMAV_REST_URL: "clamav:3310" })).toThrow();
+    expect(() => loadEnv({ TRIVY_SERVER_URL: "trivy:4954" })).toThrow();
+  });
 });

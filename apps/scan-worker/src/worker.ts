@@ -1,3 +1,4 @@
+import { env } from "@hootifactory/config";
 import { QUEUES, stopBoss, work } from "@hootifactory/queue";
 import { detectScanners } from "@hootifactory/scanning";
 import { processScan, recordScanFailure } from "./pipeline";
@@ -20,7 +21,10 @@ if (process.env.WORKER_PORT) {
 }
 
 async function main(): Promise<void> {
-  console.log("[scan-worker] starting; external scanners:", detectScanners());
+  console.log(
+    "[scan-worker] starting; external scanners:",
+    detectScanners({ trivyServerUrl: env.TRIVY_SERVER_URL, clamavRestUrl: env.CLAMAV_REST_URL }),
+  );
   await work<{ artifactId: string }>(
     QUEUES.scanArtifact,
     async (jobs) => {
