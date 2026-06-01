@@ -218,13 +218,7 @@ export class CargoAdapter implements FormatAdapter {
     const [existing] = await ctx.db
       .select({ id: packageVersions.id })
       .from(packageVersions)
-      .where(
-        and(
-          eq(packageVersions.packageId, pkg.id),
-          eq(packageVersions.version, meta.vers),
-          isNull(packageVersions.deletedAt),
-        ),
-      )
+      .where(and(eq(packageVersions.packageId, pkg.id), eq(packageVersions.version, meta.vers)))
       .limit(1);
     if (existing) return Response.json({ error: "version already exists" }, { status: 409 });
 

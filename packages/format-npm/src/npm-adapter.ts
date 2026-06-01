@@ -189,12 +189,17 @@ export class NpmAdapter implements FormatAdapter {
     const base = basename(name);
     const versionIds = new Map<string, string>();
 
-    // Live (non-deleted) versions already published — npm versions are immutable.
-    const live = await this.liveVersions(ctx, pkg.id);
-    const liveSet = new Set(live.map((v) => v.version));
+    // Any version row, including a retention tombstone, reserves the npm version.
+    // Retention hides bytes from readers; it must not make immutable versions
+    // publishable again.
+    const used = await ctx.db
+      .select({ version: packageVersions.version })
+      .from(packageVersions)
+      .where(eq(packageVersions.packageId, pkg.id));
+    const usedSet = new Set(used.map((v) => v.version));
 
     for (const [ver, manifestRaw] of Object.entries(versions)) {
-      if (liveSet.has(ver)) {
+      if (usedSet.has(ver)) {
         return Response.json(
           { error: `cannot publish over the previously published version ${ver}` },
           { status: 403 },

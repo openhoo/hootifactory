@@ -103,6 +103,15 @@ export class PypiAdapter implements FormatAdapter {
     return rows.flatMap((r) => (r.metadata as { files?: PypiFileMeta[] })?.files ?? []);
   }
 
+  private async allFiles(ctx: RepoContext): Promise<PypiFileMeta[]> {
+    const rows = await ctx.db
+      .select({ metadata: packageVersions.metadata })
+      .from(packageVersions)
+      .innerJoin(packages, eq(packageVersions.packageId, packages.id))
+      .where(eq(packages.repositoryId, ctx.repo.id));
+    return rows.flatMap((r) => (r.metadata as { files?: PypiFileMeta[] })?.files ?? []);
+  }
+
   private async simpleProject(projectRaw: string, ctx: RepoContext): Promise<Response> {
     const name = normalizeName(projectRaw);
     const pkg = await this.findPackage(ctx, name);
@@ -160,8 +169,9 @@ export class PypiAdapter implements FormatAdapter {
     const bytes = new Uint8Array(await content.arrayBuffer());
     const filename = content.name;
 
-    // PyPI files are immutable: reject a re-upload of an existing filename.
-    if ((await this.liveFiles(ctx)).some((f) => f.filename === filename)) {
+    // PyPI files are immutable: reject a re-upload of an existing filename,
+    // including files hidden by retention.
+    if ((await this.allFiles(ctx)).some((f) => f.filename === filename)) {
       return Response.json({ message: "File already exists." }, { status: 409 });
     }
     // Validate the client-declared sha256 against the actual bytes before storing.
@@ -183,6 +193,11 @@ export class PypiAdapter implements FormatAdapter {
       repositoryId: ctx.repo.id,
       name,
     });
+    const existing = await findVersion(pkg.id, version);
+    if (existing?.deletedAt) {
+      return Response.json({ message: "Release version already exists." }, { status: 409 });
+    }
+
     const stored = await storeBlobWithRef(ctx, {
       data: bytes,
       kind: "pypi_file",
@@ -198,7 +213,6 @@ export class PypiAdapter implements FormatAdapter {
       filetype,
     };
 
-    const existing = await findVersion(pkg.id, version);
     const existingFiles =
       (existing?.metadata as { files?: PypiFileMeta[] } | undefined)?.files ?? [];
     const files = [...existingFiles.filter((f) => f.filename !== filename), fileMeta];

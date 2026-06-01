@@ -256,9 +256,10 @@ export class NugetAdapter implements FormatAdapter {
       repositoryId: ctx.repo.id,
       name: lower,
     });
-    // NuGet packages are immutable — a duplicate push is a 409 Conflict.
+    // NuGet packages are immutable. A retention tombstone still reserves the
+    // normalized package version, so old bytes cannot be replaced by re-push.
     const existing = await findVersion(pkg.id, version);
-    if (existing && !existing.deletedAt) return new Response(null, { status: 409 });
+    if (existing) return new Response(null, { status: 409 });
 
     const file = `${lower}.${version}.nupkg`;
     const stored = await storeBlobWithRef(ctx, {

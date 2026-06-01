@@ -227,5 +227,6 @@ test.describe("governance: quotas + retention", () => {
     const versionsRes = await owner.ctx.get(`/api/packages/${listed!.id}/versions`);
     const versionsBody = (await versionsRes.json()) as { versions: { version: string }[] };
     expect(versionsBody.versions.map((v) => v.version).sort()).toEqual(["1.0.1", "1.0.2"]);
+    expect(publish(baseURL!, repo.mountPath, token, pkg, "1.0.0").ok).toBe(false);
   });
 });

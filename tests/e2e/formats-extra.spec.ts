@@ -1,4 +1,5 @@
-import { expect, test } from "@playwright/test";
+import { createHash } from "node:crypto";
+import { type APIRequestContext, expect, test } from "@playwright/test";
 import { anonContext, createRepo, createToken, setupOwner } from "./helpers";
 
 function cargoPublishBody(meta: object, crate: Uint8Array): Buffer {
@@ -120,6 +121,43 @@ function createNupkg(pkgId: string, version: string): Buffer {
   ]);
 }
 
+function basicToken(secret: string): string {
+  return `Basic ${Buffer.from(`__token__:${secret}`).toString("base64")}`;
+}
+
+function sha256hex(bytes: Buffer): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+async function uploadPypiFile(input: {
+  ctx: APIRequestContext;
+  mountPath: string;
+  secret: string;
+  pkg: string;
+  version: string;
+  filename: string;
+  bytes: Buffer;
+}) {
+  return input.ctx.post(`/${input.mountPath}/legacy/`, {
+    headers: { authorization: basicToken(input.secret) },
+    multipart: {
+      ":action": "file_upload",
+      protocol_version: "1",
+      name: input.pkg,
+      version: input.version,
+      filetype: "bdist_wheel",
+      pyversion: "py3",
+      metadata_version: "2.1",
+      sha256_digest: sha256hex(input.bytes),
+      content: {
+        name: input.filename,
+        mimeType: "application/octet-stream",
+        buffer: input.bytes,
+      },
+    },
+  });
+}
+
 test.describe("cargo sparse registry (protocol)", () => {
   test("publish -> config.json -> index -> download", async ({ baseURL }) => {
     const owner = await setupOwner(baseURL!);
@@ -238,6 +276,14 @@ test.describe("cargo sparse registry (protocol)", () => {
     expect(
       (await owner.ctx.get(`/${repo.mountPath}/api/v1/crates/${crate}/1.0.0/download`)).status(),
     ).toBe(404);
+    expect(
+      (
+        await anon.put(`/${repo.mountPath}/api/v1/crates/new`, {
+          headers: { authorization: token },
+          data: duplicate,
+        })
+      ).status(),
+    ).toBe(409);
   });
 
   test("malformed framed publish payloads are rejected with 400", async ({ baseURL }) => {
@@ -311,6 +357,7 @@ test.describe("go module proxy (protocol)", () => {
     expect((await owner.ctx.get(`/${repo.mountPath}/${moduleName}/@v/v1.0.0.zip`)).status()).toBe(
       404,
     );
+    expect((await upload("v1.0.0", new TextEncoder().encode("resurrected"))).status()).toBe(409);
   });
 });
 
@@ -390,5 +437,82 @@ test.describe("nuget v3 (protocol)", () => {
       `/${repo.mountPath}/v3-flatcontainer/${lower}/1.0.0/${lower}.1.0.0.nupkg`,
     );
     expect(prunedDownload.status()).toBe(404);
+
+    const republishPruned = await owner.ctx.put(`/${repo.mountPath}/v3/package`, {
+      headers: { "content-type": "application/octet-stream" },
+      data: createNupkg(pkgId, "1.0.0"),
+    });
+    expect(republishPruned.status()).toBe(409);
+  });
+});
+
+test.describe("pypi simple API (protocol)", () => {
+  test("upload, retention, and tombstoned release republish rejection", async ({ baseURL }) => {
+    const owner = await setupOwner(baseURL!);
+    const repo = (
+      await (
+        await createRepo(owner.ctx, owner.orgId, {
+          name: "pypi-ret",
+          format: "pypi",
+          visibility: "public",
+        })
+      ).json()
+    ).repository as { id: string; mountPath: string };
+    const secret = (await (await createToken(owner.ctx, owner.orgId, { name: "pypi-ret" })).json())
+      .secret as string;
+    const anon = await anonContext(baseURL!);
+    const id = Date.now().toString(36);
+    const pkg = `hootpy${id}`;
+
+    const firstFile = `${pkg}-1.0.0-py3-none-any.whl`;
+    expect(
+      (
+        await uploadPypiFile({
+          ctx: anon,
+          mountPath: repo.mountPath,
+          secret,
+          pkg,
+          version: "1.0.0",
+          filename: firstFile,
+          bytes: Buffer.from("first pypi artifact"),
+        })
+      ).status(),
+    ).toBe(200);
+    expect(
+      (
+        await uploadPypiFile({
+          ctx: anon,
+          mountPath: repo.mountPath,
+          secret,
+          pkg,
+          version: "1.0.1",
+          filename: `${pkg}-1.0.1-py3-none-any.whl`,
+          bytes: Buffer.from("second pypi artifact"),
+        })
+      ).status(),
+    ).toBe(200);
+
+    const pruned = await (
+      await owner.ctx.post(`/api/repositories/${repo.id}/retention/apply`, {
+        data: { keepLastN: 1 },
+      })
+    ).json();
+    expect(pruned.pruned).toBe(1);
+
+    const simple = await (await owner.ctx.get(`/${repo.mountPath}/simple/${pkg}/`)).text();
+    expect(simple).not.toContain("1.0.0");
+    expect(simple).toContain("1.0.1");
+    expect((await owner.ctx.get(`/${repo.mountPath}/files/${firstFile}`)).status()).toBe(404);
+
+    const republish = await uploadPypiFile({
+      ctx: anon,
+      mountPath: repo.mountPath,
+      secret,
+      pkg,
+      version: "1.0.0",
+      filename: firstFile,
+      bytes: Buffer.from("mutated pypi artifact"),
+    });
+    expect(republish.status()).toBe(409);
   });
 });
