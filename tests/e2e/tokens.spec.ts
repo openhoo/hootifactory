@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { type APIRequestContext, expect, test } from "@playwright/test";
 import { anonContext, createRepo, createToken, setupOwner, uniq } from "./helpers";
 
@@ -39,6 +40,10 @@ function insertRoleBinding(input: {
       encoding: "utf8",
     },
   );
+}
+
+function sha256(bytes: Buffer | string): string {
+  return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 }
 
 async function publishRawNpm(ctx: APIRequestContext, mountPath: string, pkgName: string) {
@@ -216,5 +221,44 @@ test.describe("api tokens", () => {
       role: "developer",
     });
     expect(roleToken.status()).toBe(403);
+  });
+
+  test("repo-scoped demotion also caps OCI image-style token scopes", async ({ baseURL }) => {
+    const owner = await setupOwner(baseURL!);
+    const me = (await (await owner.ctx.get("/api/me")).json()) as {
+      principal: { userId: string };
+    };
+    const repoName = uniq("demoted-containers");
+    const repo = (
+      await (await createRepo(owner.ctx, owner.orgId, { name: repoName, format: "docker" })).json()
+    ).repository as { id: string; name: string; mountPath: string };
+    insertRoleBinding({
+      orgId: owner.orgId,
+      userId: me.principal.userId,
+      repositoryId: repo.id,
+      role: "viewer",
+    });
+
+    const bytes = Buffer.from("blocked layer");
+    const directWrite = await owner.ctx.post(
+      `/${repo.mountPath}/app/blobs/uploads?digest=${sha256(bytes)}`,
+      { headers: { "content-type": "application/octet-stream" }, data: bytes },
+    );
+    expect(directWrite.status()).toBe(403);
+
+    const scopedWrite = await createToken(owner.ctx, owner.orgId, {
+      name: "oci-writer",
+      scopes: [{ repository: `${owner.orgSlug}/${repo.name}/app`, actions: ["write"] }],
+    });
+    expect(scopedWrite.status()).toBe(403);
+    expect(await scopedWrite.json()).toMatchObject({
+      error: `cannot grant scope action 'write' on repository '${repo.name}'`,
+    });
+
+    const scopedRead = await createToken(owner.ctx, owner.orgId, {
+      name: "oci-reader",
+      scopes: [{ repository: `${owner.orgSlug}/${repo.name}/app`, actions: ["read"] }],
+    });
+    expect(scopedRead.status()).toBe(201);
   });
 });

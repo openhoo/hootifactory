@@ -57,6 +57,18 @@ function isInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value);
 }
 
+function scopeMayTargetRepo(pattern: string, repo: { name: string; mountPath: string }): boolean {
+  if (patternMatches(pattern, repo.name)) return true;
+  const ociPrefix = repo.mountPath.startsWith("v2/") ? repo.mountPath.slice(3) : null;
+  if (!ociPrefix) return false;
+  if (patternMatches(pattern, ociPrefix) || pattern.startsWith(`${ociPrefix}/`)) return true;
+  if (pattern.endsWith("*")) {
+    const prefix = pattern.slice(0, -1);
+    return prefix.startsWith(`${ociPrefix}/`) || ociPrefix.startsWith(prefix);
+  }
+  return false;
+}
+
 uiRouter.get("/me", (c) => {
   const p = c.get("principal");
   if (p.kind === "anonymous") return c.json({ authenticated: false }, 401);
@@ -601,7 +613,11 @@ uiRouter.post("/orgs/:orgId/tokens", async (c) => {
   const orgRepos =
     body.role || body.scopes?.length
       ? await db
-          .select({ id: repositories.id, name: repositories.name })
+          .select({
+            id: repositories.id,
+            name: repositories.name,
+            mountPath: repositories.mountPath,
+          })
           .from(repositories)
           .where(eq(repositories.orgId, orgId))
       : [];
@@ -623,7 +639,7 @@ uiRouter.post("/orgs/:orgId/tokens", async (c) => {
       }
     }
     for (const repo of orgRepos) {
-      if (!patternMatches(scope.repository, repo.name)) continue;
+      if (!scopeMayTargetRepo(scope.repository, repo)) continue;
       const repoRole = await resolveUserRole(p.userId, orgId, repo.id);
       for (const action of scope.actions) {
         if (!repoRole || !roleAllows(repoRole, action)) {
