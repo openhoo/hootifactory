@@ -1,5 +1,8 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
@@ -60,6 +63,60 @@ function installAll(baseURL: string, mountPath: string, token: string, specs: st
 
 async function repoFrom(res: { json: () => Promise<unknown> }) {
   return (await res.json()) as { repository: { id: string; mountPath: string } };
+}
+
+function sha1hex(bytes: Buffer): string {
+  return createHash("sha1").update(bytes).digest("hex");
+}
+
+function sha512Integrity(bytes: Buffer): string {
+  return `sha512-${createHash("sha512").update(bytes).digest("base64")}`;
+}
+
+async function startNpmUpstream(input: {
+  name: string;
+  advertisedBytes: Buffer;
+  servedBytes: Buffer;
+}): Promise<{ url: string; close: () => Promise<void> }> {
+  const server = createServer((req, res) => {
+    const url = new URL(req.url ?? "/", "http://127.0.0.1");
+    const tarballPath = `/${input.name}/-/${input.name}-1.0.0.tgz`;
+    if (url.pathname === `/${input.name}`) {
+      const base = `http://${req.headers.host}`;
+      res.setHeader("content-type", "application/json");
+      res.end(
+        JSON.stringify({
+          name: input.name,
+          versions: {
+            "1.0.0": {
+              name: input.name,
+              version: "1.0.0",
+              dist: {
+                tarball: `${base}${tarballPath}`,
+                shasum: sha1hex(input.advertisedBytes),
+                integrity: sha512Integrity(input.advertisedBytes),
+              },
+            },
+          },
+          "dist-tags": { latest: "1.0.0" },
+        }),
+      );
+      return;
+    }
+    if (url.pathname === tarballPath) {
+      res.setHeader("content-type", "application/octet-stream");
+      res.end(input.servedBytes);
+      return;
+    }
+    res.statusCode = 404;
+    res.end("not found");
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address() as AddressInfo;
+  return {
+    url: `http://127.0.0.1:${address.port}`,
+    close: () => new Promise<void>((resolve) => (server as Server).close(() => resolve())),
+  };
 }
 
 const CRC_TABLE = new Uint32Array(256).map((_, n) => {
@@ -289,6 +346,40 @@ test.describe("virtual + proxy repositories (real npm)", () => {
     const artifact = await pollArtifact(owner.ctx, proxy.id, pkg);
     expect(artifact.version).toBe("1.0.0");
     expect(artifact.state).toBe("clean");
+  });
+
+  test("proxy repo rejects upstream tarballs that do not match advertised integrity", async ({
+    baseURL,
+  }) => {
+    const owner = await setupOwner(baseURL!);
+    const proxy = (
+      await repoFrom(
+        await createRepo(owner.ctx, owner.orgId, {
+          name: "npm-proxy-integrity",
+          format: "npm",
+          kind: "proxy",
+        }),
+      )
+    ).repository;
+    const pkg = `badintegrity${Date.now().toString(36)}`;
+    const upstream = await startNpmUpstream({
+      name: pkg,
+      advertisedBytes: Buffer.from("honest tarball"),
+      servedBytes: Buffer.from("tampered tarball"),
+    });
+    try {
+      await owner.ctx.post(`/api/repositories/${proxy.id}/upstreams`, {
+        data: { url: `${upstream.url}/` },
+      });
+
+      const packument = await owner.ctx.get(`/${proxy.mountPath}/${pkg}`);
+      expect(packument.status()).toBe(404);
+
+      const tarball = await owner.ctx.get(`/${proxy.mountPath}/${pkg}/-/${pkg}-1.0.0.tgz`);
+      expect(tarball.status()).toBe(404);
+    } finally {
+      await upstream.close();
+    }
   });
 
   test("configuration rejects invalid virtual and proxy topology", async ({ baseURL }) => {

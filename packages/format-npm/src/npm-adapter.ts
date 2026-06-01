@@ -37,6 +37,11 @@ function sha512b64(data: Uint8Array): string {
   h.update(data);
   return h.digest("base64");
 }
+function digestB64(algorithm: "sha1" | "sha256" | "sha384" | "sha512", data: Uint8Array): string {
+  const h = new Bun.CryptoHasher(algorithm);
+  h.update(data);
+  return h.digest("base64");
+}
 function basename(name: string): string {
   const i = name.lastIndexOf("/");
   return i >= 0 ? name.slice(i + 1) : name;
@@ -46,6 +51,32 @@ function basename(name: string): string {
 function isValidNpmName(name: string): boolean {
   if (!name || name.length > 214) return false;
   return /^(@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/.test(name);
+}
+
+const INTEGRITY_ALGORITHMS = new Set(["sha1", "sha256", "sha384", "sha512"]);
+
+function integrityTokenMatches(token: string, data: Uint8Array): boolean {
+  const value = token.split("?")[0] ?? "";
+  const separator = value.indexOf("-");
+  if (separator <= 0) return false;
+  const algorithm = value.slice(0, separator) as "sha1" | "sha256" | "sha384" | "sha512";
+  const expected = value.slice(separator + 1);
+  if (!INTEGRITY_ALGORITHMS.has(algorithm) || !expected) return false;
+  return digestB64(algorithm, data) === expected;
+}
+
+function upstreamDistMatchesBytes(
+  dist: { integrity?: string; shasum?: string },
+  data: Uint8Array,
+): boolean {
+  if (typeof dist.integrity === "string" && dist.integrity.trim()) {
+    const tokens = dist.integrity.trim().split(/\s+/);
+    if (!tokens.some((token) => integrityTokenMatches(token, data))) return false;
+  }
+  if (typeof dist.shasum === "string" && dist.shasum.trim()) {
+    if (sha1hex(data) !== dist.shasum.trim().toLowerCase()) return false;
+  }
+  return true;
 }
 
 interface NpmDist {
@@ -343,16 +374,11 @@ export class NpmAdapter implements FormatAdapter {
       "dist-tags"?: Record<string, string>;
     };
     const scope = pkgName.startsWith("@") ? (pkgName.split("/")[0] ?? null) : null;
-    const pkg = await findOrCreatePackage({
-      orgId: ctx.repo.orgId,
-      repositoryId: ctx.repo.id,
-      name: pkgName,
-      namespace: scope,
-    });
+    let pkg: Awaited<ReturnType<typeof findOrCreatePackage>> | null = null;
     const base = basename(pkgName);
     for (const [ver, manifestRaw] of Object.entries(packument.versions ?? {})) {
       const manifest = { ...manifestRaw } as Record<string, unknown>;
-      const dist0 = manifest.dist as { tarball?: string } | undefined;
+      const dist0 = manifest.dist as { integrity?: string; shasum?: string; tarball?: string };
       const tarballUrl = dist0?.tarball;
       if (!tarballUrl) continue;
       // Only mirror tarballs served by the configured upstream host — the URL
@@ -366,6 +392,13 @@ export class NpmAdapter implements FormatAdapter {
       }
       if (!tRes.ok) continue;
       const tarball = new Uint8Array(await tRes.arrayBuffer());
+      if (!upstreamDistMatchesBytes(dist0, tarball)) continue;
+      pkg ??= await findOrCreatePackage({
+        orgId: ctx.repo.orgId,
+        repositoryId: ctx.repo.id,
+        name: pkgName,
+        namespace: scope,
+      });
       const shasum = sha1hex(tarball);
       const integrity = `sha512-${sha512b64(tarball)}`;
       const filename = `${base}-${ver}.tgz`;
@@ -397,6 +430,7 @@ export class NpmAdapter implements FormatAdapter {
         mediaType: "application/octet-stream",
       });
     }
+    if (!pkg) return false;
     for (const [tag, ver] of Object.entries(packument["dist-tags"] ?? {})) {
       const vid = await this.versionId(ctx, pkg.id, ver);
       if (vid) await setDistTag(ctx, pkg.id, tag, vid);
