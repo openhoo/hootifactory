@@ -16,6 +16,7 @@ import {
   createRepository,
   formatRegistry,
   isUniqueViolation,
+  isValidRepositoryName,
 } from "@hootifactory/core";
 import {
   and,
@@ -402,6 +403,14 @@ uiRouter.post("/orgs/:orgId/repositories", async (c) => {
   } | null;
   if (!body?.name || !body?.format) {
     return c.json({ error: "name and format required" }, 400);
+  }
+  if (!isValidRepositoryName(body.name)) {
+    return c.json(
+      {
+        error: "repository name must be path-safe: letters, numbers, dots, underscores, or dashes",
+      },
+      400,
+    );
   }
   if (!formatRegistry.has(body.format)) {
     return c.json({ error: `unsupported repository format '${body.format}'` }, 400);

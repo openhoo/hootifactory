@@ -51,6 +51,7 @@ async function serveWeb(pathname: string): Promise<Response | null> {
 }
 
 const isRead = (m: string) => m === "GET" || m === "HEAD";
+const OCI_BEARER_FORMATS = new Set(["docker", "oci", "helm"]);
 
 /** Upstream response headers safe + useful to forward on a proxy passthrough. */
 const PROXY_FORWARD_HEADERS = [
@@ -189,6 +190,9 @@ export async function handleRegistryRequest(c: Context<AppEnv>): Promise<Respons
   if (!match) throw Errors.notFound({ path: rest });
 
   const principal = c.get("principal");
+  if (principal.kind === "registryToken" && !OCI_BEARER_FORMATS.has(repo.format)) {
+    throw Errors.denied("OCI registry bearer tokens are only valid for OCI repositories");
+  }
   const ctx = buildRepoContext(repo, principal);
 
   const perm = adapter.requiredPermission(method, match, ctx);

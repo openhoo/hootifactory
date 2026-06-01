@@ -28,6 +28,12 @@ export function computeMountPath(format: PackageFormat, orgSlug: string, repoNam
   return `${mountSegment(format)}/${orgSlug}/${repoName}`;
 }
 
+export function isValidRepositoryName(name: string): boolean {
+  if (name.length === 0 || name.length > 256) return false;
+  if (name.includes("..")) return false;
+  return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name);
+}
+
 export interface CreateRepositoryInput {
   orgId: string;
   orgSlug: string;

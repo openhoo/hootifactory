@@ -45,6 +45,15 @@ test.describe("repositories", () => {
     expect((await createRepo(owner.ctx, owner.orgId, { name: "x" })).status()).toBe(400);
   });
 
+  test("path-shaped repository names are rejected", async ({ baseURL }) => {
+    const owner = await setupOwner(baseURL!);
+    for (const name of ["../repo", "repo/child", "repo\\child", "repo child", "repo..child"]) {
+      const res = await createRepo(owner.ctx, owner.orgId, { name, format: "npm" });
+      expect(res.status()).toBe(400);
+      expect(await res.text()).toContain("repository name must be path-safe");
+    }
+  });
+
   test("unsupported formats are rejected", async ({ baseURL }) => {
     const owner = await setupOwner(baseURL!);
     for (const format of ["generic", "maven"]) {

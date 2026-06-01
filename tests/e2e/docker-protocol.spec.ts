@@ -1,7 +1,12 @@
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { OCI_MEDIA_TYPES } from "@hootifactory/types";
 import { type APIRequestContext, expect, test } from "@playwright/test";
 import { anonContext, createRepo, createToken, setupOwner } from "./helpers";
+
+const TEST_DATABASE_URL =
+  process.env.E2E_DATABASE_URL ??
+  "postgres://hootifactory:hootifactory@localhost:5432/hootifactory_test";
 
 function sha256(bytes: Buffer | string): string {
   return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
@@ -21,6 +26,44 @@ async function registryToken(
   });
   expect(res.status()).toBe(200);
   return ((await res.json()) as { token: string }).token;
+}
+
+function insertLegacyRepository(input: {
+  orgId: string;
+  name: string;
+  format: "npm";
+  mountPath: string;
+  storagePrefix: string;
+}): void {
+  execFileSync(
+    "bun",
+    [
+      "-e",
+      [
+        'import { db, repositories } from "@hootifactory/db";',
+        "await db.insert(repositories).values({",
+        "  orgId: process.env.ORG_ID,",
+        "  name: process.env.REPOSITORY_NAME,",
+        "  format: process.env.FORMAT,",
+        "  mountPath: process.env.MOUNT_PATH,",
+        "  storagePrefix: process.env.STORAGE_PREFIX,",
+        "});",
+      ].join("\n"),
+    ],
+    {
+      env: {
+        ...process.env,
+        DATABASE_URL: TEST_DATABASE_URL,
+        ORG_ID: input.orgId,
+        REPOSITORY_NAME: input.name,
+        FORMAT: input.format,
+        MOUNT_PATH: input.mountPath,
+        STORAGE_PREFIX: input.storagePrefix,
+      },
+      stdio: "pipe",
+      encoding: "utf8",
+    },
+  );
 }
 
 async function uploadBlob(
@@ -74,6 +117,38 @@ async function putManifest(
 }
 
 test.describe("docker registry protocol authorization", () => {
+  test("OCI bearer JWTs cannot authorize non-OCI repository formats", async ({ baseURL }) => {
+    const owner = await setupOwner(baseURL!);
+    expect(
+      (await createRepo(owner.ctx, owner.orgId, { name: "containers", format: "docker" })).status(),
+    ).toBe(201);
+    const imageName = `${owner.orgSlug}/containers/app`;
+    const legacyMount = `npm/${owner.orgSlug}/${imageName}`;
+    insertLegacyRepository({
+      orgId: owner.orgId,
+      name: imageName,
+      format: "npm",
+      mountPath: legacyMount,
+      storagePrefix: `${owner.orgId}/legacy-cross-format`,
+    });
+
+    const secret = (
+      await (
+        await createToken(owner.ctx, owner.orgId, {
+          name: "oci-reader",
+          scopes: [{ repository: imageName, actions: ["read"] }],
+        })
+      ).json()
+    ).secret as string;
+    const anon = await anonContext(baseURL!);
+    const jwt = await registryToken(anon, `repository:${imageName}:pull`, secret);
+
+    const res = await anon.get(`/${legacyMount}/-/whoami`, {
+      headers: { authorization: `Bearer ${jwt}` },
+    });
+    expect(res.status()).toBe(403);
+  });
+
   test("tokens and digest endpoints are scoped to the requested image", async ({ baseURL }) => {
     const owner = await setupOwner(baseURL!);
     const repo = (
