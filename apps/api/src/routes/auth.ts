@@ -1,6 +1,6 @@
 import { createSession, hashPassword, revokeSession, writeAudit } from "@hootifactory/auth";
 import { env } from "@hootifactory/config";
-import { isUniqueViolation } from "@hootifactory/core";
+import { isUniqueViolation, z } from "@hootifactory/core";
 import { db, users } from "@hootifactory/db";
 import {
   addSpanEvent,
@@ -12,6 +12,7 @@ import { type Context, Hono } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { authenticateUserPassword, SESSION_COOKIE } from "../middleware/authenticate";
 import type { AppEnv } from "../types";
+import { validateJsonBody } from "../validation";
 
 export const authRouter = new Hono<AppEnv>();
 
@@ -21,6 +22,18 @@ interface LoginThrottleBucket {
 }
 
 const loginFailures = new Map<string, LoginThrottleBucket>();
+
+const RegisterBodySchema = z.strictObject({
+  username: z.string().trim().min(1).max(128),
+  email: z.email().max(320),
+  password: z.string().min(8).max(1024),
+  displayName: z.string().trim().min(1).max(256).optional(),
+});
+
+const LoginBodySchema = z.strictObject({
+  username: z.string().trim().min(1).max(128),
+  password: z.string().min(1).max(1024),
+});
 
 function clientIp(c: Context<AppEnv>): string {
   return (
@@ -72,20 +85,12 @@ authRouter.post("/register", async (c) => {
     return c.json({ error: "registration is disabled" }, 403);
   }
 
-  const body = (await c.req.json().catch(() => null)) as {
-    username?: string;
-    email?: string;
-    password?: string;
-    displayName?: string;
-  } | null;
-  if (!body?.username || !body?.email || !body?.password) {
+  const parsedBody = await validateJsonBody(c, RegisterBodySchema, "invalid registration request");
+  if (!parsedBody.ok) {
     addSpanEvent("auth.registration_invalid_request");
-    return c.json({ error: "username, email and password required" }, 400);
+    return parsedBody.response;
   }
-  if (body.password.length < 8) {
-    addSpanEvent("auth.registration_invalid_password");
-    return c.json({ error: "password must be at least 8 characters" }, 400);
-  }
+  const body = parsedBody.data;
   const username = body.username;
   const email = body.email;
   const password = body.password;
@@ -127,13 +132,9 @@ authRouter.post("/register", async (c) => {
 });
 
 authRouter.post("/login", async (c) => {
-  const body = (await c.req.json().catch(() => null)) as {
-    username?: string;
-    password?: string;
-  } | null;
-  if (!body?.username || !body?.password) {
-    return c.json({ error: "username and password required" }, 400);
-  }
+  const parsedBody = await validateJsonBody(c, LoginBodySchema, "invalid login request");
+  if (!parsedBody.ok) return parsedBody.response;
+  const body = parsedBody.data;
   const username = body.username;
   const password = body.password;
   const ip = clientIp(c);

@@ -6,11 +6,13 @@ import {
   type HttpMethod,
   isArtifactBlocked,
   type Permission,
+  parseRegistryInput,
   type RepoContext,
   type RouteEntry,
   type RouteMatch,
   releaseBlobRef,
   storeBlobWithRef,
+  z,
 } from "@hootifactory/core";
 import { and, asc, eq, isNull, packages, packageVersions } from "@hootifactory/db";
 
@@ -26,6 +28,35 @@ export function cargoIndexPath(name: string): string {
 export function isValidCargoCrateName(name: string): boolean {
   return /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(name);
 }
+
+const CargoCrateNameSchema = z
+  .string()
+  .min(1)
+  .max(64)
+  .refine(isValidCargoCrateName, "invalid crate name");
+const CargoVersionSchema = z.string().min(1).max(256);
+const CargoIndexPathSchema = z
+  .string()
+  .min(1)
+  .max(512)
+  .regex(/^[A-Za-z0-9_/-]+$/, "invalid cargo index path");
+const CargoDependencySchema = z.looseObject({
+  name: CargoCrateNameSchema,
+  version_req: z.string().min(1).max(256),
+  features: z.array(z.string().min(1).max(128)).max(256).optional(),
+  optional: z.boolean().optional(),
+  default_features: z.boolean().optional(),
+  target: z.string().min(1).max(256).nullable().optional(),
+  kind: z.string().min(1).max(32).optional(),
+  registry: z.string().min(1).max(2048).nullable().optional(),
+  explicit_name_in_toml: CargoCrateNameSchema.optional(),
+});
+const CargoPublishMetadataSchema = z.looseObject({
+  name: CargoCrateNameSchema,
+  vers: CargoVersionSchema,
+  deps: z.array(CargoDependencySchema).max(512).optional(),
+  features: z.record(z.string(), z.array(z.string().min(1).max(128)).max(256)).optional(),
+});
 
 function sha256hex(bytes: Uint8Array): string {
   const h = new Bun.CryptoHasher("sha256");
@@ -99,6 +130,10 @@ export class CargoAdapter implements FormatAdapter {
   }
 
   private async index(path: string, ctx: RepoContext): Promise<Response> {
+    path = parseRegistryInput(CargoIndexPathSchema, path, {
+      code: "NAME_INVALID",
+      message: "invalid cargo index path",
+    });
     const name = (path.split("/").pop() ?? "").toLowerCase();
     // The request path must equal the canonical sparse-index shard for the crate.
     if (path !== cargoIndexPath(name)) return new Response("", { status: 404 });
@@ -116,6 +151,14 @@ export class CargoAdapter implements FormatAdapter {
   }
 
   private async download(crate: string, version: string, ctx: RepoContext): Promise<Response> {
+    crate = parseRegistryInput(CargoCrateNameSchema, crate, {
+      code: "NAME_INVALID",
+      message: "invalid crate name",
+    });
+    version = parseRegistryInput(CargoVersionSchema, version, {
+      code: "MANIFEST_INVALID",
+      message: "invalid crate version",
+    });
     const pkg = await this.findCrate(ctx, crate);
     if (!pkg) throw Errors.notFound();
     const [v] = await ctx.db
@@ -146,6 +189,14 @@ export class CargoAdapter implements FormatAdapter {
     yanked: boolean,
     ctx: RepoContext,
   ): Promise<Response> {
+    crate = parseRegistryInput(CargoCrateNameSchema, crate, {
+      code: "NAME_INVALID",
+      message: "invalid crate name",
+    });
+    version = parseRegistryInput(CargoVersionSchema, version, {
+      code: "MANIFEST_INVALID",
+      message: "invalid crate version",
+    });
     const pkg = await this.findCrate(ctx, crate);
     if (!pkg) throw Errors.notFound();
     const [v] = await ctx.db
@@ -181,33 +232,17 @@ export class CargoAdapter implements FormatAdapter {
     if (off + jsonLen + 4 > buf.byteLength) {
       throw Errors.manifestInvalid({ reason: "truncated publish metadata" });
     }
-    let meta: {
-      name: string;
-      vers: string;
-      deps?: {
-        name: string;
-        version_req: string;
-        features?: string[];
-        optional?: boolean;
-        default_features?: boolean;
-        target?: string | null;
-        kind?: string;
-        registry?: string | null;
-        explicit_name_in_toml?: string;
-      }[];
-      features?: Record<string, string[]>;
-    };
+    let meta: z.output<typeof CargoPublishMetadataSchema>;
+    let rawMeta: unknown;
     try {
-      meta = JSON.parse(new TextDecoder().decode(buf.subarray(off, off + jsonLen))) as typeof meta;
+      rawMeta = JSON.parse(new TextDecoder().decode(buf.subarray(off, off + jsonLen)));
     } catch {
       throw Errors.manifestInvalid({ reason: "invalid publish metadata json" });
     }
-    if (typeof meta.name !== "string" || typeof meta.vers !== "string") {
-      throw Errors.manifestInvalid({ reason: "publish metadata requires name and vers" });
-    }
-    if (!isValidCargoCrateName(meta.name)) {
-      throw Errors.manifestInvalid({ reason: "invalid crate name" });
-    }
+    meta = parseRegistryInput(CargoPublishMetadataSchema, rawMeta, {
+      code: "MANIFEST_INVALID",
+      message: "invalid publish metadata",
+    });
     off += jsonLen;
     const crateLen = dv.getUint32(off, true);
     off += 4;

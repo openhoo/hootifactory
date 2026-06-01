@@ -7,11 +7,13 @@ import {
   type HttpMethod,
   isArtifactBlocked,
   type Permission,
+  parseRegistryInput,
   type RepoContext,
   type RouteEntry,
   type RouteMatch,
   releaseBlobRef,
   storeBlobWithRef,
+  z,
 } from "@hootifactory/core";
 import { and, asc, eq, isNull, packages, packageVersions } from "@hootifactory/db";
 
@@ -29,6 +31,31 @@ function decodeBang(s: string): string {
 
 /** Canonical Go semver: vMAJOR.MINOR.PATCH with optional -prerelease / +build. */
 const GO_VERSION_RE = /^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+const GoModuleSchema = z
+  .string()
+  .min(1)
+  .max(512)
+  .refine(
+    (value) =>
+      !value.startsWith("/") &&
+      !value.includes("\\") &&
+      !value.split("/").some((part) => !part || part === "." || part === ".."),
+    "invalid Go module path",
+  );
+const GoVersionSchema = z
+  .string()
+  .min(1)
+  .max(256)
+  .regex(GO_VERSION_RE, "version must be a canonical Go semver");
+const GoVersionFileSchema = z
+  .string()
+  .min(1)
+  .max(300)
+  .regex(/^.+\.(info|mod|zip)$/, "invalid Go version file");
+const GoUploadFieldsSchema = z.strictObject({
+  mod: z.string().min(1).max(1_000_000),
+  zip: z.custom<File>((value) => value instanceof File, { message: "missing zip" }),
+});
 
 /** Split a vX.Y.Z[-pre] version into numeric parts + prerelease for comparison. */
 function parseSemver(v: string): { nums: number[]; pre: string | null } | null {
@@ -209,7 +236,10 @@ export class GoAdapter implements FormatAdapter {
   }
 
   async handle(match: RouteMatch, req: Request, ctx: RepoContext): Promise<Response> {
-    const moduleName = decodeBang(match.params.module ?? "");
+    const moduleName = parseRegistryInput(GoModuleSchema, decodeBang(match.params.module ?? ""), {
+      code: "NAME_INVALID",
+      message: "invalid Go module path",
+    });
     switch (match.entry.handlerId) {
       case "list":
         return this.list(moduleName, ctx);
@@ -271,6 +301,10 @@ export class GoAdapter implements FormatAdapter {
   }
 
   private async file(moduleName: string, file: string, ctx: RepoContext): Promise<Response> {
+    file = parseRegistryInput(GoVersionFileSchema, file, {
+      code: "NAME_INVALID",
+      message: "invalid Go version file",
+    });
     const pkg = await this.findPackage(ctx, moduleName);
     if (!pkg) throw Errors.notFound();
     const dot = file.lastIndexOf(".");
@@ -317,26 +351,27 @@ export class GoAdapter implements FormatAdapter {
     req: Request,
     ctx: RepoContext,
   ): Promise<Response> {
-    const version = decodeBang(versionRaw);
-    if (!GO_VERSION_RE.test(version)) {
-      return Response.json(
-        { error: "version must be a canonical Go semver (e.g. v1.2.3)" },
-        { status: 400 },
-      );
-    }
+    const version = parseRegistryInput(GoVersionSchema, decodeBang(versionRaw), {
+      code: "MANIFEST_INVALID",
+      message: "version must be a canonical Go semver (e.g. v1.2.3)",
+    });
     const form = await req.formData();
     const modField = form.get("mod");
     const zipField = form.get("zip");
-    const mod =
+    const rawMod =
       typeof modField === "string"
         ? modField
         : modField instanceof File
           ? await modField.text()
           : `module ${moduleName}\n`;
-    if (!(zipField instanceof File)) {
-      return Response.json({ error: "missing zip" }, { status: 400 });
-    }
-    const zipBytes = new Uint8Array(await zipField.arrayBuffer());
+    const fields = parseRegistryInput(
+      GoUploadFieldsSchema,
+      { mod: rawMod, zip: zipField },
+      { code: "MANIFEST_INVALID", message: "invalid Go upload form" },
+    );
+    const mod = fields.mod;
+    const zipFile = fields.zip;
+    const zipBytes = new Uint8Array(await zipFile.arrayBuffer());
     const existingPkg = await this.findPackage(ctx, moduleName);
     if (existingPkg) {
       const [existing] = await ctx.db

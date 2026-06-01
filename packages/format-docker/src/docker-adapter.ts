@@ -6,6 +6,7 @@ import {
   type HttpMethod,
   isArtifactBlocked,
   type Permission,
+  parseRegistryInput,
   REGISTRY_TOKEN_SERVICE,
   type RepoContext,
   type RouteEntry,
@@ -13,6 +14,7 @@ import {
   releaseBlobRef,
   storeBlobWithRef,
   upsertPackageVersion,
+  z,
 } from "@hootifactory/core";
 import {
   and,
@@ -74,23 +76,71 @@ const IMAGE_INDEX_MEDIA_TYPES = new Set<string>([
 const TAG_RE = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$/;
 const NAME_RE =
   /^[a-z0-9]+(?:(?:\.|_|__|-+)[a-z0-9]+)*(?:\/[a-z0-9]+(?:(?:\.|_|__|-+)[a-z0-9]+)*)*$/;
+const OciImageNameSchema = z.string().min(1).max(512).regex(NAME_RE, "invalid OCI image name");
+const OciTagSchema = z.string().min(1).max(128).regex(TAG_RE, "invalid OCI tag");
+const OciDigestSchema = z.string().min(1).max(256).refine(isValidDigest, "invalid OCI digest");
+const UploadUuidSchema = z.uuid();
+const ManifestReferenceSchema = z.string().min(1).max(256);
+const OciTagPageSizeSchema = z.coerce.number().int().min(0).max(10_000);
+const OciReferrersQuerySchema = z.strictObject({
+  artifactType: z.string().min(1).max(255).optional(),
+});
+const OciStartUploadQuerySchema = z.strictObject({
+  digest: OciDigestSchema.optional(),
+  mount: OciDigestSchema.optional(),
+  from: OciImageNameSchema.optional(),
+});
+const OciCommitUploadQuerySchema = z.strictObject({
+  digest: OciDigestSchema,
+});
+const ContentRangeHeaderSchema = z
+  .string()
+  .trim()
+  .regex(/^(?:bytes\s+)?\d+-\d+(?:\/(?:\d+|\*))?$/i);
+const BlobRangeHeaderSchema = z
+  .string()
+  .trim()
+  .regex(/^bytes=\d*-\d*$/i)
+  .refine((value) => !value.includes(","), "multiple ranges are not supported");
+const OciDescriptorSchema = z.looseObject({
+  mediaType: z.string().min(1).max(255),
+  digest: OciDigestSchema,
+  size: z.number().int().safe().min(0),
+  urls: z.array(z.url()).optional(),
+  annotations: z.record(z.string(), z.string()).optional(),
+  artifactType: z.string().min(1).max(255).optional(),
+  platform: z
+    .looseObject({
+      architecture: z.string().min(1).max(64),
+      os: z.string().min(1).max(64),
+      variant: z.string().min(1).max(64).optional(),
+    })
+    .optional(),
+});
 
 type Tx = Parameters<Parameters<RepoContext["db"]["transaction"]>[0]>[0];
 type ManifestReference = { kind: "digest" | "tag"; value: string };
 
 function assertImageName(name: string): void {
-  if (!NAME_RE.test(name)) throw Errors.nameInvalid({ name });
+  parseRegistryInput(OciImageNameSchema, name, {
+    code: "NAME_INVALID",
+    message: "invalid image name",
+  });
 }
 
 function parseReference(reference: string): ManifestReference {
+  parseRegistryInput(ManifestReferenceSchema, reference, {
+    code: "NAME_INVALID",
+    message: "invalid manifest reference",
+  });
   if (isValidDigest(reference)) return { kind: "digest", value: reference };
   if (reference.startsWith("sha256:")) throw Errors.digestInvalid({ reference });
-  if (!TAG_RE.test(reference)) throw Errors.tagInvalid({ reference });
+  parseRegistryInput(OciTagSchema, reference, { code: "TAG_INVALID", message: "invalid tag" });
   return { kind: "tag", value: reference };
 }
 
 function assertTag(tag: string): void {
-  if (!TAG_RE.test(tag)) throw Errors.tagInvalid({ tag });
+  parseRegistryInput(OciTagSchema, tag, { code: "TAG_INVALID", message: "invalid tag" });
 }
 
 function normalizeMediaType(value: string | null | undefined): string | null {
@@ -103,17 +153,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function validateDescriptor(value: unknown, field: string): OciDescriptor {
-  if (!isRecord(value)) throw Errors.manifestInvalid({ reason: `${field} must be a descriptor` });
-  if (typeof value.mediaType !== "string" || value.mediaType.length === 0) {
-    throw Errors.manifestInvalid({ reason: `${field}.mediaType is required` });
-  }
-  if (typeof value.digest !== "string" || !isValidDigest(value.digest)) {
-    throw Errors.digestInvalid({ reason: `${field}.digest is invalid`, digest: value.digest });
-  }
-  if (typeof value.size !== "number" || !Number.isSafeInteger(value.size) || value.size < 0) {
-    throw Errors.sizeInvalid({ reason: `${field}.size is invalid`, size: value.size });
-  }
-  return value as unknown as OciDescriptor;
+  const parsed = OciDescriptorSchema.safeParse(value);
+  if (parsed.success) return parsed.data as unknown as OciDescriptor;
+  const invalidDigest = parsed.error.issues.some((issue) => issue.path.join(".") === "digest");
+  const invalidSize = parsed.error.issues.some((issue) => issue.path.join(".") === "size");
+  if (invalidDigest) throw Errors.digestInvalid({ reason: `${field}.digest is invalid` });
+  if (invalidSize) throw Errors.sizeInvalid({ reason: `${field}.size is invalid` });
+  throw Errors.manifestInvalid({ reason: `${field} must be a valid descriptor` });
 }
 
 function validateDescriptorArray(value: unknown, field: string): OciDescriptor[] {
@@ -221,7 +267,10 @@ function manifestAnnotations(manifest: OciManifest): Record<string, string> | un
 
 function parseContentRange(value: string | null): { start: number; end: number } | null {
   if (!value) return null;
-  const match = /^(?:bytes\s+)?(\d+)-(\d+)(?:\/(?:\d+|\*))?$/.exec(value.trim());
+  const parsed = ContentRangeHeaderSchema.safeParse(value);
+  if (!parsed.success)
+    throw Errors.blobUploadInvalid({ reason: "invalid content-range", contentRange: value });
+  const match = /^(?:bytes\s+)?(\d+)-(\d+)(?:\/(?:\d+|\*))?$/i.exec(parsed.data);
   if (!match)
     throw Errors.blobUploadInvalid({ reason: "invalid content-range", contentRange: value });
   const start = Number(match[1]);
@@ -251,10 +300,11 @@ function validateContentRange(req: Request, expectedStart: number, chunkLength: 
 
 function parseBlobRange(value: string | null, size: number): { start: number; end: number } | null {
   if (!value) return null;
-  const trimmed = value.trim();
-  if (!trimmed.startsWith("bytes=") || trimmed.includes(",")) {
+  const parsed = BlobRangeHeaderSchema.safeParse(value);
+  if (!parsed.success) {
     throw Errors.blobUploadInvalid({ reason: "invalid range", range: value });
   }
+  const trimmed = parsed.data;
   const spec = trimmed.slice("bytes=".length);
   const match = /^(\d*)-(\d*)$/.exec(spec);
   if (!match) throw Errors.blobUploadInvalid({ reason: "invalid range", range: value });
@@ -762,18 +812,25 @@ export class DockerAdapter implements FormatAdapter {
     let tags = rows.map((r) => r.tag).sort();
     const url = new URL(req.url);
     // `last` is a cursor: return tags strictly after it (lexically).
-    const last = url.searchParams.get("last");
+    const lastRaw = url.searchParams.get("last");
+    const last =
+      lastRaw == null
+        ? undefined
+        : parseRegistryInput(OciTagSchema, lastRaw, {
+            code: "TAG_INVALID",
+            message: "invalid tag cursor",
+          });
     if (last) {
-      assertTag(last);
       tags = tags.filter((t) => t > last);
     }
     // `n` is a page size: absent => all; present (incl. 0) => at most n.
     const nRaw = url.searchParams.get("n");
     let truncated = false;
     if (nRaw !== null) {
-      if (!/^\d+$/.test(nRaw)) throw Errors.paginationNumberInvalid({ n: nRaw });
-      const n = Number(nRaw);
-      if (!Number.isSafeInteger(n)) throw Errors.paginationNumberInvalid({ n: nRaw });
+      const n = parseRegistryInput(OciTagPageSizeSchema, nRaw, {
+        code: "PAGINATION_NUMBER_INVALID",
+        message: "invalid tag page size",
+      });
       truncated = tags.length > n;
       tags = tags.slice(0, n);
     }
@@ -808,8 +865,16 @@ export class DockerAdapter implements FormatAdapter {
     req: Request,
     ctx: RepoContext,
   ): Promise<Response> {
-    if (!isValidDigest(digest)) throw Errors.digestInvalid({ digest });
-    const artifactTypeFilter = new URL(req.url).searchParams.get("artifactType");
+    digest = parseRegistryInput(OciDigestSchema, digest, {
+      code: "DIGEST_INVALID",
+      message: "invalid subject digest",
+    });
+    const url = new URL(req.url);
+    const { artifactType: artifactTypeFilter } = parseRegistryInput(
+      OciReferrersQuerySchema,
+      { artifactType: url.searchParams.get("artifactType") ?? undefined },
+      { code: "MANIFEST_INVALID", message: "invalid referrers query" },
+    );
     const rows = await ctx.db
       .select()
       .from(ociManifests)
@@ -854,7 +919,10 @@ export class DockerAdapter implements FormatAdapter {
     ctx: RepoContext,
     headOnly: boolean,
   ): Promise<Response> {
-    if (!isValidDigest(digest)) throw Errors.digestInvalid({ digest });
+    digest = parseRegistryInput(OciDigestSchema, digest, {
+      code: "DIGEST_INVALID",
+      message: "invalid blob digest",
+    });
     const [ref] = await ctx.db
       .select({ id: blobRefs.id })
       .from(blobRefs)
@@ -911,7 +979,10 @@ export class DockerAdapter implements FormatAdapter {
   }
 
   private async deleteBlob(image: string, digest: string, ctx: RepoContext): Promise<Response> {
-    if (!isValidDigest(digest)) throw Errors.digestInvalid({ digest });
+    digest = parseRegistryInput(OciDigestSchema, digest, {
+      code: "DIGEST_INVALID",
+      message: "invalid blob digest",
+    });
     const [ref] = await ctx.db
       .select({ id: blobRefs.id })
       .from(blobRefs)
@@ -933,15 +1004,21 @@ export class DockerAdapter implements FormatAdapter {
 
   private async startUpload(image: string, req: Request, ctx: RepoContext): Promise<Response> {
     const url = new URL(req.url);
-    const digest = url.searchParams.get("digest");
-    const mount = url.searchParams.get("mount");
-    const from = url.searchParams.get("from");
+    const { digest, mount, from } = parseRegistryInput(
+      OciStartUploadQuerySchema,
+      {
+        digest: url.searchParams.get("digest") ?? undefined,
+        mount: url.searchParams.get("mount") ?? undefined,
+        from: url.searchParams.get("from") ?? undefined,
+      },
+      { code: "DIGEST_INVALID", message: "invalid upload query" },
+    );
 
     // Cross-repo mount: only honored when the principal can READ a source repo
     // that actually references the blob (never on global CAS existence alone — that
     // would let any tenant mount any blob by digest). Otherwise we fall through to a
     // normal upload session, which is a spec-allowed response to a failed mount.
-    if (mount && isValidDigest(mount)) {
+    if (mount) {
       const sources = (
         await ctx.db
           .select({
@@ -979,7 +1056,6 @@ export class DockerAdapter implements FormatAdapter {
 
     // monolithic POST with ?digest=
     if (digest) {
-      if (!isValidDigest(digest)) throw Errors.digestInvalid({ digest });
       const bytes = await bodyBytes(req);
       if (computeDigest(bytes) !== digest) throw Errors.digestInvalid();
       await storeBlobWithRef(ctx, { data: bytes, kind: "oci_layer", scope: image });
@@ -1017,6 +1093,10 @@ export class DockerAdapter implements FormatAdapter {
   }
 
   private async loadSession(image: string, uuid: string, ctx: RepoContext) {
+    uuid = parseRegistryInput(UploadUuidSchema, uuid, {
+      code: "BLOB_UPLOAD_INVALID",
+      message: "invalid upload uuid",
+    });
     // Scope to the current repo and image so a leaked UUID cannot be driven
     // through another repository path in the same tenant repo.
     const [s] = await ctx.db
@@ -1034,6 +1114,10 @@ export class DockerAdapter implements FormatAdapter {
   }
 
   private async loadSessionForUpdateTx(image: string, uuid: string, ctx: RepoContext, tx: Tx) {
+    uuid = parseRegistryInput(UploadUuidSchema, uuid, {
+      code: "BLOB_UPLOAD_INVALID",
+      message: "invalid upload uuid",
+    });
     // Scope to the current repo and image so a leaked UUID cannot be driven
     // through another repository path in the same tenant repo.
     const [s] = await tx
@@ -1186,8 +1270,11 @@ export class DockerAdapter implements FormatAdapter {
     ctx: RepoContext,
   ): Promise<Response> {
     const url = new URL(req.url);
-    const digest = url.searchParams.get("digest");
-    if (!digest || !isValidDigest(digest)) throw Errors.digestInvalid({ reason: "missing digest" });
+    const { digest } = parseRegistryInput(
+      OciCommitUploadQuerySchema,
+      { digest: url.searchParams.get("digest") ?? undefined },
+      { code: "DIGEST_INVALID", message: "missing or invalid digest" },
+    );
 
     const chunk = await bodyBytes(req);
     const committed = await ctx.db.transaction(async (tx) => {

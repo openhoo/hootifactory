@@ -9,10 +9,12 @@ import {
   loadUpstream,
   loadVirtualMembers,
   matchRoute,
+  parseRegistryInput,
   RegistryError,
   type RepoContext,
   type RouteMatch,
   resolveRepository,
+  z,
 } from "@hootifactory/core";
 import {
   addSpanEvent,
@@ -59,6 +61,10 @@ async function serveWeb(pathname: string): Promise<Response | null> {
 
 const isRead = (m: string) => m === "GET" || m === "HEAD";
 const OCI_BEARER_FORMATS = new Set(["docker", "oci", "helm"]);
+const SearchWindowSchema = z.strictObject({
+  from: z.coerce.number().int().min(0).max(10_000).default(0),
+  size: z.coerce.number().int().min(0).max(100).default(20),
+});
 
 function isRegistryMiss(err: unknown): err is RegistryError {
   return (
@@ -143,12 +149,14 @@ async function adapterResponse(
 
 function searchWindow(req: Request): { from: number; size: number } {
   const url = new URL(req.url);
-  const parse = (name: string, fallback: number, min: number, max: number) => {
-    const value = Number(url.searchParams.get(name));
-    if (!Number.isFinite(value)) return fallback;
-    return Math.max(min, Math.min(Math.trunc(value), max));
-  };
-  return { from: parse("from", 0, 0, 10_000), size: parse("size", 20, 0, 100) };
+  return parseRegistryInput(
+    SearchWindowSchema,
+    {
+      from: url.searchParams.get("from") ?? undefined,
+      size: url.searchParams.get("size") ?? undefined,
+    },
+    { code: "PAGINATION_NUMBER_INVALID", message: "invalid search pagination" },
+  );
 }
 
 function allSearchResultsRequest(req: Request): Request {

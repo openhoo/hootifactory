@@ -4,7 +4,6 @@ import {
   createApiToken,
   patternMatches,
   ROLE_RANK,
-  type RoleName,
   resolveUserRole,
   revokeToken,
   roleAllows,
@@ -20,6 +19,7 @@ import {
   formatRegistry,
   isUniqueViolation,
   isValidRepositoryName,
+  z,
 } from "@hootifactory/core";
 import {
   and,
@@ -44,73 +44,93 @@ import {
   users,
 } from "@hootifactory/db";
 import { isValidRepositoryPattern, SEVERITY_ORDER, type Severity } from "@hootifactory/scan-core";
-import type { PackageFormat, RepoKind, Visibility } from "@hootifactory/types";
+import type { PackageFormat } from "@hootifactory/types";
 import { type Context, Hono } from "hono";
 import type { AppEnv } from "../types";
+import { uuidParams, validateInput, validateJsonBody } from "../validation";
 
 export const uiRouter = new Hono<AppEnv>();
 
-function isRepoKind(value: unknown): value is RepoKind {
-  return value === "hosted" || value === "proxy" || value === "virtual";
-}
-
-function isVisibility(value: unknown): value is Visibility {
-  return value === "private" || value === "public";
-}
-
-function isInteger(value: unknown): value is number {
-  return typeof value === "number" && Number.isInteger(value);
-}
-
-function isPolicyMode(value: unknown): value is "audit" | "enforce" {
-  return value === "audit" || value === "enforce";
-}
-
-function isTokenType(value: unknown): value is "personal" | "robot" {
-  return value === "personal" || value === "robot";
-}
-
-function isRoleName(value: unknown): value is RoleName {
-  return value === "viewer" || value === "developer" || value === "admin" || value === "owner";
-}
-
-function isAction(value: unknown): value is Action {
-  return value === "read" || value === "write" || value === "delete" || value === "admin";
-}
-
-function isSeverity(value: unknown): value is Severity {
-  return typeof value === "string" && value in SEVERITY_ORDER;
-}
-
 type ParsedTokenScope = { repository: string; actions: Action[] };
 
-function parseTokenScopes(value: unknown): { scopes: ParsedTokenScope[] } | { error: string } {
-  if (value == null) return { scopes: [] };
-  if (!Array.isArray(value)) return { error: "scopes must be an array" };
-  const scopes: ParsedTokenScope[] = [];
-  for (const scope of value) {
-    if (!scope || typeof scope !== "object" || Array.isArray(scope)) {
-      return { error: "each scope must be an object" };
-    }
-    const record = scope as { repository?: unknown; actions?: unknown };
-    if (
-      typeof record.repository !== "string" ||
-      record.repository.length === 0 ||
-      record.repository.length > 512
-    ) {
-      return { error: "scope repository must be a non-empty string" };
-    }
-    if (!Array.isArray(record.actions) || record.actions.length === 0) {
-      return { error: "scope actions must be a non-empty array" };
-    }
+const RoleNameSchema = z.enum(["viewer", "developer", "admin", "owner"]);
+const ActionSchema = z.enum(["read", "write", "delete", "admin"]);
+const RepoKindSchema = z.enum(["hosted", "proxy", "virtual"]);
+const VisibilitySchema = z.enum(["private", "public"]);
+const PolicyModeSchema = z.enum(["audit", "enforce"]);
+const TokenTypeSchema = z.enum(["personal", "robot"]);
+const SeveritySchema = z.enum(Object.keys(SEVERITY_ORDER) as [Severity, ...Severity[]]);
+const RepositoryFormatSchema = z.string().trim().min(1).max(64);
+const OptionalDescriptionSchema = z.string().trim().max(2048).optional();
+
+const CreateOrgBodySchema = z.strictObject({
+  slug: z
+    .string()
+    .trim()
+    .regex(/^[a-z0-9][a-z0-9-]{1,62}$/, "slug must be lowercase alphanumeric/dashes (2-63 chars)"),
+  displayName: z.string().trim().min(1).max(256),
+  description: OptionalDescriptionSchema,
+});
+
+const AddMemberBodySchema = z.strictObject({
+  memberRepoId: z.uuid(),
+  position: z.number().int().min(0).max(1_000_000).optional(),
+});
+
+const AddUpstreamBodySchema = z.strictObject({
+  url: z.url().max(2048),
+  priority: z.number().int().min(0).max(1_000_000).optional(),
+});
+
+const ScanPolicyBodySchema = z.strictObject({
+  repositoryPattern: z.string().max(512).optional(),
+  mode: PolicyModeSchema,
+  blockOnSeverity: SeveritySchema.nullish(),
+});
+
+const QuotaBodySchema = z.strictObject({
+  maxStorageBytes: z.number().int().safe().min(0).nullable().optional(),
+});
+
+const RetentionBodySchema = z.strictObject({
+  keepLastN: z.number().int().min(1).max(10_000).default(10),
+});
+
+const CreateRepositoryBodySchema = z.strictObject({
+  name: z.string().trim().min(1).max(256),
+  format: RepositoryFormatSchema,
+  kind: z.unknown().optional(),
+  visibility: z.unknown().optional(),
+  description: OptionalDescriptionSchema,
+});
+
+const TokenScopeSchema = z
+  .strictObject({
+    repository: z.string().min(1).max(512),
+    actions: z.array(ActionSchema).min(1).max(4),
+  })
+  .transform((scope): ParsedTokenScope => {
     const actions: Action[] = [];
-    for (const action of record.actions) {
-      if (!isAction(action)) return { error: `unsupported scope action '${String(action)}'` };
+    for (const action of scope.actions) {
       if (!actions.includes(action)) actions.push(action);
     }
-    scopes.push({ repository: record.repository, actions });
-  }
-  return { scopes };
+    return { repository: scope.repository, actions };
+  });
+
+const CreateTokenBodySchema = z.strictObject({
+  name: z.string().trim().min(1).max(256),
+  type: TokenTypeSchema.default("personal"),
+  scopes: z.array(TokenScopeSchema).max(100).default([]),
+  role: RoleNameSchema.optional(),
+  expiresAt: z.union([z.iso.datetime().transform((value) => new Date(value)), z.null()]).optional(),
+});
+
+function validateParams<T extends z.ZodType>(
+  c: Context<AppEnv>,
+  schema: T,
+  message = "invalid path parameters",
+) {
+  return validateInput(c, schema, c.req.param(), message);
 }
 
 function scopeMayTargetRepo(pattern: string, repo: { name: string; mountPath: string }): boolean {
@@ -189,17 +209,9 @@ uiRouter.post("/orgs", async (c) => {
   }
   const p = c.get("principal");
   if (p.kind !== "user") return c.json({ error: "login required" }, 401);
-  const body = (await c.req.json().catch(() => null)) as {
-    slug?: string;
-    displayName?: string;
-    description?: string;
-  } | null;
-  if (!body?.slug || !body?.displayName) {
-    return c.json({ error: "slug and displayName required" }, 400);
-  }
-  if (!/^[a-z0-9][a-z0-9-]{1,62}$/.test(body.slug)) {
-    return c.json({ error: "slug must be lowercase alphanumeric/dashes (2-63 chars)" }, 400);
-  }
+  const parsedBody = await validateJsonBody(c, CreateOrgBodySchema, "invalid org request");
+  if (!parsedBody.ok) return parsedBody.response;
+  const body = parsedBody.data;
   try {
     const [org] = await db
       .insert(organizations)
@@ -226,7 +238,9 @@ uiRouter.post("/orgs", async (c) => {
 });
 
 uiRouter.get("/orgs/:orgId/repositories", async (c) => {
-  const orgId = c.req.param("orgId");
+  const parsedParams = validateParams(c, uuidParams.orgId);
+  if (!parsedParams.ok) return parsedParams.response;
+  const { orgId } = parsedParams.data;
   const decision = await authorize(c.get("principal"), "read", { type: "org", orgId });
   if (!decision.allowed) {
     return c.json({ error: decision.reason }, decision.code === "unauthenticated" ? 401 : 403);
@@ -237,11 +251,10 @@ uiRouter.get("/orgs/:orgId/repositories", async (c) => {
 
 // ── content browsing ─────────────────────────────────────────────────────
 uiRouter.get("/repositories/:repoId", async (c) => {
-  const [repo] = await db
-    .select()
-    .from(repositories)
-    .where(eq(repositories.id, c.req.param("repoId")))
-    .limit(1);
+  const parsedParams = validateParams(c, uuidParams.repoId);
+  if (!parsedParams.ok) return parsedParams.response;
+  const { repoId } = parsedParams.data;
+  const [repo] = await db.select().from(repositories).where(eq(repositories.id, repoId)).limit(1);
   if (!repo) return c.json({ error: "repository not found" }, 404);
   const decision = await authorize(c.get("principal"), "read", {
     type: "repository",
@@ -261,11 +274,10 @@ uiRouter.get("/repositories/:repoId", async (c) => {
 });
 
 uiRouter.get("/repositories/:repoId/packages", async (c) => {
-  const [repo] = await db
-    .select()
-    .from(repositories)
-    .where(eq(repositories.id, c.req.param("repoId")))
-    .limit(1);
+  const parsedParams = validateParams(c, uuidParams.repoId);
+  if (!parsedParams.ok) return parsedParams.response;
+  const { repoId } = parsedParams.data;
+  const [repo] = await db.select().from(repositories).where(eq(repositories.id, repoId)).limit(1);
   if (!repo) return c.json({ error: "repository not found" }, 404);
   const decision = await authorize(c.get("principal"), "read", {
     type: "repository",
@@ -286,11 +298,14 @@ uiRouter.get("/repositories/:repoId/packages", async (c) => {
 });
 
 uiRouter.get("/packages/:packageId/versions", async (c) => {
+  const parsedParams = validateParams(c, uuidParams.packageId);
+  if (!parsedParams.ok) return parsedParams.response;
+  const { packageId } = parsedParams.data;
   const [row] = await db
     .select({ pkg: packages, repo: repositories })
     .from(packages)
     .innerJoin(repositories, eq(packages.repositoryId, repositories.id))
-    .where(eq(packages.id, c.req.param("packageId")))
+    .where(eq(packages.id, packageId))
     .limit(1);
   const pkg = row?.pkg;
   const repo = row?.repo;
@@ -337,19 +352,16 @@ async function repoAdminGuard(c: Context<AppEnv>, repoId: string) {
 }
 
 uiRouter.post("/repositories/:repoId/members", async (c) => {
-  const guard = await repoAdminGuard(c, c.req.param("repoId"));
+  const parsedParams = validateParams(c, uuidParams.repoId);
+  if (!parsedParams.ok) return parsedParams.response;
+  const guard = await repoAdminGuard(c, parsedParams.data.repoId);
   if ("error" in guard) return guard.error;
   if (guard.repo.kind !== "virtual") {
     return c.json({ error: "members can only be added to virtual repositories" }, 400);
   }
-  const body = (await c.req.json().catch(() => null)) as {
-    memberRepoId?: string;
-    position?: number;
-  } | null;
-  if (!body?.memberRepoId) return c.json({ error: "memberRepoId required" }, 400);
-  if (body.position !== undefined && !isInteger(body.position)) {
-    return c.json({ error: "position must be an integer" }, 400);
-  }
+  const parsedBody = await validateJsonBody(c, AddMemberBodySchema, "invalid member request");
+  if (!parsedBody.ok) return parsedBody.response;
+  const body = parsedBody.data;
 
   const [member] = await db
     .select()
@@ -391,16 +403,16 @@ uiRouter.post("/repositories/:repoId/members", async (c) => {
 });
 
 uiRouter.post("/repositories/:repoId/upstreams", async (c) => {
-  const guard = await repoAdminGuard(c, c.req.param("repoId"));
+  const parsedParams = validateParams(c, uuidParams.repoId);
+  if (!parsedParams.ok) return parsedParams.response;
+  const guard = await repoAdminGuard(c, parsedParams.data.repoId);
   if ("error" in guard) return guard.error;
   if (guard.repo.kind !== "proxy") {
     return c.json({ error: "upstreams can only be added to proxy repositories" }, 400);
   }
-  const body = (await c.req.json().catch(() => null)) as { url?: string; priority?: number } | null;
-  if (!body?.url) return c.json({ error: "url required" }, 400);
-  if (body.priority !== undefined && !isInteger(body.priority)) {
-    return c.json({ error: "priority must be an integer" }, 400);
-  }
+  const parsedBody = await validateJsonBody(c, AddUpstreamBodySchema, "invalid upstream request");
+  if (!parsedBody.ok) return parsedBody.response;
+  const body = parsedBody.data;
   // Reject private/loopback/metadata upstreams at configuration time (SSRF guard).
   try {
     assertPublicHttpUrl(body.url);
@@ -422,22 +434,18 @@ uiRouter.post("/repositories/:repoId/upstreams", async (c) => {
 
 // ── scanning ─────────────────────────────────────────────────────────────
 uiRouter.post("/orgs/:orgId/scan-policies", async (c) => {
-  const orgId = c.req.param("orgId");
+  const parsedParams = validateParams(c, uuidParams.orgId);
+  if (!parsedParams.ok) return parsedParams.response;
+  const { orgId } = parsedParams.data;
   const decision = await authorize(c.get("principal"), "admin", { type: "org", orgId });
   if (!decision.allowed) {
     return c.json({ error: decision.reason }, decision.code === "unauthenticated" ? 401 : 403);
   }
-  const body = (await c.req.json().catch(() => null)) as {
-    repositoryPattern?: unknown;
-    mode?: unknown;
-    blockOnSeverity?: unknown;
-  } | null;
-  if (!body?.mode) return c.json({ error: "mode required" }, 400);
-  if (!isPolicyMode(body.mode)) {
-    return c.json({ error: `unsupported scan policy mode '${String(body.mode)}'` }, 400);
-  }
+  const parsedBody = await validateJsonBody(c, ScanPolicyBodySchema, "invalid scan policy request");
+  if (!parsedBody.ok) return parsedBody.response;
+  const body = parsedBody.data;
   const repositoryPattern = body.repositoryPattern ?? "*";
-  if (typeof repositoryPattern !== "string" || !isValidRepositoryPattern(repositoryPattern)) {
+  if (!isValidRepositoryPattern(repositoryPattern)) {
     return c.json(
       {
         error:
@@ -447,9 +455,6 @@ uiRouter.post("/orgs/:orgId/scan-policies", async (c) => {
     );
   }
   const blockOnSeverity = body.blockOnSeverity ?? null;
-  if (blockOnSeverity != null && !isSeverity(blockOnSeverity)) {
-    return c.json({ error: `unsupported scan policy severity '${String(blockOnSeverity)}'` }, 400);
-  }
   const [row] = await db
     .insert(scanPolicies)
     .values({
@@ -476,11 +481,10 @@ uiRouter.post("/orgs/:orgId/scan-policies", async (c) => {
 });
 
 uiRouter.get("/repositories/:repoId/artifacts", async (c) => {
-  const [repo] = await db
-    .select()
-    .from(repositories)
-    .where(eq(repositories.id, c.req.param("repoId")))
-    .limit(1);
+  const parsedParams = validateParams(c, uuidParams.repoId);
+  if (!parsedParams.ok) return parsedParams.response;
+  const { repoId } = parsedParams.data;
+  const [repo] = await db.select().from(repositories).where(eq(repositories.id, repoId)).limit(1);
   if (!repo) return c.json({ error: "repository not found" }, 404);
   const decision = await authorize(c.get("principal"), "read", {
     type: "repository",
@@ -508,11 +512,14 @@ uiRouter.get("/repositories/:repoId/artifacts", async (c) => {
 });
 
 uiRouter.get("/artifacts/:artifactId/findings", async (c) => {
+  const parsedParams = validateParams(c, uuidParams.artifactId);
+  if (!parsedParams.ok) return parsedParams.response;
+  const { artifactId } = parsedParams.data;
   const [row] = await db
     .select({ art: artifacts, repo: repositories })
     .from(artifacts)
     .innerJoin(repositories, eq(artifacts.repositoryId, repositories.id))
-    .where(eq(artifacts.id, c.req.param("artifactId")))
+    .where(eq(artifacts.id, artifactId))
     .limit(1);
   const art = row?.art;
   const repo = row?.repo;
@@ -544,7 +551,9 @@ uiRouter.get("/artifacts/:artifactId/findings", async (c) => {
 
 // ── governance: quotas + retention ───────────────────────────────────────
 uiRouter.get("/orgs/:orgId/quota", async (c) => {
-  const orgId = c.req.param("orgId");
+  const parsedParams = validateParams(c, uuidParams.orgId);
+  if (!parsedParams.ok) return parsedParams.response;
+  const { orgId } = parsedParams.data;
   const decision = await authorize(c.get("principal"), "read", { type: "org", orgId });
   if (!decision.allowed) {
     return c.json({ error: decision.reason }, decision.code === "unauthenticated" ? 401 : 403);
@@ -561,21 +570,16 @@ uiRouter.get("/orgs/:orgId/quota", async (c) => {
 });
 
 uiRouter.post("/orgs/:orgId/quota", async (c) => {
-  const orgId = c.req.param("orgId");
+  const parsedParams = validateParams(c, uuidParams.orgId);
+  if (!parsedParams.ok) return parsedParams.response;
+  const { orgId } = parsedParams.data;
   const decision = await authorize(c.get("principal"), "admin", { type: "org", orgId });
   if (!decision.allowed) {
     return c.json({ error: decision.reason }, decision.code === "unauthenticated" ? 401 : 403);
   }
-  const body = (await c.req.json().catch(() => null)) as { maxStorageBytes?: unknown } | null;
-  const maxStorageBytes = body?.maxStorageBytes ?? null;
-  if (
-    maxStorageBytes != null &&
-    (typeof maxStorageBytes !== "number" ||
-      !Number.isSafeInteger(maxStorageBytes) ||
-      maxStorageBytes < 0)
-  ) {
-    return c.json({ error: "maxStorageBytes must be a non-negative integer or null" }, 400);
-  }
+  const parsedBody = await validateJsonBody(c, QuotaBodySchema, "invalid quota request");
+  if (!parsedBody.ok) return parsedBody.response;
+  const maxStorageBytes = parsedBody.data.maxStorageBytes ?? null;
   const [existing] = await db
     .select({ id: quotas.id })
     .from(quotas)
@@ -610,13 +614,13 @@ uiRouter.post("/orgs/:orgId/quota", async (c) => {
 });
 
 uiRouter.post("/repositories/:repoId/retention/apply", async (c) => {
-  const guard = await repoAdminGuard(c, c.req.param("repoId"));
+  const parsedParams = validateParams(c, uuidParams.repoId);
+  if (!parsedParams.ok) return parsedParams.response;
+  const guard = await repoAdminGuard(c, parsedParams.data.repoId);
   if ("error" in guard) return guard.error;
-  const body = (await c.req.json().catch(() => null)) as { keepLastN?: number } | null;
-  const keepLastN = body?.keepLastN ?? 10;
-  if (!Number.isInteger(keepLastN) || keepLastN < 1) {
-    return c.json({ error: "keepLastN must be a positive integer" }, 400);
-  }
+  const parsedBody = await validateJsonBody(c, RetentionBodySchema, "invalid retention request");
+  if (!parsedBody.ok) return parsedBody.response;
+  const { keepLastN } = parsedBody.data;
   const pruned = await applyRetention(guard.repo.id, keepLastN);
   void writeAudit({
     orgId: guard.repo.orgId,
@@ -631,21 +635,20 @@ uiRouter.post("/repositories/:repoId/retention/apply", async (c) => {
 });
 
 uiRouter.post("/orgs/:orgId/repositories", async (c) => {
-  const orgId = c.req.param("orgId");
+  const parsedParams = validateParams(c, uuidParams.orgId);
+  if (!parsedParams.ok) return parsedParams.response;
+  const { orgId } = parsedParams.data;
   const decision = await authorize(c.get("principal"), "admin", { type: "org", orgId });
   if (!decision.allowed) {
     return c.json({ error: decision.reason }, decision.code === "unauthenticated" ? 401 : 403);
   }
-  const body = (await c.req.json().catch(() => null)) as {
-    name?: string;
-    format?: PackageFormat;
-    kind?: unknown;
-    visibility?: unknown;
-    description?: string;
-  } | null;
-  if (!body?.name || !body?.format) {
-    return c.json({ error: "name and format required" }, 400);
-  }
+  const parsedBody = await validateJsonBody(
+    c,
+    CreateRepositoryBodySchema,
+    "invalid repository request",
+  );
+  if (!parsedBody.ok) return parsedBody.response;
+  const body = parsedBody.data;
   if (!isValidRepositoryName(body.name)) {
     return c.json(
       {
@@ -654,18 +657,21 @@ uiRouter.post("/orgs/:orgId/repositories", async (c) => {
       400,
     );
   }
-  if (!formatRegistry.has(body.format)) {
+  const format = body.format as PackageFormat;
+  if (!formatRegistry.has(format)) {
     return c.json({ error: `unsupported repository format '${body.format}'` }, 400);
   }
-  const kind = body.kind ?? "hosted";
-  if (!isRepoKind(kind)) {
+  const parsedKind = RepoKindSchema.safeParse(body.kind ?? "hosted");
+  if (!parsedKind.success) {
     return c.json({ error: `unsupported repository kind '${String(body.kind)}'` }, 400);
   }
-  const visibility = body.visibility ?? "private";
-  if (!isVisibility(visibility)) {
+  const kind = parsedKind.data;
+  const parsedVisibility = VisibilitySchema.safeParse(body.visibility ?? "private");
+  if (!parsedVisibility.success) {
     return c.json({ error: `unsupported repository visibility '${String(body.visibility)}'` }, 400);
   }
-  const adapter = formatRegistry.lookup(body.format);
+  const visibility = parsedVisibility.data;
+  const adapter = formatRegistry.lookup(format);
   if (kind === "proxy" && !adapter?.proxyIngest) {
     return c.json(
       { error: `proxy repositories are not supported for format '${body.format}'` },
@@ -690,7 +696,7 @@ uiRouter.post("/orgs/:orgId/repositories", async (c) => {
       orgId,
       orgSlug: org.slug,
       name: body.name,
-      format: body.format,
+      format,
       kind,
       visibility,
       description: body.description,
@@ -714,7 +720,9 @@ uiRouter.post("/orgs/:orgId/repositories", async (c) => {
 });
 
 uiRouter.get("/orgs/:orgId/tokens", async (c) => {
-  const orgId = c.req.param("orgId");
+  const parsedParams = validateParams(c, uuidParams.orgId);
+  if (!parsedParams.ok) return parsedParams.response;
+  const { orgId } = parsedParams.data;
   const p = c.get("principal");
   if (p.kind !== "user") return c.json({ error: "login required" }, 401);
   const adminDecision = await authorize(p, "admin", { type: "org", orgId });
@@ -748,8 +756,9 @@ uiRouter.get("/orgs/:orgId/tokens", async (c) => {
 });
 
 uiRouter.delete("/orgs/:orgId/tokens/:tokenId", async (c) => {
-  const orgId = c.req.param("orgId");
-  const tokenId = c.req.param("tokenId");
+  const parsedParams = validateParams(c, uuidParams.orgToken);
+  if (!parsedParams.ok) return parsedParams.response;
+  const { orgId, tokenId } = parsedParams.data;
   const p = c.get("principal");
   if (p.kind !== "user") return c.json({ error: "login required" }, 401);
   const [tok] = await db.select().from(apiTokens).where(eq(apiTokens.id, tokenId)).limit(1);
@@ -773,48 +782,23 @@ uiRouter.delete("/orgs/:orgId/tokens/:tokenId", async (c) => {
 });
 
 uiRouter.post("/orgs/:orgId/tokens", async (c) => {
-  const orgId = c.req.param("orgId");
+  const parsedParams = validateParams(c, uuidParams.orgId);
+  if (!parsedParams.ok) return parsedParams.response;
+  const { orgId } = parsedParams.data;
   const p = c.get("principal");
   if (p.kind !== "user") return c.json({ error: "login required" }, 401);
   const decision = await authorize(p, "read", { type: "org", orgId });
   if (!decision.allowed) return c.json({ error: decision.reason }, 403);
 
-  const body = (await c.req.json().catch(() => null)) as {
-    name?: unknown;
-    type?: unknown;
-    scopes?: unknown;
-    role?: unknown;
-    expiresAt?: unknown;
-  } | null;
-  if (typeof body?.name !== "string" || body.name.trim().length === 0) {
-    return c.json({ error: "name required" }, 400);
-  }
-  const tokenName = body.name.trim();
-  const tokenType = body.type ?? "personal";
-  if (!isTokenType(tokenType)) {
-    return c.json({ error: `unsupported token type '${String(body.type)}'` }, 400);
-  }
-  const parsedScopes = parseTokenScopes(body.scopes);
-  if ("error" in parsedScopes) return c.json({ error: parsedScopes.error }, 400);
-  const rawRole = body.role;
-  if (rawRole != null && !isRoleName(rawRole)) {
-    return c.json({ error: `unsupported token role '${String(rawRole)}'` }, 400);
-  }
-  const hasScopes = parsedScopes.scopes.length > 0;
-  const requestedRole = rawRole ?? (hasScopes ? undefined : "developer");
-  let expiresAt: Date | null;
-  if (body.expiresAt === null) {
-    expiresAt = null;
-  } else if (body.expiresAt === undefined) {
-    expiresAt = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000);
-  } else if (typeof body.expiresAt === "string") {
-    expiresAt = new Date(body.expiresAt);
-  } else {
-    return c.json({ error: "expiresAt must be an ISO timestamp or null" }, 400);
-  }
-  if (expiresAt && Number.isNaN(expiresAt.getTime())) {
-    return c.json({ error: "expiresAt must be an ISO timestamp or null" }, 400);
-  }
+  const parsedBody = await validateJsonBody(c, CreateTokenBodySchema, "invalid token request");
+  if (!parsedBody.ok) return parsedBody.response;
+  const body = parsedBody.data;
+  const tokenName = body.name;
+  const tokenType = body.type;
+  const parsedScopes = { scopes: body.scopes };
+  const requestedRole = body.role ?? (parsedScopes.scopes.length > 0 ? undefined : "developer");
+  const expiresAt =
+    body.expiresAt === undefined ? new Date(Date.now() + 90 * 24 * 60 * 60 * 1000) : body.expiresAt;
 
   // Prevent privilege escalation: neither the token's role NOR its scope actions
   // may exceed the creator's own org role. (Scopes act as a hard ceiling in can(),

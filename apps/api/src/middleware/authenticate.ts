@@ -7,7 +7,7 @@ import {
   verifyPassword,
   verifyRegistryToken,
 } from "@hootifactory/auth";
-import { Errors, REGISTRY_TOKEN_SERVICE } from "@hootifactory/core";
+import { Errors, REGISTRY_TOKEN_SERVICE, z } from "@hootifactory/core";
 import { db, eq, users } from "@hootifactory/db";
 import { logger, withSpan } from "@hootifactory/observability";
 import type { Context } from "hono";
@@ -15,6 +15,8 @@ import { getCookie } from "hono/cookie";
 import type { AppEnv } from "../types";
 
 export const SESSION_COOKIE = "hoot_session";
+const AuthorizationHeaderSchema = z.string().trim().min(1).max(16_384);
+const NugetApiKeyHeaderSchema = z.string().trim().min(1).max(4096);
 
 function invalidCredentials(): never {
   throw Errors.unauthorized("invalid authorization credentials");
@@ -60,7 +62,10 @@ export async function authenticateUserPassword(
  * no credentials default to anonymous.
  */
 async function authenticateInner(c: Context<AppEnv>): Promise<Principal> {
-  const authz = c.req.header("authorization");
+  const rawAuthz = c.req.header("authorization");
+  const parsedAuthz = rawAuthz ? AuthorizationHeaderSchema.safeParse(rawAuthz) : null;
+  if (rawAuthz && !parsedAuthz?.success) invalidCredentials();
+  const authz = parsedAuthz?.success ? parsedAuthz.data : undefined;
   if (authz) {
     if (authz.startsWith("Bearer ")) {
       const tok = authz.slice(7).trim();
@@ -130,7 +135,10 @@ async function authenticateInner(c: Context<AppEnv>): Promise<Principal> {
 
   // NuGet clients (dotnet/nuget push) send the credential as an API key header,
   // never in Authorization. Treat it as a Hootifactory scoped token.
-  const apiKey = c.req.header("x-nuget-apikey");
+  const rawApiKey = c.req.header("x-nuget-apikey");
+  const parsedApiKey = rawApiKey ? NugetApiKeyHeaderSchema.safeParse(rawApiKey) : null;
+  if (rawApiKey && !parsedApiKey?.success) invalidCredentials();
+  const apiKey = parsedApiKey?.success ? parsedApiKey.data : undefined;
   if (apiKey?.startsWith(TOKEN_PREFIX)) {
     const p = await resolveToken(apiKey.trim());
     if (p) {

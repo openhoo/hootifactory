@@ -42,4 +42,35 @@ describe("Docker adapter contract", () => {
       status: 401,
     });
   });
+
+  test("validates matched route params and query values before stateful work", async () => {
+    const adapter = new DockerAdapter();
+
+    await expect(
+      adapter.handle(
+        {
+          entry: { method: "GET", pattern: "/:name+/tags/list", handlerId: "tagsList" },
+          params: { name: "../bad" },
+          path: "/../bad/tags/list",
+        },
+        new Request("https://registry.test/v2/acme/containers/../bad/tags/list"),
+        ctx,
+      ),
+    ).rejects.toMatchObject({ status: 400, code: "NAME_INVALID" });
+
+    await expect(
+      adapter.handle(
+        {
+          entry: { method: "POST", pattern: "/:name+/blobs/uploads", handlerId: "startUpload" },
+          params: { name: "team/api" },
+          path: "/team/api/blobs/uploads",
+        },
+        new Request(
+          "https://registry.test/v2/acme/containers/team/api/blobs/uploads?digest=sha256:bad",
+          { method: "POST" },
+        ),
+        ctx,
+      ),
+    ).rejects.toMatchObject({ status: 400, code: "DIGEST_INVALID" });
+  });
 });

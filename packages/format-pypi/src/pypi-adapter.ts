@@ -7,11 +7,13 @@ import {
   type HttpMethod,
   isArtifactBlocked,
   type Permission,
+  parseRegistryInput,
   type RepoContext,
   type RouteEntry,
   type RouteMatch,
   releaseBlobRef,
   storeBlobWithRef,
+  z,
 } from "@hootifactory/core";
 import { and, eq, isNull, packages, packageVersions } from "@hootifactory/db";
 import { computeDigest, digestHex } from "@hootifactory/storage";
@@ -71,6 +73,27 @@ function parsePypiFilename(filename: string): { name: string; version: string } 
   if (sep <= 0 || sep === sourceBase.length - 1) return null;
   return { name: sourceBase.slice(0, sep), version: sourceBase.slice(sep + 1) };
 }
+
+const PypiProjectParamSchema = z
+  .string()
+  .min(1)
+  .max(256)
+  .refine((value) => isValidProjectName(value), "invalid project name");
+const PypiFilenameSchema = z
+  .string()
+  .min(1)
+  .max(512)
+  .refine((value) => isSafeDistributionFilename(value), "invalid distribution filename");
+const PypiUploadFieldsSchema = z.strictObject({
+  name: PypiProjectParamSchema,
+  version: z.string().min(1).max(256),
+  sha256_digest: z
+    .string()
+    .regex(/^[a-fA-F0-9]{64}$/)
+    .optional(),
+  requires_python: z.string().min(1).max(256).optional(),
+  filetype: z.string().min(1).max(64).optional(),
+});
 
 export class PypiAdapter implements FormatAdapter {
   readonly format = "pypi" as const;
@@ -160,6 +183,10 @@ export class PypiAdapter implements FormatAdapter {
   }
 
   private async simpleProject(projectRaw: string, ctx: RepoContext): Promise<Response> {
+    projectRaw = parseRegistryInput(PypiProjectParamSchema, projectRaw, {
+      code: "NAME_INVALID",
+      message: "invalid project name",
+    });
     const name = normalizeName(projectRaw);
     const pkg = await this.findPackage(ctx, name);
     if (!pkg) return new Response("Not Found", { status: 404 });
@@ -186,6 +213,10 @@ export class PypiAdapter implements FormatAdapter {
   }
 
   private async download(filename: string, ctx: RepoContext): Promise<Response> {
+    filename = parseRegistryInput(PypiFilenameSchema, filename, {
+      code: "NAME_INVALID",
+      message: "invalid distribution filename",
+    });
     // Resolve the digest from the SAME metadata the simple index advertises (live
     // versions only), so the bytes served match the published #sha256 and identical
     // filenames from different packages don't collide via a blob_refs scan.
@@ -207,20 +238,26 @@ export class PypiAdapter implements FormatAdapter {
     if (!(content instanceof File)) {
       return Response.json({ error: "missing file content" }, { status: 400 });
     }
-    const rawName = String(form.get("name") ?? "");
-    const version = String(form.get("version") ?? "");
-    if (!rawName || !version) {
-      return Response.json({ error: "missing name or version" }, { status: 400 });
-    }
-    if (!isValidProjectName(rawName)) {
-      return Response.json({ error: "invalid project name" }, { status: 400 });
-    }
+    const fields = parseRegistryInput(
+      PypiUploadFieldsSchema,
+      {
+        name: form.get("name"),
+        version: form.get("version"),
+        sha256_digest: form.get("sha256_digest") || undefined,
+        requires_python: form.get("requires_python") || undefined,
+        filetype: form.get("filetype") || undefined,
+      },
+      { code: "MANIFEST_INVALID", message: "invalid upload metadata" },
+    );
+    const rawName = fields.name;
+    const version = fields.version;
     const name = normalizeName(rawName);
     const bytes = new Uint8Array(await content.arrayBuffer());
     const filename = content.name;
-    if (!isSafeDistributionFilename(filename)) {
-      return Response.json({ error: "invalid distribution filename" }, { status: 400 });
-    }
+    parseRegistryInput(PypiFilenameSchema, filename, {
+      code: "NAME_INVALID",
+      message: "invalid distribution filename",
+    });
     const filenameIdentity = parsePypiFilename(filename);
     if (
       !filenameIdentity ||
@@ -239,18 +276,16 @@ export class PypiAdapter implements FormatAdapter {
       return Response.json({ message: "File already exists." }, { status: 409 });
     }
     // Validate the client-declared sha256 against the actual bytes before storing.
-    const claimed = form.get("sha256_digest");
+    const claimed = fields.sha256_digest;
     const actualSha = digestHex(computeDigest(bytes));
-    if (claimed && String(claimed).toLowerCase() !== actualSha) {
+    if (claimed && claimed.toLowerCase() !== actualSha) {
       return Response.json(
         { message: "sha256_digest does not match uploaded content" },
         { status: 400 },
       );
     }
-    const requiresPython = form.get("requires_python")
-      ? String(form.get("requires_python"))
-      : undefined;
-    const filetype = form.get("filetype") ? String(form.get("filetype")) : undefined;
+    const requiresPython = fields.requires_python;
+    const filetype = fields.filetype;
 
     const pkg = await findOrCreatePackage({
       orgId: ctx.repo.orgId,

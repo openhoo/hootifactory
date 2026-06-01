@@ -1,5 +1,5 @@
 import { env } from "@hootifactory/config";
-import { RegistryError } from "@hootifactory/core";
+import { RegistryError, z } from "@hootifactory/core";
 import {
   addSpanEvent,
   initializeObservability,
@@ -22,13 +22,17 @@ initializeObservability({ serviceRole: "api" });
 export const app = new Hono<AppEnv>();
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+const ContentLengthHeaderSchema = z
+  .string()
+  .trim()
+  .regex(/^\d+$/)
+  .transform((value) => Number(value))
+  .refine((value) => Number.isSafeInteger(value));
 
 function parseContentLength(value: string | undefined): number | "invalid" | null {
   if (value == null) return null;
-  const trimmed = value.trim();
-  if (!/^\d+$/.test(trimmed)) return "invalid";
-  const parsed = Number(trimmed);
-  return Number.isSafeInteger(parsed) ? parsed : "invalid";
+  const parsed = ContentLengthHeaderSchema.safeParse(value);
+  return parsed.success ? parsed.data : "invalid";
 }
 
 function registryPathname(url: string): string | null {

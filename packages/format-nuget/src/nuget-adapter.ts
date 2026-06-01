@@ -7,11 +7,13 @@ import {
   type HttpMethod,
   isArtifactBlocked,
   type Permission,
+  parseRegistryInput,
   type RepoContext,
   type RouteEntry,
   type RouteMatch,
   releaseBlobRef,
   storeBlobWithRef,
+  z,
 } from "@hootifactory/core";
 import { and, eq, isNull, packages, packageVersions } from "@hootifactory/db";
 import { extractNuspecMeta, type NuspecDependencyGroup } from "./nuspec";
@@ -103,6 +105,32 @@ function normalizeNugetVersion(v: string): string | null {
   if (nums.length === 4 && nums[3] === "0") nums.pop();
   return nums.join(".") + pre;
 }
+
+const NugetIdSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(128)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9_.-]*$/, "invalid NuGet package id");
+const NugetVersionInputSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(256)
+  .refine((value) => normalizeNugetVersion(value) != null, "invalid NuGet package version");
+const NugetFileSchema = z
+  .string()
+  .min(1)
+  .max(512)
+  .regex(/^[^/\\]+\.nupkg$/i, "invalid NuGet package filename");
+const NugetPublishQuerySchema = z.strictObject({
+  id: NugetIdSchema.optional(),
+  version: NugetVersionInputSchema.optional(),
+});
+const MultipartContentTypeSchema = z
+  .string()
+  .max(512)
+  .refine((value) => multipartBoundary(value) != null, "multipart boundary is required");
 
 /** Compare two normalized NuGet versions (numeric core; a release outranks its prerelease). */
 function compareNugetVersions(a: string, b: string): number {
@@ -212,6 +240,10 @@ export class NugetAdapter implements FormatAdapter {
   }
 
   private async versions(id: string, ctx: RepoContext): Promise<Response> {
+    id = parseRegistryInput(NugetIdSchema, id, {
+      code: "NAME_INVALID",
+      message: "invalid package id",
+    });
     const pkg = await this.findPkg(ctx, id);
     if (!pkg) return new Response("Not Found", { status: 404 });
     const rows = await this.listVersions(ctx, pkg.id);
@@ -220,6 +252,10 @@ export class NugetAdapter implements FormatAdapter {
   }
 
   private async registration(id: string, base: string, ctx: RepoContext): Promise<Response> {
+    id = parseRegistryInput(NugetIdSchema, id, {
+      code: "NAME_INVALID",
+      message: "invalid package id",
+    });
     const pkg = await this.findPkg(ctx, id);
     if (!pkg) return new Response("Not Found", { status: 404 });
     const rows = await this.listVersions(ctx, pkg.id);
@@ -274,6 +310,19 @@ export class NugetAdapter implements FormatAdapter {
     file: string,
     ctx: RepoContext,
   ): Promise<Response> {
+    id = parseRegistryInput(NugetIdSchema, id, {
+      code: "NAME_INVALID",
+      message: "invalid package id",
+    });
+    version = parseRegistryInput(NugetVersionInputSchema, version, {
+      code: "MANIFEST_UNKNOWN",
+      message: "invalid package version",
+      status: 404,
+    });
+    file = parseRegistryInput(NugetFileSchema, file, {
+      code: "NAME_INVALID",
+      message: "invalid package filename",
+    });
     const pkg = await this.findPkg(ctx, id);
     if (!pkg) throw Errors.notFound();
     const norm = normalizeNugetVersion(version);
@@ -308,6 +357,15 @@ export class NugetAdapter implements FormatAdapter {
     listed: boolean,
     ctx: RepoContext,
   ): Promise<Response> {
+    id = parseRegistryInput(NugetIdSchema, id, {
+      code: "NAME_INVALID",
+      message: "invalid package id",
+    });
+    version = parseRegistryInput(NugetVersionInputSchema, version, {
+      code: "MANIFEST_UNKNOWN",
+      message: "invalid package version",
+      status: 404,
+    });
     const pkg = await this.findPkg(ctx, id);
     if (!pkg) throw Errors.notFound();
     const norm = normalizeNugetVersion(version);
@@ -334,14 +392,26 @@ export class NugetAdapter implements FormatAdapter {
 
   private async publish(req: Request, ctx: RepoContext): Promise<Response> {
     const url = new URL(req.url);
-    let id = (url.searchParams.get("id") ?? "").trim();
-    let version = (url.searchParams.get("version") ?? "").trim();
+    const query = parseRegistryInput(
+      NugetPublishQuerySchema,
+      {
+        id: url.searchParams.get("id") || undefined,
+        version: url.searchParams.get("version") || undefined,
+      },
+      { code: "MANIFEST_INVALID", message: "invalid publish query" },
+    );
+    let id = query.id ?? "";
+    let version = query.version ?? "";
 
     // Accept the raw .nupkg body or a multipart part (real `dotnet nuget push`
     // sends a positional file part, not a named "package" field).
     let bytes: Uint8Array;
     const ct = req.headers.get("content-type") ?? "";
     if (ct.includes("multipart/form-data")) {
+      parseRegistryInput(MultipartContentTypeSchema, ct, {
+        code: "MANIFEST_INVALID",
+        message: "invalid multipart content-type",
+      });
       const body = new Uint8Array(await req.arrayBuffer());
       const file = extractMultipartFile(ct, body);
       if (!file) return Response.json({ error: "missing package" }, { status: 400 });
@@ -357,10 +427,14 @@ export class NugetAdapter implements FormatAdapter {
         { status: 400 },
       );
     }
-    if (id && id.toLowerCase() !== meta.id.toLowerCase()) {
+    const metaId = parseRegistryInput(NugetIdSchema, meta.id, {
+      code: "MANIFEST_INVALID",
+      message: "invalid nuspec package id",
+    });
+    if (id && id.toLowerCase() !== metaId.toLowerCase()) {
       return Response.json({ error: "package id does not match nuspec" }, { status: 400 });
     }
-    id = id || meta.id;
+    id = id || metaId;
 
     const normalizedMetaVersion = normalizeNugetVersion(meta.version);
     const normalizedQueryVersion = version ? normalizeNugetVersion(version) : normalizedMetaVersion;

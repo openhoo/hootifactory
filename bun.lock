@@ -120,6 +120,7 @@
         "@hootifactory/scan-core": "workspace:*",
         "@hootifactory/storage": "workspace:*",
         "@hootifactory/types": "workspace:*",
+        "zod": "^4.4.3",
       },
     },
     "packages/db": {

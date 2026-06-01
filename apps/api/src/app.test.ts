@@ -49,4 +49,33 @@ describe("request body guard", () => {
       errors: [{ code: "BAD_REQUEST", message: "invalid content-length" }],
     });
   });
+
+  test("rejects malformed JSON route bodies through Zod schemas", async () => {
+    const response = await app.fetch(
+      new Request("http://localhost/api/auth/login", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ username: "alice", password: "secret", unexpected: true }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { error?: string; issues?: unknown };
+    expect(body.error).toBe("invalid login request");
+    expect(body.issues).toBeTruthy();
+  });
+
+  test("rejects malformed OCI token query scopes before minting tokens", async () => {
+    const response = await app.fetch(
+      new Request("http://localhost/token?service=hootifactory&scope=repository:acme/app:execute"),
+    );
+
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as {
+      errors?: { code?: string; message?: string; detail?: unknown }[];
+    };
+    expect(body.errors?.[0]?.code).toBe("BAD_REQUEST");
+    expect(body.errors?.[0]?.message).toBe("invalid token scope");
+    expect(body.errors?.[0]?.detail).toBeTruthy();
+  });
 });

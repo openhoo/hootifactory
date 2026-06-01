@@ -18,6 +18,7 @@
     "@hootifactory/db": "workspace:*",
     "@hootifactory/scan-core": "workspace:*",
     "@hootifactory/storage": "workspace:*",
-    "@hootifactory/auth": "workspace:*"
+    "@hootifactory/auth": "workspace:*",
+    "zod": "^4.4.3"
   }
 }

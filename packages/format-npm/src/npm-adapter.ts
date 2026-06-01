@@ -6,6 +6,7 @@ import {
   type HttpMethod,
   isArtifactBlocked,
   type Permission,
+  parseRegistryInput,
   type RepoContext,
   type RouteEntry,
   type RouteMatch,
@@ -15,6 +16,7 @@ import {
   storeBlobWithRef,
   upsertPackageVersion,
   upsertPackageVersionWithBlobRef,
+  z,
 } from "@hootifactory/core";
 import {
   and,
@@ -83,6 +85,39 @@ function isValidDistTag(tag: string): boolean {
   if (/^v\d/i.test(tag)) return false;
   return !isValidNpmVersion(tag);
 }
+
+const NpmPackageNameSchema = z
+  .string()
+  .min(1)
+  .max(214)
+  .refine(isValidNpmName, "invalid npm package name");
+const NpmVersionSchema = z
+  .string()
+  .min(1)
+  .max(256)
+  .refine(isValidNpmVersion, "invalid npm version");
+const NpmDistTagSchema = z.string().min(1).max(214).refine(isValidDistTag, "invalid npm dist-tag");
+const NpmTarballFilenameSchema = z
+  .string()
+  .min(1)
+  .max(512)
+  .regex(/^[^/\\]+\.tgz$/, "invalid tarball filename");
+const NpmSearchQuerySchema = z.strictObject({
+  text: z.string().max(256).default(""),
+  from: z.coerce.number().int().min(0).max(10_000).default(0),
+  size: z.coerce.number().int().min(0).max(100).default(20),
+});
+const NpmPublishManifestSchema = z.looseObject({
+  name: z.string().optional(),
+  version: z.string().optional(),
+  dist: z.record(z.string(), z.unknown()).optional(),
+});
+const NpmPublishBodySchema = z.looseObject({
+  name: z.string().optional(),
+  versions: z.record(z.string(), NpmPublishManifestSchema).default({}),
+  _attachments: z.record(z.string(), z.looseObject({ data: z.string() })).default({}),
+  "dist-tags": z.record(z.string(), z.string()).optional(),
+});
 
 const INTEGRITY_ALGORITHMS = new Set(["sha1", "sha256", "sha384", "sha512"]);
 
@@ -161,12 +196,6 @@ function decodeBase64(data: unknown): Buffer | null {
     return null;
   }
   return decoded;
-}
-
-function boundedInt(value: string | null, fallback: number, min: number, max: number): number {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.max(min, Math.min(Math.trunc(parsed), max));
 }
 
 function ifNoneMatch(req: Request, etag: string): boolean {
@@ -273,8 +302,10 @@ export class NpmAdapter implements FormatAdapter {
   }
 
   private async packument(name: string, req: Request, ctx: RepoContext): Promise<Response> {
-    if (!isValidNpmName(name))
-      return Response.json({ error: "invalid package name" }, { status: 400 });
+    name = parseRegistryInput(NpmPackageNameSchema, name, {
+      code: "NAME_INVALID",
+      message: "invalid package name",
+    });
     const pkg = await this.findPackage(ctx, name);
     if (!pkg) return Response.json({ error: "Not found" }, { status: 404 });
     const versions = await this.liveVersions(ctx, pkg.id);
@@ -293,8 +324,14 @@ export class NpmAdapter implements FormatAdapter {
     req: Request,
     ctx: RepoContext,
   ): Promise<Response> {
-    if (!isValidNpmName(name))
-      return Response.json({ error: "invalid package name" }, { status: 400 });
+    name = parseRegistryInput(NpmPackageNameSchema, name, {
+      code: "NAME_INVALID",
+      message: "invalid package name",
+    });
+    filename = parseRegistryInput(NpmTarballFilenameSchema, filename, {
+      code: "NAME_INVALID",
+      message: "invalid tarball filename",
+    });
     const pkg = await this.findPackage(ctx, name);
     if (!pkg) return Response.json({ error: "Not found" }, { status: 404 });
     const versions = await this.liveVersions(ctx, pkg.id);
@@ -316,16 +353,15 @@ export class NpmAdapter implements FormatAdapter {
   }
 
   private async publish(name: string, req: Request, ctx: RepoContext): Promise<Response> {
-    const body = (await req.json().catch(() => null)) as {
-      name?: string;
-      versions?: Record<string, Record<string, unknown>>;
-      _attachments?: Record<string, { data: string }>;
-      "dist-tags"?: Record<string, string>;
-    } | null;
-    if (!body) return Response.json({ error: "invalid publish payload" }, { status: 400 });
-    if (!isValidNpmName(name)) {
-      return Response.json({ error: "invalid package name" }, { status: 400 });
-    }
+    const rawBody = await req.json().catch(() => null);
+    const body = parseRegistryInput(NpmPublishBodySchema, rawBody, {
+      code: "MANIFEST_INVALID",
+      message: "invalid publish payload",
+    });
+    name = parseRegistryInput(NpmPackageNameSchema, name, {
+      code: "NAME_INVALID",
+      message: "invalid package name",
+    });
     if (body.name && body.name !== name) {
       return Response.json({ error: "package name in body does not match URL" }, { status: 400 });
     }
@@ -335,12 +371,10 @@ export class NpmAdapter implements FormatAdapter {
     const base = basename(name);
     const publishVersions: PublishVersion[] = [];
     for (const [ver, manifestRaw] of Object.entries(versions)) {
-      if (!isValidNpmVersion(ver)) {
-        return Response.json({ error: "invalid package version" }, { status: 400 });
-      }
-      if (!manifestRaw || typeof manifestRaw !== "object" || Array.isArray(manifestRaw)) {
-        return Response.json({ error: "invalid version manifest" }, { status: 400 });
-      }
+      parseRegistryInput(NpmVersionSchema, ver, {
+        code: "MANIFEST_INVALID",
+        message: "invalid package version",
+      });
       const manifest = { ...(manifestRaw as Record<string, unknown>) };
       if (manifest.name !== undefined && manifest.name !== name) {
         return Response.json(
@@ -379,15 +413,14 @@ export class NpmAdapter implements FormatAdapter {
     const existingPkg = await this.findPackage(ctx, name);
     const existingTagVersionIds = new Map<string, string>();
     for (const [tag, ver] of Object.entries(distTags)) {
-      if (!isValidDistTag(tag)) {
-        return Response.json({ error: "invalid dist-tag" }, { status: 400 });
-      }
-      if (typeof ver !== "string" || !isValidNpmVersion(ver)) {
-        return Response.json(
-          { error: `dist-tag ${tag} points to an invalid version` },
-          { status: 400 },
-        );
-      }
+      parseRegistryInput(NpmDistTagSchema, tag, {
+        code: "TAG_INVALID",
+        message: "invalid dist-tag",
+      });
+      parseRegistryInput(NpmVersionSchema, ver, {
+        code: "MANIFEST_INVALID",
+        message: `dist-tag ${tag} points to an invalid version`,
+      });
       if (!publishVersionSet.has(ver)) {
         const existingVersionId = existingPkg
           ? await this.versionId(ctx, existingPkg.id, ver)
@@ -511,8 +544,10 @@ export class NpmAdapter implements FormatAdapter {
   }
 
   private async distTagsList(name: string, ctx: RepoContext): Promise<Response> {
-    if (!isValidNpmName(name))
-      return Response.json({ error: "invalid package name" }, { status: 400 });
+    name = parseRegistryInput(NpmPackageNameSchema, name, {
+      code: "NAME_INVALID",
+      message: "invalid package name",
+    });
     const pkg = await this.findPackage(ctx, name);
     if (!pkg) return Response.json({}, { status: 404 });
     return Response.json(await this.distTags(ctx, pkg.id));
@@ -524,12 +559,21 @@ export class NpmAdapter implements FormatAdapter {
     req: Request,
     ctx: RepoContext,
   ): Promise<Response> {
-    if (!isValidNpmName(name))
-      return Response.json({ error: "invalid package name" }, { status: 400 });
+    name = parseRegistryInput(NpmPackageNameSchema, name, {
+      code: "NAME_INVALID",
+      message: "invalid package name",
+    });
     const pkg = await this.findPackage(ctx, name);
     if (!pkg) return Response.json({ error: "Not found" }, { status: 404 });
-    if (!isValidDistTag(tag)) return Response.json({ error: "invalid dist-tag" }, { status: 400 });
+    tag = parseRegistryInput(NpmDistTagSchema, tag, {
+      code: "TAG_INVALID",
+      message: "invalid dist-tag",
+    });
     const version = (await req.text()).replace(/^"|"$/g, "").trim();
+    parseRegistryInput(NpmVersionSchema, version, {
+      code: "MANIFEST_INVALID",
+      message: "invalid package version",
+    });
     const versionId = await this.versionId(ctx, pkg.id, version);
     if (!versionId) return Response.json({ error: "version not found" }, { status: 404 });
     await setDistTag(ctx, pkg.id, tag, versionId);
@@ -540,11 +584,16 @@ export class NpmAdapter implements FormatAdapter {
   }
 
   private async distTagDelete(name: string, tag: string, ctx: RepoContext): Promise<Response> {
-    if (!isValidNpmName(name))
-      return Response.json({ error: "invalid package name" }, { status: 400 });
+    name = parseRegistryInput(NpmPackageNameSchema, name, {
+      code: "NAME_INVALID",
+      message: "invalid package name",
+    });
     const pkg = await this.findPackage(ctx, name);
     if (!pkg) return Response.json({ error: "Not found" }, { status: 404 });
-    if (!isValidDistTag(tag)) return Response.json({ error: "invalid dist-tag" }, { status: 400 });
+    tag = parseRegistryInput(NpmDistTagSchema, tag, {
+      code: "TAG_INVALID",
+      message: "invalid dist-tag",
+    });
     await ctx.db
       .delete(versionTags)
       .where(and(eq(versionTags.packageId, pkg.id), eq(versionTags.tag, tag)));
@@ -699,9 +748,15 @@ export class NpmAdapter implements FormatAdapter {
 
   private async searchHandler(req: Request, ctx: RepoContext): Promise<Response> {
     const url = new URL(req.url);
-    const text = url.searchParams.get("text") ?? "";
-    const from = boundedInt(url.searchParams.get("from"), 0, 0, 10_000);
-    const size = boundedInt(url.searchParams.get("size"), 20, 0, 100);
+    const { text, from, size } = parseRegistryInput(
+      NpmSearchQuerySchema,
+      {
+        text: url.searchParams.get("text") ?? undefined,
+        from: url.searchParams.get("from") ?? undefined,
+        size: url.searchParams.get("size") ?? undefined,
+      },
+      { code: "PAGINATION_NUMBER_INVALID", message: "invalid search query" },
+    );
     const rows = await ctx.db
       .select()
       .from(packages)
