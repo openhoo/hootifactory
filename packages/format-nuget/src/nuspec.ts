@@ -1,9 +1,9 @@
 import { inflateRawSync } from "node:zlib";
 
 /**
- * Minimal, dependency-free reader for the `<id>`/`<version>` of a .nupkg's root
- * `.nuspec`. A .nupkg is a zip; we read the central directory (authoritative
- * sizes/offsets, unlike streamed local headers) to locate and inflate the entry.
+ * Minimal, dependency-free reader for the root `.nuspec` metadata in a .nupkg.
+ * A .nupkg is a zip; we read the central directory (authoritative sizes/offsets,
+ * unlike streamed local headers) to locate and inflate the entry.
  */
 
 const u16 = (b: Uint8Array, o: number): number => (b[o] ?? 0) | ((b[o + 1] ?? 0) << 8);
@@ -51,12 +51,91 @@ function readNuspecXml(zip: Uint8Array): string | null {
   return null;
 }
 
-/** Extract id + version from a .nupkg's nuspec, or null if it can't be parsed. */
-export function extractNuspecMeta(nupkg: Uint8Array): { id: string; version: string } | null {
+export interface NuspecDependency {
+  id: string;
+  range: string;
+  include?: string;
+  exclude?: string;
+}
+
+export interface NuspecDependencyGroup {
+  targetFramework?: string;
+  dependencies: NuspecDependency[];
+}
+
+export interface NuspecMeta {
+  id: string;
+  version: string;
+  dependencyGroups: NuspecDependencyGroup[];
+}
+
+function decodeXml(value: string): string {
+  return value
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&");
+}
+
+function attrMap(tag: string): Record<string, string> {
+  const attrs: Record<string, string> = {};
+  for (const match of tag.matchAll(/([A-Za-z_:][\w:.-]*)\s*=\s*(?:"([^"]*)"|'([^']*)')/g)) {
+    attrs[match[1]!.toLowerCase()] = decodeXml(match[2] ?? match[3] ?? "");
+  }
+  return attrs;
+}
+
+function dependencyFromTag(tag: string): NuspecDependency | null {
+  const attrs = attrMap(tag);
+  const id = attrs.id?.trim();
+  const range = attrs.version?.trim();
+  if (!id || !range) return null;
+  return {
+    id,
+    range,
+    ...(attrs.include ? { include: attrs.include } : {}),
+    ...(attrs.exclude ? { exclude: attrs.exclude } : {}),
+  };
+}
+
+function parseDependencies(xml: string): NuspecDependencyGroup[] {
+  const depsXml = xml.match(/<dependencies\b[^>]*>([\s\S]*?)<\/dependencies>/i)?.[1];
+  if (!depsXml) return [];
+
+  const groups: NuspecDependencyGroup[] = [];
+  const groupRanges: [number, number][] = [];
+  for (const match of depsXml.matchAll(/<group\b([^>]*)>([\s\S]*?)<\/group>/gi)) {
+    groupRanges.push([match.index ?? 0, (match.index ?? 0) + match[0].length]);
+    const attrs = attrMap(match[1] ?? "");
+    const dependencies = [...(match[2] ?? "").matchAll(/<dependency\b[^>]*\/?>/gi)]
+      .map((dep) => dependencyFromTag(dep[0]))
+      .filter((dep): dep is NuspecDependency => dep != null);
+    groups.push({
+      ...(attrs.targetframework ? { targetFramework: attrs.targetframework } : {}),
+      dependencies,
+    });
+  }
+
+  const directXml = groupRanges.reduce(
+    (source, [start, end]) =>
+      `${source.slice(0, start)}${" ".repeat(end - start)}${source.slice(end)}`,
+    depsXml,
+  );
+  const directDependencies = [...directXml.matchAll(/<dependency\b[^>]*\/?>/gi)]
+    .map((dep) => dependencyFromTag(dep[0]))
+    .filter((dep): dep is NuspecDependency => dep != null);
+  if (directDependencies.length > 0) groups.unshift({ dependencies: directDependencies });
+
+  return groups.filter((group) => group.dependencies.length > 0);
+}
+
+/** Extract NuGet package metadata from a .nupkg's nuspec, or null if it can't be parsed. */
+export function extractNuspecMeta(nupkg: Uint8Array): NuspecMeta | null {
   const xml = readNuspecXml(nupkg);
   if (!xml) return null;
   const id = xml.match(/<id>\s*([^<]+?)\s*<\/id>/i)?.[1];
   const version = xml.match(/<version>\s*([^<]+?)\s*<\/version>/i)?.[1];
   if (!id || !version) return null;
-  return { id: id.trim(), version: version.trim() };
+  return { id: id.trim(), version: version.trim(), dependencyGroups: parseDependencies(xml) };
 }

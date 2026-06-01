@@ -14,12 +14,13 @@ import {
   storeBlobWithRef,
 } from "@hootifactory/core";
 import { and, eq, isNull, packages, packageVersions } from "@hootifactory/db";
-import { extractNuspecMeta } from "./nuspec";
+import { extractNuspecMeta, type NuspecDependencyGroup } from "./nuspec";
 
 interface NugetVersionMeta {
   nupkgDigest: string;
   file: string;
   listed?: boolean;
+  dependencyGroups?: NuspecDependencyGroup[];
 }
 
 const CRLF = new TextEncoder().encode("\r\n");
@@ -225,8 +226,17 @@ export class NugetAdapter implements FormatAdapter {
     const lower = id.toLowerCase();
     const registrationUrl = `${base}/v3/registrations/${lower}/index.json`;
     const items = rows.map((r) => {
+      const metadata = r.metadata as unknown as NugetVersionMeta;
       const leaf = `${base}/v3/registrations/${lower}/${r.version}.json`;
       const content = `${base}/v3-flatcontainer/${lower}/${r.version}/${lower}.${r.version}.nupkg`;
+      const dependencyGroups = (metadata.dependencyGroups ?? []).map((group) => ({
+        ...(group.targetFramework ? { targetFramework: group.targetFramework } : {}),
+        dependencies: group.dependencies.map((dep) => ({
+          id: dep.id,
+          range: dep.range,
+          registration: `${base}/v3/registrations/${dep.id.toLowerCase()}/index.json`,
+        })),
+      }));
       return {
         "@id": leaf,
         "@type": "Package",
@@ -237,6 +247,7 @@ export class NugetAdapter implements FormatAdapter {
           version: r.version,
           listed: true,
           packageContent: content,
+          ...(dependencyGroups.length > 0 ? { dependencyGroups } : {}),
         },
         packageContent: content,
         registration: registrationUrl,
@@ -382,7 +393,13 @@ export class NugetAdapter implements FormatAdapter {
     const versionId = await createPackageVersion(ctx, {
       packageId: pkg.id,
       version,
-      metadata: { nupkgDigest: stored.digest, file, displayId: id, listed: true },
+      metadata: {
+        nupkgDigest: stored.digest,
+        file,
+        displayId: id,
+        listed: true,
+        dependencyGroups: meta.dependencyGroups,
+      },
       sizeBytes: bytes.length,
     });
     if (!versionId) {

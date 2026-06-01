@@ -68,7 +68,47 @@ describe("NuGet nuspec extraction", () => {
       "<package><metadata><id>Example.Lib</id><version>1.2.3-beta</version></metadata></package>",
     );
 
-    expect(extractNuspecMeta(nupkg)).toEqual({ id: "Example.Lib", version: "1.2.3-beta" });
+    expect(extractNuspecMeta(nupkg)).toEqual({
+      id: "Example.Lib",
+      version: "1.2.3-beta",
+      dependencyGroups: [],
+    });
+  });
+
+  test("extracts direct and target-framework dependency groups", () => {
+    const nupkg = makeStoredZip(
+      "Example.nuspec",
+      `<package>
+        <metadata>
+          <id>Example.Lib</id>
+          <version>1.2.3</version>
+          <dependencies>
+            <dependency id="Direct.Dependency" version="[1.0.0,2.0.0)" />
+            <group targetFramework="net8.0">
+              <dependency id="Grouped.Dependency" version="2.1.0" exclude="Build,Analyzers" />
+              <dependency id="Xml.Entity" version="3.0.0" include="contentFiles &amp; build" />
+            </group>
+          </dependencies>
+        </metadata>
+      </package>`,
+    );
+
+    expect(extractNuspecMeta(nupkg)).toEqual({
+      id: "Example.Lib",
+      version: "1.2.3",
+      dependencyGroups: [
+        {
+          dependencies: [{ id: "Direct.Dependency", range: "[1.0.0,2.0.0)" }],
+        },
+        {
+          targetFramework: "net8.0",
+          dependencies: [
+            { id: "Grouped.Dependency", range: "2.1.0", exclude: "Build,Analyzers" },
+            { id: "Xml.Entity", range: "3.0.0", include: "contentFiles & build" },
+          ],
+        },
+      ],
+    });
   });
 
   test("ignores nested nuspec files and malformed archives", () => {
