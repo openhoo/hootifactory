@@ -1,3 +1,4 @@
+import { inflateRawSync } from "node:zlib";
 import {
   createPackageVersion,
   Errors,
@@ -58,6 +59,16 @@ function readU32(view: DataView, offset: number): number {
   return view.getUint32(offset, true);
 }
 
+function decodeModuleDirective(mod: string): string | null {
+  for (const line of mod.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("//")) continue;
+    const match = /^module\s+(\S+)\s*$/.exec(trimmed);
+    return match?.[1] ?? null;
+  }
+  return null;
+}
+
 function findZipEndOfCentralDirectory(view: DataView): number {
   const min = Math.max(0, view.byteLength - 65_557);
   for (let offset = view.byteLength - 22; offset >= min; offset--) {
@@ -110,6 +121,55 @@ function validateGoModuleZip(
   }
   if (pos > centralOffset + centralSize) return "zip central directory exceeds declared size";
   if (!hasGoMod) return "zip is missing go.mod";
+  return null;
+}
+
+function readZipEntryText(bytes: Uint8Array, entryName: string): string | null {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const eocd = findZipEndOfCentralDirectory(view);
+  if (eocd < 0) return null;
+
+  const entries = readU16(view, eocd + 10);
+  const centralSize = readU32(view, eocd + 12);
+  const centralOffset = readU32(view, eocd + 16);
+  if (centralOffset + centralSize > bytes.byteLength) return null;
+
+  const decoder = new TextDecoder();
+  let pos = centralOffset;
+  for (let i = 0; i < entries; i++) {
+    if (pos + 46 > bytes.byteLength || readU32(view, pos) !== 0x02014b50) return null;
+    const method = readU16(view, pos + 10);
+    const compressedSize = readU32(view, pos + 20);
+    const nameLen = readU16(view, pos + 28);
+    const extraLen = readU16(view, pos + 30);
+    const commentLen = readU16(view, pos + 32);
+    const localOffset = readU32(view, pos + 42);
+    const nameStart = pos + 46;
+    const nameEnd = nameStart + nameLen;
+    if (nameEnd > bytes.byteLength) return null;
+    const name = decoder.decode(bytes.subarray(nameStart, nameEnd));
+    if (name === entryName) {
+      if (localOffset + 30 > bytes.byteLength || readU32(view, localOffset) !== 0x04034b50) {
+        return null;
+      }
+      const localNameLen = readU16(view, localOffset + 26);
+      const localExtraLen = readU16(view, localOffset + 28);
+      const dataStart = localOffset + 30 + localNameLen + localExtraLen;
+      const dataEnd = dataStart + compressedSize;
+      if (dataEnd > bytes.byteLength) return null;
+      const data = bytes.subarray(dataStart, dataEnd);
+      if (method === 0) return decoder.decode(data);
+      if (method === 8) {
+        try {
+          return decoder.decode(inflateRawSync(data));
+        } catch {
+          return null;
+        }
+      }
+      return null;
+    }
+    pos = nameEnd + extraLen + commentLen;
+  }
   return null;
 }
 
@@ -277,21 +337,37 @@ export class GoAdapter implements FormatAdapter {
       return Response.json({ error: "missing zip" }, { status: 400 });
     }
     const zipBytes = new Uint8Array(await zipField.arrayBuffer());
-    const pkg = await findOrCreatePackage({
-      orgId: ctx.repo.orgId,
-      repositoryId: ctx.repo.id,
-      name: moduleName,
-    });
-    const [existing] = await ctx.db
-      .select({ id: packageVersions.id })
-      .from(packageVersions)
-      .where(and(eq(packageVersions.packageId, pkg.id), eq(packageVersions.version, version)))
-      .limit(1);
-    if (existing) return Response.json({ error: "version already exists" }, { status: 409 });
+    const existingPkg = await this.findPackage(ctx, moduleName);
+    if (existingPkg) {
+      const [existing] = await ctx.db
+        .select({ id: packageVersions.id })
+        .from(packageVersions)
+        .where(
+          and(eq(packageVersions.packageId, existingPkg.id), eq(packageVersions.version, version)),
+        )
+        .limit(1);
+      if (existing) return Response.json({ error: "version already exists" }, { status: 409 });
+    }
 
     const zipError = validateGoModuleZip(zipBytes, moduleName, version);
     if (zipError)
       return Response.json({ error: `invalid module zip: ${zipError}` }, { status: 400 });
+    const zipMod = readZipEntryText(zipBytes, `${moduleName}@${version}/go.mod`);
+    const declaredModule = decodeModuleDirective(mod);
+    const zipModule = zipMod ? decodeModuleDirective(zipMod) : null;
+    if (declaredModule !== moduleName || zipModule !== moduleName) {
+      return Response.json(
+        { error: "go.mod module path does not match upload URL" },
+        { status: 400 },
+      );
+    }
+    const pkg =
+      existingPkg ??
+      (await findOrCreatePackage({
+        orgId: ctx.repo.orgId,
+        repositoryId: ctx.repo.id,
+        name: moduleName,
+      }));
 
     const stored = await storeBlobWithRef(ctx, {
       data: zipBytes,

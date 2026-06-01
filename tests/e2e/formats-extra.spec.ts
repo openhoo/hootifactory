@@ -121,11 +121,16 @@ function createNupkg(pkgId: string, version: string): Buffer {
   ]);
 }
 
-function createGoModuleZip(moduleName: string, version: string, marker: string): Buffer {
+function createGoModuleZip(
+  moduleName: string,
+  version: string,
+  marker: string,
+  goModModule = moduleName,
+): Buffer {
   return createStoredZip([
     {
       name: `${moduleName}@${version}/go.mod`,
-      data: `module ${moduleName}\n\ngo 1.20\n`,
+      data: `module ${goModModule}\n\ngo 1.20\n`,
     },
     {
       name: `${moduleName}@${version}/lib.go`,
@@ -360,13 +365,36 @@ test.describe("go module proxy (protocol)", () => {
     ).repository as { id: string; mountPath: string };
 
     const moduleName = `hoot.test/mod${Date.now().toString(36)}`;
-    const upload = (version: string, bytes = createGoModuleZip(moduleName, version, version)) =>
+    const upload = (
+      version: string,
+      bytes = createGoModuleZip(moduleName, version, version),
+      mod = `module ${moduleName}\n\ngo 1.20\n`,
+    ) =>
       owner.ctx.put(`/${repo.mountPath}/${moduleName}/@v/${version}`, {
         multipart: {
-          mod: `module ${moduleName}\n\ngo 1.20\n`,
+          mod,
           zip: { name: "m.zip", mimeType: "application/zip", buffer: Buffer.from(bytes) },
         },
       });
+
+    expect(
+      (
+        await upload(
+          "v1.0.3",
+          createGoModuleZip(moduleName, "v1.0.3", "bad-mod-field"),
+          "module hoot.test/other\n\ngo 1.20\n",
+        )
+      ).status(),
+    ).toBe(400);
+    expect(
+      (
+        await upload(
+          "v1.0.4",
+          createGoModuleZip(moduleName, "v1.0.4", "bad-zip-mod", "hoot.test/other"),
+        )
+      ).status(),
+    ).toBe(400);
+    expect((await owner.ctx.get(`/${repo.mountPath}/${moduleName}/@v/list`)).status()).toBe(404);
 
     expect((await upload("v1.0.0")).status()).toBe(200);
     expect((await owner.ctx.head(`/${repo.mountPath}/${moduleName}/@v/list`)).status()).toBe(200);
