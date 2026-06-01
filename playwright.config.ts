@@ -1,3 +1,4 @@
+import { availableParallelism } from "node:os";
 import { defineConfig } from "@playwright/test";
 
 const PORT = Number(process.env.E2E_API_PORT ?? 3399);
@@ -9,10 +10,23 @@ const TEST_DATABASE_URL =
   process.env.E2E_DATABASE_URL ??
   "postgres://hootifactory:hootifactory@localhost:5432/hootifactory_test";
 
+function e2eWorkers(): number {
+  const override = process.env.E2E_WORKERS;
+  if (override !== undefined) {
+    const parsed = Number.parseInt(override, 10);
+    if (!Number.isInteger(parsed) || parsed < 1 || String(parsed) !== override) {
+      throw new Error("E2E_WORKERS must be a positive integer");
+    }
+    return parsed;
+  }
+
+  return Math.min(4, Math.max(1, availableParallelism()));
+}
+
 export default defineConfig({
   testDir: "./tests/e2e",
   fullyParallel: false,
-  workers: 1,
+  workers: e2eWorkers(),
   retries: process.env.CI ? 1 : 0,
   timeout: 60_000,
   reporter: [["list"]],
