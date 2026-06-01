@@ -7,6 +7,7 @@ import {
   db,
   eq,
   findings as findingsTable,
+  ociManifests,
   packages,
   packageVersions,
   repositories,
@@ -27,6 +28,7 @@ import {
   scanForMalware,
 } from "@hootifactory/scanning";
 import { blobStore } from "@hootifactory/storage";
+import type { OciManifest } from "@hootifactory/types";
 
 type PolicyRow = typeof scanPolicies.$inferSelect;
 
@@ -53,16 +55,41 @@ function dedupe(items: NormalizedFinding[]): NormalizedFinding[] {
   return out;
 }
 
+function ociManifestReferences(raw: string): { blobs: string[]; manifests: string[] } {
+  let parsed: OciManifest;
+  try {
+    parsed = JSON.parse(raw) as OciManifest;
+  } catch {
+    return { blobs: [], manifests: [] };
+  }
+  const blobs = new Set<string>();
+  const manifests = new Set<string>();
+  if (parsed.config?.digest) blobs.add(parsed.config.digest);
+  for (const layer of parsed.layers ?? []) {
+    if (layer.digest) blobs.add(layer.digest);
+  }
+  for (const manifest of parsed.manifests ?? []) {
+    if (manifest.digest) manifests.add(manifest.digest);
+  }
+  return { blobs: [...blobs], manifests: [...manifests] };
+}
+
+const OCI_FORMATS = new Set(["docker", "oci", "helm"]);
+
 /** Run the scan pipeline for one artifact and apply the policy decision. */
 export async function processScan(artifactId: string): Promise<void> {
   const [art] = await db.select().from(artifacts).where(eq(artifacts.id, artifactId)).limit(1);
   if (!art) return;
+  const artName = art.name;
+  const artVersion = art.version;
   const [repo] = await db
     .select()
     .from(repositories)
     .where(eq(repositories.id, art.repositoryId))
     .limit(1);
   if (!repo) return;
+  const repoId = repo.id;
+  const repoFormat = repo.format;
 
   // Gather dependencies (npm) from the stored version manifest.
   let deps: Record<string, string> = {};
@@ -88,13 +115,15 @@ export async function processScan(artifactId: string): Promise<void> {
   const found: NormalizedFinding[] = [];
   found.push(...scanDependencies(deps));
 
-  let bytes: Uint8Array | null = null;
-  try {
-    bytes = await blobStore.getBytes(art.digest);
-  } catch {
-    // blob may be large/unavailable; skip byte-level scans
-  }
-  if (bytes) {
+  let scannedBytePayload = false;
+  async function scanStoredBytes(digest: string): Promise<boolean> {
+    let bytes: Uint8Array;
+    try {
+      bytes = await blobStore.getBytes(digest);
+    } catch {
+      return false;
+    }
+    scannedBytePayload = true;
     found.push(...scanForMalware(bytes));
     // Run installed external scanners (e.g. Grype) against a scratch copy.
     const scanners = detectScanners();
@@ -104,7 +133,7 @@ export async function processScan(artifactId: string): Promise<void> {
         const base = env.SCAN_SCRATCH_DIR.replace(/\/+$/, "");
         await mkdir(base, { recursive: true });
         dir = await mkdtemp(join(base, "scan-"));
-        const path = join(dir, art.digest.replace(/[^a-z0-9]/gi, "_"));
+        const path = join(dir, digest.replace(/[^a-z0-9]/gi, "_"));
         await Bun.write(path, bytes);
         found.push(...(await runGrypeIfAvailable(path)));
       } catch (err) {
@@ -113,6 +142,63 @@ export async function processScan(artifactId: string): Promise<void> {
         if (dir) await rm(dir, { recursive: true, force: true }).catch(() => {});
       }
     }
+    return true;
+  }
+
+  async function scanOciManifestReferences(
+    digest: string,
+    seen = new Set<string>(),
+  ): Promise<void> {
+    if (seen.has(digest)) return;
+    seen.add(digest);
+    const [manifest] = await db
+      .select({ raw: ociManifests.raw })
+      .from(ociManifests)
+      .where(and(eq(ociManifests.repositoryId, repoId), eq(ociManifests.digest, digest)))
+      .limit(1);
+    if (!manifest) return;
+    const refs = ociManifestReferences(manifest.raw);
+    for (const blobDigest of refs.blobs) {
+      await scanStoredBytes(blobDigest);
+    }
+    for (const manifestDigest of refs.manifests) {
+      await scanOciManifestReferences(manifestDigest, seen);
+    }
+  }
+
+  async function isDeletedPackageVersion(): Promise<boolean> {
+    if (!artName || !artVersion) return false;
+    const [version] = await db
+      .select({ deletedAt: packageVersions.deletedAt })
+      .from(packages)
+      .innerJoin(packageVersions, eq(packageVersions.packageId, packages.id))
+      .where(
+        and(
+          eq(packages.repositoryId, repoId),
+          eq(packages.name, artName),
+          eq(packageVersions.version, artVersion),
+        ),
+      )
+      .limit(1);
+    return version?.deletedAt != null;
+  }
+
+  const scannedDirectBytes = await scanStoredBytes(art.digest);
+  if (!scannedDirectBytes && OCI_FORMATS.has(repoFormat)) {
+    await scanOciManifestReferences(art.digest);
+  }
+  if (!scannedBytePayload && Object.keys(deps).length === 0) {
+    if (await isDeletedPackageVersion()) {
+      await db
+        .update(artifacts)
+        .set({
+          state: "clean",
+          policyDecision: { skipped: "package_version_deleted", findings: 0 },
+        })
+        .where(eq(artifacts.id, art.id));
+      return;
+    }
+    throw new Error(`no scannable bytes available for artifact ${art.digest}`);
   }
   if (process.env.SCANNER_OSV === "true") {
     found.push(...(await osvScanDependencies("npm", deps, env.OSV_API_URL)));

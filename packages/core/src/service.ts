@@ -7,6 +7,7 @@ import {
   isNull,
   packageVersions,
   quotas,
+  scanPolicies,
   sql,
   versionTags,
 } from "@hootifactory/db";
@@ -56,6 +57,14 @@ async function adjustStorageUsedTx(tx: Tx, orgId: string, delta: number): Promis
 
 /** True if a published artifact (by digest, in this repo) is policy-blocked. */
 export async function isArtifactBlocked(ctx: RepoContext, digest: string): Promise<boolean> {
+  const policies = await ctx.db
+    .select({ mode: scanPolicies.mode, repositoryPattern: scanPolicies.repositoryPattern })
+    .from(scanPolicies)
+    .where(eq(scanPolicies.orgId, ctx.repo.orgId));
+  const policy =
+    policies.find((p) => p.repositoryPattern === ctx.repo.name) ??
+    policies.find((p) => p.repositoryPattern === "*") ??
+    null;
   const [row] = await ctx.db
     .select({ state: artifacts.state })
     .from(artifacts)
@@ -67,7 +76,13 @@ export async function isArtifactBlocked(ctx: RepoContext, digest: string): Promi
       ),
     )
     .limit(1);
-  return row?.state === "blocked";
+  if (row?.state === "blocked") return true;
+  // Enforce mode is fail-closed: bytes are unavailable until a scanner has
+  // positively marked the artifact clean. This covers pending, failed/retried
+  // scans that leave the artifact pending, scanner-disabled repos with no
+  // artifact row, and artifacts that predate policy creation.
+  if (policy?.mode === "enforce") return row?.state !== "clean";
+  return false;
 }
 
 /** Audience/service name for OCI Bearer tokens (used by /token + verify + challenge). */
