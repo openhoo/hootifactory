@@ -1,5 +1,25 @@
-import { expect, test } from "@playwright/test";
-import { anonContext, createToken, setupOwner } from "./helpers";
+import { type APIRequestContext, expect, test } from "@playwright/test";
+import { anonContext, createRepo, createToken, setupOwner, uniq } from "./helpers";
+
+async function publishRawNpm(ctx: APIRequestContext, mountPath: string, pkgName: string) {
+  const filename = `${pkgName}-1.0.0.tgz`;
+  const res = await ctx.put(`/${mountPath}/${pkgName}`, {
+    data: {
+      name: pkgName,
+      versions: {
+        "1.0.0": {
+          name: pkgName,
+          version: "1.0.0",
+        },
+      },
+      _attachments: {
+        [filename]: { data: Buffer.from(`artifact-${pkgName}`).toString("base64") },
+      },
+      "dist-tags": { latest: "1.0.0" },
+    },
+  });
+  expect(res.status()).toBe(201);
+}
 
 test.describe("api tokens", () => {
   test("create -> bearer works -> list -> revoke -> bearer fails", async ({ baseURL }) => {
@@ -53,5 +73,63 @@ test.describe("api tokens", () => {
       data: { name: "nested" },
     });
     expect(res.status()).toBe(401);
+  });
+
+  test("repository-scoped read token can browse package and scan endpoints", async ({
+    baseURL,
+  }) => {
+    const owner = await setupOwner(baseURL!);
+    const repoName = uniq("scoped-repo");
+    const repo = (
+      await (await createRepo(owner.ctx, owner.orgId, { name: repoName, format: "npm" })).json()
+    ).repository as { id: string; name: string; mountPath: string };
+    const pkgName = uniq("scoped-pkg");
+    await publishRawNpm(owner.ctx, repo.mountPath, pkgName);
+
+    const secret = (
+      await (
+        await createToken(owner.ctx, owner.orgId, {
+          name: "repo-reader",
+          scopes: [{ repository: repo.name, actions: ["read"] }],
+        })
+      ).json()
+    ).secret as string;
+    const wrongSecret = (
+      await (
+        await createToken(owner.ctx, owner.orgId, {
+          name: "wrong-reader",
+          scopes: [{ repository: `${repo.name}-other`, actions: ["read"] }],
+        })
+      ).json()
+    ).secret as string;
+    const anon = await anonContext(baseURL!);
+    const auth = { authorization: `Bearer ${secret}` };
+
+    const packagesRes = await anon.get(`/api/repositories/${repo.id}/packages`, { headers: auth });
+    expect(packagesRes.status()).toBe(200);
+    const packagesBody = (await packagesRes.json()) as {
+      packages: { id: string; name: string }[];
+    };
+    const pkg = packagesBody.packages.find((p) => p.name === pkgName);
+    expect(pkg).toBeTruthy();
+
+    const versions = await anon.get(`/api/packages/${pkg!.id}/versions`, { headers: auth });
+    expect(versions.status()).toBe(200);
+
+    const artifacts = await anon.get(`/api/repositories/${repo.id}/artifacts`, { headers: auth });
+    expect(artifacts.status()).toBe(200);
+    const artifactsBody = (await artifacts.json()) as {
+      artifacts: { id: string; name: string }[];
+    };
+    const artifact = artifactsBody.artifacts.find((a) => a.name === pkgName);
+    expect(artifact).toBeTruthy();
+
+    const findings = await anon.get(`/api/artifacts/${artifact!.id}/findings`, { headers: auth });
+    expect(findings.status()).toBe(200);
+
+    const denied = await anon.get(`/api/packages/${pkg!.id}/versions`, {
+      headers: { authorization: `Bearer ${wrongSecret}` },
+    });
+    expect(denied.status()).toBe(403);
   });
 });

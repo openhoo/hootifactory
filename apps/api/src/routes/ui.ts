@@ -156,13 +156,22 @@ uiRouter.get("/repositories/:repoId/packages", async (c) => {
 });
 
 uiRouter.get("/packages/:packageId/versions", async (c) => {
-  const [pkg] = await db
-    .select()
+  const [row] = await db
+    .select({ pkg: packages, repo: repositories })
     .from(packages)
+    .innerJoin(repositories, eq(packages.repositoryId, repositories.id))
     .where(eq(packages.id, c.req.param("packageId")))
     .limit(1);
-  if (!pkg) return c.json({ error: "package not found" }, 404);
-  const decision = await authorize(c.get("principal"), "read", { type: "org", orgId: pkg.orgId });
+  const pkg = row?.pkg;
+  const repo = row?.repo;
+  if (!pkg || !repo) return c.json({ error: "package not found" }, 404);
+  const decision = await authorize(c.get("principal"), "read", {
+    type: "repository",
+    orgId: repo.orgId,
+    repositoryId: repo.id,
+    repositoryName: repo.name,
+    visibility: repo.visibility,
+  });
   if (!decision.allowed) {
     return c.json({ error: decision.reason }, decision.code === "unauthenticated" ? 401 : 403);
   }
@@ -182,7 +191,13 @@ uiRouter.get("/packages/:packageId/versions", async (c) => {
 async function repoAdminGuard(c: Context<AppEnv>, repoId: string) {
   const [repo] = await db.select().from(repositories).where(eq(repositories.id, repoId)).limit(1);
   if (!repo) return { error: c.json({ error: "repository not found" }, 404) };
-  const decision = await authorize(c.get("principal"), "admin", { type: "org", orgId: repo.orgId });
+  const decision = await authorize(c.get("principal"), "admin", {
+    type: "repository",
+    orgId: repo.orgId,
+    repositoryId: repo.id,
+    repositoryName: repo.name,
+    visibility: repo.visibility,
+  });
   if (!decision.allowed) {
     return {
       error: c.json({ error: decision.reason }, decision.code === "unauthenticated" ? 401 : 403),
@@ -250,7 +265,13 @@ uiRouter.get("/repositories/:repoId/artifacts", async (c) => {
     .where(eq(repositories.id, c.req.param("repoId")))
     .limit(1);
   if (!repo) return c.json({ error: "repository not found" }, 404);
-  const decision = await authorize(c.get("principal"), "read", { type: "org", orgId: repo.orgId });
+  const decision = await authorize(c.get("principal"), "read", {
+    type: "repository",
+    orgId: repo.orgId,
+    repositoryId: repo.id,
+    repositoryName: repo.name,
+    visibility: repo.visibility,
+  });
   if (!decision.allowed) {
     return c.json({ error: decision.reason }, decision.code === "unauthenticated" ? 401 : 403);
   }
@@ -270,13 +291,22 @@ uiRouter.get("/repositories/:repoId/artifacts", async (c) => {
 });
 
 uiRouter.get("/artifacts/:artifactId/findings", async (c) => {
-  const [art] = await db
-    .select()
+  const [row] = await db
+    .select({ art: artifacts, repo: repositories })
     .from(artifacts)
+    .innerJoin(repositories, eq(artifacts.repositoryId, repositories.id))
     .where(eq(artifacts.id, c.req.param("artifactId")))
     .limit(1);
-  if (!art) return c.json({ error: "artifact not found" }, 404);
-  const decision = await authorize(c.get("principal"), "read", { type: "org", orgId: art.orgId });
+  const art = row?.art;
+  const repo = row?.repo;
+  if (!art || !repo) return c.json({ error: "artifact not found" }, 404);
+  const decision = await authorize(c.get("principal"), "read", {
+    type: "repository",
+    orgId: repo.orgId,
+    repositoryId: repo.id,
+    repositoryName: repo.name,
+    visibility: repo.visibility,
+  });
   if (!decision.allowed) {
     return c.json({ error: decision.reason }, decision.code === "unauthenticated" ? 401 : 403);
   }
