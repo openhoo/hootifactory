@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { CargoAdapter, cargoIndexPath, isValidCargoCrateName } from "./cargo-adapter";
+import { CargoAdapter } from "./cargo-adapter";
+import { cargoIndexPath, isValidCargoCrateName, isValidCargoVersion } from "./cargo-validation";
 
 describe("Cargo adapter", () => {
   test("computes sparse index paths for short and long crate names", () => {
@@ -14,6 +15,13 @@ describe("Cargo adapter", () => {
     expect(isValidCargoCrateName("bad/name")).toBe(false);
     expect(isValidCargoCrateName("../crate")).toBe(false);
     expect(isValidCargoCrateName("bad\\name")).toBe(false);
+  });
+
+  test("validates Cargo SemVer versions including numeric prerelease identifiers", () => {
+    expect(isValidCargoVersion("1.2.3")).toBe(true);
+    expect(isValidCargoVersion("1.2.3-alpha.1+build.5")).toBe(true);
+    expect(isValidCargoVersion("1.2.3-alpha.01")).toBe(false);
+    expect(isValidCargoVersion("01.2.3")).toBe(false);
   });
 
   test("uses read permissions for reads and write permissions for mutations", () => {

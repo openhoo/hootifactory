@@ -1,10 +1,9 @@
+import { randomUUID } from "node:crypto";
 import { type APIRequestContext, request as pwRequest } from "@playwright/test";
-
-let seq = 0;
 
 /** Unique, slug-safe identifier for test isolation. */
 export function uniq(prefix: string): string {
-  return `${prefix}-${Date.now().toString(36)}-${seq++}`;
+  return `${prefix}-${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
 }
 
 export interface OwnerCtx {

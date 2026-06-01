@@ -13,87 +13,20 @@ import {
   type RouteMatch,
   releaseBlobRef,
   storeBlobWithRef,
-  z,
 } from "@hootifactory/core";
 import { and, eq, isNull, packages, packageVersions } from "@hootifactory/db";
 import { computeDigest, digestHex } from "@hootifactory/storage";
 import {
-  isSafeDistributionFilename,
-  isValidProjectName,
-  normalizeName,
-  renderProjectHtml,
-  renderRootHtml,
-  type SimpleFile,
-} from "./simple";
-
-interface PypiFileMeta {
-  filename: string;
-  blobDigest: string;
-  sha256: string;
-  requiresPython?: string;
-  size: number;
-  filetype?: string;
-}
-
-type PypiVersionMetadata = {
-  name?: string;
-  requiresPython?: string;
-  files?: PypiFileMeta[];
-};
-
-type AddPypiFileResult =
-  | { ok: true; versionId: string }
-  | { ok: false; reason: "file_exists" | "version_exists" };
-
-function normalizeFilenameVersionToken(version: string): string {
-  return version.toLowerCase().replace(/[-_.]+/g, "_");
-}
-
-function filenameVersionMatches(declared: string, fromFilename: string): boolean {
-  return (
-    declared.toLowerCase() === fromFilename.toLowerCase() ||
-    normalizeFilenameVersionToken(declared) === normalizeFilenameVersionToken(fromFilename)
-  );
-}
-
-function parsePypiFilename(filename: string): { name: string; version: string } | null {
-  if (filename.endsWith(".whl")) {
-    const parts = filename.slice(0, -".whl".length).split("-");
-    if (parts.length < 5 || !parts[0] || !parts[1]) return null;
-    return { name: parts[0], version: parts[1] };
-  }
-
-  const sourceBase = filename.endsWith(".tar.gz")
-    ? filename.slice(0, -".tar.gz".length)
-    : filename.endsWith(".zip")
-      ? filename.slice(0, -".zip".length)
-      : null;
-  if (!sourceBase) return null;
-  const sep = sourceBase.lastIndexOf("-");
-  if (sep <= 0 || sep === sourceBase.length - 1) return null;
-  return { name: sourceBase.slice(0, sep), version: sourceBase.slice(sep + 1) };
-}
-
-const PypiProjectParamSchema = z
-  .string()
-  .min(1)
-  .max(256)
-  .refine((value) => isValidProjectName(value), "invalid project name");
-const PypiFilenameSchema = z
-  .string()
-  .min(1)
-  .max(512)
-  .refine((value) => isSafeDistributionFilename(value), "invalid distribution filename");
-const PypiUploadFieldsSchema = z.strictObject({
-  name: PypiProjectParamSchema,
-  version: z.string().min(1).max(256),
-  sha256_digest: z
-    .string()
-    .regex(/^[a-fA-F0-9]{64}$/)
-    .optional(),
-  requires_python: z.string().min(1).max(256).optional(),
-  filetype: z.string().min(1).max(64).optional(),
-});
+  type AddPypiFileResult,
+  filenameVersionMatches,
+  normalizePypiVersionMetadata,
+  type PypiFileMeta,
+  PypiFilenameSchema,
+  PypiProjectParamSchema,
+  PypiUploadFieldsSchema,
+  parsePypiFilename,
+} from "./pypi-validation";
+import { normalizeName, renderProjectHtml, renderRootHtml, type SimpleFile } from "./simple";
 
 export class PypiAdapter implements FormatAdapter {
   readonly format = "pypi" as const;
@@ -405,13 +338,4 @@ export class PypiAdapter implements FormatAdapter {
       return { ok: true, versionId: row.id };
     });
   }
-}
-
-function normalizePypiVersionMetadata(value: unknown): PypiVersionMetadata {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  const metadata = value as PypiVersionMetadata;
-  return {
-    ...metadata,
-    files: Array.isArray(metadata.files) ? metadata.files : [],
-  };
 }

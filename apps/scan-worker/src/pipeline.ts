@@ -11,7 +11,6 @@ import {
   packages,
   packageVersions,
   repositories,
-  scanPolicies,
   scans,
 } from "@hootifactory/db";
 import {
@@ -21,13 +20,7 @@ import {
   withLogAttributes,
   withSpan,
 } from "@hootifactory/observability";
-import {
-  maxSeverity,
-  type NormalizedFinding,
-  resolveScanPolicy,
-  SEVERITY_ORDER,
-  type Severity,
-} from "@hootifactory/scan-core";
+import type { NormalizedFinding } from "@hootifactory/scan-core";
 import {
   detectScanners,
   osvScanDependencies,
@@ -37,26 +30,10 @@ import {
 } from "@hootifactory/scanning";
 import { blobStore } from "@hootifactory/storage";
 import { ociManifestReferences } from "@hootifactory/types";
+import { collectPackageDependencies } from "./scan-dependencies";
+import { dedupeFindings, evaluateScanPolicy, loadPolicy } from "./scan-policy";
 
-type PolicyRow = typeof scanPolicies.$inferSelect;
-
-async function loadPolicy(orgId: string, repoName: string): Promise<PolicyRow | null> {
-  const rows = await db.select().from(scanPolicies).where(eq(scanPolicies.orgId, orgId));
-  return resolveScanPolicy(rows, repoName);
-}
-
-export function dedupeFindings(items: NormalizedFinding[]): NormalizedFinding[] {
-  const seen = new Set<string>();
-  const out: NormalizedFinding[] = [];
-  for (const f of items) {
-    const key = `${f.type}:${f.vulnId ?? f.title ?? ""}:${f.purl ?? f.packageName ?? ""}`;
-    if (!seen.has(key)) {
-      seen.add(key);
-      out.push(f);
-    }
-  }
-  return out;
-}
+export { dedupeFindings } from "./scan-policy";
 
 const OCI_FORMATS = new Set(["docker", "oci", "helm"]);
 
@@ -109,58 +86,11 @@ async function processScanInner(artifactId: string): Promise<void> {
     format: repo.format,
   });
 
-  // Gather declared dependencies from supported package metadata.
-  let deps: Record<string, string> = {};
-  let osvEcosystem = "npm";
-  await withSpan("scan.collect_dependencies", { "registry.format": repo.format }, async (span) => {
-    if (art.name && art.version) {
-      const [pkg] = await db
-        .select({ id: packages.id })
-        .from(packages)
-        .where(and(eq(packages.repositoryId, repo.id), eq(packages.name, art.name)))
-        .limit(1);
-      if (pkg) {
-        const [pv] = await db
-          .select({ metadata: packageVersions.metadata })
-          .from(packageVersions)
-          .where(
-            and(eq(packageVersions.packageId, pkg.id), eq(packageVersions.version, art.version)),
-          )
-          .limit(1);
-        const metadata = (pv?.metadata ?? {}) as Record<string, unknown>;
-        if (repo.format === "npm") {
-          const manifest = metadata.manifest as
-            | { dependencies?: Record<string, string>; devDependencies?: Record<string, string> }
-            | undefined;
-          deps = { ...(manifest?.dependencies ?? {}), ...(manifest?.devDependencies ?? {}) };
-          osvEcosystem = "npm";
-        } else if (repo.format === "cargo") {
-          const index = metadata.index as { deps?: { name?: string; req?: string }[] } | undefined;
-          deps = Object.fromEntries(
-            (index?.deps ?? []).filter((d) => d.name && d.req).map((d) => [d.name!, d.req!]),
-          );
-          osvEcosystem = "crates.io";
-        } else if (repo.format === "nuget") {
-          const groups = metadata.dependencyGroups as
-            | { dependencies?: { id?: string; range?: string }[] }[]
-            | undefined;
-          deps = Object.fromEntries(
-            (groups ?? [])
-              .flatMap((g) => g.dependencies ?? [])
-              .filter((d) => d.id && d.range)
-              .map((d) => [d.id!, d.range!]),
-          );
-          osvEcosystem = "NuGet";
-        } else if (repo.format === "go") {
-          const mod = typeof metadata.mod === "string" ? metadata.mod : "";
-          deps = Object.fromEntries(
-            [...mod.matchAll(/^\s*require\s+([^\s]+)\s+([^\s]+)\s*$/gm)].map((m) => [m[1]!, m[2]!]),
-          );
-          osvEcosystem = "Go";
-        }
-      }
-    }
-    span.setAttribute("scan.dependencies.count", Object.keys(deps).length);
+  const { deps, osvEcosystem } = await collectPackageDependencies({
+    repositoryId: repo.id,
+    repositoryFormat: repo.format,
+    artifactName: art.name,
+    artifactVersion: art.version,
   });
 
   const found: NormalizedFinding[] = [];
@@ -448,57 +378,36 @@ async function processScanInner(artifactId: string): Promise<void> {
     );
   }
 
-  // Policy decision — honor every declared gate, OR-combined.
-  let highest: Severity = "unknown";
-  let maxCvss = 0;
-  for (const f of results) {
-    highest = maxSeverity(highest, f.severity);
-    if (typeof f.cvssScore === "number") maxCvss = Math.max(maxCvss, f.cvssScore);
-  }
   const policy = await withSpan("scan.load_policy", { "registry.repository.name": repo.name }, () =>
     loadPolicy(repo.orgId, repo.name),
   );
-  const threshold = policy?.blockOnSeverity ?? "low";
-  const denyLicenses = policy?.denyLicenses ?? [];
-  const severityViolates =
-    results.length > 0 && SEVERITY_ORDER[highest] >= SEVERITY_ORDER[threshold];
-  // blockOnMalware is a default-ON gate; admins disable it by storing "false".
-  const malwareViolates =
-    (policy?.blockOnMalware ?? "true") !== "false" && results.some((f) => f.type === "malware");
-  const cvssViolates = policy?.maxCvss != null && maxCvss > policy.maxCvss;
-  const licenseViolates =
-    denyLicenses.length > 0 &&
-    results.some((f) => f.type === "license" && !!f.title && denyLicenses.includes(f.title));
-  const violates = severityViolates || malwareViolates || cvssViolates || licenseViolates;
-
-  let state: "clean" | "quarantined" | "blocked" = "clean";
-  if (violates) state = policy?.mode === "enforce" ? "blocked" : "quarantined";
+  const policyEvaluation = evaluateScanPolicy(results, policy);
 
   await db
     .update(artifacts)
     .set({
-      state,
+      state: policyEvaluation.state,
       policyDecision: {
-        highest,
+        highest: policyEvaluation.highest,
         findings: results.length,
-        mode: policy?.mode ?? "audit",
-        threshold,
-        reasons: { severityViolates, malwareViolates, cvssViolates, licenseViolates },
+        mode: policyEvaluation.mode,
+        threshold: policyEvaluation.threshold,
+        reasons: policyEvaluation.reasons,
       },
     })
     .where(eq(artifacts.id, art.id));
   setActiveSpanAttributes({
-    "scan.policy.mode": policy?.mode ?? "audit",
-    "scan.policy.result": state,
-    "scan.findings.highest_severity": highest,
+    "scan.policy.mode": policyEvaluation.mode,
+    "scan.policy.result": policyEvaluation.state,
+    "scan.findings.highest_severity": policyEvaluation.highest,
   });
   logger.info("scan artifact completed", {
     artifactId: art.id,
     digest: art.digest,
     repo: repo.name,
-    state,
+    state: policyEvaluation.state,
     findings: results.length,
-    highest,
+    highest: policyEvaluation.highest,
   });
 }
 

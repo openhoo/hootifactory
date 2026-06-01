@@ -12,75 +12,21 @@ import {
   type RouteMatch,
   releaseBlobRef,
   storeBlobWithRef,
-  z,
 } from "@hootifactory/core";
 import { and, asc, eq, isNull, packages, packageVersions } from "@hootifactory/db";
-
-/** Cargo sparse-index path sharding for a crate name. */
-export function cargoIndexPath(name: string): string {
-  const n = name.toLowerCase();
-  if (n.length === 1) return `1/${n}`;
-  if (n.length === 2) return `2/${n}`;
-  if (n.length === 3) return `3/${n[0]}/${n}`;
-  return `${n.slice(0, 2)}/${n.slice(2, 4)}/${n}`;
-}
-
-export function isValidCargoCrateName(name: string): boolean {
-  return /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(name);
-}
-
-const CargoCrateNameSchema = z
-  .string()
-  .min(1)
-  .max(64)
-  .refine(isValidCargoCrateName, "invalid crate name");
-function isValidSemver(version: string): boolean {
-  const match =
-    /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.exec(
-      version,
-    );
-  if (!match) return false;
-  return (match[4] ?? "")
-    .split(".")
-    .filter(Boolean)
-    .every((id) => !/^\d+$/.test(id) || /^(0|[1-9]\d*)$/.test(id));
-}
-const CargoVersionSchema = z.string().min(1).max(256).refine(isValidSemver, "invalid SemVer");
-const CargoIndexPathSchema = z
-  .string()
-  .min(1)
-  .max(512)
-  .regex(/^[A-Za-z0-9_/-]+$/, "invalid cargo index path");
-const CargoDependencySchema = z.looseObject({
-  name: CargoCrateNameSchema,
-  version_req: z.string().min(1).max(256),
-  features: z.array(z.string().min(1).max(128)).max(256).optional(),
-  optional: z.boolean().optional(),
-  default_features: z.boolean().optional(),
-  target: z.string().min(1).max(256).nullable().optional(),
-  kind: z.string().min(1).max(32).optional(),
-  registry: z.string().min(1).max(2048).nullable().optional(),
-  explicit_name_in_toml: CargoCrateNameSchema.optional(),
-});
-const CargoPublishMetadataSchema = z.looseObject({
-  name: CargoCrateNameSchema,
-  vers: CargoVersionSchema,
-  deps: z.array(CargoDependencySchema).max(512).optional(),
-  features: z.record(z.string(), z.array(z.string().min(1).max(128)).max(256)).optional(),
-  links: z.string().min(1).max(128).optional(),
-  rust_version: z.string().min(1).max(128).optional(),
-});
-
-function sha256hex(bytes: Uint8Array): string {
-  const h = new Bun.CryptoHasher("sha256");
-  h.update(bytes);
-  return h.digest("hex");
-}
-
-interface CargoVersionMeta {
-  index: Record<string, unknown>;
-  crateDigest: string;
-}
+import {
+  buildCargoIndexEntry,
+  cargoBlobScope,
+  digestCargoCrate,
+  parseCargoPublishBody,
+} from "./cargo-publish";
+import {
+  CargoCrateNameSchema,
+  CargoIndexPathSchema,
+  type CargoVersionMeta,
+  CargoVersionSchema,
+  cargoIndexPath,
+} from "./cargo-validation";
 
 /** Cargo sparse registry: config.json, sharded index, publish + download. */
 export class CargoAdapter implements FormatAdapter {
@@ -233,39 +179,13 @@ export class CargoAdapter implements FormatAdapter {
   }
 
   private async publish(req: Request, ctx: RepoContext): Promise<Response> {
-    const buf = new Uint8Array(await req.arrayBuffer());
-    const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
-    // Length-prefixed framing: u32 jsonLen | json | u32 crateLen | crate. Every
-    // read is bounds-checked so a truncated/oversized body yields a 400, not a
-    // silent truncation, wrong checksum, or a 500.
-    if (buf.byteLength < 4) throw Errors.manifestInvalid({ reason: "truncated publish header" });
-    let off = 0;
-    const jsonLen = dv.getUint32(off, true);
-    off += 4;
-    if (off + jsonLen + 4 > buf.byteLength) {
-      throw Errors.manifestInvalid({ reason: "truncated publish metadata" });
-    }
-    let meta: z.output<typeof CargoPublishMetadataSchema>;
-    let rawMeta: unknown;
-    try {
-      rawMeta = JSON.parse(new TextDecoder().decode(buf.subarray(off, off + jsonLen)));
-    } catch {
-      throw Errors.manifestInvalid({ reason: "invalid publish metadata json" });
-    }
-    meta = parseRegistryInput(CargoPublishMetadataSchema, rawMeta, {
-      code: "MANIFEST_INVALID",
-      message: "invalid publish metadata",
-    });
-    off += jsonLen;
-    const crateLen = dv.getUint32(off, true);
-    off += 4;
-    if (off + crateLen !== buf.byteLength) {
-      throw Errors.manifestInvalid({ reason: "crate length does not match body" });
-    }
-    const crateBytes = buf.subarray(off, off + crateLen);
+    const { metadata: meta, crateBytes } = parseCargoPublishBody(
+      new Uint8Array(await req.arrayBuffer()),
+    );
 
     const name = meta.name.toLowerCase();
-    const cksum = sha256hex(crateBytes);
+    const cksum = digestCargoCrate(crateBytes);
+    const scope = cargoBlobScope(name, meta.vers);
     const pkg = await findOrCreatePackage({
       orgId: ctx.repo.orgId,
       repositoryId: ctx.repo.id,
@@ -281,34 +201,10 @@ export class CargoAdapter implements FormatAdapter {
     const stored = await storeBlobWithRef(ctx, {
       data: crateBytes,
       kind: "generic_file",
-      scope: `${name}@${meta.vers}.crate`,
+      scope,
       mediaType: "application/octet-stream",
     });
-    const indexEntry = {
-      name: meta.name,
-      vers: meta.vers,
-      deps: (meta.deps ?? []).map((d) => {
-        // Renamed deps: in the index, `name` is the name used in Cargo.toml and
-        // `package` is the real crate name (the publish payload uses the inverse).
-        const renamed = d.explicit_name_in_toml && d.explicit_name_in_toml !== d.name;
-        return {
-          name: renamed ? d.explicit_name_in_toml : d.name,
-          req: d.version_req,
-          features: d.features ?? [],
-          optional: Boolean(d.optional),
-          default_features: d.default_features !== false,
-          target: d.target ?? null,
-          kind: d.kind ?? "normal",
-          registry: d.registry ?? null,
-          package: renamed ? d.name : null,
-        };
-      }),
-      cksum,
-      features: meta.features ?? {},
-      yanked: false,
-      ...(meta.links ? { links: meta.links } : {}),
-      ...(meta.rust_version ? { rust_version: meta.rust_version } : {}),
-    };
+    const indexEntry = buildCargoIndexEntry(meta, cksum);
     const versionId = await createPackageVersion(ctx, {
       packageId: pkg.id,
       version: meta.vers,
@@ -320,7 +216,7 @@ export class CargoAdapter implements FormatAdapter {
         await releaseBlobRef(ctx, {
           digest: stored.digest,
           kind: "generic_file",
-          scope: `${name}@${meta.vers}.crate`,
+          scope,
         });
       }
       return Response.json({ error: "version already exists" }, { status: 409 });

@@ -17,7 +17,6 @@ import {
   storeBlobWithRef,
   upsertPackageVersion,
   upsertPackageVersionWithBlobRef,
-  z,
 } from "@hootifactory/core";
 import {
   and,
@@ -32,214 +31,30 @@ import {
   versionTags,
 } from "@hootifactory/db";
 import { computeDigest } from "@hootifactory/storage";
+import { decodeBase64, ifNoneMatch, responseBytes, responseJson } from "./npm-http";
+import {
+  type NpmDist,
+  type PublishVersion,
+  sha1hex,
+  sha1hexText,
+  sha512b64,
+  upstreamDistMatchesBytes,
+  upstreamDistMatchesStored,
+} from "./npm-integrity";
+import {
+  basename,
+  isValidDistTag,
+  isValidNpmName,
+  isValidNpmVersion,
+  NpmDistTagSchema,
+  NpmPackageNameSchema,
+  NpmPublishBodySchema,
+  NpmSearchQuerySchema,
+  NpmTarballFilenameSchema,
+  NpmVersionSchema,
+  packagePath,
+} from "./npm-validation";
 import { buildPackument } from "./packument";
-
-function sha1hex(data: Uint8Array): string {
-  const h = new Bun.CryptoHasher("sha1");
-  h.update(data);
-  return h.digest("hex");
-}
-function sha1hexText(data: string): string {
-  const h = new Bun.CryptoHasher("sha1");
-  h.update(data);
-  return h.digest("hex");
-}
-function sha512b64(data: Uint8Array): string {
-  const h = new Bun.CryptoHasher("sha512");
-  h.update(data);
-  return h.digest("base64");
-}
-function digestB64(algorithm: "sha1" | "sha256" | "sha384" | "sha512", data: Uint8Array): string {
-  const h = new Bun.CryptoHasher(algorithm);
-  h.update(data);
-  return h.digest("base64");
-}
-function basename(name: string): string {
-  const i = name.lastIndexOf("/");
-  return i >= 0 ? name.slice(i + 1) : name;
-}
-
-function packagePath(name: string): string {
-  return encodeURIComponent(name);
-}
-
-/** npm package-name rules (subset): optional scope, url-safe, ≤214 chars. */
-function isValidNpmName(name: string): boolean {
-  if (!name || name.length > 214) return false;
-  return /^(@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/.test(name);
-}
-
-function isValidNpmVersion(version: string): boolean {
-  const match =
-    /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.exec(
-      version,
-    );
-  if (!match) return false;
-  for (const id of (match[4] ?? "").split(".").filter(Boolean)) {
-    if (/^\d+$/.test(id) && !/^(0|[1-9]\d*)$/.test(id)) return false;
-  }
-  return true;
-}
-
-function isValidDistTag(tag: string): boolean {
-  if (!tag || tag.length > 214) return false;
-  if (!/^[A-Za-z][A-Za-z0-9._~-]*$/.test(tag)) return false;
-  if (/^v\d/i.test(tag)) return false;
-  return !isValidNpmVersion(tag);
-}
-
-const NpmPackageNameSchema = z
-  .string()
-  .min(1)
-  .max(214)
-  .refine(isValidNpmName, "invalid npm package name");
-const NpmVersionSchema = z
-  .string()
-  .min(1)
-  .max(256)
-  .refine(isValidNpmVersion, "invalid npm version");
-const NpmDistTagSchema = z.string().min(1).max(214).refine(isValidDistTag, "invalid npm dist-tag");
-const NpmTarballFilenameSchema = z
-  .string()
-  .min(1)
-  .max(512)
-  .regex(/^[^/\\]+\.tgz$/, "invalid tarball filename");
-const NpmSearchQuerySchema = z.strictObject({
-  text: z.string().max(256).default(""),
-  from: z.coerce.number().int().min(0).max(10_000).default(0),
-  size: z.coerce.number().int().min(0).max(10_000).default(20),
-});
-const NpmPublishManifestSchema = z.looseObject({
-  name: z.string().optional(),
-  version: z.string().optional(),
-  dist: z.record(z.string(), z.unknown()).optional(),
-});
-const NpmPublishBodySchema = z.looseObject({
-  name: z.string().optional(),
-  versions: z.record(z.string(), NpmPublishManifestSchema).default({}),
-  _attachments: z.record(z.string(), z.looseObject({ data: z.string() })).default({}),
-  "dist-tags": z.record(z.string(), z.string()).optional(),
-});
-
-const INTEGRITY_ALGORITHMS = new Set(["sha1", "sha256", "sha384", "sha512"]);
-
-function integrityTokenMatches(token: string, data: Uint8Array): boolean {
-  const value = token.split("?")[0] ?? "";
-  const separator = value.indexOf("-");
-  if (separator <= 0) return false;
-  const algorithm = value.slice(0, separator) as "sha1" | "sha256" | "sha384" | "sha512";
-  const expected = value.slice(separator + 1);
-  if (!INTEGRITY_ALGORITHMS.has(algorithm) || !expected) return false;
-  return digestB64(algorithm, data) === expected;
-}
-
-function upstreamDistMatchesBytes(
-  dist: { integrity?: string; shasum?: string },
-  data: Uint8Array,
-): boolean {
-  if (
-    (typeof dist.integrity !== "string" || !dist.integrity.trim()) &&
-    (typeof dist.shasum !== "string" || !dist.shasum.trim())
-  ) {
-    return false;
-  }
-  if (typeof dist.integrity === "string" && dist.integrity.trim()) {
-    const tokens = dist.integrity.trim().split(/\s+/);
-    if (!tokens.some((token) => integrityTokenMatches(token, data))) return false;
-  }
-  if (typeof dist.shasum === "string" && dist.shasum.trim()) {
-    if (sha1hex(data) !== dist.shasum.trim().toLowerCase()) return false;
-  }
-  return true;
-}
-
-function upstreamDistMatchesStored(
-  dist: { integrity?: string; shasum?: string },
-  stored: NpmDist,
-): boolean {
-  let checked = false;
-  if (typeof dist.integrity === "string" && dist.integrity.trim()) {
-    checked = true;
-    const tokens = dist.integrity
-      .trim()
-      .split(/\s+/)
-      .map((token) => token.split("?")[0] ?? "");
-    if (!tokens.includes(stored.integrity)) return false;
-  }
-  if (typeof dist.shasum === "string" && dist.shasum.trim()) {
-    checked = true;
-    if (dist.shasum.trim().toLowerCase() !== stored.shasum) return false;
-  }
-  return checked;
-}
-
-interface NpmDist {
-  filename: string;
-  blobDigest: string;
-  shasum: string;
-  integrity: string;
-  size: number;
-}
-
-interface PublishVersion {
-  version: string;
-  manifest: Record<string, unknown>;
-  tarball: Buffer;
-}
-
-function decodeBase64(data: unknown): Buffer | null {
-  if (typeof data !== "string") return null;
-  const normalized = data.replace(/\s+/g, "");
-  if (!normalized || normalized.length % 4 === 1) return null;
-  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(normalized)) return null;
-  const decoded = Buffer.from(normalized, "base64");
-  if (!decoded.length) return null;
-  if (decoded.toString("base64").replace(/=+$/, "") !== normalized.replace(/=+$/, "")) {
-    return null;
-  }
-  return decoded;
-}
-
-function ifNoneMatch(req: Request, etag: string): boolean {
-  const header = req.headers.get("if-none-match");
-  if (!header) return false;
-  return header
-    .split(",")
-    .map((v) => v.trim())
-    .some((v) => v === "*" || v === etag || v === `W/${etag}`);
-}
-
-async function responseBytes(res: Response, maxBytes: number): Promise<Uint8Array | null> {
-  const declared = Number(res.headers.get("content-length") ?? 0);
-  if (declared > maxBytes) return null;
-  const reader = res.body?.getReader();
-  if (!reader) return new Uint8Array(0);
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > maxBytes) {
-      await reader.cancel().catch(() => {});
-      return null;
-    }
-    chunks.push(value);
-  }
-  const out = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    out.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return out;
-}
-
-async function responseJson<T>(res: Response, maxBytes: number): Promise<T | null> {
-  const bytes = await responseBytes(res, maxBytes);
-  if (!bytes) return null;
-  return JSON.parse(new TextDecoder().decode(bytes)) as T;
-}
 
 export class NpmAdapter implements FormatAdapter {
   readonly format = "npm" as const;
@@ -289,7 +104,7 @@ export class NpmAdapter implements FormatAdapter {
             ctx.principal.kind === "user"
               ? ctx.principal.username
               : ctx.principal.kind === "token"
-                ? `token:${ctx.principal.tokenId}`
+                ? "token"
                 : ctx.principal.kind === "registryToken"
                   ? ctx.principal.subject
                   : "anonymous",

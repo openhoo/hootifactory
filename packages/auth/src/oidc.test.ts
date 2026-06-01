@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   extractGroups,
+  extractStringClaim,
   mapGroupsToOrgRoles,
   mapGroupsToRole,
   safeOidcReturnTo,
@@ -33,6 +34,14 @@ describe("OIDC group -> role mapping", () => {
     expect(extractGroups({}, "groups")).toEqual([]);
   });
 
+  test("extractStringClaim trims nested string claims and rejects non-strings", () => {
+    expect(
+      extractStringClaim({ profile: { email: " Alice@example.TEST " } }, "profile.email"),
+    ).toBe("Alice@example.TEST");
+    expect(extractStringClaim({ profile: { email: "" } }, "profile.email")).toBeNull();
+    expect(extractStringClaim({ profile: { email: 123 } }, "profile.email")).toBeNull();
+  });
+
   test("multi-org mappings keep the highest role per org", () => {
     expect(
       mapGroupsToOrgRoles(["everyone", "developers", "platform-admins"], {
@@ -50,9 +59,10 @@ describe("OIDC group -> role mapping", () => {
   });
 
   test("returnTo validation rejects absolute and scheme-relative URLs", () => {
-    expect(safeOidcReturnTo("/repositories?x=1")).toBe("/repositories?x=1");
+    expect(safeOidcReturnTo("/repositories?x=1#top")).toBe("/repositories?x=1#top");
     expect(safeOidcReturnTo("https://evil.test")).toBe("/");
     expect(safeOidcReturnTo("//evil.test/path")).toBe("/");
+    expect(safeOidcReturnTo("")).toBe("/");
     expect(safeOidcReturnTo(null)).toBe("/");
   });
 
@@ -68,6 +78,8 @@ describe("OIDC group -> role mapping", () => {
     expect(verifyOidcState(signed, "test-secret")).toEqual(payload);
     expect(verifyOidcState(`${signed.slice(0, -1)}0`, "test-secret")).toBeNull();
     expect(verifyOidcState(signed, "wrong-secret")).toBeNull();
+    expect(verifyOidcState(`${signed}.extra`, "test-secret")).toBeNull();
+    expect(verifyOidcState("not-json.signature", "test-secret")).toBeNull();
     expect(verifyOidcState(signed, "test-secret", payload.expiresAt + 1)).toBeNull();
   });
 });

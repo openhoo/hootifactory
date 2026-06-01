@@ -19,6 +19,14 @@ export function validateInput<T extends ZodType>(
   return { ok: false, response: validationResponse(c, message, parsed.error) };
 }
 
+export function validateParams<T extends ZodType>(
+  c: Context<AppEnv>,
+  schema: T,
+  message = "invalid path parameters",
+): ValidationResult<z.output<T>> {
+  return validateInput(c, schema, c.req.param(), message);
+}
+
 export async function validateJsonBody<T extends ZodType>(
   c: Context<AppEnv>,
   schema: T,

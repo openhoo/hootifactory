@@ -1,23 +1,12 @@
-import { join } from "node:path";
 import { httpStatusForDenial } from "@hootifactory/auth";
-import { env } from "@hootifactory/config";
 import {
   Errors,
-  type FormatAdapter,
   formatRegistry,
   type HttpMethod,
-  loadUpstream,
-  loadVirtualMembers,
   matchRoute,
-  parseRegistryInput,
-  RegistryError,
-  type RepoContext,
-  type RouteMatch,
   resolveRepository,
-  z,
 } from "@hootifactory/core";
 import {
-  addSpanEvent,
   logger,
   recordRegistryRequest,
   setActiveSpanAttributes,
@@ -26,396 +15,15 @@ import {
 } from "@hootifactory/observability";
 import type { Context } from "hono";
 import { buildRepoContext } from "./context";
+import { adapterResponse } from "./registry-adapter";
+import { appendBearerChallengeError, authorizeRoute } from "./registry-auth";
+import { dispatchProxy } from "./registry-proxy";
+import { stripBodyForFallbackHead } from "./registry-utils";
+import { dispatchVirtual } from "./registry-virtual";
+import { serveWebFallback } from "./registry-web";
 import type { AppEnv } from "./types";
 
-/** Reserved server path segments that must never fall back to the SPA index.html. */
-const RESERVED_SEGMENTS = [
-  "api",
-  "v2",
-  "token",
-  "healthz",
-  "readyz",
-  "npm",
-  "pypi",
-  "go",
-  "cargo",
-  "nuget",
-];
-
-/** Serve the built SPA (assets + index.html fallback) for single-container deploys. */
-async function serveWeb(pathname: string): Promise<Response | null> {
-  if (!env.WEB_DIST) return null;
-  const clean = pathname.replace(/^\/+/, "");
-  // API/registry routes must return their real (JSON) 404, not the SPA shell.
-  if (RESERVED_SEGMENTS.some((s) => clean === s || clean.startsWith(`${s}/`))) return null;
-  if (clean && !clean.includes("..")) {
-    const file = Bun.file(join(env.WEB_DIST, clean));
-    if (await file.exists()) return new Response(file);
-  }
-  const index = Bun.file(join(env.WEB_DIST, "index.html"));
-  if (await index.exists()) {
-    return new Response(index, { headers: { "content-type": "text/html; charset=utf-8" } });
-  }
-  return null;
-}
-
-const isRead = (m: string) => m === "GET" || m === "HEAD";
 const OCI_BEARER_FORMATS = new Set(["docker", "oci", "helm"]);
-const SearchWindowSchema = z.strictObject({
-  from: z.coerce.number().int().min(0).max(10_000).default(0),
-  size: z.coerce.number().int().min(0).max(100).default(20),
-});
-
-function isRegistryMiss(err: unknown): err is RegistryError {
-  return (
-    err instanceof RegistryError &&
-    err.status === 404 &&
-    ["BLOB_UNKNOWN", "MANIFEST_UNKNOWN", "NAME_UNKNOWN", "NOT_FOUND"].includes(err.code)
-  );
-}
-
-function stripBodyForFallbackHead(fellBackToGet: boolean, res: Response): Response {
-  if (!fellBackToGet) return res;
-  const headers = new Headers(res.headers);
-  headers.delete("content-length");
-  return new Response(null, { status: res.status, statusText: res.statusText, headers });
-}
-
-function shouldRewriteVirtualBody(contentType: string): boolean {
-  return contentType.includes("json") || contentType.includes("text/html");
-}
-
-async function rewriteVirtualBody(
-  res: Response,
-  memberMountPath: string,
-  virtualMountPath: string,
-): Promise<Response> {
-  const body = (await res.text()).split(`/${memberMountPath}/`).join(`/${virtualMountPath}/`);
-  // Rebuild headers and drop the now-stale content-length (the body changed length).
-  const headers = new Headers(res.headers);
-  headers.delete("content-length");
-  return new Response(body, { status: res.status, headers });
-}
-
-async function adapterResponse(
-  adapter: FormatAdapter,
-  match: RouteMatch,
-  req: Request,
-  ctx: RepoContext,
-): Promise<Response> {
-  return withSpan(
-    "registry.adapter.handle",
-    {
-      "registry.format": adapter.format,
-      "registry.repository.id": ctx.repo.id,
-      "registry.repository.name": ctx.repo.name,
-      "registry.repository.kind": ctx.repo.kind,
-      "registry.handler": match.entry.handlerId,
-      "registry.route": match.entry.pattern,
-      "http.request.method": req.method,
-    },
-    async (span) => {
-      try {
-        const response = await adapter.handle(match, req, ctx);
-        span.setAttribute("http.response.status_code", response.status);
-        logger.debug("registry adapter handled request", {
-          format: adapter.format,
-          repo: ctx.repo.name,
-          handler: match.entry.handlerId,
-          status: response.status,
-        });
-        return response;
-      } catch (err) {
-        if (isRegistryMiss(err)) {
-          const response =
-            adapter.format === "npm"
-              ? Response.json({ error: err.message }, { status: err.status })
-              : err.toResponse();
-          span.setAttribute("http.response.status_code", response.status);
-          span.addEvent("registry.adapter.miss", {
-            "registry.error.code": err.code,
-            "registry.error.message": err.message,
-          });
-          logger.debug("registry adapter miss", {
-            format: adapter.format,
-            repo: ctx.repo.name,
-            handler: match.entry.handlerId,
-            code: err.code,
-          });
-          return response;
-        }
-        throw err;
-      }
-    },
-  );
-}
-
-function searchWindow(req: Request): { from: number; size: number } {
-  const url = new URL(req.url);
-  return parseRegistryInput(
-    SearchWindowSchema,
-    {
-      from: url.searchParams.get("from") ?? undefined,
-      size: url.searchParams.get("size") ?? undefined,
-    },
-    { code: "PAGINATION_NUMBER_INVALID", message: "invalid search pagination" },
-  );
-}
-
-function allSearchResultsRequest(req: Request): Request {
-  const url = new URL(req.url);
-  url.searchParams.set("from", "0");
-  url.searchParams.set("size", "10000");
-  return new Request(url.toString(), { method: req.method, headers: req.headers });
-}
-
-function appendBearerChallengeError(
-  header: string,
-  error?: "invalid_token" | "insufficient_scope",
-) {
-  return error ? `${header},error="${error}"` : header;
-}
-
-async function dispatchVirtualSearch(
-  adapter: FormatAdapter,
-  match: RouteMatch,
-  req: Request,
-  ctx: RepoContext,
-): Promise<Response> {
-  return withSpan(
-    "registry.virtual.search",
-    {
-      "registry.format": adapter.format,
-      "registry.repository.id": ctx.repo.id,
-      "registry.repository.name": ctx.repo.name,
-    },
-    async (span) => {
-      const members = await loadVirtualMembers(ctx.repo.id);
-      span.setAttribute("registry.virtual.member_count", members.length);
-      const seen = new Set<string>();
-      const objects: unknown[] = [];
-      for (const member of members) {
-        await withSpan(
-          "registry.virtual.search_member",
-          {
-            "registry.repository.id": member.id,
-            "registry.repository.name": member.name,
-            "registry.repository.kind": member.kind,
-          },
-          async (memberSpan) => {
-            const memberCtx = buildRepoContext(member, ctx.principal);
-            const perm = adapter.requiredPermission(req.method as HttpMethod, match, memberCtx);
-            const decision = await memberCtx.authorize(perm.action, {
-              repositoryName: perm.repositoryName ?? member.name,
-            });
-            memberSpan.setAttributes({
-              "auth.action": perm.action,
-              "auth.decision": decision.allowed ? "allowed" : "denied",
-            });
-            if (!decision.allowed) {
-              addSpanEvent("registry.virtual.member_skipped", {
-                "auth.reason": decision.reason ?? decision.code,
-              });
-              return;
-            }
-
-            const res = await adapterResponse(
-              adapter,
-              match,
-              allSearchResultsRequest(req),
-              memberCtx,
-            );
-            memberSpan.setAttribute("http.response.status_code", res.status);
-            if (res.status >= 400) return;
-            const body = (await res.json().catch(() => null)) as {
-              objects?: Array<{ package?: { name?: unknown } }>;
-              total?: number;
-            } | null;
-            memberSpan.setAttribute("registry.virtual.member_total", body?.total ?? 0);
-            for (const object of body?.objects ?? []) {
-              const name = object.package?.name;
-              if (typeof name !== "string" || seen.has(name)) continue;
-              seen.add(name);
-              objects.push(object);
-            }
-          },
-        );
-      }
-      const { from, size } = searchWindow(req);
-      span.setAttribute("registry.virtual.result_count", objects.length);
-      return Response.json({
-        objects: objects.slice(from, from + size),
-        total: objects.length,
-        time: new Date().toISOString(),
-      });
-    },
-  );
-}
-
-/** Virtual repo: try each member in order; return the first non-error response. */
-async function dispatchVirtual(
-  adapter: FormatAdapter,
-  match: RouteMatch,
-  req: Request,
-  ctx: RepoContext,
-): Promise<Response> {
-  return withSpan(
-    "registry.virtual.dispatch",
-    {
-      "registry.format": adapter.format,
-      "registry.repository.id": ctx.repo.id,
-      "registry.repository.name": ctx.repo.name,
-      "registry.handler": match.entry.handlerId,
-    },
-    async (span) => {
-      if (!isRead(req.method))
-        throw Errors.unsupported({ reason: "writes are not allowed on virtual repositories" });
-      if (match.entry.handlerId === "search")
-        return dispatchVirtualSearch(adapter, match, req, ctx);
-      const members = await loadVirtualMembers(ctx.repo.id);
-      span.setAttribute("registry.virtual.member_count", members.length);
-      let last: Response | null = null;
-      for (const member of members) {
-        const res = await withSpan(
-          "registry.virtual.member",
-          {
-            "registry.repository.id": member.id,
-            "registry.repository.name": member.name,
-            "registry.repository.kind": member.kind,
-          },
-          async (memberSpan) => {
-            // Authorize against EACH member with its own org/visibility/name — the
-            // request was only authorized against the virtual repo, and members may
-            // belong to other orgs or be private. Skip members the principal can't read.
-            const memberCtx = buildRepoContext(member, ctx.principal);
-            const perm = adapter.requiredPermission(req.method as HttpMethod, match, memberCtx);
-            const decision = await memberCtx.authorize(perm.action, {
-              repositoryName: perm.repositoryName ?? member.name,
-            });
-            memberSpan.setAttributes({
-              "auth.action": perm.action,
-              "auth.decision": decision.allowed ? "allowed" : "denied",
-            });
-            if (!decision.allowed) {
-              logger.debug("virtual member skipped by authorization", {
-                virtualRepo: ctx.repo.name,
-                member: member.name,
-                action: perm.action,
-                reason: decision.reason ?? decision.code,
-              });
-              return null;
-            }
-            const response = await adapterResponse(adapter, match, req, memberCtx);
-            memberSpan.setAttribute("http.response.status_code", response.status);
-            return response;
-          },
-        );
-        if (!res) continue;
-        if (res.status < 400) {
-          // Rewrite member mount -> virtual mount so clients route follow-ups through the virtual repo.
-          const ct = res.headers.get("content-type") ?? "";
-          if (shouldRewriteVirtualBody(ct) && member.mountPath !== ctx.repo.mountPath) {
-            span.addEvent("registry.virtual.response_rewritten", {
-              "registry.virtual.member": member.name,
-            });
-            return rewriteVirtualBody(res, member.mountPath, ctx.repo.mountPath);
-          }
-          return res;
-        }
-        last = res;
-      }
-      return last ?? Errors.notFound().toResponse();
-    },
-  );
-}
-
-/** Proxy repo: serve locally; on a read miss, mirror from the upstream and retry. */
-async function dispatchProxy(
-  adapter: FormatAdapter,
-  match: RouteMatch,
-  req: Request,
-  ctx: RepoContext,
-): Promise<Response> {
-  return withSpan(
-    "registry.proxy.dispatch",
-    {
-      "registry.format": adapter.format,
-      "registry.repository.id": ctx.repo.id,
-      "registry.repository.name": ctx.repo.name,
-      "registry.handler": match.entry.handlerId,
-    },
-    async (span) => {
-      if (!isRead(req.method))
-        throw Errors.unsupported({ reason: "writes are not allowed on proxy repositories" });
-
-      const upstream = await loadUpstream(ctx.repo.id);
-      span.setAttribute("registry.proxy.has_upstream", Boolean(upstream));
-      let refreshed = false;
-      if (
-        upstream &&
-        adapter.proxyIngest &&
-        match.entry.handlerId === "packument" &&
-        req.method === "GET"
-      ) {
-        refreshed = await withSpan(
-          "registry.proxy.refresh",
-          {
-            "registry.upstream.url": upstream.url,
-            "registry.package.name": match.params.pkg ?? "",
-          },
-          async (refreshSpan) => {
-            const ok = await adapter
-              .proxyIngest?.(match.params.pkg ?? "", upstream.url, ctx)
-              .catch(() => false);
-            refreshSpan.setAttribute("registry.proxy.refreshed", Boolean(ok));
-            logger.debug("proxy refresh attempted", {
-              repo: ctx.repo.name,
-              package: match.params.pkg,
-              refreshed: Boolean(ok),
-            });
-            return Boolean(ok);
-          },
-        );
-      }
-
-      const local = await adapterResponse(adapter, match, req, ctx);
-      if (local.status < 400) return local;
-
-      const proxyError = async (response: Response) =>
-        new Response(await response.text(), {
-          status: response.status,
-          headers: { "content-type": "text/plain; charset=utf-8" },
-        });
-
-      if (!upstream) return proxyError(local);
-
-      // Format-aware mirror (npm packument -> ingest tarballs), then retry locally.
-      // Do not fall back to transparent passthrough: returning upstream bytes
-      // directly would bypass local artifact records, scan policy, quotas, and
-      // retention semantics.
-      if (!refreshed && adapter.proxyIngest && match.entry.handlerId === "packument") {
-        const ok = await withSpan(
-          "registry.proxy.retry_refresh",
-          {
-            "registry.upstream.url": upstream.url,
-            "registry.package.name": match.params.pkg ?? "",
-          },
-          async (retrySpan) => {
-            const refreshedOnRetry = await adapter.proxyIngest?.(
-              match.params.pkg ?? "",
-              upstream.url,
-              ctx,
-            );
-            retrySpan.setAttribute("registry.proxy.refreshed", Boolean(refreshedOnRetry));
-            return Boolean(refreshedOnRetry);
-          },
-        );
-        if (ok) return adapterResponse(adapter, match, req, ctx);
-      }
-      return proxyError(local);
-    },
-  );
-}
 
 /**
  * Catch-all registry dispatch: resolve repo -> adapter -> route -> authorize ->
@@ -444,7 +52,7 @@ export async function handleRegistryRequest(c: Context<AppEnv>): Promise<Respons
   if (!resolution) {
     if (c.req.method === "GET") {
       const web = await withSpan("web.spa_fallback", { "url.path": url.pathname }, () =>
-        serveWeb(url.pathname),
+        serveWebFallback(url.pathname),
       );
       if (web) return web;
     }
@@ -497,27 +105,25 @@ export async function handleRegistryRequest(c: Context<AppEnv>): Promise<Respons
       }
       const ctx = buildRepoContext(repo, principal);
 
-      const perm = adapter.requiredPermission(method, match, ctx);
-      setActiveSpanAttributes({ "auth.action": perm.action });
-      const decision = await withSpan(
+      const authorization = await withSpan(
         "registry.authorize",
         {
-          "auth.action": perm.action,
           "auth.principal.kind": principal.kind,
           "registry.repository.name": repo.name,
-          "registry.permission.repository": perm.repositoryName ?? repo.name,
         },
         async (span) => {
-          const authDecision = await ctx.authorize(perm.action, {
-            repositoryName: perm.repositoryName ?? repo.name,
-          });
+          const result = await authorizeRoute(adapter, method, match, ctx);
           span.setAttributes({
-            "auth.decision": authDecision.allowed ? "allowed" : "denied",
-            "auth.decision.code": authDecision.code,
+            "auth.action": result.permission.action,
+            "auth.decision": result.decision.allowed ? "allowed" : "denied",
+            "auth.decision.code": result.decision.code,
+            "registry.permission.repository": result.repositoryName,
           });
-          return authDecision;
+          return result;
         },
       );
+      const { decision, permission: perm } = authorization;
+      setActiveSpanAttributes({ "auth.action": perm.action });
 
       if (!decision.allowed) {
         const status = httpStatusForDenial(decision);

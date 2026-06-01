@@ -1,0 +1,116 @@
+import { authorize, createApiToken, revokeToken, writeAudit } from "@hootifactory/auth";
+import { and, apiTokens, db, desc, eq, users } from "@hootifactory/db";
+import type { Hono } from "hono";
+import type { AppEnv } from "../types";
+import { uuidParams, validateJsonBody, validateParams } from "../validation";
+import { tokenDto } from "./ui-dto";
+import { CreateTokenBodySchema } from "./ui-schemas";
+import { validateTokenGrant } from "./ui-token-grants";
+
+export function registerTokenRoutes(router: Hono<AppEnv>): void {
+  router.get("/orgs/:orgId/tokens", async (c) => {
+    const parsedParams = validateParams(c, uuidParams.orgId);
+    if (!parsedParams.ok) return parsedParams.response;
+    const { orgId } = parsedParams.data;
+    const p = c.get("principal");
+    if (p.kind !== "user") return c.json({ error: "login required" }, 401);
+    const adminDecision = await authorize(p, "admin", { type: "org", orgId });
+    const readDecision = adminDecision.allowed
+      ? adminDecision
+      : await authorize(p, "read", { type: "org", orgId });
+    if (!readDecision.allowed) return c.json({ error: readDecision.reason }, 403);
+    const where = adminDecision.allowed
+      ? eq(apiTokens.orgId, orgId)
+      : and(eq(apiTokens.orgId, orgId), eq(apiTokens.ownerUserId, p.userId));
+    const rows = await db
+      .select({
+        id: apiTokens.id,
+        ownerUserId: apiTokens.ownerUserId,
+        ownerUsername: users.username,
+        name: apiTokens.name,
+        prefix: apiTokens.tokenPrefix,
+        type: apiTokens.type,
+        scopes: apiTokens.scopes,
+        role: apiTokens.role,
+        expiresAt: apiTokens.expiresAt,
+        revokedAt: apiTokens.revokedAt,
+        lastUsedAt: apiTokens.lastUsedAt,
+        createdAt: apiTokens.createdAt,
+      })
+      .from(apiTokens)
+      .leftJoin(users, eq(apiTokens.ownerUserId, users.id))
+      .where(where)
+      .orderBy(desc(apiTokens.createdAt));
+    return c.json({ tokens: rows });
+  });
+
+  router.delete("/orgs/:orgId/tokens/:tokenId", async (c) => {
+    const parsedParams = validateParams(c, uuidParams.orgToken);
+    if (!parsedParams.ok) return parsedParams.response;
+    const { orgId, tokenId } = parsedParams.data;
+    const p = c.get("principal");
+    if (p.kind !== "user") return c.json({ error: "login required" }, 401);
+    const [tok] = await db.select().from(apiTokens).where(eq(apiTokens.id, tokenId)).limit(1);
+    if (!tok || tok.orgId !== orgId) return c.json({ error: "token not found" }, 404);
+    const isOwner = tok.ownerUserId === p.userId;
+    if (!isOwner) {
+      const decision = await authorize(p, "admin", { type: "org", orgId });
+      if (!decision.allowed) return c.json({ error: "forbidden" }, 403);
+    }
+    await revokeToken(tokenId);
+    void writeAudit({
+      orgId,
+      action: "token.revoke",
+      result: "success",
+      resourceType: "token",
+      resourceId: tokenId,
+      principal: p,
+    }).catch(() => {});
+    return c.json({ ok: true });
+  });
+
+  router.post("/orgs/:orgId/tokens", async (c) => {
+    const parsedParams = validateParams(c, uuidParams.orgId);
+    if (!parsedParams.ok) return parsedParams.response;
+    const { orgId } = parsedParams.data;
+    const p = c.get("principal");
+    if (p.kind !== "user") return c.json({ error: "login required" }, 401);
+    const decision = await authorize(p, "read", { type: "org", orgId });
+    if (!decision.allowed) return c.json({ error: decision.reason }, 403);
+
+    const parsedBody = await validateJsonBody(c, CreateTokenBodySchema, "invalid token request");
+    if (!parsedBody.ok) return parsedBody.response;
+    const body = parsedBody.data;
+    const tokenName = body.name;
+    const tokenType = body.type;
+    const scopes = body.scopes;
+    const requestedRole = body.role ?? (scopes.length > 0 ? undefined : "developer");
+    const expiresAt =
+      body.expiresAt === undefined
+        ? new Date(Date.now() + 90 * 24 * 60 * 60 * 1000)
+        : body.expiresAt;
+
+    const grant = await validateTokenGrant({ userId: p.userId, orgId, requestedRole, scopes });
+    if (!grant.ok) return c.json({ error: grant.error }, 403);
+
+    const { token, secret } = await createApiToken({
+      orgId,
+      ownerUserId: p.userId,
+      name: tokenName,
+      type: tokenType,
+      scopes,
+      role: requestedRole,
+      expiresAt,
+    });
+    void writeAudit({
+      orgId,
+      action: "token.create",
+      result: "success",
+      resourceType: "token",
+      resourceId: token.id,
+      principal: p,
+      detail: { name: token.name, type: token.type },
+    }).catch(() => {});
+    return c.json({ token: tokenDto(token, p.username), secret }, 201);
+  });
+}

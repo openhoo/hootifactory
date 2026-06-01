@@ -5,7 +5,6 @@ import {
   createSession,
   hashPassword,
   OidcEmailLinkRequiredError,
-  type OidcProviderConfig,
   resetPasswordWithToken,
   resolveOidcCallbackClaims,
   revokeSession,
@@ -16,223 +15,53 @@ import {
   writeAudit,
 } from "@hootifactory/auth";
 import { env } from "@hootifactory/config";
-import { isUniqueViolation, z } from "@hootifactory/core";
+import { isUniqueViolation } from "@hootifactory/core";
 import { and, db, eq, externalIdentities, users } from "@hootifactory/db";
-import type { EmailJob } from "@hootifactory/email";
 import {
   addSpanEvent,
-  captureTelemetryContext,
   logger,
   setActiveSpanAttributes,
   withSpan,
 } from "@hootifactory/observability";
-import { enqueue, QUEUES } from "@hootifactory/queue";
-import { type Context, Hono } from "hono";
-import { deleteCookie, getCookie, setCookie } from "hono/cookie";
-import { authenticateUserPassword, SESSION_COOKIE } from "../middleware/authenticate";
+import { Hono } from "hono";
+import { authenticateUserPassword } from "../middleware/authenticate";
 import type { AppEnv } from "../types";
 import { validateJsonBody } from "../validation";
+import {
+  browserFacingUrl,
+  clientIp,
+  deleteOidcStateCookie,
+  deleteSessionCookie,
+  enqueueEmail,
+  loginNoticeRedirect,
+  loginRedirect,
+  oidcCallbackUrl,
+  oidcConfig,
+  publicUrl,
+  readOidcStateCookie,
+  readSessionCookie,
+  setOidcStateCookie,
+  setSessionCookie,
+} from "./auth-helpers";
+import {
+  ConfirmLinkQuerySchema,
+  LoginBodySchema,
+  OidcLinkMetadataSchema,
+  PasswordResetConfirmBodySchema,
+  PasswordResetRequestBodySchema,
+  RegisterBodySchema,
+} from "./auth-schemas";
+import {
+  clearLoginFailures,
+  loginIsThrottled,
+  loginThrottleKey,
+  passwordResetIsThrottled,
+  passwordResetThrottleKey,
+  recordLoginFailure,
+  recordPasswordResetRequest,
+} from "./auth-throttle";
 
 export const authRouter = new Hono<AppEnv>();
-const OIDC_STATE_COOKIE = "hoot_oidc_state";
-
-interface LoginThrottleBucket {
-  count: number;
-  resetAt: number;
-}
-
-const loginFailures = new Map<string, LoginThrottleBucket>();
-const passwordResetRequests = new Map<string, LoginThrottleBucket>();
-
-const RegisterBodySchema = z.strictObject({
-  username: z.string().trim().min(1).max(128),
-  email: z.email().max(320),
-  password: z.string().min(8).max(1024),
-  displayName: z.string().trim().min(1).max(256).optional(),
-});
-
-const LoginBodySchema = z.strictObject({
-  username: z.string().trim().min(1).max(128),
-  password: z.string().min(1).max(1024),
-});
-
-const PasswordResetRequestBodySchema = z.strictObject({
-  email: z.email().max(320),
-});
-
-const PasswordResetConfirmBodySchema = z.strictObject({
-  token: z.string().min(16).max(512),
-  password: z.string().min(8).max(1024),
-});
-
-const OidcGrantSchema = z.strictObject({
-  org: z.string().min(1),
-  role: z.enum(["viewer", "developer", "admin", "owner"]),
-  groups: z.array(z.string()),
-});
-
-const OidcLinkMetadataSchema = z.strictObject({
-  returnTo: z.string().min(1),
-  claims: z.strictObject({
-    issuer: z.string().min(1),
-    subject: z.string().min(1),
-    email: z.string().nullable(),
-    emailVerified: z.boolean(),
-    username: z.string().nullable(),
-    displayName: z.string().nullable(),
-    groups: z.array(z.string()),
-    grants: z.array(OidcGrantSchema),
-  }),
-});
-
-const ConfirmLinkQuerySchema = z.strictObject({
-  token: z.string().min(16).max(512),
-});
-
-function clientIp(c: Context<AppEnv>): string {
-  return (
-    c.req.header("x-forwarded-for")?.split(",")[0]?.trim() || c.req.header("x-real-ip") || "unknown"
-  );
-}
-
-function loginThrottleKey(username: string, ip: string): string {
-  return `${username.trim().toLowerCase()}\0${ip}`;
-}
-
-function passwordResetThrottleKey(email: string, ip: string): string {
-  return `${email.trim().toLowerCase()}\0${ip}`;
-}
-
-function currentThrottleBucket(
-  buckets: Map<string, LoginThrottleBucket>,
-  key: string,
-  windowSeconds: number,
-  now = Date.now(),
-): LoginThrottleBucket {
-  const existing = buckets.get(key);
-  if (existing && existing.resetAt > now) return existing;
-  const fresh = {
-    count: 0,
-    resetAt: now + windowSeconds * 1000,
-  };
-  buckets.set(key, fresh);
-  return fresh;
-}
-
-function currentLoginBucket(key: string, now = Date.now()): LoginThrottleBucket {
-  return currentThrottleBucket(loginFailures, key, env.AUTH_LOGIN_WINDOW_SECONDS, now);
-}
-
-function currentPasswordResetBucket(key: string, now = Date.now()): LoginThrottleBucket {
-  return currentThrottleBucket(
-    passwordResetRequests,
-    key,
-    env.AUTH_PASSWORD_RESET_WINDOW_SECONDS,
-    now,
-  );
-}
-
-function retryAfterSeconds(bucket: LoginThrottleBucket, now = Date.now()): number {
-  return Math.max(1, Math.ceil((bucket.resetAt - now) / 1000));
-}
-
-function loginIsThrottled(
-  key: string,
-): { throttled: false } | { throttled: true; retryAfter: number } {
-  const bucket = currentLoginBucket(key);
-  if (bucket.count < env.AUTH_LOGIN_MAX_ATTEMPTS) return { throttled: false };
-  return { throttled: true, retryAfter: retryAfterSeconds(bucket) };
-}
-
-function recordLoginFailure(key: string): LoginThrottleBucket {
-  const bucket = currentLoginBucket(key);
-  bucket.count += 1;
-  return bucket;
-}
-
-function passwordResetIsThrottled(
-  key: string,
-): { throttled: false } | { throttled: true; retryAfter: number } {
-  const bucket = currentPasswordResetBucket(key);
-  if (bucket.count < env.AUTH_PASSWORD_RESET_MAX_ATTEMPTS) return { throttled: false };
-  return { throttled: true, retryAfter: retryAfterSeconds(bucket) };
-}
-
-function recordPasswordResetRequest(key: string): LoginThrottleBucket {
-  const bucket = currentPasswordResetBucket(key);
-  bucket.count += 1;
-  return bucket;
-}
-
-function clearLoginFailures(key: string): void {
-  loginFailures.delete(key);
-}
-
-function oidcConfig(): OidcProviderConfig | null {
-  if (!env.AUTH_OIDC_ENABLED) return null;
-  if (!env.AUTH_OIDC_ISSUER || !env.AUTH_OIDC_CLIENT_ID || !env.AUTH_OIDC_CLIENT_SECRET) {
-    return null;
-  }
-  return {
-    issuer: env.AUTH_OIDC_ISSUER,
-    clientId: env.AUTH_OIDC_CLIENT_ID,
-    clientSecret: env.AUTH_OIDC_CLIENT_SECRET,
-    scopes: env.AUTH_OIDC_SCOPES,
-    groupClaim: env.AUTH_OIDC_GROUP_CLAIM,
-    groupMappings: env.AUTH_OIDC_GROUP_MAPPINGS,
-    emailClaim: env.AUTH_OIDC_EMAIL_CLAIM,
-    usernameClaim: env.AUTH_OIDC_USERNAME_CLAIM,
-  };
-}
-
-function forwardedValue(c: Context<AppEnv>, header: string): string | undefined {
-  return c.req.header(header)?.split(",")[0]?.trim() || undefined;
-}
-
-function browserFacingUrl(c: Context<AppEnv>): URL {
-  const url = new URL(c.req.url);
-  const host = forwardedValue(c, "x-forwarded-host");
-  if (host) {
-    url.host = host;
-    url.protocol = `${forwardedValue(c, "x-forwarded-proto") ?? url.protocol.replace(":", "")}:`;
-  }
-  return url;
-}
-
-function oidcCallbackUrl(c: Context<AppEnv>): string {
-  const url = browserFacingUrl(c);
-  url.pathname = "/api/auth/oidc/callback";
-  url.search = "";
-  url.hash = "";
-  return url.href;
-}
-
-function loginRedirect(error = "sso_failed"): string {
-  return `/login?error=${encodeURIComponent(error)}`;
-}
-
-function loginNoticeRedirect(notice: string): string {
-  return `/login?notice=${encodeURIComponent(notice)}`;
-}
-
-function publicUrl(path: string): string {
-  return new URL(path, `${env.APP_PUBLIC_URL}/`).href;
-}
-
-async function enqueueEmail(job: EmailJob): Promise<void> {
-  if (!env.EMAIL_ENABLED) return;
-  await enqueue(
-    QUEUES.emailSend,
-    { ...job, telemetry: captureTelemetryContext() },
-    {
-      retryLimit: 5,
-      retryDelay: 30,
-      retryBackoff: true,
-      singletonKey: job.deliveryKey,
-      singletonSeconds: job.deliveryKey ? 7 * 24 * 60 * 60 : undefined,
-    },
-  );
-}
 
 authRouter.get("/methods", (c) =>
   c.json({
@@ -254,21 +83,19 @@ authRouter.get("/oidc/start", async (c) => {
   const requestUrl = browserFacingUrl(c);
   const returnTo = safeOidcReturnTo(requestUrl.searchParams.get("returnTo"));
   const request = await createOidcAuthorizationRequest(config, oidcCallbackUrl(c), returnTo);
-  setCookie(c, OIDC_STATE_COOKIE, signOidcState(request.state, env.SESSION_SECRET), {
-    httpOnly: true,
-    sameSite: "Lax",
-    path: "/api/auth/oidc",
-    secure: env.NODE_ENV === "production",
-    expires: new Date(request.state.expiresAt),
-  });
+  setOidcStateCookie(
+    c,
+    signOidcState(request.state, env.SESSION_SECRET),
+    new Date(request.state.expiresAt),
+  );
   return c.redirect(request.url.href);
 });
 
 authRouter.get("/oidc/callback", async (c) => {
   const config = oidcConfig();
   if (!config) return c.redirect(loginRedirect("sso_disabled"));
-  const state = verifyOidcState(getCookie(c, OIDC_STATE_COOKIE), env.SESSION_SECRET);
-  deleteCookie(c, OIDC_STATE_COOKIE, { path: "/api/auth/oidc" });
+  const state = verifyOidcState(readOidcStateCookie(c), env.SESSION_SECRET);
+  deleteOidcStateCookie(c);
   if (!state) return c.redirect(loginRedirect("sso_state"));
 
   let claims: Awaited<ReturnType<typeof resolveOidcCallbackClaims>> | null = null;
@@ -279,13 +106,7 @@ authRouter.get("/oidc/callback", async (c) => {
       ip: c.req.header("x-forwarded-for") ?? undefined,
       userAgent: c.req.header("user-agent") ?? undefined,
     });
-    setCookie(c, SESSION_COOKIE, secret, {
-      httpOnly: true,
-      sameSite: "Lax",
-      path: "/",
-      secure: env.NODE_ENV === "production",
-      expires: expiresAt,
-    });
+    setSessionCookie(c, secret, expiresAt);
     setActiveSpanAttributes({ "enduser.id": user.id, "auth.event": "oidc_login" });
     logger.info("OIDC login succeeded", { userId: user.id, issuer: claims.issuer });
     void writeAudit({
@@ -380,13 +201,7 @@ authRouter.get("/oidc/link/confirm", async (c) => {
       ip: c.req.header("x-forwarded-for") ?? undefined,
       userAgent: c.req.header("user-agent") ?? undefined,
     });
-    setCookie(c, SESSION_COOKIE, secret, {
-      httpOnly: true,
-      sameSite: "Lax",
-      path: "/",
-      secure: env.NODE_ENV === "production",
-      expires: expiresAt,
-    });
+    setSessionCookie(c, secret, expiresAt);
     setActiveSpanAttributes({ "enduser.id": user.id, "auth.event": "oidc_link_confirm" });
     logger.info("OIDC link confirmation succeeded", { userId: user.id, issuer: claims.issuer });
     void writeAudit({
@@ -536,13 +351,7 @@ authRouter.post("/register", async (c) => {
     const { secret, expiresAt } = await createSession(user.id, {
       ip: c.req.header("x-forwarded-for") ?? undefined,
     });
-    setCookie(c, SESSION_COOKIE, secret, {
-      httpOnly: true,
-      sameSite: "Lax",
-      path: "/",
-      secure: env.NODE_ENV === "production",
-      expires: expiresAt,
-    });
+    setSessionCookie(c, secret, expiresAt);
     setActiveSpanAttributes({ "enduser.id": user.id, "auth.event": "registration" });
     logger.info("user registered", { userId: user.id });
     return c.json({ user: { id: user.id, username: user.username, email: user.email } }, 201);
@@ -612,23 +421,17 @@ authRouter.post("/login", async (c) => {
     ip: c.req.header("x-forwarded-for") ?? undefined,
     userAgent: c.req.header("user-agent") ?? undefined,
   });
-  setCookie(c, SESSION_COOKIE, secret, {
-    httpOnly: true,
-    sameSite: "Lax",
-    path: "/",
-    secure: env.NODE_ENV === "production",
-    expires: expiresAt,
-  });
+  setSessionCookie(c, secret, expiresAt);
   return c.json({ user: { id: principal.userId, username: principal.username } });
 });
 
 authRouter.post("/logout", async (c) => {
-  const secret = getCookie(c, SESSION_COOKIE);
+  const secret = readSessionCookie(c);
   if (secret) {
     await withSpan("auth.revoke_session", {}, () => revokeSession(secret));
     logger.info("session revoked");
   }
-  deleteCookie(c, SESSION_COOKIE, { path: "/" });
+  deleteSessionCookie(c);
   return c.json({ ok: true });
 });
 

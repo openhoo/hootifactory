@@ -13,170 +13,20 @@ import {
   type RouteMatch,
   releaseBlobRef,
   storeBlobWithRef,
-  z,
 } from "@hootifactory/core";
 import { and, eq, isNull, packages, packageVersions } from "@hootifactory/db";
-import { extractNuspecMeta, type NuspecDependencyGroup } from "./nuspec";
-
-interface NugetVersionMeta {
-  nupkgDigest: string;
-  file: string;
-  listed?: boolean;
-  dependencyGroups?: NuspecDependencyGroup[];
-}
-
-const CRLF = new TextEncoder().encode("\r\n");
-const HEADER_END = new TextEncoder().encode("\r\n\r\n");
-
-function indexOfBytes(haystack: Uint8Array, needle: Uint8Array, from = 0): number {
-  if (needle.length === 0) return from;
-  for (let i = from; i <= haystack.length - needle.length; i++) {
-    let ok = true;
-    for (let j = 0; j < needle.length; j++) {
-      if (haystack[i + j] !== needle[j]) {
-        ok = false;
-        break;
-      }
-    }
-    if (ok) return i;
-  }
-  return -1;
-}
-
-function multipartBoundary(contentType: string): string | null {
-  const boundary = contentType.match(/(?:^|;)\s*boundary=(?:"([^"]+)"|([^;]+))/i);
-  return boundary?.[1] ?? boundary?.[2]?.trim() ?? null;
-}
-
-function extractMultipartFile(contentType: string, body: Uint8Array): Uint8Array | null {
-  const boundary = multipartBoundary(contentType);
-  if (!boundary) return null;
-
-  const marker = new TextEncoder().encode(`--${boundary}`);
-  const delimiter = new TextEncoder().encode(`\r\n--${boundary}`);
-  let cursor = indexOfBytes(body, marker);
-  const decoder = new TextDecoder();
-
-  while (cursor >= 0) {
-    cursor += marker.length;
-    if (body[cursor] === 45 && body[cursor + 1] === 45) return null;
-    if (indexOfBytes(body, CRLF, cursor) !== cursor) return null;
-    cursor += CRLF.length;
-
-    const headerEnd = indexOfBytes(body, HEADER_END, cursor);
-    if (headerEnd < 0) return null;
-    const headers = decoder.decode(body.subarray(cursor, headerEnd)).toLowerCase();
-    const dataStart = headerEnd + HEADER_END.length;
-    const next = indexOfBytes(body, delimiter, dataStart);
-    if (next < 0) return null;
-    if (headers.includes("content-disposition:") && next >= dataStart) {
-      return body.subarray(dataStart, next);
-    }
-    cursor = next + CRLF.length;
-  }
-
-  return null;
-}
-
-function validPrerelease(pre: string): boolean {
-  return pre.split(".").every((part) => /^[0-9A-Za-z-]+$/.test(part));
-}
-
-function escapeXml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
-/** NuGet version normalization: drop a zero 4th segment + build metadata, lowercase prerelease. */
-function normalizeNugetVersion(v: string): string | null {
-  let s = v.trim();
-  if (!s) return null;
-  const plus = s.indexOf("+");
-  if (plus >= 0) s = s.slice(0, plus); // strip build metadata
-  const dash = s.indexOf("-");
-  const core = dash >= 0 ? s.slice(0, dash) : s;
-  const preRaw = dash >= 0 ? s.slice(dash + 1) : "";
-  if (dash >= 0 && !preRaw) return null;
-  if (preRaw && !validPrerelease(preRaw)) return null;
-  const parts = core.split(".");
-  if (parts.length > 4 || parts.some((part) => !/^\d+$/.test(part))) return null;
-  const pre = preRaw ? `-${preRaw.toLowerCase()}` : "";
-  const nums = parts.map((n) => String(Number.parseInt(n, 10)));
-  while (nums.length < 3) nums.push("0");
-  if (nums.length === 4 && nums[3] === "0") nums.pop();
-  return nums.join(".") + pre;
-}
-
-const NugetIdSchema = z
-  .string()
-  .trim()
-  .min(1)
-  .max(128)
-  .regex(/^[A-Za-z0-9][A-Za-z0-9_.-]*$/, "invalid NuGet package id");
-const NugetVersionInputSchema = z
-  .string()
-  .trim()
-  .min(1)
-  .max(256)
-  .refine((value) => normalizeNugetVersion(value) != null, "invalid NuGet package version");
-const NugetFileSchema = z
-  .string()
-  .min(1)
-  .max(512)
-  .regex(/^[^/\\]+\.(?:nupkg|nuspec)$/i, "invalid NuGet package filename");
-const NugetPublishQuerySchema = z.strictObject({
-  id: NugetIdSchema.optional(),
-  version: NugetVersionInputSchema.optional(),
-});
-const MultipartContentTypeSchema = z
-  .string()
-  .max(512)
-  .refine((value) => multipartBoundary(value) != null, "multipart boundary is required");
-
-/** Compare two normalized NuGet versions (numeric core; a release outranks its prerelease). */
-function compareNugetVersions(a: string, b: string): number {
-  const split = (v: string) => {
-    const d = v.indexOf("-");
-    const core = (d >= 0 ? v.slice(0, d) : v).split(".").map(Number);
-    return { core, pre: d >= 0 ? v.slice(d + 1) : null };
-  };
-  const pa = split(a);
-  const pb = split(b);
-  const maxCore = Math.max(pa.core.length, pb.core.length);
-  for (let i = 0; i < maxCore; i++) {
-    if ((pa.core[i] ?? 0) !== (pb.core[i] ?? 0)) return (pa.core[i] ?? 0) - (pb.core[i] ?? 0);
-  }
-  if (!pa.pre && pb.pre) return 1;
-  if (pa.pre && !pb.pre) return -1;
-  if (pa.pre && pb.pre) return comparePrerelease(pa.pre, pb.pre);
-  return 0;
-}
-
-function comparePrerelease(a: string, b: string): number {
-  const aa = a.split(".");
-  const bb = b.split(".");
-  const max = Math.max(aa.length, bb.length);
-  for (let i = 0; i < max; i++) {
-    const x = aa[i];
-    const y = bb[i];
-    if (x === undefined) return -1;
-    if (y === undefined) return 1;
-    const xn = /^(0|[1-9]\d*)$/.test(x);
-    const yn = /^(0|[1-9]\d*)$/.test(y);
-    if (xn && yn) {
-      const diff = Number(x) - Number(y);
-      if (diff !== 0) return diff;
-    } else if (xn !== yn) {
-      return xn ? -1 : 1;
-    } else if (x !== y) {
-      return x < y ? -1 : 1;
-    }
-  }
-  return 0;
-}
+import { extractMultipartFile, MultipartContentTypeSchema } from "./nuget-multipart";
+import {
+  compareNugetVersions,
+  escapeXml,
+  NugetFileSchema,
+  NugetIdSchema,
+  NugetPublishQuerySchema,
+  NugetVersionInputSchema,
+  type NugetVersionMeta,
+  normalizeNugetVersion,
+} from "./nuget-validation";
+import { extractNuspecMeta } from "./nuspec";
 
 /**
  * NuGet v3. The consumption surface (service index + flat container) is
@@ -283,7 +133,7 @@ export class NugetAdapter implements FormatAdapter {
     });
     const pkg = await this.findPkg(ctx, id);
     if (!pkg) return new Response("Not Found", { status: 404 });
-    const rows = await this.listVersions(ctx, pkg.id, { includeUnlisted: true });
+    const rows = await this.listVersions(ctx, pkg.id);
     if (rows.length === 0) return new Response("Not Found", { status: 404 });
     return Response.json({ versions: rows.map((r) => r.version) });
   }

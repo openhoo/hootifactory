@@ -1,6 +1,5 @@
 import {
   Errors,
-  ensureBlobRef,
   type FormatAdapter,
   findOrCreatePackage,
   type HttpMethod,
@@ -12,10 +11,7 @@ import {
   type RouteEntry,
   type RouteMatch,
   releaseBlobRef,
-  storeBlobStreamWithRef,
-  storeBlobWithRef,
   upsertPackageVersion,
-  z,
 } from "@hootifactory/core";
 import {
   and,
@@ -27,78 +23,32 @@ import {
   ociTags,
   packages,
   packageVersions,
-  repositories,
   sql,
-  uploadSessions,
 } from "@hootifactory/db";
-import { computeDigest, isValidDigest, stagingKey } from "@hootifactory/storage";
+import { computeDigest, isValidDigest } from "@hootifactory/storage";
+import { OCI_MEDIA_TYPES, type OciManifest } from "@hootifactory/types";
+import { cancelUpload, patchUpload, putUpload, startUpload, uploadStatus } from "./oci-uploads";
 import {
-  OCI_MEDIA_TYPES,
-  type OciDescriptor,
-  type OciManifest,
-  ociManifestReferences,
-} from "@hootifactory/types";
+  acceptsMediaType,
+  assertImageName,
+  assertTag,
+  manifestAnnotations,
+  manifestBlobDigests,
+  manifestManifestDigests,
+  manifestMediaType,
+  OciDigestSchema,
+  OciReferrersQuerySchema,
+  OciTagPageSizeSchema,
+  OciTagSchema,
+  parseBlobRange,
+  parseManifestRaw,
+  parseReference,
+  referrerArtifactType,
+  validateDescriptor,
+  validateManifest,
+} from "./oci-validation";
+import { bodyBytes } from "./upload-state";
 
-interface UploadChunk {
-  key: string;
-  size: number;
-}
-
-interface UploadMultipartState {
-  chunks: UploadChunk[];
-}
-
-function uploadMultipartState(raw: string | null): UploadMultipartState {
-  if (!raw) return { chunks: [] };
-  try {
-    const parsed = JSON.parse(raw) as { chunks?: UploadChunk[] };
-    return {
-      chunks: Array.isArray(parsed.chunks)
-        ? parsed.chunks.filter((chunk) => chunk.key && chunk.size >= 0)
-        : [],
-    };
-  } catch {
-    return { chunks: [] };
-  }
-}
-
-function uploadChunkStream(
-  ctx: RepoContext,
-  chunks: UploadChunk[],
-  extra?: Uint8Array,
-): ReadableStream<Uint8Array> {
-  return new ReadableStream<Uint8Array>({
-    async start(controller) {
-      try {
-        for (const chunk of chunks) {
-          const bytes = await ctx.blobs.bytesAtKey(chunk.key);
-          if (bytes.byteLength !== chunk.size) {
-            throw Errors.blobUploadInvalid({
-              reason: "staging chunk size mismatch",
-              expected: chunk.size,
-              actual: bytes.byteLength,
-            });
-          }
-          controller.enqueue(bytes);
-        }
-        if (extra?.byteLength) controller.enqueue(extra);
-        controller.close();
-      } catch (err) {
-        controller.error(err);
-      }
-    },
-  });
-}
-
-async function deleteUploadChunks(ctx: RepoContext, chunks: UploadChunk[]): Promise<void> {
-  await Promise.all(chunks.map((chunk) => ctx.blobs.deleteKey(chunk.key).catch(() => {})));
-}
-
-async function bodyBytes(req: Request): Promise<Uint8Array> {
-  return new Uint8Array(await req.arrayBuffer());
-}
-
-const UPLOAD_TTL_MS = 24 * 60 * 60 * 1000;
 const UPLOAD_CONTROL_HANDLERS = new Set([
   "startUpload",
   "uploadStatus",
@@ -106,280 +56,9 @@ const UPLOAD_CONTROL_HANDLERS = new Set([
   "putUpload",
   "cancelUpload",
 ]);
-const OCI_ARTIFACT_MANIFEST_MEDIA_TYPE = "application/vnd.oci.artifact.manifest.v1+json";
-const SUPPORTED_MANIFEST_MEDIA_TYPES = new Set<string>([
-  OCI_MEDIA_TYPES.manifestV1,
-  OCI_MEDIA_TYPES.imageIndexV1,
-  OCI_MEDIA_TYPES.dockerManifestV2,
-  OCI_MEDIA_TYPES.dockerManifestListV2,
-  OCI_ARTIFACT_MANIFEST_MEDIA_TYPE,
-]);
-const IMAGE_MANIFEST_MEDIA_TYPES = new Set<string>([
-  OCI_MEDIA_TYPES.manifestV1,
-  OCI_MEDIA_TYPES.dockerManifestV2,
-]);
-const IMAGE_INDEX_MEDIA_TYPES = new Set<string>([
-  OCI_MEDIA_TYPES.imageIndexV1,
-  OCI_MEDIA_TYPES.dockerManifestListV2,
-]);
-const TAG_RE = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$/;
-const NAME_RE =
-  /^[a-z0-9]+(?:(?:\.|_|__|-+)[a-z0-9]+)*(?:\/[a-z0-9]+(?:(?:\.|_|__|-+)[a-z0-9]+)*)*$/;
-const OciImageNameSchema = z.string().min(1).max(512).regex(NAME_RE, "invalid OCI image name");
-const OciTagSchema = z.string().min(1).max(128).regex(TAG_RE, "invalid OCI tag");
-const OciDigestSchema = z.string().min(1).max(256).refine(isValidDigest, "invalid OCI digest");
-const UploadUuidSchema = z.uuid();
-const ManifestReferenceSchema = z.string().min(1).max(256);
-const OciTagPageSizeSchema = z.coerce.number().int().min(0).max(10_000);
-const OciReferrersQuerySchema = z.strictObject({
-  artifactType: z.string().min(1).max(255).optional(),
-});
-const OciStartUploadQuerySchema = z.strictObject({
-  digest: OciDigestSchema.optional(),
-  mount: OciDigestSchema.optional(),
-  from: OciImageNameSchema.optional(),
-});
-const OciCommitUploadQuerySchema = z.strictObject({
-  digest: OciDigestSchema,
-});
-const ContentRangeHeaderSchema = z
-  .string()
-  .trim()
-  .regex(/^(?:bytes\s+)?\d+-\d+(?:\/(?:\d+|\*))?$/i);
-const BlobRangeHeaderSchema = z
-  .string()
-  .trim()
-  .regex(/^bytes=\d*-\d*$/i)
-  .refine((value) => !value.includes(","), "multiple ranges are not supported");
-const OciDescriptorSchema = z.looseObject({
-  mediaType: z.string().min(1).max(255),
-  digest: OciDigestSchema,
-  size: z.number().int().safe().min(0),
-  urls: z.array(z.url()).optional(),
-  annotations: z.record(z.string(), z.string()).optional(),
-  artifactType: z.string().min(1).max(255).optional(),
-  platform: z
-    .looseObject({
-      architecture: z.string().min(1).max(64),
-      os: z.string().min(1).max(64),
-      variant: z.string().min(1).max(64).optional(),
-    })
-    .optional(),
-});
-
-type Tx = Parameters<Parameters<RepoContext["db"]["transaction"]>[0]>[0];
-type ManifestReference = { kind: "digest" | "tag"; value: string };
-
-function assertImageName(name: string): void {
-  parseRegistryInput(OciImageNameSchema, name, {
-    code: "NAME_INVALID",
-    message: "invalid image name",
-  });
-}
-
-function parseReference(reference: string): ManifestReference {
-  parseRegistryInput(ManifestReferenceSchema, reference, {
-    code: "NAME_INVALID",
-    message: "invalid manifest reference",
-  });
-  if (isValidDigest(reference)) return { kind: "digest", value: reference };
-  if (reference.startsWith("sha256:")) throw Errors.digestInvalid({ reference });
-  parseRegistryInput(OciTagSchema, reference, { code: "TAG_INVALID", message: "invalid tag" });
-  return { kind: "tag", value: reference };
-}
-
-function assertTag(tag: string): void {
-  parseRegistryInput(OciTagSchema, tag, { code: "TAG_INVALID", message: "invalid tag" });
-}
-
-function normalizeMediaType(value: string | null | undefined): string | null {
-  const mediaType = value?.split(";")[0]?.trim().toLowerCase();
-  return mediaType || null;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
-function validateDescriptor(value: unknown, field: string): OciDescriptor {
-  const parsed = OciDescriptorSchema.safeParse(value);
-  if (parsed.success) return parsed.data as unknown as OciDescriptor;
-  const invalidDigest = parsed.error.issues.some((issue) => issue.path.join(".") === "digest");
-  const invalidSize = parsed.error.issues.some((issue) => issue.path.join(".") === "size");
-  if (invalidDigest) throw Errors.digestInvalid({ reason: `${field}.digest is invalid` });
-  if (invalidSize) throw Errors.sizeInvalid({ reason: `${field}.size is invalid` });
-  throw Errors.manifestInvalid({ reason: `${field} must be a valid descriptor` });
-}
-
-function validateDescriptorArray(value: unknown, field: string): OciDescriptor[] {
-  if (value === undefined) return [];
-  if (!Array.isArray(value)) throw Errors.manifestInvalid({ reason: `${field} must be an array` });
-  return value.map((descriptor, i) => validateDescriptor(descriptor, `${field}[${i}]`));
-}
-
-function manifestMediaType(req: Request, parsed: OciManifest): string {
-  const contentType = normalizeMediaType(req.headers.get("content-type"));
-  const bodyMediaType =
-    typeof parsed.mediaType === "string" ? normalizeMediaType(parsed.mediaType) : null;
-  const mediaType = contentType ?? bodyMediaType;
-  if (!mediaType) throw Errors.manifestInvalid({ reason: "manifest media type is required" });
-  if (!SUPPORTED_MANIFEST_MEDIA_TYPES.has(mediaType)) {
-    throw Errors.unsupported({ reason: "unsupported manifest media type", mediaType });
-  }
-  if (bodyMediaType && bodyMediaType !== mediaType) {
-    throw Errors.manifestInvalid({
-      reason: "content-type does not match manifest mediaType",
-      contentType: mediaType,
-      mediaType: bodyMediaType,
-    });
-  }
-  return mediaType;
-}
-
-function validateManifest(parsed: OciManifest, mediaType: string): void {
-  if (parsed.schemaVersion !== 2) {
-    throw Errors.manifestInvalid({ reason: "schemaVersion must be 2" });
-  }
-  if (IMAGE_MANIFEST_MEDIA_TYPES.has(mediaType)) {
-    validateDescriptor(parsed.config, "config");
-    if (!Array.isArray(parsed.layers)) {
-      throw Errors.manifestInvalid({ reason: "layers must be an array" });
-    }
-    validateDescriptorArray(parsed.layers, "layers");
-    return;
-  }
-  if (IMAGE_INDEX_MEDIA_TYPES.has(mediaType)) {
-    if (!Array.isArray(parsed.manifests)) {
-      throw Errors.manifestInvalid({ reason: "manifests must be an array" });
-    }
-    validateDescriptorArray(parsed.manifests, "manifests");
-    return;
-  }
-  if (mediaType === OCI_ARTIFACT_MANIFEST_MEDIA_TYPE) {
-    if (parsed.artifactType !== undefined && typeof parsed.artifactType !== "string") {
-      throw Errors.manifestInvalid({ reason: "artifactType must be a string" });
-    }
-    validateDescriptorArray(parsed.blobs, "blobs");
-    return;
-  }
-}
-
-function parseManifestRaw(raw: string): OciManifest {
-  try {
-    return JSON.parse(raw) as OciManifest;
-  } catch {
-    return { schemaVersion: 2 };
-  }
-}
-
-function referrerArtifactType(manifest: OciManifest, mediaType: string): string | undefined {
-  if (typeof manifest.artifactType === "string" && manifest.artifactType.length > 0) {
-    return manifest.artifactType;
-  }
-  if (
-    IMAGE_MANIFEST_MEDIA_TYPES.has(mediaType) &&
-    typeof manifest.config?.mediaType === "string" &&
-    manifest.config.mediaType.length > 0
-  ) {
-    return manifest.config.mediaType;
-  }
-  return undefined;
-}
-
-function manifestAnnotations(manifest: OciManifest): Record<string, string> | undefined {
-  if (!isRecord(manifest.annotations)) return undefined;
-  const annotations: Record<string, string> = {};
-  for (const [key, value] of Object.entries(manifest.annotations)) {
-    if (typeof value === "string") annotations[key] = value;
-  }
-  return Object.keys(annotations).length > 0 ? annotations : undefined;
-}
-
-function parseContentRange(value: string | null): { start: number; end: number } | null {
-  if (!value) return null;
-  const parsed = ContentRangeHeaderSchema.safeParse(value);
-  if (!parsed.success)
-    throw Errors.blobUploadInvalid({ reason: "invalid content-range", contentRange: value });
-  const match = /^(?:bytes\s+)?(\d+)-(\d+)(?:\/(?:\d+|\*))?$/i.exec(parsed.data);
-  if (!match)
-    throw Errors.blobUploadInvalid({ reason: "invalid content-range", contentRange: value });
-  const start = Number(match[1]);
-  const end = Number(match[2]);
-  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || end < start) {
-    throw Errors.blobUploadInvalid({ reason: "invalid content-range", contentRange: value });
-  }
-  return { start, end };
-}
-
-function validateContentRange(req: Request, expectedStart: number, chunkLength: number): void {
-  const contentRange = req.headers.get("content-range");
-  if (!contentRange) return;
-  if (chunkLength === 0) {
-    throw Errors.blobUploadInvalid({ reason: "content-range with empty chunk", contentRange });
-  }
-  const range = parseContentRange(contentRange);
-  const expectedEnd = expectedStart + chunkLength - 1;
-  if (!range || range.start !== expectedStart || range.end !== expectedEnd) {
-    throw Errors.blobUploadInvalid({
-      reason: "content-range does not match upload offset",
-      expected: `${expectedStart}-${expectedEnd}`,
-      got: contentRange,
-    });
-  }
-}
-
-function parseBlobRange(value: string | null, size: number): { start: number; end: number } | null {
-  if (!value) return null;
-  const parsed = BlobRangeHeaderSchema.safeParse(value);
-  if (!parsed.success) {
-    throw Errors.blobUploadInvalid({ reason: "invalid range", range: value });
-  }
-  const trimmed = parsed.data;
-  const spec = trimmed.slice("bytes=".length);
-  const match = /^(\d*)-(\d*)$/.exec(spec);
-  if (!match) throw Errors.blobUploadInvalid({ reason: "invalid range", range: value });
-
-  const startRaw = match[1] ?? "";
-  const endRaw = match[2] ?? "";
-  if (!startRaw && !endRaw)
-    throw Errors.blobUploadInvalid({ reason: "invalid range", range: value });
-
-  if (!startRaw) {
-    const suffix = Number(endRaw);
-    if (!Number.isSafeInteger(suffix) || suffix <= 0 || size === 0) {
-      throw Errors.blobUploadInvalid({ reason: "unsatisfiable range", range: value });
-    }
-    return { start: Math.max(0, size - suffix), end: size - 1 };
-  }
-
-  const start = Number(startRaw);
-  const requestedEnd = endRaw ? Number(endRaw) : size - 1;
-  if (
-    !Number.isSafeInteger(start) ||
-    !Number.isSafeInteger(requestedEnd) ||
-    start > requestedEnd ||
-    start >= size
-  ) {
-    throw Errors.blobUploadInvalid({ reason: "unsatisfiable range", range: value });
-  }
-  return { start, end: Math.min(requestedEnd, size - 1) };
-}
 
 function packageVersionDigestEquals(digest: string) {
   return sql`jsonb_extract_path_text((${packageVersions.metadata} #>> '{}')::jsonb, ${"digest"}) = ${digest}`;
-}
-
-/**
- * The CAS blob digests an image manifest references (its config + layers). Index
- * / manifest-list manifests reference sub-manifests (not blobs). OCI artifact
- * manifests reference payloads through `blobs`.
- */
-function manifestBlobDigests(raw: string): string[] {
-  return ociManifestReferences(raw).blobs;
-}
-
-function manifestManifestDigests(raw: string): string[] {
-  return ociManifestReferences(raw).manifests;
 }
 
 export class DockerAdapter implements FormatAdapter {
@@ -450,15 +129,15 @@ export class DockerAdapter implements FormatAdapter {
       case "deleteManifest":
         return this.deleteManifest(image, match.params.reference ?? "", ctx);
       case "startUpload":
-        return this.startUpload(image, req, ctx);
+        return startUpload(image, req, ctx);
       case "uploadStatus":
-        return this.uploadStatus(image, match.params.uuid ?? "", ctx);
+        return uploadStatus(image, match.params.uuid ?? "", ctx);
       case "patchUpload":
-        return this.patchUpload(image, match.params.uuid ?? "", req, ctx);
+        return patchUpload(image, match.params.uuid ?? "", req, ctx);
       case "putUpload":
-        return this.putUpload(image, match.params.uuid ?? "", req, ctx);
+        return putUpload(image, match.params.uuid ?? "", req, ctx);
       case "cancelUpload":
-        return this.cancelUpload(image, match.params.uuid ?? "", ctx);
+        return cancelUpload(image, match.params.uuid ?? "", ctx);
       case "headBlob":
         return this.getBlob(image, match.params.digest ?? "", req, ctx, true);
       case "getBlob":
@@ -670,7 +349,7 @@ export class DockerAdapter implements FormatAdapter {
   private async getManifest(
     image: string,
     reference: string,
-    _req: Request,
+    req: Request,
     ctx: RepoContext,
     headOnly: boolean,
   ): Promise<Response> {
@@ -679,6 +358,9 @@ export class DockerAdapter implements FormatAdapter {
     if (!m) throw Errors.manifestUnknown({ reference });
     if (await isArtifactBlocked(ctx, m.digest))
       throw Errors.denied({ reason: "blocked by scan policy" });
+    if (!acceptsMediaType(req.headers.get("accept"), m.mediaType)) {
+      throw Errors.manifestUnknown({ reference, mediaType: m.mediaType });
+    }
     const headers = {
       "content-type": m.mediaType,
       "docker-content-digest": m.digest,
@@ -1025,185 +707,6 @@ export class DockerAdapter implements FormatAdapter {
     });
   }
 
-  private async startUpload(image: string, req: Request, ctx: RepoContext): Promise<Response> {
-    const url = new URL(req.url);
-    const { digest, mount, from } = parseRegistryInput(
-      OciStartUploadQuerySchema,
-      {
-        digest: url.searchParams.get("digest") ?? undefined,
-        mount: url.searchParams.get("mount") ?? undefined,
-        from: url.searchParams.get("from") ?? undefined,
-      },
-      { code: "DIGEST_INVALID", message: "invalid upload query" },
-    );
-
-    // Cross-repo mount: only honored when the principal can READ a source repo
-    // that actually references the blob (never on global CAS existence alone — that
-    // would let any tenant mount any blob by digest). Otherwise we fall through to a
-    // normal upload session, which is a spec-allowed response to a failed mount.
-    if (mount) {
-      const sources = (
-        await ctx.db
-          .select({
-            orgId: repositories.orgId,
-            id: repositories.id,
-            mountPath: repositories.mountPath,
-            visibility: repositories.visibility,
-            scope: blobRefs.scope,
-          })
-          .from(blobRefs)
-          .innerJoin(repositories, eq(blobRefs.repositoryId, repositories.id))
-          .where(eq(blobRefs.digest, mount))
-      ).map((s) => ({ ...s, full: `${s.mountPath.replace(/^v2\//, "")}/${s.scope}` }));
-      const pool = from ? sources.filter((s) => s.full === from) : sources;
-      for (const src of pool) {
-        const decision = await ctx.authorize("read", {
-          orgId: src.orgId,
-          repositoryId: src.id,
-          repositoryName: src.full,
-          visibility: src.visibility,
-        });
-        if (decision.allowed && (await ctx.blobs.exists(mount))) {
-          await ensureBlobRef(ctx, { digest: mount, kind: "oci_layer", scope: image });
-          return new Response(null, {
-            status: 201,
-            headers: {
-              location: `${ctx.baseUrl}/${ctx.repo.mountPath}/${image}/blobs/${mount}`,
-              "docker-content-digest": mount,
-              "content-length": "0",
-            },
-          });
-        }
-      }
-    }
-
-    // monolithic POST with ?digest=
-    if (digest) {
-      const bytes = await bodyBytes(req);
-      if (computeDigest(bytes) !== digest) throw Errors.digestInvalid();
-      await storeBlobWithRef(ctx, { data: bytes, kind: "oci_layer", scope: image });
-      return new Response(null, {
-        status: 201,
-        headers: {
-          location: `${ctx.baseUrl}/${ctx.repo.mountPath}/${image}/blobs/${digest}`,
-          "docker-content-digest": digest,
-          "content-length": "0",
-        },
-      });
-    }
-
-    // begin a resumable session
-    const uuid = crypto.randomUUID();
-    const key = stagingKey(uuid);
-    await ctx.db.insert(uploadSessions).values({
-      id: uuid,
-      repositoryId: ctx.repo.id,
-      scope: image,
-      storageKey: key,
-      offsetBytes: 0,
-      state: "open",
-      expiresAt: new Date(Date.now() + UPLOAD_TTL_MS),
-    });
-    return new Response(null, {
-      status: 202,
-      headers: {
-        location: `${ctx.baseUrl}/${ctx.repo.mountPath}/${image}/blobs/uploads/${uuid}`,
-        range: "0-0",
-        "docker-upload-uuid": uuid,
-        "content-length": "0",
-      },
-    });
-  }
-
-  private async loadSession(image: string, uuid: string, ctx: RepoContext) {
-    uuid = parseRegistryInput(UploadUuidSchema, uuid, {
-      code: "BLOB_UPLOAD_INVALID",
-      message: "invalid upload uuid",
-    });
-    // Scope to the current repo and image so a leaked UUID cannot be driven
-    // through another repository path in the same tenant repo.
-    const [s] = await ctx.db
-      .select()
-      .from(uploadSessions)
-      .where(
-        and(
-          eq(uploadSessions.id, uuid),
-          eq(uploadSessions.repositoryId, ctx.repo.id),
-          eq(uploadSessions.scope, image),
-        ),
-      )
-      .limit(1);
-    return s ?? null;
-  }
-
-  private async loadSessionForUpdateTx(image: string, uuid: string, ctx: RepoContext, tx: Tx) {
-    uuid = parseRegistryInput(UploadUuidSchema, uuid, {
-      code: "BLOB_UPLOAD_INVALID",
-      message: "invalid upload uuid",
-    });
-    // Scope to the current repo and image so a leaked UUID cannot be driven
-    // through another repository path in the same tenant repo.
-    const [s] = await tx
-      .select()
-      .from(uploadSessions)
-      .where(
-        and(
-          eq(uploadSessions.id, uuid),
-          eq(uploadSessions.repositoryId, ctx.repo.id),
-          eq(uploadSessions.scope, image),
-        ),
-      )
-      .for("update")
-      .limit(1);
-    return s ?? null;
-  }
-
-  private async loadOpenSession(image: string, uuid: string, ctx: RepoContext) {
-    const s = await this.loadSession(image, uuid, ctx);
-    if (!s) throw Errors.blobUploadUnknown({ uuid });
-    if (s.state !== "open") throw Errors.blobUploadUnknown({ uuid, state: s.state });
-    if (s.expiresAt.getTime() <= Date.now()) {
-      await ctx.blobs.deleteKey(s.storageKey).catch(() => {});
-      await deleteUploadChunks(ctx, uploadMultipartState(s.multipart).chunks);
-      await ctx.db
-        .update(uploadSessions)
-        .set({ state: "aborted" })
-        .where(
-          and(
-            eq(uploadSessions.id, uuid),
-            eq(uploadSessions.repositoryId, ctx.repo.id),
-            eq(uploadSessions.scope, image),
-            eq(uploadSessions.state, "open"),
-          ),
-        );
-      throw Errors.blobUploadUnknown({ uuid, reason: "expired" });
-    }
-    return s;
-  }
-
-  private async loadOpenSessionForUpdateTx(image: string, uuid: string, ctx: RepoContext, tx: Tx) {
-    const s = await this.loadSessionForUpdateTx(image, uuid, ctx, tx);
-    if (!s) throw Errors.blobUploadUnknown({ uuid });
-    if (s.state !== "open") throw Errors.blobUploadUnknown({ uuid, state: s.state });
-    if (s.expiresAt.getTime() <= Date.now()) {
-      await ctx.blobs.deleteKey(s.storageKey).catch(() => {});
-      await deleteUploadChunks(ctx, uploadMultipartState(s.multipart).chunks);
-      await tx
-        .update(uploadSessions)
-        .set({ state: "aborted" })
-        .where(
-          and(
-            eq(uploadSessions.id, uuid),
-            eq(uploadSessions.repositoryId, ctx.repo.id),
-            eq(uploadSessions.scope, image),
-            eq(uploadSessions.state, "open"),
-          ),
-        );
-      throw Errors.blobUploadUnknown({ uuid, reason: "expired" });
-    }
-    return s;
-  }
-
   /**
    * True when `digest` is reachable for this image only through manifests that
    * scan policy would deny. A shared CAS digest can be clean for one image while
@@ -1218,160 +721,5 @@ export class DockerAdapter implements FormatAdapter {
       if (!(await isArtifactBlocked(ctx, m.digest))) return false;
     }
     return referenced;
-  }
-
-  private async appendChunk(
-    session: { id: string; storageKey: string; offsetBytes: number; multipart: string | null },
-    chunk: Uint8Array,
-    ctx: RepoContext,
-  ): Promise<{ offset: number; multipart: string }> {
-    const state = uploadMultipartState(session.multipart);
-    const existing = state.chunks.reduce((sum, part) => sum + part.size, 0);
-    if (existing !== session.offsetBytes) {
-      throw Errors.blobUploadInvalid({
-        reason: "staging offset mismatch",
-        expected: session.offsetBytes,
-        actual: existing,
-      });
-    }
-    if (chunk.length > 0) {
-      const key = `${session.storageKey}/chunks/${state.chunks.length}`;
-      await ctx.blobs.putAtKey(key, chunk);
-      state.chunks.push({ key, size: chunk.length });
-    }
-    return {
-      offset: state.chunks.reduce((sum, part) => sum + part.size, 0),
-      multipart: JSON.stringify(state),
-    };
-  }
-
-  private async uploadStatus(image: string, uuid: string, ctx: RepoContext): Promise<Response> {
-    const s = await this.loadOpenSession(image, uuid, ctx);
-    return new Response(null, {
-      status: 204,
-      headers: {
-        range: `0-${Math.max(0, s.offsetBytes - 1)}`,
-        "docker-upload-uuid": uuid,
-        location: `${ctx.baseUrl}/${ctx.repo.mountPath}/${image}/blobs/uploads/${uuid}`,
-      },
-    });
-  }
-
-  private async patchUpload(
-    image: string,
-    uuid: string,
-    req: Request,
-    ctx: RepoContext,
-  ): Promise<Response> {
-    const chunk = await bodyBytes(req);
-    const offset = await ctx.db.transaction(async (tx) => {
-      const s = await this.loadOpenSessionForUpdateTx(image, uuid, ctx, tx);
-      validateContentRange(req, s.offsetBytes, chunk.length);
-      const next = await this.appendChunk(s, chunk, ctx);
-      await tx
-        .update(uploadSessions)
-        .set({ offsetBytes: next.offset, multipart: next.multipart })
-        .where(
-          and(
-            eq(uploadSessions.id, uuid),
-            eq(uploadSessions.repositoryId, ctx.repo.id),
-            eq(uploadSessions.scope, image),
-            eq(uploadSessions.state, "open"),
-          ),
-        );
-      return next.offset;
-    });
-    return new Response(null, {
-      status: 202,
-      headers: {
-        range: `0-${Math.max(0, offset - 1)}`,
-        "docker-upload-uuid": uuid,
-        location: `${ctx.baseUrl}/${ctx.repo.mountPath}/${image}/blobs/uploads/${uuid}`,
-        "content-length": "0",
-      },
-    });
-  }
-
-  private async putUpload(
-    image: string,
-    uuid: string,
-    req: Request,
-    ctx: RepoContext,
-  ): Promise<Response> {
-    const url = new URL(req.url);
-    const { digest } = parseRegistryInput(
-      OciCommitUploadQuerySchema,
-      { digest: url.searchParams.get("digest") ?? undefined },
-      { code: "DIGEST_INVALID", message: "missing or invalid digest" },
-    );
-
-    const chunk = await bodyBytes(req);
-    const committed = await ctx.db.transaction(async (tx) => {
-      const s = await this.loadOpenSessionForUpdateTx(image, uuid, ctx, tx);
-      validateContentRange(req, s.offsetBytes, chunk.length);
-      const state = uploadMultipartState(s.multipart);
-      const existing = state.chunks.reduce((sum, part) => sum + part.size, 0);
-      if (existing !== s.offsetBytes) {
-        throw Errors.blobUploadInvalid({
-          reason: "staging offset mismatch",
-          expected: s.offsetBytes,
-          actual: existing,
-        });
-      }
-      const stored = await storeBlobStreamWithRef(ctx, {
-        data: uploadChunkStream(ctx, state.chunks, chunk),
-        expectedDigest: digest,
-        kind: "oci_layer",
-        scope: image,
-      }).catch((err) => {
-        if (err instanceof Error && err.name === "InvalidDigestError") {
-          throw Errors.digestInvalid({ expected: digest, error: err.message });
-        }
-        throw err;
-      });
-      await tx
-        .update(uploadSessions)
-        .set({ state: "committed", offsetBytes: stored.size })
-        .where(
-          and(
-            eq(uploadSessions.id, uuid),
-            eq(uploadSessions.repositoryId, ctx.repo.id),
-            eq(uploadSessions.scope, image),
-            eq(uploadSessions.state, "open"),
-          ),
-        );
-      return { size: stored.size, storageKey: s.storageKey, chunks: state.chunks };
-    });
-    await ctx.blobs.deleteKey(committed.storageKey).catch(() => {});
-    await deleteUploadChunks(ctx, committed.chunks);
-
-    return new Response(null, {
-      status: 201,
-      headers: {
-        location: `${ctx.baseUrl}/${ctx.repo.mountPath}/${image}/blobs/${digest}`,
-        "docker-content-digest": digest,
-        "content-length": "0",
-        "content-range": `0-${Math.max(0, committed.size - 1)}`,
-        range: `0-${Math.max(0, committed.size - 1)}`,
-      },
-    });
-  }
-
-  private async cancelUpload(image: string, uuid: string, ctx: RepoContext): Promise<Response> {
-    await ctx.db.transaction(async (tx) => {
-      const s = await this.loadOpenSessionForUpdateTx(image, uuid, ctx, tx);
-      await ctx.blobs.deleteKey(s.storageKey).catch(() => {});
-      await deleteUploadChunks(ctx, uploadMultipartState(s.multipart).chunks);
-      await tx
-        .delete(uploadSessions)
-        .where(
-          and(
-            eq(uploadSessions.id, uuid),
-            eq(uploadSessions.repositoryId, ctx.repo.id),
-            eq(uploadSessions.scope, image),
-          ),
-        );
-    });
-    return new Response(null, { status: 204 });
   }
 }
