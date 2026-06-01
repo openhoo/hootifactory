@@ -66,4 +66,49 @@ test.describe("npm registry (real CLI)", () => {
     expect(doc.versions["1.0.0"]).toBeTruthy();
     expect(doc["dist-tags"].latest).toBe("1.0.0");
   });
+
+  test("scoped package supports whoami and dist-tags", async ({ baseURL }) => {
+    test.setTimeout(120_000);
+
+    const owner = await setupOwner(baseURL!);
+    const repoName = "npmrepo-tags";
+    expect(
+      (await createRepo(owner.ctx, owner.orgId, { name: repoName, format: "npm" })).status(),
+    ).toBe(201);
+    const secret = (await (await createToken(owner.ctx, owner.orgId, { name: "npm-tags" })).json())
+      .secret as string;
+
+    const registry = `${baseURL}/npm/${owner.orgSlug}/${repoName}/`;
+    const npmrc = [
+      `registry=${registry}`,
+      `${registry.replace(/^https?:/, "")}:_authToken=${secret}`,
+      "",
+    ].join("\n");
+    const id = Date.now().toString(36);
+    const pkgName = `@hoot-${id}/scoped-pkg`;
+
+    const pubDir = mkdtempSync(join(tmpdir(), "hoot-npm-scoped-"));
+    writeFileSync(
+      join(pubDir, "package.json"),
+      JSON.stringify({ name: pkgName, version: "1.0.0", description: "e2e", main: "index.js" }),
+    );
+    writeFileSync(join(pubDir, "index.js"), `module.exports = ${JSON.stringify(pkgName)};\n`);
+    writeFileSync(join(pubDir, ".npmrc"), npmrc);
+
+    npm(["whoami", "--registry", registry], pubDir);
+    npm(["publish", "--registry", registry, "--access", "public"], pubDir);
+    npm(["dist-tag", "add", `${pkgName}@1.0.0`, "beta", "--registry", registry], pubDir);
+    const tags = npm(["dist-tag", "ls", pkgName, "--registry", registry], pubDir);
+    expect(tags).toContain("latest: 1.0.0");
+    expect(tags).toContain("beta: 1.0.0");
+
+    const insDir = mkdtempSync(join(tmpdir(), "hoot-npm-scoped-ins-"));
+    writeFileSync(join(insDir, ".npmrc"), npmrc);
+    writeFileSync(
+      join(insDir, "package.json"),
+      JSON.stringify({ name: "consumer", version: "1.0.0" }),
+    );
+    npm(["install", `${pkgName}@beta`, "--registry", registry, "--no-audit", "--no-fund"], insDir);
+    expect(existsSync(join(insDir, "node_modules", pkgName, "index.js"))).toBe(true);
+  });
 });

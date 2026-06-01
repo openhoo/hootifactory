@@ -18,7 +18,7 @@ A self-hostable, **multi-format artifact & package manager** — an open-source 
 ```bash
 bun test ./packages      # unit + integration (storage on MinIO, auth/RBAC, route matcher, scanning, OIDC)
 bun run e2e:install      # one-time: Playwright chromium
-bun run test:e2e         # 56 Playwright e2e — drives real npm/docker/pip/helm/go/cargo clients,
+bun run test:e2e         # 57 Playwright e2e — drives real npm/docker/pip/helm/go/cargo clients,
                          # the browser UI, proxy/virtual repos, scanning+policy gates, governance
 ```
 
