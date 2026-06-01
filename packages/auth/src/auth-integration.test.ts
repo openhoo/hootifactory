@@ -18,6 +18,7 @@ import { createApiToken, resolveToken, revokeToken } from "./tokens";
 
 let orgId = "";
 let userId = "";
+let secondOrgId = "";
 
 beforeAll(async () => {
   const [org] = await db
@@ -34,9 +35,15 @@ beforeAll(async () => {
     .returning();
   userId = u!.id;
   await db.insert(memberships).values({ orgId, userId, role: "owner" });
+  const [secondOrg] = await db
+    .insert(organizations)
+    .values({ slug: `test-${crypto.randomUUID().slice(0, 8)}`, displayName: "Second Test Org" })
+    .returning();
+  secondOrgId = secondOrg!.id;
 });
 
 afterAll(async () => {
+  if (secondOrgId) await db.delete(organizations).where(eq(organizations.id, secondOrgId));
   if (orgId) await db.delete(organizations).where(eq(organizations.id, orgId));
   if (userId) await db.delete(users).where(eq(users.id, userId));
 });
@@ -159,6 +166,37 @@ describe("api tokens (DB)", () => {
         repositoryName: repo!.name,
       }),
     ).resolves.toBe("viewer");
+  });
+
+  test("repo bindings with a mismatched org are ignored", async () => {
+    const [repo] = await db
+      .insert(repositories)
+      .values({
+        orgId: secondOrgId,
+        name: `repo-${crypto.randomUUID().slice(0, 8)}`,
+        format: "npm",
+        mountPath: `npm/test-${crypto.randomUUID().slice(0, 8)}`,
+        storagePrefix: `${secondOrgId}/auth-test`,
+      })
+      .returning();
+    await db.insert(roleBindings).values({
+      orgId,
+      userId,
+      repositoryId: repo!.id,
+      role: "owner",
+    });
+
+    await expect(
+      effectiveRoleFor(
+        { kind: "user", userId, username: "alice" },
+        {
+          type: "repository",
+          orgId: secondOrgId,
+          repositoryId: repo!.id,
+          repositoryName: repo!.name,
+        },
+      ),
+    ).resolves.toBeNull();
   });
 });
 

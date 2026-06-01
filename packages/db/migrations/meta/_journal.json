@@ -15,6 +15,13 @@
       "when": 1780254602015,
       "tag": "0001_first_vindicator",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1780293473209,
+      "tag": "0002_role_binding_invariants",
+      "breakpoints": true
     }
   ]
 }

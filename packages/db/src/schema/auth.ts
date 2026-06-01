@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import {
   boolean,
+  check,
   index,
   jsonb,
   pgTable,
@@ -92,6 +93,8 @@ export const roleBindings = pgTable(
   (t) => [
     index("role_bindings_org_idx").on(t.orgId),
     index("role_bindings_user_idx").on(t.userId),
+    index("role_bindings_token_idx").on(t.tokenId),
+    check("role_bindings_one_subject_ck", sql`(${t.userId} is null) <> (${t.tokenId} is null)`),
     uniqueIndex("role_bindings_user_repo_uq")
       .on(t.orgId, t.userId, t.repositoryId)
       .where(sql`${t.userId} is not null`),
@@ -100,6 +103,12 @@ export const roleBindings = pgTable(
     uniqueIndex("role_bindings_user_org_uq")
       .on(t.orgId, t.userId)
       .where(sql`${t.userId} is not null and ${t.repositoryId} is null`),
+    uniqueIndex("role_bindings_token_repo_uq")
+      .on(t.orgId, t.tokenId, t.repositoryId)
+      .where(sql`${t.tokenId} is not null`),
+    uniqueIndex("role_bindings_token_org_uq")
+      .on(t.orgId, t.tokenId)
+      .where(sql`${t.tokenId} is not null and ${t.repositoryId} is null`),
   ],
 );
 

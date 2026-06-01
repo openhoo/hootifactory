@@ -17,7 +17,13 @@ export async function resolveUserRole(
     const [repoBinding] = await db
       .select({ role: roleBindings.role })
       .from(roleBindings)
-      .where(and(eq(roleBindings.userId, userId), eq(roleBindings.repositoryId, repositoryId)))
+      .where(
+        and(
+          eq(roleBindings.userId, userId),
+          eq(roleBindings.orgId, orgId),
+          eq(roleBindings.repositoryId, repositoryId),
+        ),
+      )
       .limit(1);
     if (repoBinding) return repoBinding.role;
   }
@@ -65,6 +71,7 @@ export async function effectiveRoleFor(
             .where(
               and(
                 eq(roleBindings.tokenId, principal.tokenId),
+                eq(roleBindings.orgId, resource.orgId),
                 eq(roleBindings.repositoryId, resource.repositoryId),
               ),
             )
