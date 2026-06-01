@@ -78,6 +78,31 @@ test.describe("nuget registry (real dotnet)", () => {
     const nupkg = join(work, "packages", `${packageId}.${version}.nupkg`);
     expect(existsSync(nupkg)).toBe(true);
 
+    let invalidKeyFailed = false;
+    try {
+      runDotnet(
+        [
+          "nuget",
+          "push",
+          nupkg,
+          "--api-key",
+          `${secret}x`,
+          "--source",
+          source,
+          "--allow-insecure-connections",
+        ],
+        work,
+      );
+    } catch {
+      invalidKeyFailed = true;
+    }
+    expect(invalidKeyFailed).toBe(true);
+
+    const lower = packageId.toLowerCase();
+    expect(
+      (await owner.ctx.get(`/${repo.mountPath}/v3-flatcontainer/${lower}/index.json`)).status(),
+    ).toBe(404);
+
     runDotnet(
       [
         "nuget",
@@ -92,7 +117,6 @@ test.describe("nuget registry (real dotnet)", () => {
       work,
     );
 
-    const lower = packageId.toLowerCase();
     const versions = await (
       await owner.ctx.get(`/${repo.mountPath}/v3-flatcontainer/${lower}/index.json`)
     ).json();
