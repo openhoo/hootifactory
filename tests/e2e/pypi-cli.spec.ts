@@ -1,6 +1,13 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { APIRequestContext } from "@playwright/test";
@@ -35,6 +42,33 @@ function pythonAvailable(): boolean {
     return true;
   } catch {
     return false;
+  }
+}
+
+function commandAvailable(command: string, args: string[]): boolean {
+  try {
+    execFileSync(command, args, { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function run(command: string, args: string[], cwd: string): string {
+  try {
+    return execFileSync(command, args, {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      env: {
+        ...process.env,
+        PYTHON_KEYRING_BACKEND: "keyring.backends.null.Keyring",
+        TWINE_NON_INTERACTIVE: "1",
+      },
+    });
+  } catch (err) {
+    const e = err as { stdout?: string; stderr?: string };
+    throw new Error(`${command} ${args.join(" ")} failed:\n${e.stdout ?? ""}\n${e.stderr ?? ""}`);
   }
 }
 
@@ -169,5 +203,89 @@ test.describe("pypi registry (real pip)", () => {
       throw new Error(`pip install failed:\n${e.stdout ?? ""}\n${e.stderr ?? ""}`);
     }
     expect(existsSync(join(target, pkg, "__init__.py"))).toBe(true);
+  });
+
+  test("python build -> twine upload -> pip install", async ({ baseURL }) => {
+    test.skip(!commandAvailable("twine", ["--version"]), "twine not available");
+    test.skip(
+      !commandAvailable("python3", ["-m", "build", "--version"]),
+      "python build module not available",
+    );
+    test.setTimeout(180_000);
+    const owner = await setupOwner(baseURL!);
+    const repo = "pypitwine";
+    expect(
+      (await createRepo(owner.ctx, owner.orgId, { name: repo, format: "pypi" })).status(),
+    ).toBe(201);
+    const secret = (await (await createToken(owner.ctx, owner.orgId, { name: "twine" })).json())
+      .secret as string;
+
+    const pkg = `hoottwine${Date.now().toString(36)}`;
+    const ver = "1.0.0";
+    const work = mkdtempSync(join(tmpdir(), "hoot-twine-"));
+    mkdirSync(join(work, "src", pkg), { recursive: true });
+    writeFileSync(
+      join(work, "pyproject.toml"),
+      `[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "${pkg}"
+version = "${ver}"
+description = "Hootifactory Twine e2e fixture"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+`,
+    );
+    writeFileSync(join(work, "src", pkg, "__init__.py"), `VALUE = ${JSON.stringify(pkg)}\n`);
+
+    run("python3", ["-m", "build", "--wheel", "--no-isolation"], work);
+    const dist = join(work, "dist");
+    const wheel = readdirSync(dist).find((name) => name.endsWith(".whl"));
+    if (!wheel) throw new Error("python build did not produce a wheel");
+
+    run(
+      "twine",
+      [
+        "upload",
+        "--repository-url",
+        `${baseURL}/pypi/${owner.orgSlug}/${repo}/legacy/`,
+        "--username",
+        "__token__",
+        "--password",
+        secret,
+        "--non-interactive",
+        "--disable-progress-bar",
+        join(dist, wheel),
+      ],
+      work,
+    );
+
+    const simple = await owner.ctx.get(`/pypi/${owner.orgSlug}/${repo}/simple/${pkg}/`);
+    expect(simple.status()).toBe(200);
+    expect(await simple.text()).toContain(wheel);
+
+    const target = mkdtempSync(join(tmpdir(), "hoot-twine-install-"));
+    const host = new URL(baseURL!).host;
+    const indexUrl = `http://__token__:${secret}@${host}/pypi/${owner.orgSlug}/${repo}/simple/`;
+    run(
+      "pip",
+      [
+        "install",
+        "--index-url",
+        indexUrl,
+        "--trusted-host",
+        host.split(":")[0]!,
+        "--no-cache-dir",
+        "--no-deps",
+        "--target",
+        target,
+        `${pkg}==${ver}`,
+      ],
+      work,
+    );
+    expect(readFileSync(join(target, pkg, "__init__.py"), "utf8")).toContain(pkg);
   });
 });
