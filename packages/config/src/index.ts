@@ -22,6 +22,29 @@ const absoluteUrl = z
 
 const httpUrl = absoluteUrl.refine((s) => /^https?:\/\//.test(s), "must be an http(s) URL");
 
+const originList = z
+  .string()
+  .default("")
+  .transform((value, ctx) => {
+    const origins: string[] = [];
+    for (const raw of value.split(",")) {
+      const item = raw.trim();
+      if (!item) continue;
+      try {
+        const url = new URL(item);
+        if (!/^https?:$/.test(url.protocol)) throw new Error("unsupported scheme");
+        origins.push(url.origin);
+      } catch {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `invalid trusted origin "${item}"`,
+        });
+        return z.NEVER;
+      }
+    }
+    return [...new Set(origins)];
+  });
+
 /** Well-known dev-default secret values that must never reach production. */
 const DEV_DEFAULT_SECRETS = {
   SESSION_SECRET: "dev-session-secret-change-me-please-32chars",
@@ -48,6 +71,7 @@ const EnvSchema = z
       .positive()
       .default(100 * 1024 * 1024),
     REGISTRY_PUBLIC_URL: absoluteUrl.default("http://localhost:3000"),
+    API_TRUSTED_ORIGINS: originList,
     /** When set, the API serves the built web UI (single-container deploys). */
     WEB_DIST: z.string().optional(),
 

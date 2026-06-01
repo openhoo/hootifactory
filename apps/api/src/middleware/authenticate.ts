@@ -60,12 +60,16 @@ export async function authenticate(c: Context<AppEnv>): Promise<Principal> {
       const tok = authz.slice(7).trim();
       if (tok.startsWith(TOKEN_PREFIX)) {
         const p = await resolveToken(tok);
-        if (p) return p;
+        if (p) {
+          c.set("authSource", "authorization");
+          return p;
+        }
         invalidCredentials();
       } else {
         // OCI registry Bearer JWT (issued by /token).
         try {
           const verified = await verifyRegistryToken(tok, REGISTRY_TOKEN_SERVICE);
+          c.set("authSource", "authorization");
           return {
             kind: "registryToken",
             subject: verified.subject ?? "anonymous",
@@ -88,16 +92,25 @@ export async function authenticate(c: Context<AppEnv>): Promise<Principal> {
         const pass = decoded.slice(idx + 1);
         if (pass.startsWith(TOKEN_PREFIX)) {
           const p = await resolveToken(pass);
-          if (p) return p;
+          if (p) {
+            c.set("authSource", "authorization");
+            return p;
+          }
         }
         const up = await authenticateUserPassword(user, pass);
-        if (up) return up;
+        if (up) {
+          c.set("authSource", "authorization");
+          return up;
+        }
       }
       invalidCredentials();
     } else if (authz.startsWith(TOKEN_PREFIX)) {
       // Bare token (Cargo sends the token with no scheme).
       const p = await resolveToken(authz.trim());
-      if (p) return p;
+      if (p) {
+        c.set("authSource", "authorization");
+        return p;
+      }
       invalidCredentials();
     } else {
       invalidCredentials();
@@ -109,7 +122,10 @@ export async function authenticate(c: Context<AppEnv>): Promise<Principal> {
   const apiKey = c.req.header("x-nuget-apikey");
   if (apiKey?.startsWith(TOKEN_PREFIX)) {
     const p = await resolveToken(apiKey.trim());
-    if (p) return p;
+    if (p) {
+      c.set("authSource", "nugetApiKey");
+      return p;
+    }
     invalidCredentials();
   } else if (apiKey) {
     invalidCredentials();
@@ -120,9 +136,13 @@ export async function authenticate(c: Context<AppEnv>): Promise<Principal> {
     const s = await resolveSession(session);
     if (s) {
       const p = await userPrincipalById(s.userId);
-      if (p) return p;
+      if (p) {
+        c.set("authSource", "session");
+        return p;
+      }
     }
   }
 
+  c.set("authSource", "anonymous");
   return { kind: "anonymous" };
 }

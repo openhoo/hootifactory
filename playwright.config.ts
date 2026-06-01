@@ -33,6 +33,7 @@ export default defineConfig({
         API_PORT: String(PORT),
         API_HOST: "127.0.0.1",
         REGISTRY_PUBLIC_URL: BASE_URL,
+        API_TRUSTED_ORIGINS: WEB_URL,
         DATABASE_URL: TEST_DATABASE_URL,
         NODE_ENV: "test",
         LOG_LEVEL: "warn",

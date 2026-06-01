@@ -1,6 +1,6 @@
 import { env } from "@hootifactory/config";
 import { RegistryError } from "@hootifactory/core";
-import { Hono } from "hono";
+import { type Context, Hono } from "hono";
 import { logger } from "./lib/logger";
 import { authenticate } from "./middleware/authenticate";
 import { handleRegistryRequest } from "./registry";
@@ -12,6 +12,8 @@ import { v2VersionCheck } from "./routes/v2";
 import type { AppEnv } from "./types";
 
 export const app = new Hono<AppEnv>();
+
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
 function parseContentLength(value: string | undefined): number | "invalid" | null {
   if (value == null) return null;
@@ -42,9 +44,40 @@ app.use("*", async (c, next) => {
   await next();
 });
 
+function trustedOriginsForRequest(requestUrl: string): Set<string> {
+  const origins = new Set(env.API_TRUSTED_ORIGINS);
+  origins.add(new URL(requestUrl).origin);
+  origins.add(new URL(env.REGISTRY_PUBLIC_URL).origin);
+  return origins;
+}
+
+function isTrustedOrigin(requestUrl: string, origin: string): boolean {
+  try {
+    return trustedOriginsForRequest(requestUrl).has(new URL(origin).origin);
+  } catch {
+    return false;
+  }
+}
+
+function rejectsCookieCsrf(c: Context<AppEnv>): boolean {
+  if (SAFE_METHODS.has(c.req.method)) return false;
+  if (c.get("authSource") !== "session") return false;
+  const origin = c.req.header("origin");
+  if (origin) return !isTrustedOrigin(c.req.url, origin);
+  const fetchSite = c.req.header("sec-fetch-site");
+  return fetchSite === "cross-site" || fetchSite === "same-site";
+}
+
 // Identity for every request (defaults to anonymous).
 app.use("*", async (c, next) => {
   c.set("principal", await authenticate(c));
+  await next();
+});
+
+app.use("*", async (c, next) => {
+  if (rejectsCookieCsrf(c)) {
+    return c.json({ error: "cross-origin session request denied" }, 403);
+  }
   await next();
 });
 

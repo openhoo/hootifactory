@@ -15,6 +15,7 @@ describe("environment auth creation defaults", () => {
     const devEnv = loadEnv({ NODE_ENV: "development" });
     expect(devEnv.AUTH_ALLOW_REGISTRATION).toBe(true);
     expect(devEnv.AUTH_ALLOW_ORG_CREATION).toBe(true);
+    expect(devEnv.API_TRUSTED_ORIGINS).toEqual([]);
     expect(devEnv.REGISTRY_MAX_UPLOAD_BYTES).toBe(100 * 1024 * 1024);
     expect(devEnv.SCAN_MAX_BYTES).toBe(100 * 1024 * 1024);
     expect(loadEnv({ NODE_ENV: "test" }).AUTH_ALLOW_REGISTRATION).toBe(true);
@@ -54,5 +55,15 @@ describe("environment auth creation defaults", () => {
     );
     expect(() => loadEnv({ REGISTRY_MAX_UPLOAD_BYTES: "0" })).toThrow();
     expect(() => loadEnv({ REGISTRY_MAX_UPLOAD_BYTES: "-1" })).toThrow();
+  });
+
+  test("trusted API origins are normalized and validated", () => {
+    expect(
+      loadEnv({
+        API_TRUSTED_ORIGINS: "http://localhost:5173/, https://app.example/path",
+      }).API_TRUSTED_ORIGINS,
+    ).toEqual(["http://localhost:5173", "https://app.example"]);
+    expect(() => loadEnv({ API_TRUSTED_ORIGINS: "notaurl" })).toThrow();
+    expect(() => loadEnv({ API_TRUSTED_ORIGINS: "ftp://example.test" })).toThrow();
   });
 });
