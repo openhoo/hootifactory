@@ -16,6 +16,8 @@ describe("environment auth creation defaults", () => {
     expect(devEnv.AUTH_ALLOW_REGISTRATION).toBe(true);
     expect(devEnv.AUTH_ALLOW_ORG_CREATION).toBe(true);
     expect(devEnv.API_TRUSTED_ORIGINS).toEqual([]);
+    expect(devEnv.AUTH_LOGIN_MAX_ATTEMPTS).toBe(5);
+    expect(devEnv.AUTH_LOGIN_WINDOW_SECONDS).toBe(60);
     expect(devEnv.REGISTRY_MAX_UPLOAD_BYTES).toBe(100 * 1024 * 1024);
     expect(devEnv.SCAN_MAX_BYTES).toBe(100 * 1024 * 1024);
     expect(loadEnv({ NODE_ENV: "test" }).AUTH_ALLOW_REGISTRATION).toBe(true);
@@ -65,5 +67,16 @@ describe("environment auth creation defaults", () => {
     ).toEqual(["http://localhost:5173", "https://app.example"]);
     expect(() => loadEnv({ API_TRUSTED_ORIGINS: "notaurl" })).toThrow();
     expect(() => loadEnv({ API_TRUSTED_ORIGINS: "ftp://example.test" })).toThrow();
+  });
+
+  test("login throttle configuration is positive integer based", () => {
+    const env = loadEnv({
+      AUTH_LOGIN_MAX_ATTEMPTS: "7",
+      AUTH_LOGIN_WINDOW_SECONDS: "120",
+    });
+    expect(env.AUTH_LOGIN_MAX_ATTEMPTS).toBe(7);
+    expect(env.AUTH_LOGIN_WINDOW_SECONDS).toBe(120);
+    expect(() => loadEnv({ AUTH_LOGIN_MAX_ATTEMPTS: "0" })).toThrow();
+    expect(() => loadEnv({ AUTH_LOGIN_WINDOW_SECONDS: "-1" })).toThrow();
   });
 });

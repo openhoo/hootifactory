@@ -93,6 +93,8 @@ const EnvSchema = z
     SESSION_SECRET: z.string().min(16).default("dev-session-secret-change-me-please-32chars"),
     AUTH_ALLOW_REGISTRATION: boolish.optional(),
     AUTH_ALLOW_ORG_CREATION: boolish.optional(),
+    AUTH_LOGIN_MAX_ATTEMPTS: z.coerce.number().int().positive().default(5),
+    AUTH_LOGIN_WINDOW_SECONDS: z.coerce.number().int().positive().default(60),
     REGISTRY_JWT_PRIVATE_KEY: z.string().optional(),
     REGISTRY_JWT_PUBLIC_KEY: z.string().optional(),
     REGISTRY_JWT_TTL: z.coerce.number().int().positive().default(300),

@@ -47,6 +47,36 @@ test.describe("authentication", () => {
     expect(res.status()).toBe(401);
   });
 
+  test("repeated failed logins are throttled by username and client IP", async ({ baseURL }) => {
+    const owner = await setupOwner(baseURL!);
+    const anon = await anonContext(baseURL!);
+    const headers = { "x-forwarded-for": "203.0.113.42" };
+
+    for (let i = 0; i < 5; i++) {
+      const res = await anon.post("/api/auth/login", {
+        headers,
+        data: { username: owner.username, password: `wrong-password-${i}` },
+      });
+      expect(res.status()).toBe(401);
+    }
+
+    const throttled = await anon.post("/api/auth/login", {
+      headers,
+      data: { username: owner.username, password: owner.password },
+    });
+    expect(throttled.status()).toBe(429);
+    expect(throttled.headers()["retry-after"]).toMatch(/^\d+$/);
+    expect(await throttled.json()).toEqual({
+      error: "too many login attempts, try again later",
+    });
+
+    const otherIp = await anon.post("/api/auth/login", {
+      headers: { "x-forwarded-for": "203.0.113.43" },
+      data: { username: owner.username, password: owner.password },
+    });
+    expect(otherIp.status()).toBe(200);
+  });
+
   test("login missing fields -> 400", async ({ request }) => {
     expect((await request.post("/api/auth/login", { data: {} })).status()).toBe(400);
   });
