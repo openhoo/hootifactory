@@ -195,6 +195,51 @@ export async function storeBlobWithRef(
 }
 
 /**
+ * Record a repo-scoped reference to an existing CAS blob, maintaining the same
+ * per-org quota and ref_count invariants as a normal upload. Used by OCI
+ * cross-repo mounts, where the bytes are already present and must not be copied.
+ */
+export async function ensureBlobRef(
+  ctx: RepoContext,
+  ref: { digest: string; kind: BlobRefKind; scope: string },
+): Promise<void> {
+  await ctx.db.transaction(async (tx) => {
+    const [b] = await tx
+      .select({ size: blobs.sizeBytes })
+      .from(blobs)
+      .where(eq(blobs.digest, ref.digest))
+      .limit(1);
+    if (!b) throw Errors.blobUnknown({ digest: ref.digest });
+
+    const quota = await lockOrgQuotaTx(tx, ctx.repo.orgId);
+    const chargeOrg = !(await orgAlreadyReferencesDigestTx(tx, ctx.repo.orgId, ref.digest));
+    if (chargeOrg) assertStorageQuotaRowAllows(quota, b.size);
+
+    const refRows = await tx
+      .insert(blobRefs)
+      .values({
+        digest: ref.digest,
+        kind: ref.kind,
+        repositoryId: ctx.repo.id,
+        scope: ref.scope,
+      })
+      .onConflictDoNothing()
+      .returning({ id: blobRefs.id });
+    if (refRows.length === 0) return;
+
+    await tx
+      .update(blobs)
+      .set({
+        refCount: sql`${blobs.refCount} + 1`,
+        state: "active",
+        pendingSince: null,
+      })
+      .where(eq(blobs.digest, ref.digest));
+    if (chargeOrg) await adjustStorageUsedTx(tx, ctx.repo.orgId, b.size);
+  });
+}
+
+/**
  * Release one repo-scoped blob reference. The AFTER DELETE trigger on blob_refs
  * decrements ref_count (and marks the blob pending_delete at zero). Storage
  * quota is refunded when the org no longer references the digest; CAS bytes are

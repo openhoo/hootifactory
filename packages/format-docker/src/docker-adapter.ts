@@ -1,5 +1,6 @@
 import {
   Errors,
+  ensureBlobRef,
   type FormatAdapter,
   findOrCreatePackage,
   type HttpMethod,
@@ -16,7 +17,6 @@ import {
 import {
   and,
   blobRefs,
-  blobs,
   eq,
   inArray,
   isNull,
@@ -701,7 +701,7 @@ export class DockerAdapter implements FormatAdapter {
           visibility: src.visibility,
         });
         if (decision.allowed && (await ctx.blobs.exists(mount))) {
-          await this.ensureRef(ctx, mount, image);
+          await ensureBlobRef(ctx, { digest: mount, kind: "oci_layer", scope: image });
           return new Response(null, {
             status: 201,
             headers: {
@@ -916,22 +916,5 @@ export class DockerAdapter implements FormatAdapter {
       await ctx.db.delete(uploadSessions).where(eq(uploadSessions.id, uuid));
     }
     return new Response(null, { status: 204 });
-  }
-
-  /** Insert a blob_ref for an already-stored blob (cross-repo mount), no byte copy. */
-  private async ensureRef(ctx: RepoContext, digest: string, image: string): Promise<void> {
-    await ctx.db.transaction(async (tx) => {
-      const refRows = await tx
-        .insert(blobRefs)
-        .values({ digest, kind: "oci_layer", repositoryId: ctx.repo.id, scope: image })
-        .onConflictDoNothing()
-        .returning({ id: blobRefs.id });
-      if (refRows.length > 0) {
-        await tx
-          .update(blobs)
-          .set({ refCount: sql`${blobs.refCount} + 1` })
-          .where(eq(blobs.digest, digest));
-      }
-    });
   }
 }

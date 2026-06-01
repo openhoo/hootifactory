@@ -4,7 +4,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type APIRequestContext, type APIResponse, expect, test } from "@playwright/test";
-import { createRepo, createToken, setupOwner } from "./helpers";
+import { createRepo, createToken, setupOwner, uniq } from "./helpers";
 
 function sha256(bytes: Buffer | string): string {
   return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
@@ -111,6 +111,60 @@ test.describe("governance: quotas + retention", () => {
 
     const quota = await (await second.ctx.get(`/api/orgs/${second.orgId}/quota`)).json();
     expect(quota.usedStorageBytes).toBe(bytes.byteLength);
+  });
+
+  test("storage quota blocks cross-org OCI blob mounts before adding a target ref", async ({
+    baseURL,
+  }) => {
+    const owner = await setupOwner(baseURL!);
+    const targetSlug = uniq("target-org");
+    const targetOrgRes = await owner.ctx.post("/api/orgs", {
+      data: { slug: targetSlug, displayName: `Org ${targetSlug}` },
+    });
+    expect(targetOrgRes.status()).toBe(201);
+    const targetOrg = (await targetOrgRes.json()).org as { id: string };
+    const sourceRepoName = uniq("source-oci");
+    const targetRepoName = uniq("target-oci");
+    const sourceRepo = (
+      await (
+        await createRepo(owner.ctx, owner.orgId, { name: sourceRepoName, format: "docker" })
+      ).json()
+    ).repository as { mountPath: string };
+    const targetRepo = (
+      await (
+        await createRepo(owner.ctx, targetOrg.id, { name: targetRepoName, format: "docker" })
+      ).json()
+    ).repository as { mountPath: string };
+    const bytes = Buffer.from("mounted payload that must be charged to target org");
+    const digest = sha256(bytes);
+
+    const sourceUpload = await uploadOciBlob(owner.ctx, sourceRepo.mountPath, "app", bytes);
+    expect(sourceUpload.status()).toBe(201);
+    expect(sourceUpload.headers()["docker-content-digest"]).toBe(digest);
+
+    const mountFrom = `${sourceRepo.mountPath.replace(/^v2\//, "")}/app`;
+    const mountUrl = `/${targetRepo.mountPath}/app/blobs/uploads?mount=${encodeURIComponent(
+      digest,
+    )}&from=${encodeURIComponent(mountFrom)}`;
+
+    await owner.ctx.post(`/api/orgs/${targetOrg.id}/quota`, { data: { maxStorageBytes: 10 } });
+    const blocked = await owner.ctx.post(mountUrl);
+    expect(blocked.status()).toBe(403);
+    expect((await blocked.json()).errors[0].message).toBe("storage quota exceeded");
+
+    await owner.ctx.post(`/api/orgs/${targetOrg.id}/quota`, {
+      data: { maxStorageBytes: 1_000_000 },
+    });
+    const allowed = await owner.ctx.post(mountUrl);
+    expect(allowed.status()).toBe(201);
+    expect(allowed.headers()["docker-content-digest"]).toBe(digest);
+
+    const quota = await (await owner.ctx.get(`/api/orgs/${targetOrg.id}/quota`)).json();
+    expect(quota.usedStorageBytes).toBe(bytes.byteLength);
+
+    const mountedBlob = await owner.ctx.get(`/${targetRepo.mountPath}/app/blobs/${digest}`);
+    expect(mountedBlob.status()).toBe(200);
+    expect(Buffer.from(await mountedBlob.body()).equals(bytes)).toBe(true);
   });
 
   test("retention prunes old versions", async ({ baseURL }) => {
