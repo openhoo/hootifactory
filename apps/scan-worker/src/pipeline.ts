@@ -223,18 +223,19 @@ export async function processScan(artifactId: string): Promise<void> {
   const results = dedupe(found);
 
   const dedupKey = {
+    artifactId: art.id,
     blobDigest: art.digest,
     scanType: "vuln" as const,
     scanner: "hootifactory-heuristic",
     scannerVersion: "1",
     dbVersion: "builtin",
   };
-  // Upsert on the dedup key: identical bytes reuse one scan row, and a retry after
-  // a failure flips it back to succeeded. Findings are still attached per-artifact below.
+  // Upsert on the per-artifact key so retries replace that artifact's scan
+  // result without coupling findings or lifecycle to another artifact that has
+  // the same digest.
   const [scan] = await db
     .insert(scans)
     .values({
-      artifactId: art.id,
       ...dedupKey,
       status: "succeeded",
       startedAt: new Date(),
@@ -243,6 +244,7 @@ export async function processScan(artifactId: string): Promise<void> {
     })
     .onConflictDoUpdate({
       target: [
+        scans.artifactId,
         scans.blobDigest,
         scans.scanType,
         scans.scanner,

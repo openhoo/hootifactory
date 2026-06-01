@@ -96,6 +96,34 @@ function setArtifactState(artifactId: string, state: "pending" | "clean"): void 
   );
 }
 
+function scanRowsForArtifacts(artifactIds: string[]): { id: string; artifactId: string }[] {
+  const out = execFileSync(
+    "bun",
+    [
+      "-e",
+      [
+        'import { db, inArray, scans } from "@hootifactory/db";',
+        "const artifactIds = JSON.parse(process.env.ARTIFACT_IDS);",
+        "const rows = await db",
+        "  .select({ id: scans.id, artifactId: scans.artifactId })",
+        "  .from(scans)",
+        "  .where(inArray(scans.artifactId, artifactIds));",
+        "console.log(JSON.stringify(rows));",
+      ].join("\n"),
+    ],
+    {
+      env: {
+        ...process.env,
+        DATABASE_URL: TEST_DATABASE_URL,
+        ARTIFACT_IDS: JSON.stringify(artifactIds),
+      },
+      stdio: "pipe",
+      encoding: "utf8",
+    },
+  );
+  return JSON.parse(out) as { id: string; artifactId: string }[];
+}
+
 async function publishRawNpm(
   ctx: APIRequestContext,
   mountPath: string,
@@ -284,5 +312,54 @@ test.describe("scanning + policy gates", () => {
 
     const blocked = await owner.ctx.get(`/${repo.mountPath}/${image}/manifests/1.0`);
     expect(blocked.status()).toBe(403);
+  });
+
+  test("identical OCI bytes still get per-artifact scan rows", async ({ baseURL }) => {
+    const owner = await setupOwner(baseURL!);
+    const firstRepo = (
+      await (
+        await createRepo(owner.ctx, owner.orgId, { name: "dedupe-a", format: "docker" })
+      ).json()
+    ).repository as { id: string; mountPath: string };
+    const secondRepo = (
+      await (
+        await createRepo(owner.ctx, owner.orgId, { name: "dedupe-b", format: "docker" })
+      ).json()
+    ).repository as { id: string; mountPath: string };
+
+    const image = `dedupe${Date.now().toString(36)}`;
+    const configBytes = Buffer.from("{}");
+    const layerBytes = Buffer.from("same clean layer");
+    const firstConfig = await uploadOciBlob(owner.ctx, firstRepo.mountPath, image, configBytes);
+    const firstLayer = await uploadOciBlob(owner.ctx, firstRepo.mountPath, image, layerBytes);
+    const secondConfig = await uploadOciBlob(owner.ctx, secondRepo.mountPath, image, configBytes);
+    const secondLayer = await uploadOciBlob(owner.ctx, secondRepo.mountPath, image, layerBytes);
+    expect(secondConfig).toBe(firstConfig);
+    expect(secondLayer).toBe(firstLayer);
+    const firstManifest = await putOciManifest(
+      owner.ctx,
+      firstRepo.mountPath,
+      image,
+      "1.0",
+      firstConfig,
+      firstLayer,
+    );
+    const secondManifest = await putOciManifest(
+      owner.ctx,
+      secondRepo.mountPath,
+      image,
+      "1.0",
+      secondConfig,
+      secondLayer,
+    );
+    expect(secondManifest).toBe(firstManifest);
+
+    const firstArt = await pollArtifact(owner.ctx, firstRepo.id, image);
+    const secondArt = await pollArtifact(owner.ctx, secondRepo.id, image);
+    expect(firstArt.state).toBe("clean");
+    expect(secondArt.state).toBe("clean");
+
+    const scanRows = scanRowsForArtifacts([firstArt.id, secondArt.id]);
+    expect(scanRows.map((s) => s.artifactId).sort()).toEqual([firstArt.id, secondArt.id].sort());
   });
 });

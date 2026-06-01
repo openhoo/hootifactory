@@ -49,9 +49,9 @@ export const artifacts = pgTable(
 );
 
 /**
- * A single scan run by one scanner at a specific scanner+DB version. Deduped on
- * (blobDigest, scanType, scanner, scannerVersion, dbVersion) so identical bytes
- * aren't re-scanned. raw output offloaded to object storage when large.
+ * A single scan run by one scanner at a specific scanner+DB version. Deduped per
+ * artifact so findings, retries, and artifact deletion stay scoped to the
+ * artifact that owns them. raw output offloaded to object storage when large.
  */
 export const scans = pgTable(
   "scans",
@@ -76,6 +76,7 @@ export const scans = pgTable(
   },
   (t) => [
     uniqueIndex("scans_dedup_uq").on(
+      t.artifactId,
       t.blobDigest,
       t.scanType,
       t.scanner,
