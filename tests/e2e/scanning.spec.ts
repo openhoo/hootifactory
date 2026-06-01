@@ -96,7 +96,12 @@ function setArtifactState(artifactId: string, state: "pending" | "clean"): void 
   );
 }
 
-function scanRowsForArtifacts(artifactIds: string[]): { id: string; artifactId: string }[] {
+function scanRowsForArtifacts(artifactIds: string[]): {
+  id: string;
+  artifactId: string;
+  status: string;
+  error: string | null;
+}[] {
   const out = execFileSync(
     "bun",
     [
@@ -105,7 +110,7 @@ function scanRowsForArtifacts(artifactIds: string[]): { id: string; artifactId: 
         'import { db, inArray, scans } from "@hootifactory/db";',
         "const artifactIds = JSON.parse(process.env.ARTIFACT_IDS);",
         "const rows = await db",
-        "  .select({ id: scans.id, artifactId: scans.artifactId })",
+        "  .select({ id: scans.id, artifactId: scans.artifactId, status: scans.status, error: scans.error })",
         "  .from(scans)",
         "  .where(inArray(scans.artifactId, artifactIds));",
         "console.log(JSON.stringify(rows));",
@@ -121,7 +126,34 @@ function scanRowsForArtifacts(artifactIds: string[]): { id: string; artifactId: 
       encoding: "utf8",
     },
   );
-  return JSON.parse(out) as { id: string; artifactId: string }[];
+  return JSON.parse(out) as {
+    id: string;
+    artifactId: string;
+    status: string;
+    error: string | null;
+  }[];
+}
+
+function recordFailure(artifactId: string): void {
+  execFileSync(
+    "bun",
+    [
+      "-e",
+      [
+        'import { recordScanFailure } from "./apps/scan-worker/src/pipeline.ts";',
+        'await recordScanFailure(process.env.ARTIFACT_ID, new Error("forced scan failure"));',
+      ].join("\n"),
+    ],
+    {
+      env: {
+        ...process.env,
+        DATABASE_URL: TEST_DATABASE_URL,
+        ARTIFACT_ID: artifactId,
+      },
+      stdio: "pipe",
+      encoding: "utf8",
+    },
+  );
 }
 
 async function publishRawNpm(
@@ -292,6 +324,31 @@ test.describe("scanning + policy gates", () => {
     const clean = await owner.ctx.get(`/${repo.mountPath}/${pkg}/-/${pkg}-1.0.0.tgz`);
     expect(clean.status()).toBe(200);
     expect(Buffer.from(await clean.body())).toEqual(tarball);
+  });
+
+  test("scan failure recording upserts on the per-artifact scan key", async ({ baseURL }) => {
+    const owner = await setupOwner(baseURL!);
+    const repo = (
+      await (
+        await createRepo(owner.ctx, owner.orgId, { name: "failure-npm", format: "npm" })
+      ).json()
+    ).repository as { id: string; mountPath: string };
+
+    const pkg = `failurepkg${Date.now().toString(36)}`;
+    await publishRawNpm(owner.ctx, repo.mountPath, pkg, {});
+    const art = await pollArtifact(owner.ctx, repo.id, pkg);
+    expect(art.state).toBe("clean");
+
+    recordFailure(art.id);
+    recordFailure(art.id);
+
+    const rows = scanRowsForArtifacts([art.id]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      artifactId: art.id,
+      status: "failed",
+      error: "forced scan failure",
+    });
   });
 
   test("enforce policy blocks OCI manifests whose referenced blobs contain malware", async ({

@@ -344,6 +344,7 @@ export async function recordScanFailure(artifactId: string, err: unknown): Promi
     })
     .onConflictDoUpdate({
       target: [
+        scans.artifactId,
         scans.blobDigest,
         scans.scanType,
         scans.scanner,

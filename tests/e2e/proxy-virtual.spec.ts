@@ -62,6 +62,25 @@ async function repoFrom(res: { json: () => Promise<unknown> }) {
   return (await res.json()) as { repository: { id: string; mountPath: string } };
 }
 
+async function pollArtifact(
+  ctx: Awaited<ReturnType<typeof setupOwner>>["ctx"],
+  repoId: string,
+  name: string,
+  timeoutMs = 60_000,
+): Promise<{ id: string; name: string; version: string | null; state: string }> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const res = await ctx.get(`/api/repositories/${repoId}/artifacts`);
+    const body = (await res.json()) as {
+      artifacts: { id: string; name: string; version: string | null; state: string }[];
+    };
+    const found = body.artifacts.find((a) => a.name === name);
+    if (found && found.state !== "pending") return found;
+    await new Promise((r) => setTimeout(r, 400));
+  }
+  throw new Error(`artifact ${name} was not scanned within ${timeoutMs}ms`);
+}
+
 test.describe("virtual + proxy repositories (real npm)", () => {
   test("virtual repo aggregates two member repos", async ({ baseURL }) => {
     test.setTimeout(120_000);
@@ -144,6 +163,48 @@ test.describe("virtual + proxy repositories (real npm)", () => {
       `/${proxy.mountPath}/${pkg}/-/${pkg}-1.0.0.tgz`,
     );
     expect(localTarballAfterIngest.status()).toBe(200);
+  });
+
+  test("proxy-mirrored packages are recorded and scanned locally", async ({ baseURL }) => {
+    test.setTimeout(120_000);
+    const owner = await setupOwner(baseURL!);
+    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "t" })).json())
+      .secret as string;
+    const upstream = (
+      await repoFrom(
+        await createRepo(owner.ctx, owner.orgId, {
+          name: "npm-scan-up",
+          format: "npm",
+          visibility: "public",
+        }),
+      )
+    ).repository;
+    const proxyName = "npm-proxy-scan";
+    const proxy = (
+      await repoFrom(
+        await createRepo(owner.ctx, owner.orgId, {
+          name: proxyName,
+          format: "npm",
+          kind: "proxy",
+        }),
+      )
+    ).repository;
+    await owner.ctx.post(`/api/repositories/${proxy.id}/upstreams`, {
+      data: { url: `${baseURL}/${upstream.mountPath}/` },
+    });
+    await owner.ctx.post(`/api/orgs/${owner.orgId}/scan-policies`, {
+      data: { repositoryPattern: proxyName, mode: "audit", blockOnSeverity: "high" },
+    });
+
+    const pkg = `proxyscan${Date.now().toString(36)}`;
+    publish(baseURL!, upstream.mountPath, token, pkg);
+
+    const packument = await owner.ctx.get(`/${proxy.mountPath}/${pkg}`);
+    expect(packument.status()).toBe(200);
+
+    const artifact = await pollArtifact(owner.ctx, proxy.id, pkg);
+    expect(artifact.version).toBe("1.0.0");
+    expect(artifact.state).toBe("clean");
   });
 
   test("configuration rejects invalid virtual and proxy topology", async ({ baseURL }) => {

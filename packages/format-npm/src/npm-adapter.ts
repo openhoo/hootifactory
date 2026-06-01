@@ -358,6 +358,12 @@ export class NpmAdapter implements FormatAdapter {
         },
         sizeBytes: tarball.length,
       });
+      await ctx.enqueueScan({
+        digest: stored.digest,
+        name: pkgName,
+        version: ver,
+        mediaType: "application/octet-stream",
+      });
     }
     for (const [tag, ver] of Object.entries(packument["dist-tags"] ?? {})) {
       const vid = await this.versionId(ctx, pkg.id, ver);
