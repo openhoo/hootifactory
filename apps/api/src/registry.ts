@@ -60,6 +60,13 @@ function isRegistryMiss(err: unknown): err is RegistryError {
   );
 }
 
+function stripBodyForFallbackHead(fellBackToGet: boolean, res: Response): Response {
+  if (!fellBackToGet) return res;
+  const headers = new Headers(res.headers);
+  headers.delete("content-length");
+  return new Response(null, { status: res.status, statusText: res.statusText, headers });
+}
+
 async function adapterResponse(
   adapter: FormatAdapter,
   match: RouteMatch,
@@ -162,7 +169,13 @@ export async function handleRegistryRequest(c: Context<AppEnv>): Promise<Respons
   if (!adapter) throw Errors.unsupported({ format: repo.format });
 
   const method = c.req.method as HttpMethod;
-  const match = matchRoute(formatRegistry.routesFor(repo.format), method, rest);
+  const routes = formatRegistry.routesFor(repo.format);
+  let match = matchRoute(routes, method, rest);
+  let fellBackToGet = false;
+  if (!match && method === "HEAD") {
+    match = matchRoute(routes, "GET", rest);
+    fellBackToGet = Boolean(match);
+  }
   if (!match) throw Errors.notFound({ path: rest });
 
   const principal = c.get("principal");
@@ -193,7 +206,11 @@ export async function handleRegistryRequest(c: Context<AppEnv>): Promise<Respons
     throw status === 401 ? Errors.unauthorized(decision.reason) : Errors.denied(decision.reason);
   }
 
-  if (repo.kind === "virtual") return dispatchVirtual(adapter, match, c.req.raw, ctx);
-  if (repo.kind === "proxy") return dispatchProxy(adapter, match, c.req.raw, ctx);
-  return adapter.handle(match, c.req.raw, ctx);
+  const res =
+    repo.kind === "virtual"
+      ? await dispatchVirtual(adapter, match, c.req.raw, ctx)
+      : repo.kind === "proxy"
+        ? await dispatchProxy(adapter, match, c.req.raw, ctx)
+        : await adapter.handle(match, c.req.raw, ctx);
+  return stripBodyForFallbackHead(fellBackToGet, res);
 }

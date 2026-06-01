@@ -193,6 +193,10 @@ test.describe("governance: quotas + retention", () => {
     expect(Object.keys(before.versions)).toHaveLength(3);
     expect(before["dist-tags"].latest).toBe("1.0.0");
     expect(before["dist-tags"].beta).toBe("1.0.0");
+    expect((await owner.ctx.head(`/${repo.mountPath}/${pkg}`)).status()).toBe(200);
+    expect((await owner.ctx.head(`/${repo.mountPath}/${pkg}/-/${pkg}-1.0.0.tgz`)).status()).toBe(
+      200,
+    );
 
     const invalid = await owner.ctx.post(`/api/repositories/${repo.id}/retention/apply`, {
       data: { keepLastN: 0 },

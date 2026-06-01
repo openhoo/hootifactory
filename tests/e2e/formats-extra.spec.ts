@@ -192,6 +192,7 @@ test.describe("cargo sparse registry (protocol)", () => {
     // config.json
     const config = await (await owner.ctx.get(`/${repo.mountPath}/config.json`)).json();
     expect(config.dl).toContain("/api/v1/crates");
+    expect((await owner.ctx.head(`/${repo.mountPath}/config.json`)).status()).toBe(200);
 
     // sparse index (sharded path for a 4+ char name: ho/ot/<name>)
     const indexPath = `${crate.slice(0, 2)}/${crate.slice(2, 4)}/${crate}`;
@@ -205,6 +206,9 @@ test.describe("cargo sparse registry (protocol)", () => {
     const dl = await owner.ctx.get(`/${repo.mountPath}/api/v1/crates/${crate}/1.0.0/download`);
     expect(dl.status()).toBe(200);
     expect(Buffer.from(await dl.body())).toEqual(Buffer.from(crateBytes));
+    expect(
+      (await owner.ctx.head(`/${repo.mountPath}/api/v1/crates/${crate}/1.0.0/download`)).status(),
+    ).toBe(200);
   });
 
   test("duplicate publish is rejected and retention hides pruned versions", async ({ baseURL }) => {
@@ -341,6 +345,10 @@ test.describe("go module proxy (protocol)", () => {
       });
 
     expect((await upload("v1.0.0")).status()).toBe(200);
+    expect((await owner.ctx.head(`/${repo.mountPath}/${moduleName}/@v/list`)).status()).toBe(200);
+    expect((await owner.ctx.head(`/${repo.mountPath}/${moduleName}/@v/v1.0.0.zip`)).status()).toBe(
+      200,
+    );
     expect((await upload("v1.0.0", new TextEncoder().encode("mutated"))).status()).toBe(409);
     expect((await upload("v1.0.1")).status()).toBe(200);
 
@@ -415,6 +423,14 @@ test.describe("nuget v3 (protocol)", () => {
     );
     expect(dl.status()).toBe(200);
     expect(Buffer.from(await dl.body())).toEqual(nupkg);
+    expect((await owner.ctx.head(`/${repo.mountPath}/v3/index.json`)).status()).toBe(200);
+    expect(
+      (
+        await owner.ctx.head(
+          `/${repo.mountPath}/v3-flatcontainer/${lower}/1.0.0/${lower}.1.0.0.nupkg`,
+        )
+      ).status(),
+    ).toBe(200);
 
     const pruned = await (
       await owner.ctx.post(`/api/repositories/${repo.id}/retention/apply`, {
@@ -543,6 +559,8 @@ test.describe("pypi simple API (protocol)", () => {
         })
       ).status(),
     ).toBe(200);
+    expect((await owner.ctx.head(`/${repo.mountPath}/simple/${pkg}/`)).status()).toBe(200);
+    expect((await owner.ctx.head(`/${repo.mountPath}/files/${firstFile}`)).status()).toBe(200);
 
     const pruned = await (
       await owner.ctx.post(`/api/repositories/${repo.id}/retention/apply`, {
