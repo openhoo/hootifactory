@@ -120,4 +120,115 @@ test.describe("cargo sparse registry (real cargo)", () => {
     const unyanked = await (await owner.ctx.get(`/${repo.mountPath}/${indexPath}`)).text();
     expect(unyanked).toContain('"yanked":false');
   });
+
+  test("cargo publish preserves renamed registry dependencies for real cargo resolution", async ({
+    baseURL,
+  }) => {
+    test.setTimeout(180_000);
+    const owner = await setupOwner(baseURL!);
+    const repo = (
+      await (
+        await createRepo(owner.ctx, owner.orgId, {
+          name: "crates-deps-cli",
+          format: "cargo",
+          visibility: "public",
+        })
+      ).json()
+    ).repository as { mountPath: string };
+    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "cargo" })).json())
+      .secret as string;
+
+    const registryUrl = `${baseURL}/${repo.mountPath}/`;
+    const cargoHome = mkdtempSync(join(tmpdir(), "hoot-cargo-deps-home-"));
+    const env = {
+      ...process.env,
+      CARGO_HOME: cargoHome,
+      CARGO_REGISTRIES_HOOTI_TOKEN: token,
+      CARGO_TARGET_DIR: join(cargoHome, "target"),
+    };
+
+    const id = Date.now().toString(36);
+    const depName = `hootclidep${id}`;
+    const mainName = `hootclimain${id}`;
+
+    const depDir = mkdtempSync(join(tmpdir(), "hoot-cargo-dep-"));
+    mkdirSync(join(depDir, "src"), { recursive: true });
+    writeCargoConfig(depDir, registryUrl);
+    writeFileSync(
+      join(depDir, "Cargo.toml"),
+      [
+        "[package]",
+        `name = "${depName}"`,
+        'version = "1.0.0"',
+        'edition = "2024"',
+        'license = "MIT"',
+        'description = "hootifactory dependency crate"',
+        "",
+        "[lib]",
+        'path = "src/lib.rs"',
+        "",
+      ].join("\n"),
+    );
+    writeFileSync(join(depDir, "src", "lib.rs"), 'pub fn dep_value() -> &\'static str { "dep" }\n');
+    cargo(["publish", "--registry", "hooti", "--allow-dirty", "--no-verify"], depDir, env);
+
+    const mainDir = mkdtempSync(join(tmpdir(), "hoot-cargo-main-"));
+    mkdirSync(join(mainDir, "src"), { recursive: true });
+    writeCargoConfig(mainDir, registryUrl);
+    writeFileSync(
+      join(mainDir, "Cargo.toml"),
+      [
+        "[package]",
+        `name = "${mainName}"`,
+        'version = "1.0.0"',
+        'edition = "2024"',
+        'license = "MIT"',
+        'description = "hootifactory dependent crate"',
+        "",
+        "[lib]",
+        'path = "src/lib.rs"',
+        "",
+        "[dependencies]",
+        `dep_alias = { package = "${depName}", version = "1.0.0", registry = "hooti" }`,
+        "",
+      ].join("\n"),
+    );
+    writeFileSync(
+      join(mainDir, "src", "lib.rs"),
+      "pub fn main_value() -> &'static str { dep_alias::dep_value() }\n",
+    );
+    cargo(["publish", "--registry", "hooti", "--allow-dirty", "--no-verify"], mainDir, env);
+
+    const mainIndexPath = `${mainName.slice(0, 2)}/${mainName.slice(2, 4)}/${mainName}`;
+    const mainIndexText = await (await owner.ctx.get(`/${repo.mountPath}/${mainIndexPath}`)).text();
+    const mainIndex = JSON.parse(mainIndexText.trim().split("\n")[0]!);
+    expect(mainIndex.deps[0]).toMatchObject({
+      name: "dep_alias",
+      package: depName,
+      req: "^1.0.0",
+    });
+
+    const consumer = mkdtempSync(join(tmpdir(), "hoot-cargo-deps-consumer-"));
+    mkdirSync(join(consumer, "src"), { recursive: true });
+    writeCargoConfig(consumer, registryUrl);
+    writeFileSync(
+      join(consumer, "Cargo.toml"),
+      [
+        "[package]",
+        'name = "consumer"',
+        'version = "1.0.0"',
+        'edition = "2024"',
+        "",
+        "[dependencies]",
+        `${mainName} = { version = "1.0.0", registry = "hooti" }`,
+        "",
+      ].join("\n"),
+    );
+    writeFileSync(
+      join(consumer, "src", "lib.rs"),
+      `pub fn consumer() -> &'static str { ${mainName}::main_value() }\n`,
+    );
+
+    cargo(["check"], consumer, env);
+  });
 });
