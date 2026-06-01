@@ -1,4 +1,5 @@
 import {
+  createPackageVersion,
   Errors,
   type FormatAdapter,
   findOrCreatePackage,
@@ -8,6 +9,7 @@ import {
   type RepoContext,
   type RouteEntry,
   type RouteMatch,
+  releaseBlobRef,
   safeFetch,
   setDistTag,
   storeBlobWithRef,
@@ -236,12 +238,25 @@ export class NpmAdapter implements FormatAdapter {
         integrity,
         size: tarball.length,
       };
-      const versionId = await upsertPackageVersion(ctx, {
+      const versionId = await createPackageVersion(ctx, {
         packageId: pkg.id,
         version: ver,
         metadata: { manifest, dist },
         sizeBytes: tarball.length,
       });
+      if (!versionId) {
+        if (stored.refCreated) {
+          await releaseBlobRef(ctx, {
+            digest: stored.digest,
+            kind: "npm_tarball",
+            scope: `${name}@${ver}`,
+          });
+        }
+        return Response.json(
+          { error: `cannot publish over the previously published version ${ver}` },
+          { status: 403 },
+        );
+      }
       versionIds.set(ver, versionId);
       await ctx.enqueueScan({
         digest: stored.digest,

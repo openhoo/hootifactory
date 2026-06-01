@@ -1,4 +1,5 @@
 import {
+  createPackageVersion,
   Errors,
   type FormatAdapter,
   findOrCreatePackage,
@@ -8,8 +9,8 @@ import {
   type RepoContext,
   type RouteEntry,
   type RouteMatch,
+  releaseBlobRef,
   storeBlobWithRef,
-  upsertPackageVersion,
 } from "@hootifactory/core";
 import { and, asc, eq, isNull, packages, packageVersions } from "@hootifactory/db";
 
@@ -304,12 +305,22 @@ export class GoAdapter implements FormatAdapter {
       zipSize: zipBytes.length,
       time: new Date().toISOString(),
     };
-    await upsertPackageVersion(ctx, {
+    const versionId = await createPackageVersion(ctx, {
       packageId: pkg.id,
       version,
       metadata: meta as unknown as Record<string, unknown>,
       sizeBytes: zipBytes.length,
     });
+    if (!versionId) {
+      if (stored.refCreated) {
+        await releaseBlobRef(ctx, {
+          digest: stored.digest,
+          kind: "generic_file",
+          scope: `${moduleName}@${version}.zip`,
+        });
+      }
+      return Response.json({ error: "version already exists" }, { status: 409 });
+    }
     await ctx.enqueueScan({
       digest: stored.digest,
       name: moduleName,

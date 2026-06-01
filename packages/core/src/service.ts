@@ -122,6 +122,7 @@ export interface StoredBlob {
   digest: string;
   size: number;
   deduped: boolean;
+  refCreated: boolean;
 }
 
 /**
@@ -148,6 +149,7 @@ export async function storeBlobWithRef(
   // Cheap, best-effort fast-fail so a clearly-over-quota org write never touches S3.
   if (!existingOrgRef) await assertStorageQuota(ctx, opts.data.byteLength);
   const put = await ctx.blobs.put(opts.data);
+  let refCreated = false;
   await ctx.db.transaction(async (tx) => {
     const quota = await lockOrgQuotaTx(tx, ctx.repo.orgId);
     const chargeOrg = !(await orgAlreadyReferencesDigestTx(tx, ctx.repo.orgId, put.digest));
@@ -184,6 +186,7 @@ export async function storeBlobWithRef(
       .onConflictDoNothing()
       .returning({ id: blobRefs.id });
     if (refRows.length > 0) {
+      refCreated = true;
       await tx
         .update(blobs)
         .set({ refCount: sql`${blobs.refCount} + 1` })
@@ -191,7 +194,7 @@ export async function storeBlobWithRef(
       if (chargeOrg) await adjustStorageUsedTx(tx, ctx.repo.orgId, put.size);
     }
   });
-  return put;
+  return { ...put, refCreated };
 }
 
 /**
@@ -364,6 +367,31 @@ export async function upsertPackageVersion(
     .returning({ id: packageVersions.id });
   if (!row) throw new Error("failed to upsert package version");
   return row.id;
+}
+
+export async function createPackageVersion(
+  ctx: RepoContext,
+  opts: {
+    packageId: string;
+    version: string;
+    metadata: Record<string, unknown>;
+    sizeBytes: number;
+  },
+): Promise<string | null> {
+  const publisher = publisherOf(ctx);
+  const [row] = await ctx.db
+    .insert(packageVersions)
+    .values({
+      orgId: ctx.repo.orgId,
+      packageId: opts.packageId,
+      version: opts.version,
+      metadata: opts.metadata,
+      sizeBytes: opts.sizeBytes,
+      ...publisher,
+    })
+    .onConflictDoNothing()
+    .returning({ id: packageVersions.id });
+  return row?.id ?? null;
 }
 
 export async function setDistTag(

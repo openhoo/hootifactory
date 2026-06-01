@@ -1,4 +1,5 @@
 import {
+  createPackageVersion,
   Errors,
   type FormatAdapter,
   findOrCreatePackage,
@@ -9,8 +10,8 @@ import {
   type RepoContext,
   type RouteEntry,
   type RouteMatch,
+  releaseBlobRef,
   storeBlobWithRef,
-  upsertPackageVersion,
 } from "@hootifactory/core";
 import { and, eq, isNull, packages, packageVersions } from "@hootifactory/db";
 import { extractNuspecMeta } from "./nuspec";
@@ -306,12 +307,22 @@ export class NugetAdapter implements FormatAdapter {
       scope: file,
       mediaType: "application/octet-stream",
     });
-    await upsertPackageVersion(ctx, {
+    const versionId = await createPackageVersion(ctx, {
       packageId: pkg.id,
       version,
       metadata: { nupkgDigest: stored.digest, file, displayId: id, listed: true },
       sizeBytes: bytes.length,
     });
+    if (!versionId) {
+      if (stored.refCreated) {
+        await releaseBlobRef(ctx, {
+          digest: stored.digest,
+          kind: "generic_file",
+          scope: file,
+        });
+      }
+      return new Response(null, { status: 409 });
+    }
     await ctx.enqueueScan({
       digest: stored.digest,
       name: lower,
