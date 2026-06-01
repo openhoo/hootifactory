@@ -110,5 +110,10 @@ test.describe("npm registry (real CLI)", () => {
     );
     npm(["install", `${pkgName}@beta`, "--registry", registry, "--no-audit", "--no-fund"], insDir);
     expect(existsSync(join(insDir, "node_modules", pkgName, "index.js"))).toBe(true);
+
+    npm(["dist-tag", "rm", pkgName, "beta", "--registry", registry], pubDir);
+    const afterRm = npm(["dist-tag", "ls", pkgName, "--registry", registry], pubDir);
+    expect(afterRm).toContain("latest: 1.0.0");
+    expect(afterRm).not.toContain("beta:");
   });
 });

@@ -70,6 +70,7 @@ export class NpmAdapter implements FormatAdapter {
       { method: "GET", pattern: "/-/v1/search", handlerId: "search" },
       { method: "GET", pattern: "/-/package/:pkg+/dist-tags", handlerId: "distTagsList" },
       { method: "PUT", pattern: "/-/package/:pkg+/dist-tags/:tag", handlerId: "distTagSet" },
+      { method: "DELETE", pattern: "/-/package/:pkg+/dist-tags/:tag", handlerId: "distTagDelete" },
       { method: "GET", pattern: "/:pkg+/-/:filename", handlerId: "tarball" },
       { method: "PUT", pattern: "/:pkg+", handlerId: "publish" },
       { method: "GET", pattern: "/:pkg+", handlerId: "packument" },
@@ -102,6 +103,8 @@ export class NpmAdapter implements FormatAdapter {
         return this.distTagsList(match.params.pkg ?? "", ctx);
       case "distTagSet":
         return this.distTagSet(match.params.pkg ?? "", match.params.tag ?? "", req, ctx);
+      case "distTagDelete":
+        return this.distTagDelete(match.params.pkg ?? "", match.params.tag ?? "", ctx);
       default:
         throw Errors.notFound();
     }
@@ -296,6 +299,15 @@ export class NpmAdapter implements FormatAdapter {
     const versionId = await this.versionId(ctx, pkg.id, version);
     if (!versionId) return Response.json({ error: "version not found" }, { status: 404 });
     await setDistTag(ctx, pkg.id, tag, versionId);
+    return Response.json({ ok: true });
+  }
+
+  private async distTagDelete(name: string, tag: string, ctx: RepoContext): Promise<Response> {
+    const pkg = await this.findPackage(ctx, name);
+    if (!pkg) return Response.json({ error: "Not found" }, { status: 404 });
+    await ctx.db
+      .delete(versionTags)
+      .where(and(eq(versionTags.packageId, pkg.id), eq(versionTags.tag, tag)));
     return Response.json({ ok: true });
   }
 
