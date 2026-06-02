@@ -16,7 +16,7 @@ import {
 import { blobStore } from "@hootifactory/storage";
 import type { PackageFormat, Visibility } from "@hootifactory/types";
 import type { ResolvedRepo } from "./format/adapter";
-import { releaseRepoDigestTx } from "./service";
+import { deleteUnreferencedCasBlob, releaseRepoDigestTx } from "./service";
 
 const V2_FORMATS = new Set<PackageFormat>(["docker", "oci", "helm"]);
 const OCI_REPOSITORY_NAME_RE =
@@ -259,7 +259,8 @@ export async function applyRetention(repositoryId: string, keepLastN: number): P
     return count;
   });
 
-  // Delete reclaimed objects from the CAS after the DB transaction commits.
-  for (const digest of casToDelete) await blobStore.delete(digest).catch(() => {});
+  // Delete reclaimed objects from the CAS only if no concurrent upload reactivated them.
+  for (const digest of casToDelete)
+    await deleteUnreferencedCasBlob({ db, blobs: blobStore }, digest);
   return pruned;
 }

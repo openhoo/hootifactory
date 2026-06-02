@@ -118,6 +118,33 @@ function expireUploadSession(uuid: string): void {
   );
 }
 
+function casBlobState(digest: string): { dbRows: number; exists: boolean } {
+  const out = execFileSync(
+    "bun",
+    [
+      "-e",
+      [
+        'import { blobStore } from "@hootifactory/storage";',
+        'import { blobs, db, eq } from "@hootifactory/db";',
+        "const rows = await db",
+        "  .select({ digest: blobs.digest })",
+        "  .from(blobs)",
+        "  .where(eq(blobs.digest, process.env.DIGEST));",
+        "console.log(JSON.stringify({",
+        "  dbRows: rows.length,",
+        "  exists: await blobStore.exists(process.env.DIGEST),",
+        "}));",
+      ].join("\n"),
+    ],
+    {
+      env: { ...process.env, DATABASE_URL: TEST_DATABASE_URL, DIGEST: digest },
+      stdio: "pipe",
+      encoding: "utf8",
+    },
+  );
+  return JSON.parse(out);
+}
+
 async function putManifest(
   ctx: APIRequestContext,
   mountPath: string,
@@ -865,5 +892,28 @@ test.describe("docker registry protocol authorization", () => {
     const expiredStatus = await owner.ctx.get(expired.path);
     expect(expiredStatus.status()).toBe(404);
     expect((await expiredStatus.json()).errors[0].code).toBe("BLOB_UPLOAD_UNKNOWN");
+  });
+
+  test("quota-rejected resumable upload does not leave orphaned CAS bytes", async ({ baseURL }) => {
+    const owner = await setupOwner(baseURL!);
+    const repo = (
+      await (
+        await createRepo(owner.ctx, owner.orgId, { name: "quota-containers", format: "docker" })
+      ).json()
+    ).repository as { mountPath: string };
+    await owner.ctx.post(`/api/orgs/${owner.orgId}/quota`, { data: { maxStorageBytes: 1 } });
+
+    const bytes = Buffer.from("stream quota rollback payload");
+    const digest = sha256(bytes);
+    const upload = await startUpload(owner.ctx, repo.mountPath, "quota");
+    const rejected = await owner.ctx.put(`${upload.path}?digest=${digest}`, {
+      headers: {
+        "content-type": "application/octet-stream",
+        "content-range": `0-${bytes.length - 1}`,
+      },
+      data: bytes,
+    });
+    expect(rejected.status()).toBe(403);
+    expect(casBlobState(digest)).toEqual({ dbRows: 0, exists: false });
   });
 });

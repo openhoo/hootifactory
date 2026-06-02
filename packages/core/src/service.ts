@@ -1,6 +1,7 @@
 export { isArtifactBlocked, REGISTRY_TOKEN_SERVICE } from "./service-artifacts";
 export {
   type BlobRefKind,
+  deleteUnreferencedCasBlob,
   ensureBlobRef,
   releaseBlobRef,
   releaseRepoDigestTx,
