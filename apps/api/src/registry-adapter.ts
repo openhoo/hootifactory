@@ -79,3 +79,19 @@ export async function adapterResponse(
     },
   );
 }
+
+export async function adapterResponseOrRegistryError(
+  adapter: FormatAdapter,
+  match: RouteMatch,
+  req: Request,
+  ctx: RepoContext,
+): Promise<Response> {
+  try {
+    return await adapterResponse(adapter, match, req, ctx);
+  } catch (err) {
+    if (err instanceof RegistryError) {
+      return registryErrorToFormatResponse(adapter.format, err);
+    }
+    throw err;
+  }
+}
