@@ -2,24 +2,20 @@ import { applyRetention } from "@hootifactory/core";
 import {
   and,
   artifacts,
-  blobRefs,
-  blobs,
-  count,
   db,
   desc,
   eq,
   findings,
   isNull,
-  packageVersions,
   quotas,
   repositories,
   scanPolicies,
-  sql,
 } from "@hootifactory/db";
 import type { Hono } from "hono";
 import type { AppEnv } from "../types";
 import { uuidParams, validateJsonBody, validateParams } from "../validation";
 import { audit } from "./http";
+import { calculateOrgQuotaUsage, upsertOrgQuota } from "./ui-quota";
 import {
   requireOrgAccess,
   requireReadableParentRepo,
@@ -167,37 +163,8 @@ export function registerGovernanceRoutes(router: Hono<AppEnv>): void {
     if (!parsedBody.ok) return parsedBody.response;
     const maxStorageBytes = parsedBody.data.maxStorageBytes ?? null;
     const maxArtifacts = parsedBody.data.maxArtifacts ?? null;
-    const [agg] = await db
-      .select({ used: sql<number>`coalesce(sum(${blobs.sizeBytes}), 0)` })
-      .from(blobs)
-      .where(
-        sql`${blobs.digest} in (select distinct ${blobRefs.digest} from ${blobRefs} join ${repositories} on ${blobRefs.repositoryId} = ${repositories.id} where ${repositories.orgId} = ${orgId})`,
-      );
-    const [artifactAgg] = await db
-      .select({ used: count() })
-      .from(packageVersions)
-      .where(eq(packageVersions.orgId, orgId));
-    const usedStorageBytes = Number(agg?.used ?? 0);
-    const usedArtifacts = artifactAgg?.used ?? 0;
-    const [existing] = await db
-      .select({ id: quotas.id })
-      .from(quotas)
-      .where(and(eq(quotas.orgId, orgId), isNull(quotas.repositoryId)))
-      .limit(1);
-    if (existing) {
-      await db
-        .update(quotas)
-        .set({ maxStorageBytes, maxArtifacts, usedStorageBytes, usedArtifacts })
-        .where(eq(quotas.id, existing.id));
-    } else {
-      await db.insert(quotas).values({
-        orgId,
-        maxStorageBytes,
-        maxArtifacts,
-        usedStorageBytes,
-        usedArtifacts,
-      });
-    }
+    const usage = await calculateOrgQuotaUsage(orgId);
+    await upsertOrgQuota(orgId, { maxStorageBytes, maxArtifacts }, usage);
     audit({
       orgId,
       action: "quota.set",
