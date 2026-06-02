@@ -26,6 +26,7 @@ import {
   packageVersions,
   sql,
 } from "@hootifactory/db";
+import { buildOciBlobResponse } from "./oci-blobs";
 import { parseOciManifestPutRequest } from "./oci-manifest-put";
 import {
   buildOciReferrerDescriptor,
@@ -38,7 +39,6 @@ import {
   assertImageName,
   manifestBlobDigests,
   OciDigestSchema,
-  parseBlobRange,
   parseReference,
 } from "./oci-validation";
 
@@ -538,41 +538,14 @@ export class DockerAdapter implements FormatAdapter {
     }
     const stat = await ctx.blobs.stat(digest);
     if (!stat) throw Errors.blobUnknown({ digest });
-    const headers: Record<string, string> = {
-      "accept-ranges": "bytes",
-      "docker-content-digest": digest,
-      "content-length": String(stat.size),
-      "content-type": "application/octet-stream",
-    };
-    if (headOnly) return new Response(null, { status: 200, headers });
-    let range: { start: number; end: number } | null = null;
-    try {
-      range = parseBlobRange(req.headers.get("range"), stat.size);
-    } catch (err) {
-      if (err instanceof Error) {
-        return new Response(null, {
-          status: 416,
-          headers: {
-            "accept-ranges": "bytes",
-            "content-range": `bytes */${stat.size}`,
-            "content-length": "0",
-          },
-        });
-      }
-      throw err;
-    }
-    if (range) {
-      headers["content-range"] = `bytes ${range.start}-${range.end}/${stat.size}`;
-      headers["content-length"] = String(range.end - range.start + 1);
-      const body = await new Response(
-        ctx.blobs.getRange(digest, range.start, range.end + 1),
-      ).arrayBuffer();
-      return new Response(body, {
-        status: 206,
-        headers,
-      });
-    }
-    return new Response(ctx.blobs.get(digest), { status: 200, headers });
+    return buildOciBlobResponse({
+      digest,
+      size: stat.size,
+      rangeHeader: req.headers.get("range"),
+      headOnly,
+      get: () => ctx.blobs.get(digest),
+      getRange: (start, end) => ctx.blobs.getRange(digest, start, end),
+    });
   }
 
   private async deleteBlob(image: string, digest: string, ctx: RepoContext): Promise<Response> {
