@@ -8,8 +8,22 @@ export interface GoVersionMeta {
 }
 
 /** Decode Go module "!"-escaping (an uppercase letter is encoded as `!` + lowercase). */
-export function decodeBang(value: string): string {
-  return value.replace(/!([a-z])/g, (_match, char: string) => char.toUpperCase());
+export function decodeBang(value: string): string | null {
+  let decoded = "";
+  for (let i = 0; i < value.length; i++) {
+    const char = value[i];
+    if (!char) continue;
+    if (char >= "A" && char <= "Z") return null;
+    if (char !== "!") {
+      decoded += char;
+      continue;
+    }
+    const escaped = value[i + 1];
+    if (!escaped || escaped < "a" || escaped > "z") return null;
+    decoded += escaped.toUpperCase();
+    i++;
+  }
+  return decoded;
 }
 
 /** Canonical Go semver: vMAJOR.MINOR.PATCH with optional -prerelease / +build. */
@@ -45,8 +59,11 @@ export const GoUploadFieldsSchema = z.strictObject({
   zip: z.custom<File>((value) => value instanceof File, { message: "missing zip" }),
 });
 
+const GO_PSEUDO_VERSION_RE =
+  /^v\d+\.(?:0\.0-|\d+\.\d+-(?:[^+]*\.)?0\.)\d{14}-[A-Za-z0-9]+(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+
 export function isPseudoVersion(version: string): boolean {
-  return /^v\d+\.\d+\.\d+-(?:0\.|[0-9A-Za-z.-]+\.)?0\.\d{14}-[0-9a-f]{12}$/i.test(version);
+  return GO_PSEUDO_VERSION_RE.test(version) && parseSemver(version) != null;
 }
 
 /** Split a vX.Y.Z[-pre] version into numeric parts + prerelease for comparison. */

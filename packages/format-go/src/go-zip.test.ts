@@ -9,26 +9,42 @@ function u32(value: number): number[] {
   return [value & 0xff, (value >> 8) & 0xff, (value >> 16) & 0xff, (value >> 24) & 0xff];
 }
 
-function makeStoredZip(entries: Record<string, string>): Uint8Array {
+interface ZipEntryInput {
+  name: string;
+  data: string;
+  method?: number;
+  declaredCompressedSize?: number;
+  declaredUncompressedSize?: number;
+  localName?: string;
+}
+
+function makeStoredZip(entries: Record<string, string> | ZipEntryInput[]): Uint8Array {
+  const normalized: ZipEntryInput[] = Array.isArray(entries)
+    ? entries
+    : Object.entries(entries).map(([name, data]) => ({ name, data }));
   const locals: number[] = [];
   const central: number[] = [];
-  for (const [filename, content] of Object.entries(entries)) {
-    const name = new TextEncoder().encode(filename);
-    const data = new TextEncoder().encode(content);
+  for (const entry of normalized) {
+    const localName = new TextEncoder().encode(entry.localName ?? entry.name);
+    const centralName = new TextEncoder().encode(entry.name);
+    const data = new TextEncoder().encode(entry.data);
+    const method = entry.method ?? 0;
+    const compressedSize = entry.declaredCompressedSize ?? data.byteLength;
+    const uncompressedSize = entry.declaredUncompressedSize ?? data.byteLength;
     const localOffset = locals.length;
     locals.push(
       ...u32(0x04034b50),
       ...u16(20),
       ...u16(0),
-      ...u16(0),
+      ...u16(method),
       ...u16(0),
       ...u16(0),
       ...u32(0),
-      ...u32(data.byteLength),
-      ...u32(data.byteLength),
-      ...u16(name.byteLength),
+      ...u32(compressedSize),
+      ...u32(uncompressedSize),
+      ...u16(localName.byteLength),
       ...u16(0),
-      ...name,
+      ...localName,
       ...data,
     );
     central.push(
@@ -36,20 +52,20 @@ function makeStoredZip(entries: Record<string, string>): Uint8Array {
       ...u16(20),
       ...u16(20),
       ...u16(0),
-      ...u16(0),
+      ...u16(method),
       ...u16(0),
       ...u16(0),
       ...u32(0),
-      ...u32(data.byteLength),
-      ...u32(data.byteLength),
-      ...u16(name.byteLength),
+      ...u32(compressedSize),
+      ...u32(uncompressedSize),
+      ...u16(centralName.byteLength),
       ...u16(0),
       ...u16(0),
       ...u16(0),
       ...u16(0),
       ...u32(0),
       ...u32(localOffset),
-      ...name,
+      ...centralName,
     );
   }
   const centralOffset = locals.length;
@@ -57,8 +73,8 @@ function makeStoredZip(entries: Record<string, string>): Uint8Array {
     ...u32(0x06054b50),
     ...u16(0),
     ...u16(0),
-    ...u16(Object.keys(entries).length),
-    ...u16(Object.keys(entries).length),
+    ...u16(normalized.length),
+    ...u16(normalized.length),
     ...u32(central.length),
     ...u32(centralOffset),
     ...u16(0),
@@ -94,6 +110,131 @@ describe("Go module zip helpers", () => {
         "v1.2.3",
       ),
     ).toBe("zip entries must be rooted at module@version");
+  });
+
+  test("enforces Go module zip size limits and declared entry sizes", () => {
+    expect(
+      validateGoModuleZip(
+        makeStoredZip([
+          {
+            name: "example.com/hoot@v1.2.3/go.mod",
+            data: "module example.com/hoot\n",
+            declaredUncompressedSize: 16 * 1024 * 1024 + 1,
+          },
+        ]),
+        "example.com/hoot",
+        "v1.2.3",
+      ),
+    ).toBe("go.mod is too large");
+
+    expect(
+      validateGoModuleZip(
+        makeStoredZip([
+          { name: "example.com/hoot@v1.2.3/go.mod", data: "module example.com/hoot\n" },
+          {
+            name: "example.com/hoot@v1.2.3/LICENSE",
+            data: "license\n",
+            declaredUncompressedSize: 16 * 1024 * 1024 + 1,
+          },
+        ]),
+        "example.com/hoot",
+        "v1.2.3",
+      ),
+    ).toBe("LICENSE is too large");
+
+    expect(
+      validateGoModuleZip(
+        makeStoredZip([
+          { name: "example.com/hoot@v1.2.3/go.mod", data: "module example.com/hoot\n" },
+          {
+            name: "example.com/hoot@v1.2.3/huge.bin",
+            data: "tiny",
+            declaredUncompressedSize: 500 * 1024 * 1024 + 1,
+          },
+        ]),
+        "example.com/hoot",
+        "v1.2.3",
+      ),
+    ).toBe("zip contents are too large");
+
+    expect(
+      validateGoModuleZip(
+        makeStoredZip([
+          {
+            name: "example.com/hoot@v1.2.3/go.mod",
+            data: "module example.com/hoot\n",
+            declaredUncompressedSize: 100,
+          },
+        ]),
+        "example.com/hoot",
+        "v1.2.3",
+      ),
+    ).toBe("zip entry size does not match header");
+  });
+
+  test("rejects case-fold collisions and nested go.mod files", () => {
+    expect(
+      validateGoModuleZip(
+        makeStoredZip({
+          "example.com/hoot@v1.2.3/go.mod": "module example.com/hoot\n",
+          "example.com/hoot@v1.2.3/Hoot.go": "package hoot\n",
+          "example.com/hoot@v1.2.3/hoot.go": "package hoot\n",
+        }),
+        "example.com/hoot",
+        "v1.2.3",
+      ),
+    ).toBe("zip contains case-insensitive path collision");
+
+    expect(
+      validateGoModuleZip(
+        makeStoredZip({
+          "example.com/hoot@v1.2.3/go.mod": "module example.com/hoot\n",
+          "example.com/hoot@v1.2.3/sub/go.mod": "module example.com/hoot/sub\n",
+        }),
+        "example.com/hoot",
+        "v1.2.3",
+      ),
+    ).toBe("go.mod file not in module root directory");
+
+    expect(
+      validateGoModuleZip(
+        makeStoredZip({
+          "example.com/hoot@v1.2.3/Go.mod": "module example.com/hoot\n",
+        }),
+        "example.com/hoot",
+        "v1.2.3",
+      ),
+    ).toBe("go.mod file not in module root directory");
+  });
+
+  test("rejects unsupported compression methods and local filename mismatches", () => {
+    expect(
+      validateGoModuleZip(
+        makeStoredZip([
+          {
+            name: "example.com/hoot@v1.2.3/go.mod",
+            data: "module example.com/hoot\n",
+            method: 12,
+          },
+        ]),
+        "example.com/hoot",
+        "v1.2.3",
+      ),
+    ).toBe("zip entry uses an unsupported compression method");
+
+    expect(
+      validateGoModuleZip(
+        makeStoredZip([
+          {
+            name: "example.com/hoot@v1.2.3/go.mod",
+            localName: "example.com/hoot@v1.2.3/other.mod",
+            data: "module example.com/hoot\n",
+          },
+        ]),
+        "example.com/hoot",
+        "v1.2.3",
+      ),
+    ).toBe("zip local filename does not match central directory");
   });
 
   test("decodes the first go.mod module directive", () => {

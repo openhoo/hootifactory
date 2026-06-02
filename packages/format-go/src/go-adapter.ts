@@ -133,7 +133,10 @@ export class GoAdapter implements FormatAdapter {
     if (!pkg) throw Errors.notFound();
     const dot = file.lastIndexOf(".");
     if (dot < 0) throw Errors.notFound();
-    const version = decodeBang(file.slice(0, dot));
+    const version = parseRegistryInput(GoVersionSchema, decodeBang(file.slice(0, dot)), {
+      code: "NAME_INVALID",
+      message: "invalid Go version",
+    });
     const ext = file.slice(dot + 1);
     const [row] = await ctx.db
       .select({ metadata: packageVersions.metadata, createdAt: packageVersions.createdAt })
