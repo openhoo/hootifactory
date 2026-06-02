@@ -34,10 +34,16 @@ export function registerTokenRoutes(router: Hono<AppEnv>): void {
         name: apiTokens.name,
         prefix: apiTokens.tokenPrefix,
         type: apiTokens.type,
-        scopes: apiTokens.scopes,
+        grants: apiTokens.grants,
         role: apiTokens.role,
         expiresAt: apiTokens.expiresAt,
         revokedAt: apiTokens.revokedAt,
+        revokedByUserId: apiTokens.revokedByUserId,
+        revokedByTokenId: apiTokens.revokedByTokenId,
+        revocationReason: apiTokens.revocationReason,
+        rotatedAt: apiTokens.rotatedAt,
+        rotatedByUserId: apiTokens.rotatedByUserId,
+        rotatedByTokenId: apiTokens.rotatedByTokenId,
         lastUsedAt: apiTokens.lastUsedAt,
         createdAt: apiTokens.createdAt,
       })
@@ -45,7 +51,14 @@ export function registerTokenRoutes(router: Hono<AppEnv>): void {
       .leftJoin(users, eq(apiTokens.ownerUserId, users.id))
       .where(where)
       .orderBy(desc(apiTokens.createdAt));
-    return c.json({ tokens: rows });
+    return c.json({
+      tokens: rows.map((token) => ({
+        ...token,
+        scopes: token.grants
+          .filter((grant) => grant.resource === "repository")
+          .map((grant) => ({ repository: grant.repository, actions: grant.actions })),
+      })),
+    });
   });
 
   router.delete("/orgs/:orgId/tokens/:tokenId", async (c) => {
@@ -62,7 +75,7 @@ export function registerTokenRoutes(router: Hono<AppEnv>): void {
       const decision = await authorize(p, "admin", { type: "org", orgId });
       if (!decision.allowed) return c.json({ error: "forbidden" }, 403);
     }
-    await revokeToken(tokenId);
+    await revokeToken(tokenId, { userId: p.userId });
     audit({
       orgId,
       action: "token.revoke",
@@ -92,7 +105,7 @@ export function registerTokenRoutes(router: Hono<AppEnv>): void {
       userId: p.userId,
       orgId,
       requestedRole: request.requestedRole,
-      scopes: request.scopes,
+      grants: request.grants,
     });
     if (!grant.ok) return c.json({ error: grant.error }, 403);
 
@@ -101,7 +114,7 @@ export function registerTokenRoutes(router: Hono<AppEnv>): void {
       ownerUserId: p.userId,
       name: request.name,
       type: request.type,
-      scopes: request.scopes,
+      grants: request.grants,
       role: request.requestedRole,
       expiresAt: request.expiresAt,
     });

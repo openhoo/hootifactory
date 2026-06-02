@@ -12,6 +12,7 @@ import {
   rejectCrossOriginSessionWrites,
 } from "./middleware/request-safety";
 import { handleRegistryRequest } from "./registry";
+import { apiV1Router } from "./routes/api-v1";
 import { authRouter } from "./routes/auth";
 import { healthRouter } from "./routes/health";
 import { tokenRouter } from "./routes/token";
@@ -71,6 +72,7 @@ app.onError((err, c) => {
 // Explicit app routes (evaluated before the registry catch-all).
 app.route("/", healthRouter);
 app.route("/api/auth", authRouter);
+app.route("/api/v1", apiV1Router);
 app.route("/api", uiRouter);
 app.route("/token", tokenRouter);
 

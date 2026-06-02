@@ -21,6 +21,9 @@ export function TokensPage() {
   const qc = useQueryClient();
   const [name, setName] = useState("");
   const [secret, setSecret] = useState("");
+  const [grantResource, setGrantResource] = useState<"org" | "repository">("org");
+  const [repositoryPattern, setRepositoryPattern] = useState("*");
+  const [grantActions, setGrantActions] = useState<string[]>(["read", "write"]);
 
   const tokensQ = useQuery({
     queryKey: ["tokens", selected?.id],
@@ -28,7 +31,15 @@ export function TokensPage() {
     enabled: !!selected,
   });
   const create = useMutation({
-    mutationFn: () => api.createToken(selected!.id, { name }),
+    mutationFn: () =>
+      api.createToken(selected!.id, {
+        name,
+        grants: [
+          grantResource === "org"
+            ? { resource: "org", actions: grantActions }
+            : { resource: "repository", repository: repositoryPattern, actions: grantActions },
+        ],
+      }),
     onSuccess: async (res) => {
       setSecret(res.secret);
       setName("");
@@ -42,6 +53,26 @@ export function TokensPage() {
 
   const tokens = tokensQ.data?.tokens ?? [];
   const canSeeTokenOwners = selected?.role === "admin" || selected?.role === "owner";
+  const actions = ["read", "write", "delete", "admin"];
+
+  function toggleAction(action: string) {
+    setGrantActions((current) =>
+      current.includes(action) ? current.filter((a) => a !== action) : [...current, action],
+    );
+  }
+
+  function grantSummary(t: (typeof tokens)[number]) {
+    if (!t.grants.length) return t.role ?? "inherited";
+    return t.grants
+      .map((grant) => {
+        if (grant.resource === "repository") {
+          return `${grant.repository}: ${grant.actions.join(",")}`;
+        }
+        if (grant.resource === "org") return `org: ${grant.actions.join(",")}`;
+        return `${grant.resource}: ${grant.actions.join(",")}`;
+      })
+      .join("; ");
+  }
 
   return (
     <div>
@@ -58,7 +89,7 @@ export function TokensPage() {
               create.mutate();
             }}
           >
-            <div className="w-64">
+            <div className="w-56">
               <Field label="Token name">
                 <Input
                   className="h-9 w-full"
@@ -67,6 +98,46 @@ export function TokensPage() {
                   data-testid="token-name"
                   placeholder="ci-pipeline"
                 />
+              </Field>
+            </div>
+            <div className="w-40">
+              <Field label="Grant">
+                <select
+                  className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+                  value={grantResource}
+                  onChange={(e) => setGrantResource(e.target.value as "org" | "repository")}
+                >
+                  <option value="org">Org</option>
+                  <option value="repository">Repository</option>
+                </select>
+              </Field>
+            </div>
+            {grantResource === "repository" && (
+              <div className="w-56">
+                <Field label="Repository pattern">
+                  <Input
+                    className="h-9 w-full"
+                    value={repositoryPattern}
+                    onChange={(e) => setRepositoryPattern(e.target.value)}
+                    placeholder="repo or team/*"
+                  />
+                </Field>
+              </div>
+            )}
+            <div>
+              <Field label="Actions">
+                <div className="flex h-9 flex-wrap items-center gap-2">
+                  {actions.map((action) => (
+                    <label key={action} className="flex items-center gap-1 text-xs capitalize">
+                      <input
+                        type="checkbox"
+                        checked={grantActions.includes(action)}
+                        onChange={() => toggleAction(action)}
+                      />
+                      {action}
+                    </label>
+                  ))}
+                </div>
               </Field>
             </div>
             <SubmitButton pending={create.isPending} className="h-9" data-testid="token-create">
@@ -97,7 +168,7 @@ export function TokensPage() {
               {canSeeTokenOwners && <TableHead>Owner</TableHead>}
               <TableHead>Prefix</TableHead>
               <TableHead>Type</TableHead>
-              <TableHead>Role</TableHead>
+              <TableHead>Grants</TableHead>
               <TableHead>Expires</TableHead>
               <TableHead>Status</TableHead>
               <TableHead className="pr-4" />
@@ -116,7 +187,9 @@ export function TokensPage() {
                   {t.prefix}…
                 </TableCell>
                 <TableCell className="capitalize">{t.type}</TableCell>
-                <TableCell>{t.role ?? (t.scopes.length ? "scoped" : "inherited")}</TableCell>
+                <TableCell className="max-w-64 truncate text-xs text-muted-foreground">
+                  {grantSummary(t)}
+                </TableCell>
                 <TableCell className="text-muted-foreground">
                   {t.expiresAt ? new Date(t.expiresAt).toLocaleDateString() : "never"}
                 </TableCell>

@@ -65,10 +65,24 @@ export interface TokenInfo {
   name: string;
   prefix: string;
   type: string;
+  grants: Array<
+    | { resource: "org"; actions: string[] }
+    | { resource: "repository"; repository: string; actions: string[] }
+    | { resource: "package"; repository: string; package: string; actions: string[] }
+    | { resource: "artifact"; repository: string; artifact: string; actions: string[] }
+    | { resource: "policy"; policy: string; repository?: string; actions: string[] }
+    | { resource: "token"; target: string; actions: string[] }
+  >;
   scopes: { repository: string; actions: string[] }[];
   role: string | null;
   expiresAt: string | null;
   revokedAt: string | null;
+  revokedByUserId: string | null;
+  revokedByTokenId: string | null;
+  revocationReason: string | null;
+  rotatedAt: string | null;
+  rotatedByUserId: string | null;
+  rotatedByTokenId: string | null;
   lastUsedAt: string | null;
   createdAt: string;
 }

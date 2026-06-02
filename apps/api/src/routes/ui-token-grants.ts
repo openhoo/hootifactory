@@ -1,13 +1,13 @@
 import { type RoleName, resolveUserRole, roleAllows, roleOutranks } from "@hootifactory/auth";
 import { db, eq, repositories } from "@hootifactory/db";
-import type { ParsedTokenScope } from "./ui-schemas";
+import type { ParsedTokenGrant } from "./ui-schemas";
 import { scopeMayTargetRepo } from "./ui-token-scope";
 
 interface TokenGrantRequest {
   userId: string;
   orgId: string;
   requestedRole?: RoleName;
-  scopes: ParsedTokenScope[];
+  grants: ParsedTokenGrant[];
 }
 
 type TokenGrantResult = { ok: true } | { ok: false; error: string };
@@ -16,7 +16,7 @@ export async function validateTokenGrant({
   userId,
   orgId,
   requestedRole,
-  scopes,
+  grants,
 }: TokenGrantRequest): Promise<TokenGrantResult> {
   const creatorRole = await resolveUserRole(userId, orgId);
   if (requestedRole && (!creatorRole || roleOutranks(requestedRole, creatorRole))) {
@@ -24,7 +24,7 @@ export async function validateTokenGrant({
   }
 
   const orgRepos =
-    requestedRole || scopes.length
+    requestedRole || grants.some((grant) => "repository" in grant && grant.repository)
       ? await db
           .select({
             id: repositories.id,
@@ -47,16 +47,17 @@ export async function validateTokenGrant({
     }
   }
 
-  for (const scope of scopes) {
-    for (const action of scope.actions) {
+  for (const grant of grants) {
+    for (const action of grant.actions) {
       if (!creatorRole || !roleAllows(creatorRole, action)) {
         return { ok: false, error: `cannot grant scope action '${action}' beyond your role` };
       }
     }
+    if (!("repository" in grant) || !grant.repository) continue;
     for (const repo of orgRepos) {
-      if (!scopeMayTargetRepo(scope.repository, repo)) continue;
+      if (!scopeMayTargetRepo(grant.repository, repo)) continue;
       const repoRole = await resolveUserRole(userId, orgId, repo.id);
-      for (const action of scope.actions) {
+      for (const action of grant.actions) {
         if (!repoRole || !roleAllows(repoRole, action)) {
           return {
             ok: false,

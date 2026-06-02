@@ -1,6 +1,7 @@
-import { apiTokens, db, eq, type TokenScope, users } from "@hootifactory/db";
+import { apiTokens, db, eq, type TokenGrant, type TokenScope, users } from "@hootifactory/db";
 import type { RoleName } from "./permissions";
 import type { Principal } from "./principal";
+import { repositoryGrantsAsScopes } from "./scope";
 import { randomSecret, sha256hex } from "./secret";
 
 export const TOKEN_PREFIX = "hoot_";
@@ -26,6 +27,8 @@ export interface CreateTokenInput {
   ownerUserId?: string | null;
   name: string;
   type?: "personal" | "robot";
+  grants?: TokenGrant[];
+  /** Legacy pre-v1 input, normalized to repository grants before storage. */
   scopes?: TokenScope[];
   role?: RoleName | null;
   expiresAt?: Date | null;
@@ -37,6 +40,16 @@ export async function createApiToken(
   input: CreateTokenInput,
 ): Promise<{ token: ApiTokenRow; secret: string }> {
   const { secret, prefix, hash } = generateTokenSecret();
+  const grants =
+    input.grants ??
+    input.scopes?.map(
+      (scope): TokenGrant => ({
+        resource: "repository",
+        repository: scope.repository,
+        actions: [...scope.actions],
+      }),
+    ) ??
+    [];
   const [token] = await db
     .insert(apiTokens)
     .values({
@@ -46,7 +59,7 @@ export async function createApiToken(
       type: input.type ?? "personal",
       tokenHash: hash,
       tokenPrefix: prefix,
-      scopes: input.scopes ?? [],
+      grants,
       role: input.role ?? null,
       expiresAt: input.expiresAt ?? null,
     })
@@ -72,6 +85,7 @@ export async function resolveToken(secret: string): Promise<Principal | null> {
     if (!owner?.isActive) return null;
     ownerUsername = owner.username;
   }
+  const grants = row.grants ?? [];
 
   // best-effort last-used bookkeeping. `.catch()` both executes the lazy Drizzle
   // query (a bare `void db.update(...)` is never sent) and swallows transient
@@ -89,12 +103,51 @@ export async function resolveToken(secret: string): Promise<Principal | null> {
     orgId: row.orgId,
     ownerUserId: row.ownerUserId,
     ownerUsername,
-    scopes: row.scopes,
+    grants,
+    scopes: repositoryGrantsAsScopes(grants),
     role: row.role,
     isRobot: row.type === "robot",
   };
 }
 
-export async function revokeToken(id: string): Promise<void> {
-  await db.update(apiTokens).set({ revokedAt: new Date() }).where(eq(apiTokens.id, id));
+export interface TokenActor {
+  userId?: string | null;
+  tokenId?: string | null;
+}
+
+export async function revokeToken(
+  id: string,
+  actor: TokenActor = {},
+  reason?: string | null,
+): Promise<void> {
+  await db
+    .update(apiTokens)
+    .set({
+      revokedAt: new Date(),
+      revokedByUserId: actor.userId ?? null,
+      revokedByTokenId: actor.tokenId ?? null,
+      revocationReason: reason ?? null,
+      updatedAt: new Date(),
+    })
+    .where(eq(apiTokens.id, id));
+}
+
+export async function rotateToken(
+  id: string,
+  actor: TokenActor = {},
+): Promise<{ token: ApiTokenRow; secret: string } | null> {
+  const { secret, prefix, hash } = generateTokenSecret();
+  const [token] = await db
+    .update(apiTokens)
+    .set({
+      tokenHash: hash,
+      tokenPrefix: prefix,
+      rotatedAt: new Date(),
+      rotatedByUserId: actor.userId ?? null,
+      rotatedByTokenId: actor.tokenId ?? null,
+      updatedAt: new Date(),
+    })
+    .where(eq(apiTokens.id, id))
+    .returning();
+  return token ? { token, secret } : null;
 }

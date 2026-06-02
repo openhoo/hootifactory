@@ -10,7 +10,7 @@ describe("create token request resolution", () => {
     expect(request).toEqual({
       name: "ci",
       type: "personal",
-      scopes: [],
+      grants: [],
       requestedRole: "developer",
       expiresAt: new Date(now.getTime() + DEFAULT_TOKEN_TTL_MS),
     });
@@ -30,7 +30,7 @@ describe("create token request resolution", () => {
       name: "reader",
       type: "robot",
       requestedRole: undefined,
-      scopes: [{ repository: "packages", actions: ["read"] }],
+      grants: [{ resource: "repository", repository: "packages", actions: ["read"] }],
     });
   });
 

@@ -1,4 +1,4 @@
-import type { TokenScope } from "@hootifactory/db";
+import type { TokenGrant, TokenScope } from "@hootifactory/db";
 import type { RoleName } from "./permissions";
 
 /** An OCI Bearer-token access claim (already authorized at /token issue time). */
@@ -19,6 +19,8 @@ export type Principal =
       orgId: string;
       ownerUserId: string | null;
       ownerUsername?: string | null;
+      grants: TokenGrant[];
+      /** Legacy alias derived from repository grants for older UI/API callers. */
       scopes: TokenScope[];
       role: RoleName | null;
       isRobot: boolean;
@@ -30,7 +32,14 @@ export type Principal =
       access: RegistryAccess[];
     };
 
-export type ResourceType = "repository" | "org" | "system";
+export type ResourceType =
+  | "repository"
+  | "org"
+  | "package"
+  | "artifact"
+  | "policy"
+  | "token"
+  | "system";
 
 export interface ResourceRef {
   type: ResourceType;
@@ -39,6 +48,11 @@ export interface ResourceRef {
   repositoryId?: string;
   /** Used for token-scope matching, e.g. "acme/app" or "@scope/pkg". */
   repositoryName?: string;
+  packageName?: string;
+  artifactRef?: string;
+  policy?: "scan" | "quota" | "retention" | "*";
+  tokenTarget?: "self" | "org";
+  tokenId?: string;
   visibility?: "private" | "public";
 }
 

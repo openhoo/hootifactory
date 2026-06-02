@@ -16,11 +16,47 @@ import { authEmailTokenPurposeEnum, roleNameEnum, tokenTypeEnum } from "./enums"
 import { repositories } from "./repositories";
 import { organizations, users } from "./tenancy";
 
-/** A scope entry on a token, e.g. { repository: "acme/*", actions: ["read","write"] }. */
+export type TokenAction = "read" | "write" | "delete" | "admin";
+
+/** Legacy request shape accepted only by pre-v1 token routes. */
 export interface TokenScope {
   repository: string;
-  actions: ("read" | "write" | "delete" | "admin")[];
+  actions: TokenAction[];
 }
+
+export type TokenGrant =
+  | {
+      resource: "org";
+      actions: TokenAction[];
+    }
+  | {
+      resource: "repository";
+      repository: string;
+      actions: TokenAction[];
+    }
+  | {
+      resource: "package";
+      repository: string;
+      package: string;
+      actions: TokenAction[];
+    }
+  | {
+      resource: "artifact";
+      repository: string;
+      artifact: string;
+      actions: TokenAction[];
+    }
+  | {
+      resource: "policy";
+      policy: "scan" | "quota" | "retention" | "*";
+      repository?: string;
+      actions: TokenAction[];
+    }
+  | {
+      resource: "token";
+      target: "self" | "org";
+      actions: TokenAction[];
+    };
 
 /**
  * Opaque API tokens for CLI/registry clients. The secret is shown once at
@@ -39,12 +75,18 @@ export const apiTokens = pgTable(
     name: text().notNull(),
     tokenHash: varchar({ length: 64 }).notNull().unique(),
     tokenPrefix: varchar({ length: 16 }).notNull(),
-    /** Scopes beyond the owner's role; null/empty => inherit owner role. */
-    scopes: jsonb().$type<TokenScope[]>().notNull().default([]),
+    /** Grants beyond the owner's role; null/empty => inherit owner role for legacy tokens. */
+    grants: jsonb().$type<TokenGrant[]>().notNull().default([]),
     /** Robot tokens may carry an explicit role at org scope. */
     role: roleNameEnum(),
     expiresAt: timestamp({ withTimezone: true }),
     revokedAt: timestamp({ withTimezone: true }),
+    revokedByUserId: uuid(),
+    revokedByTokenId: uuid(),
+    revocationReason: text(),
+    rotatedAt: timestamp({ withTimezone: true }),
+    rotatedByUserId: uuid(),
+    rotatedByTokenId: uuid(),
     lastUsedAt: timestamp({ withTimezone: true }),
     ...timestamps(),
   },

@@ -27,10 +27,19 @@ export function tokenDto(token: ApiTokenRow, ownerUsername?: string | null) {
     name: token.name,
     prefix: token.tokenPrefix,
     type: token.type,
-    scopes: token.scopes,
+    grants: token.grants,
+    scopes: token.grants
+      .filter((grant) => grant.resource === "repository")
+      .map((grant) => ({ repository: grant.repository, actions: grant.actions })),
     role: token.role,
     expiresAt: token.expiresAt,
     revokedAt: token.revokedAt,
+    revokedByUserId: token.revokedByUserId,
+    revokedByTokenId: token.revokedByTokenId,
+    revocationReason: token.revocationReason,
+    rotatedAt: token.rotatedAt,
+    rotatedByUserId: token.rotatedByUserId,
+    rotatedByTokenId: token.rotatedByTokenId,
     lastUsedAt: token.lastUsedAt,
     createdAt: token.createdAt,
   };

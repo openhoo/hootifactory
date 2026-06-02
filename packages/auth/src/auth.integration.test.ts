@@ -140,7 +140,8 @@ describe("api tokens (DB)", () => {
       tokenId: token.id,
       orgId,
       ownerUserId: userId,
-      scopes: token.scopes,
+      grants: token.grants,
+      scopes: [],
       role: token.role,
       isRobot: false,
     };
@@ -184,7 +185,8 @@ describe("api tokens (DB)", () => {
       tokenId: token.id,
       orgId,
       ownerUserId: userId,
-      scopes: token.scopes,
+      grants: token.grants,
+      scopes: [],
       role: token.role,
       isRobot: false,
     };
@@ -218,7 +220,7 @@ describe("api tokens (DB)", () => {
         type: "robot",
         tokenHash: crypto.randomUUID().replaceAll("-", ""),
         tokenPrefix: "hoot_test",
-        scopes: [],
+        grants: [],
         role: "admin",
       })
       .returning();
@@ -234,6 +236,7 @@ describe("api tokens (DB)", () => {
       tokenId: token!.id,
       orgId,
       ownerUserId: null,
+      grants: [],
       scopes: [],
       role: "admin",
       isRobot: true,
