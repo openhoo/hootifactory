@@ -33,7 +33,6 @@ import {
   sql,
   versionTags,
 } from "@hootifactory/db";
-import { computeDigest } from "@hootifactory/storage";
 import { ifNoneMatch, responseBytes, responseJson } from "./npm-http";
 import {
   type NpmDist,
@@ -43,6 +42,15 @@ import {
   upstreamDistMatchesBytes,
   upstreamDistMatchesStored,
 } from "./npm-integrity";
+import {
+  buildNpmMirroredDist,
+  isNpmTarballUrlOnUpstreamHost,
+  type NpmUpstreamPackument,
+  normalizeNpmProxyManifest,
+  npmUpstreamHost,
+  npmUpstreamPackumentUrl,
+  rewriteNpmProxyManifestForExistingDist,
+} from "./npm-proxy";
 import { parseNpmPublishRequest, resolveNpmPublishDistTags } from "./npm-publish";
 import {
   buildNpmSearchObject,
@@ -494,34 +502,25 @@ export class NpmAdapter implements FormatAdapter {
   /** Pull-through: mirror an upstream package (all versions) into this proxy repo. */
   async proxyIngest(pkgName: string, upstreamBase: string, ctx: RepoContext): Promise<boolean> {
     if (!isValidLegacyNpmName(pkgName)) return false;
-    let upstreamHost = "";
-    try {
-      upstreamHost = new URL(upstreamBase).host;
-    } catch {
-      return false;
-    }
-    const url = `${upstreamBase.replace(/\/$/, "")}/${packagePath(pkgName)}`;
+    const upstreamHost = npmUpstreamHost(upstreamBase);
+    if (!upstreamHost) return false;
+    const url = npmUpstreamPackumentUrl(upstreamBase, pkgName);
     // safeFetch rejects private/loopback/metadata hosts and re-validates redirects.
     const res = await safeFetch(url, { headers: { accept: "application/json" } }).catch(() => null);
     if (!res?.ok) return false;
-    const packument = await responseJson<{
-      versions?: Record<string, Record<string, unknown>>;
-      "dist-tags"?: Record<string, string>;
-    }>(res, Math.min(env.REGISTRY_MAX_UPLOAD_BYTES, 10 * 1024 * 1024));
+    const packument = await responseJson<NpmUpstreamPackument>(
+      res,
+      Math.min(env.REGISTRY_MAX_UPLOAD_BYTES, 10 * 1024 * 1024),
+    );
     if (!packument) return false;
     const scope = pkgName.startsWith("@") ? (pkgName.split("/")[0] ?? null) : null;
     let pkg = await this.findPackage(ctx, pkgName);
-    const base = basename(pkgName);
     for (const [ver, manifestRaw] of Object.entries(packument.versions ?? {})) {
       if (!isValidNpmVersion(ver)) continue;
-      const manifest = { ...manifestRaw } as Record<string, unknown>;
-      if (manifest.name !== undefined && manifest.name !== pkgName) continue;
-      if (manifest.version !== undefined && manifest.version !== ver) continue;
-      manifest.name = pkgName;
-      manifest.version = ver;
-      const dist0 = manifest.dist as { integrity?: string; shasum?: string; tarball?: string };
-      const tarballUrl = dist0?.tarball;
-      if (!tarballUrl) continue;
+      const proxyManifest = normalizeNpmProxyManifest(pkgName, ver, manifestRaw);
+      if (!proxyManifest) continue;
+      let { manifest } = proxyManifest;
+      const { tarballUrl, upstreamDist } = proxyManifest;
       const [existingVersion] = pkg
         ? await ctx.db
             .select({ metadata: packageVersions.metadata })
@@ -536,13 +535,15 @@ export class NpmAdapter implements FormatAdapter {
             .limit(1)
         : [];
       const existingDist = (existingVersion?.metadata as { dist?: NpmDist } | undefined)?.dist;
-      if (pkg && existingDist && upstreamDistMatchesStored(dist0, existingDist)) {
-        manifest.dist = {
-          ...(dist0 ?? {}),
-          tarball: `${ctx.baseUrl}/${ctx.repo.mountPath}/${packagePath(pkgName)}/-/${existingDist.filename}`,
-          shasum: existingDist.shasum,
-          integrity: existingDist.integrity,
-        };
+      if (pkg && existingDist && upstreamDistMatchesStored(upstreamDist, existingDist)) {
+        manifest = rewriteNpmProxyManifestForExistingDist({
+          manifest,
+          upstreamDist,
+          existingDist,
+          baseUrl: ctx.baseUrl,
+          mountPath: ctx.repo.mountPath,
+          packageName: pkgName,
+        });
         // Refresh metadata without re-downloading or re-scanning unchanged bytes.
         await upsertPackageVersion(ctx, {
           packageId: pkg.id,
@@ -556,7 +557,7 @@ export class NpmAdapter implements FormatAdapter {
       // comes from untrusted upstream JSON and must not point elsewhere (SSRF).
       let tRes: Response | null = null;
       try {
-        if (new URL(tarballUrl).host !== upstreamHost) continue;
+        if (!isNpmTarballUrlOnUpstreamHost(tarballUrl, upstreamHost)) continue;
         tRes = await safeFetch(tarballUrl, { allowedHosts: [upstreamHost] });
       } catch {
         continue;
@@ -564,7 +565,7 @@ export class NpmAdapter implements FormatAdapter {
       if (!tRes.ok) continue;
       const tarball = await responseBytes(tRes, env.REGISTRY_MAX_UPLOAD_BYTES);
       if (!tarball) continue;
-      if (!upstreamDistMatchesBytes(dist0, tarball)) continue;
+      if (!upstreamDistMatchesBytes(upstreamDist, tarball)) continue;
       pkg ??= await findOrCreatePackage({
         orgId: ctx.repo.orgId,
         repositoryId: ctx.repo.id,
@@ -572,22 +573,15 @@ export class NpmAdapter implements FormatAdapter {
         namespace: scope,
       });
       const previousDigest = existingDist?.blobDigest;
-      const shasum = sha1hex(tarball);
-      const integrity = `sha512-${sha512b64(tarball)}`;
-      const filename = `${base}-${ver}.tgz`;
-      manifest.dist = {
-        ...(dist0 ?? {}),
-        tarball: `${ctx.baseUrl}/${ctx.repo.mountPath}/${packagePath(pkgName)}/-/${filename}`,
-        shasum,
-        integrity,
-      };
-      const dist: NpmDist = {
-        filename,
-        blobDigest: computeDigest(tarball),
-        shasum,
-        integrity,
-        size: tarball.length,
-      };
+      const { manifestDist, dist } = buildNpmMirroredDist({
+        packageName: pkgName,
+        version: ver,
+        upstreamDist,
+        tarball,
+        baseUrl: ctx.baseUrl,
+        mountPath: ctx.repo.mountPath,
+      });
+      manifest.dist = manifestDist;
       const { stored } = await upsertPackageVersionWithBlobRef(ctx, {
         packageId: pkg.id,
         version: ver,
