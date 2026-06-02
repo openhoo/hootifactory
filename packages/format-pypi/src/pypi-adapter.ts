@@ -28,6 +28,10 @@ import {
 } from "./pypi-validation";
 import { normalizeName, renderProjectHtml, renderRootHtml, type SimpleFile } from "./simple";
 
+const SIMPLE_JSON_CONTENT_TYPE = "application/vnd.pypi.simple.v1+json";
+const SIMPLE_HTML_CONTENT_TYPE = "application/vnd.pypi.simple.v1+html; charset=utf-8";
+const LEGACY_HTML_CONTENT_TYPE = "text/html; charset=utf-8";
+
 export class PypiAdapter implements FormatAdapter {
   readonly format = "pypi" as const;
   readonly capabilities = {
@@ -58,9 +62,9 @@ export class PypiAdapter implements FormatAdapter {
   async handle(match: RouteMatch, req: Request, ctx: RepoContext): Promise<Response> {
     switch (match.entry.handlerId) {
       case "simpleRoot":
-        return this.simpleRoot(ctx);
+        return this.simpleRoot(req, ctx);
       case "simpleProject":
-        return this.simpleProject(match.params.project ?? "", ctx);
+        return this.simpleProject(match.params.project ?? "", req, ctx);
       case "download":
         return this.download(match.params.filename ?? "", ctx);
       case "upload":
@@ -79,13 +83,60 @@ export class PypiAdapter implements FormatAdapter {
     return pkg ?? null;
   }
 
-  private async simpleRoot(ctx: RepoContext): Promise<Response> {
+  private redirectToSlash(req: Request): Response | null {
+    if (new URL(req.url).pathname.endsWith("/")) return null;
+    const url = new URL(req.url);
+    url.pathname = `${url.pathname}/`;
+    return new Response(null, { status: 308, headers: { location: url.toString() } });
+  }
+
+  private simpleContentType(req: Request): "json" | "html" {
+    const accept = req.headers.get("accept") ?? "";
+    const weighted = accept.split(",").map((part) => {
+      const [media = "", ...params] = part.trim().split(";");
+      const qParam = params.find((param) => param.trim().startsWith("q="));
+      const q = qParam ? Number.parseFloat(qParam.split("=", 2)[1] ?? "0") : 1;
+      return { media: media.trim().toLowerCase(), q: Number.isFinite(q) ? q : 0 };
+    });
+    const jsonQ =
+      weighted.find((part) => part.media === SIMPLE_JSON_CONTENT_TYPE)?.q ??
+      weighted.find((part) => part.media === "application/json")?.q ??
+      0;
+    const htmlQ =
+      Math.max(
+        weighted.find((part) => part.media === "text/html")?.q ?? 0,
+        weighted.find((part) => part.media === "application/vnd.pypi.simple.v1+html")?.q ?? 0,
+        weighted.find((part) => part.media === "*/*")?.q ?? 0,
+      ) || (accept ? 0 : 1);
+    return jsonQ > 0 && jsonQ >= htmlQ ? "json" : "html";
+  }
+
+  private htmlContentType(req: Request): string {
+    return (req.headers.get("accept") ?? "").toLowerCase().includes("application/vnd.pypi.simple")
+      ? SIMPLE_HTML_CONTENT_TYPE
+      : LEGACY_HTML_CONTENT_TYPE;
+  }
+
+  private async simpleRoot(req: Request, ctx: RepoContext): Promise<Response> {
+    const redirect = this.redirectToSlash(req);
+    if (redirect) return redirect;
+
     const rows = await ctx.db
       .select({ name: packages.name })
       .from(packages)
       .where(eq(packages.repositoryId, ctx.repo.id));
-    return new Response(renderRootHtml(rows.map((r) => r.name).sort()), {
-      headers: { "content-type": "text/html; charset=utf-8" },
+    const projects = rows.map((r) => r.name).sort();
+    if (this.simpleContentType(req) === "json") {
+      return Response.json(
+        {
+          meta: { "api-version": "1.1" },
+          projects: projects.map((name) => ({ name })),
+        },
+        { headers: { "content-type": SIMPLE_JSON_CONTENT_TYPE } },
+      );
+    }
+    return new Response(renderRootHtml(projects), {
+      headers: { "content-type": this.htmlContentType(req) },
     });
   }
 
@@ -115,7 +166,14 @@ export class PypiAdapter implements FormatAdapter {
     return rows.flatMap((r) => (r.metadata as { files?: PypiFileMeta[] })?.files ?? []);
   }
 
-  private async simpleProject(projectRaw: string, ctx: RepoContext): Promise<Response> {
+  private async simpleProject(
+    projectRaw: string,
+    req: Request,
+    ctx: RepoContext,
+  ): Promise<Response> {
+    const redirect = this.redirectToSlash(req);
+    if (redirect) return redirect;
+
     projectRaw = parseRegistryInput(PypiProjectParamSchema, projectRaw, {
       code: "NAME_INVALID",
       message: "invalid project name",
@@ -125,7 +183,11 @@ export class PypiAdapter implements FormatAdapter {
     if (!pkg) return new Response("Not Found", { status: 404 });
     // Live versions only — pruned releases must drop out of the PEP 503 index.
     const versions = await ctx.db
-      .select({ metadata: packageVersions.metadata })
+      .select({
+        version: packageVersions.version,
+        metadata: packageVersions.metadata,
+        createdAt: packageVersions.createdAt,
+      })
       .from(packageVersions)
       .where(and(eq(packageVersions.packageId, pkg.id), isNull(packageVersions.deletedAt)));
     const files: SimpleFile[] = [];
@@ -137,11 +199,31 @@ export class PypiAdapter implements FormatAdapter {
           url: `${ctx.baseUrl}/${ctx.repo.mountPath}/files/${encodeURIComponent(f.filename)}`,
           sha256: f.sha256,
           requiresPython: f.requiresPython,
+          size: f.size,
+          uploadTime: v.createdAt.toISOString(),
         });
       }
     }
+    if (this.simpleContentType(req) === "json") {
+      return Response.json(
+        {
+          meta: { "api-version": "1.1" },
+          name,
+          versions: versions.map((v) => v.version).sort(),
+          files: files.map((file) => ({
+            filename: file.filename,
+            url: file.url,
+            hashes: { sha256: file.sha256 },
+            ...(file.requiresPython ? { "requires-python": file.requiresPython } : {}),
+            size: file.size,
+            "upload-time": file.uploadTime,
+          })),
+        },
+        { headers: { "content-type": SIMPLE_JSON_CONTENT_TYPE } },
+      );
+    }
     return new Response(renderProjectHtml(name, files), {
-      headers: { "content-type": "text/html; charset=utf-8" },
+      headers: { "content-type": this.htmlContentType(req) },
     });
   }
 

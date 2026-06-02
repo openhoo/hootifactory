@@ -201,7 +201,6 @@ export async function createPackageVersion(
   const publisher = publisherOf(ctx);
   return ctx.db.transaction(async (tx) => {
     const quota = await lockOrgQuotaTx(tx, ctx.repo.orgId);
-    assertArtifactQuotaRowAllows(quota, 1);
     const [row] = await tx
       .insert(packageVersions)
       .values({
@@ -215,6 +214,7 @@ export async function createPackageVersion(
       .onConflictDoNothing()
       .returning({ id: packageVersions.id });
     if (!row) return null;
+    assertArtifactQuotaRowAllows(quota, 1);
     await adjustArtifactsUsedTx(tx, ctx.repo.orgId, 1);
     return row.id;
   });

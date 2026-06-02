@@ -651,6 +651,133 @@ test.describe("pypi simple API (protocol)", () => {
     expect(valid.status()).toBe(200);
   });
 
+  test("simple pages redirect to slash URLs and negotiate JSON responses", async ({ baseURL }) => {
+    const owner = await setupOwner(baseURL!);
+    const repo = (
+      await (
+        await createRepo(owner.ctx, owner.orgId, {
+          name: "pypi-simple-json",
+          format: "pypi",
+          visibility: "public",
+        })
+      ).json()
+    ).repository as { mountPath: string };
+    const secret = (
+      await (await createToken(owner.ctx, owner.orgId, { name: "pypi-simple-json" })).json()
+    ).secret as string;
+    const anon = await anonContext(baseURL!);
+    const id = Date.now().toString(36);
+    const pkg = `hootpyjson${id}`;
+    const bytes = Buffer.from("simple json pypi artifact");
+    const filename = `${pkg}-1.0.0-py3-none-any.whl`;
+
+    expect(
+      (
+        await uploadPypiFile({
+          ctx: anon,
+          mountPath: repo.mountPath,
+          secret,
+          pkg,
+          version: "1.0.0",
+          filename,
+          bytes,
+        })
+      ).status(),
+    ).toBe(200);
+
+    const rootRedirect = await owner.ctx.get(`/${repo.mountPath}/simple`, { maxRedirects: 0 });
+    expect(rootRedirect.status()).toBe(308);
+    expect(rootRedirect.headers().location).toContain(`/${repo.mountPath}/simple/`);
+
+    const projectRedirect = await owner.ctx.get(`/${repo.mountPath}/simple/${pkg}`, {
+      maxRedirects: 0,
+    });
+    expect(projectRedirect.status()).toBe(308);
+    expect(projectRedirect.headers().location).toContain(`/${repo.mountPath}/simple/${pkg}/`);
+
+    const rootJson = await owner.ctx.get(`/${repo.mountPath}/simple/`, {
+      headers: { accept: "application/vnd.pypi.simple.v1+json" },
+    });
+    expect(rootJson.headers()["content-type"]).toContain("application/vnd.pypi.simple.v1+json");
+    expect((await rootJson.json()).projects).toContainEqual({ name: pkg });
+
+    const projectJson = await owner.ctx.get(`/${repo.mountPath}/simple/${pkg}/`, {
+      headers: { accept: "application/vnd.pypi.simple.v1+json" },
+    });
+    expect(projectJson.headers()["content-type"]).toContain("application/vnd.pypi.simple.v1+json");
+    const body = await projectJson.json();
+    expect(body).toMatchObject({
+      meta: { "api-version": "1.1" },
+      name: pkg,
+      versions: ["1.0.0"],
+      files: [
+        {
+          filename,
+          hashes: { sha256: sha256hex(bytes) },
+          size: bytes.length,
+        },
+      ],
+    });
+    expect(body.files[0].url).toContain(`/${repo.mountPath}/files/${filename}`);
+    expect(body.files[0]["upload-time"]).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+
+  test("artifact quota allows a second distribution for an existing release", async ({
+    baseURL,
+  }) => {
+    const owner = await setupOwner(baseURL!);
+    const repo = (
+      await (
+        await createRepo(owner.ctx, owner.orgId, {
+          name: "pypi-quota-files",
+          format: "pypi",
+          visibility: "public",
+        })
+      ).json()
+    ).repository as { mountPath: string };
+    const secret = (
+      await (await createToken(owner.ctx, owner.orgId, { name: "pypi-quota-files" })).json()
+    ).secret as string;
+    const anon = await anonContext(baseURL!);
+    const id = Date.now().toString(36);
+    const pkg = `hootpyquota${id}`;
+
+    expect(
+      (
+        await uploadPypiFile({
+          ctx: anon,
+          mountPath: repo.mountPath,
+          secret,
+          pkg,
+          version: "1.0.0",
+          filename: `${pkg}-1.0.0-py3-none-any.whl`,
+          bytes: Buffer.from("quota wheel"),
+        })
+      ).status(),
+    ).toBe(200);
+
+    expect(
+      (
+        await owner.ctx.post(`/api/orgs/${owner.orgId}/quota`, { data: { maxArtifacts: 1 } })
+      ).status(),
+    ).toBe(200);
+
+    const sdist = await uploadPypiFile({
+      ctx: anon,
+      mountPath: repo.mountPath,
+      secret,
+      pkg,
+      version: "1.0.0",
+      filename: `${pkg}-1.0.0.tar.gz`,
+      bytes: Buffer.from("quota sdist"),
+    });
+    expect(sdist.status()).toBe(200);
+
+    const simple = await (await owner.ctx.get(`/${repo.mountPath}/simple/${pkg}/`)).text();
+    expect(simple).toContain(`${pkg}-1.0.0-py3-none-any.whl`);
+    expect(simple).toContain(`${pkg}-1.0.0.tar.gz`);
+  });
+
   test("upload, retention, and tombstoned release republish rejection", async ({ baseURL }) => {
     const owner = await setupOwner(baseURL!);
     const repo = (

@@ -3,6 +3,8 @@ export interface SimpleFile {
   url: string;
   sha256: string;
   requiresPython?: string;
+  size?: number;
+  uploadTime?: string;
 }
 
 function escapeHtml(s: string): string {
