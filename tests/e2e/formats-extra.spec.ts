@@ -657,6 +657,72 @@ test.describe("nuget v3 (protocol)", () => {
     ).json();
     expect(semver1.data[0].version).toBe("1.0.0");
   });
+
+  test("virtual search aggregates NuGet member responses", async ({ baseURL }) => {
+    const owner = await setupOwner(baseURL!);
+    const a = (
+      await (
+        await createRepo(owner.ctx, owner.orgId, {
+          name: "nuget-virtual-a",
+          format: "nuget",
+          visibility: "public",
+        })
+      ).json()
+    ).repository as { id: string; mountPath: string };
+    const b = (
+      await (
+        await createRepo(owner.ctx, owner.orgId, {
+          name: "nuget-virtual-b",
+          format: "nuget",
+          visibility: "public",
+        })
+      ).json()
+    ).repository as { id: string; mountPath: string };
+    const virtual = (
+      await (
+        await createRepo(owner.ctx, owner.orgId, {
+          name: "nuget-virtual",
+          format: "nuget",
+          kind: "virtual",
+          visibility: "public",
+        })
+      ).json()
+    ).repository as { id: string; mountPath: string };
+    await owner.ctx.post(`/api/repositories/${virtual.id}/members`, {
+      data: { memberRepoId: a.id, position: 0 },
+    });
+    await owner.ctx.post(`/api/repositories/${virtual.id}/members`, {
+      data: { memberRepoId: b.id, position: 1 },
+    });
+
+    const suffix = Date.now().toString(36);
+    const pkgA = `Hoot.VirtualA${suffix}`;
+    const pkgB = `Hoot.VirtualB${suffix}`;
+    expect(
+      (
+        await owner.ctx.put(`/${a.mountPath}/v3/package`, {
+          headers: { "content-type": "application/octet-stream" },
+          data: createNupkg(pkgA, "1.0.0"),
+        })
+      ).status(),
+    ).toBe(201);
+    expect(
+      (
+        await owner.ctx.put(`/${b.mountPath}/v3/package`, {
+          headers: { "content-type": "application/octet-stream" },
+          data: createNupkg(pkgB, "1.0.0"),
+        })
+      ).status(),
+    ).toBe(201);
+
+    const search = await (
+      await owner.ctx.get(`/${virtual.mountPath}/v3/query?q=hoot.virtual&semVerLevel=2.0.0`)
+    ).json();
+    expect(search.totalHits).toBe(2);
+    expect(search.data.map((item: { id: string }) => item.id)).toEqual([pkgA, pkgB]);
+    expect(search.data[0].registration).toContain(`/${virtual.mountPath}/`);
+    expect(search.data[0].registration).not.toContain(`/${a.mountPath}/`);
+  });
 });
 
 test.describe("pypi simple API (protocol)", () => {

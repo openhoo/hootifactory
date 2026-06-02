@@ -1,9 +1,11 @@
 import {
   Errors,
   type FormatAdapter,
+  type FormatMetadata,
   type HttpMethod,
   loadVirtualMembers,
   parseRegistryInput,
+  RegistryError,
   type RepoContext,
   type RouteMatch,
   z,
@@ -12,16 +14,27 @@ import { addSpanEvent, logger, withSpan } from "@hootifactory/observability";
 import { buildRepoContext } from "./context";
 import { adapterResponse } from "./registry-adapter";
 import { authorizeRoute } from "./registry-auth";
+import { registryErrorResponseForFormat } from "./registry-error-format";
 import { headersWithoutContentLength, isReadMethod } from "./registry-utils";
 
-const SearchWindowSchema = z.strictObject({
+const NpmSearchWindowSchema = z.strictObject({
   from: z.coerce.number().int().min(0).max(10_000).default(0),
   size: z.coerce.number().int().min(0).max(100).default(20),
+});
+
+const NugetSearchWindowSchema = z.strictObject({
+  skip: z.coerce.number().int().min(0).max(10_000).default(0),
+  take: z.coerce.number().int().min(0).max(100).default(20),
 });
 
 interface NpmSearchBody {
   objects?: Array<{ package?: { name?: unknown } }>;
   total?: number;
+}
+
+interface NugetSearchBody {
+  data?: Array<Record<string, unknown> & { id?: unknown }>;
+  totalHits?: number;
 }
 
 function shouldRewriteVirtualBody(contentType: string): boolean {
@@ -40,10 +53,66 @@ async function rewriteVirtualBody(
   });
 }
 
-function searchWindow(req: Request): { from: number; size: number } {
+function rewriteVirtualMetadata(
+  part: FormatMetadata,
+  memberMountPath: string,
+  virtualMountPath: string,
+): FormatMetadata {
+  if (memberMountPath === virtualMountPath || !shouldRewriteVirtualBody(part.contentType)) {
+    return part;
+  }
+  const body = typeof part.body === "string" ? part.body : new TextDecoder().decode(part.body);
+  const headers = { ...(part.headers ?? {}) };
+  delete headers["content-length"];
+  delete headers["Content-Length"];
+  return {
+    ...part,
+    body: body.split(`/${memberMountPath}/`).join(`/${virtualMountPath}/`),
+    headers,
+  };
+}
+
+function metadataResponse(part: FormatMetadata): Response {
+  const headers = new Headers(part.headers);
+  headers.set("content-type", part.contentType);
+  headers.delete("content-length");
+  return new Response(part.body, { headers });
+}
+
+async function adapterResponseOrRegistryError(
+  adapter: FormatAdapter,
+  match: RouteMatch,
+  req: Request,
+  ctx: RepoContext,
+): Promise<Response> {
+  try {
+    return await adapterResponse(adapter, match, req, ctx);
+  } catch (err) {
+    if (err instanceof RegistryError) {
+      return registryErrorResponseForFormat(adapter.format, {
+        status: err.status,
+        code: err.code,
+        message: err.message,
+        detail: err.detail,
+      });
+    }
+    throw err;
+  }
+}
+
+function registryErrorToResponse(adapter: FormatAdapter, err: RegistryError): Response {
+  return registryErrorResponseForFormat(adapter.format, {
+    status: err.status,
+    code: err.code,
+    message: err.message,
+    detail: err.detail,
+  });
+}
+
+function npmSearchWindow(req: Request): { from: number; size: number } {
   const url = new URL(req.url);
   return parseRegistryInput(
-    SearchWindowSchema,
+    NpmSearchWindowSchema,
     {
       from: url.searchParams.get("from") ?? undefined,
       size: url.searchParams.get("size") ?? undefined,
@@ -52,14 +121,33 @@ function searchWindow(req: Request): { from: number; size: number } {
   );
 }
 
-function allSearchResultsRequest(req: Request): Request {
+function nugetSearchWindow(req: Request): { skip: number; take: number } {
+  const url = new URL(req.url);
+  return parseRegistryInput(
+    NugetSearchWindowSchema,
+    {
+      skip: url.searchParams.get("skip") ?? undefined,
+      take: url.searchParams.get("take") ?? undefined,
+    },
+    { code: "PAGINATION_NUMBER_INVALID", message: "invalid search pagination" },
+  );
+}
+
+function allNpmSearchResultsRequest(req: Request): Request {
   const url = new URL(req.url);
   url.searchParams.set("from", "0");
   url.searchParams.set("size", "10000");
   return new Request(url.toString(), { method: req.method, headers: req.headers });
 }
 
-async function dispatchVirtualSearch(
+function allNugetSearchResultsRequest(req: Request): Request {
+  const url = new URL(req.url);
+  url.searchParams.set("skip", "0");
+  url.searchParams.set("take", "100");
+  return new Request(url.toString(), { method: req.method, headers: req.headers });
+}
+
+async function dispatchVirtualNpmSearch(
   adapter: FormatAdapter,
   match: RouteMatch,
   req: Request,
@@ -104,10 +192,10 @@ async function dispatchVirtualSearch(
               return;
             }
 
-            const res = await adapterResponse(
+            const res = await adapterResponseOrRegistryError(
               adapter,
               match,
-              allSearchResultsRequest(req),
+              allNpmSearchResultsRequest(req),
               memberCtx,
             );
             memberSpan.setAttribute("http.response.status_code", res.status);
@@ -123,13 +211,188 @@ async function dispatchVirtualSearch(
           },
         );
       }
-      const { from, size } = searchWindow(req);
+      const { from, size } = npmSearchWindow(req);
       span.setAttribute("registry.virtual.result_count", objects.length);
       return Response.json({
         objects: objects.slice(from, from + size),
         total: objects.length,
         time: new Date().toISOString(),
       });
+    },
+  );
+}
+
+async function dispatchVirtualNugetSearch(
+  adapter: FormatAdapter,
+  match: RouteMatch,
+  req: Request,
+  ctx: RepoContext,
+): Promise<Response> {
+  return withSpan(
+    "registry.virtual.search",
+    {
+      "registry.format": adapter.format,
+      "registry.repository.id": ctx.repo.id,
+      "registry.repository.name": ctx.repo.name,
+    },
+    async (span) => {
+      const members = await loadVirtualMembers(ctx.repo.id);
+      span.setAttribute("registry.virtual.member_count", members.length);
+      const seen = new Set<string>();
+      const data: NonNullable<NugetSearchBody["data"]> = [];
+      for (const member of members) {
+        await withSpan(
+          "registry.virtual.search_member",
+          {
+            "registry.repository.id": member.id,
+            "registry.repository.name": member.name,
+            "registry.repository.kind": member.kind,
+          },
+          async (memberSpan) => {
+            const memberCtx = buildRepoContext(member, ctx.principal);
+            const { decision, permission } = await authorizeRoute(
+              adapter,
+              req.method as HttpMethod,
+              match,
+              memberCtx,
+            );
+            memberSpan.setAttributes({
+              "auth.action": permission.action,
+              "auth.decision": decision.allowed ? "allowed" : "denied",
+            });
+            if (!decision.allowed) {
+              addSpanEvent("registry.virtual.member_skipped", {
+                "auth.reason": decision.reason ?? decision.code,
+              });
+              return;
+            }
+
+            const res = await adapterResponseOrRegistryError(
+              adapter,
+              match,
+              allNugetSearchResultsRequest(req),
+              memberCtx,
+            );
+            memberSpan.setAttribute("http.response.status_code", res.status);
+            if (res.status >= 400) return;
+            const text = (await res.text())
+              .split(`/${member.mountPath}/`)
+              .join(`/${ctx.repo.mountPath}/`);
+            const body = JSON.parse(text) as NugetSearchBody;
+            memberSpan.setAttribute("registry.virtual.member_total", body.totalHits ?? 0);
+            for (const item of body.data ?? []) {
+              const id = item.id;
+              if (typeof id !== "string") continue;
+              const key = id.toLowerCase();
+              if (seen.has(key)) continue;
+              seen.add(key);
+              data.push(item);
+            }
+          },
+        );
+      }
+      const { skip, take } = nugetSearchWindow(req);
+      span.setAttribute("registry.virtual.result_count", data.length);
+      return Response.json({
+        totalHits: data.length,
+        data: data.slice(skip, skip + take),
+      });
+    },
+  );
+}
+
+function dispatchVirtualSearch(
+  adapter: FormatAdapter,
+  match: RouteMatch,
+  req: Request,
+  ctx: RepoContext,
+): Promise<Response> {
+  if (adapter.format === "nuget") return dispatchVirtualNugetSearch(adapter, match, req, ctx);
+  if (adapter.format === "npm") return dispatchVirtualNpmSearch(adapter, match, req, ctx);
+  throw Errors.unsupported({ reason: "virtual search is not supported for this format" });
+}
+
+function metadataPackageName(match: RouteMatch): string | null {
+  if (match.entry.handlerId !== "packument") return null;
+  return match.params.pkg ?? null;
+}
+
+async function dispatchVirtualMetadata(
+  adapter: FormatAdapter,
+  name: string,
+  req: Request,
+  ctx: RepoContext,
+): Promise<Response> {
+  return withSpan(
+    "registry.virtual.metadata",
+    {
+      "registry.format": adapter.format,
+      "registry.repository.id": ctx.repo.id,
+      "registry.repository.name": ctx.repo.name,
+    },
+    async (span) => {
+      const members = await loadVirtualMembers(ctx.repo.id);
+      span.setAttribute("registry.virtual.member_count", members.length);
+      const parts: FormatMetadata[] = [];
+      let last: Response | null = null;
+      for (const member of members) {
+        await withSpan(
+          "registry.virtual.metadata_member",
+          {
+            "registry.repository.id": member.id,
+            "registry.repository.name": member.name,
+            "registry.repository.kind": member.kind,
+          },
+          async (memberSpan) => {
+            const memberCtx = buildRepoContext(member, ctx.principal);
+            const { decision, permission } = await authorizeRoute(
+              adapter,
+              req.method as HttpMethod,
+              {
+                entry: { method: "GET", pattern: "/:pkg+", handlerId: "packument" },
+                params: { pkg: name },
+                path: name,
+              },
+              memberCtx,
+            );
+            memberSpan.setAttributes({
+              "auth.action": permission.action,
+              "auth.decision": decision.allowed ? "allowed" : "denied",
+            });
+            if (!decision.allowed) {
+              addSpanEvent("registry.virtual.member_skipped", {
+                "auth.reason": decision.reason ?? decision.code,
+              });
+              return;
+            }
+            try {
+              const part = await adapter.generateMetadata?.(name, memberCtx);
+              if (part)
+                parts.push(rewriteVirtualMetadata(part, member.mountPath, ctx.repo.mountPath));
+              memberSpan.setAttribute("registry.virtual.member_found", part ? 1 : 0);
+            } catch (err) {
+              if (!(err instanceof RegistryError)) throw err;
+              const res = registryErrorToResponse(adapter, err);
+              memberSpan.setAttribute("http.response.status_code", res.status);
+              last = res;
+            }
+          },
+        );
+      }
+      if (parts.length === 0) {
+        return (
+          last ??
+          registryErrorResponseForFormat(adapter.format, {
+            status: 404,
+            code: "NOT_FOUND",
+            message: "not found",
+          })
+        );
+      }
+      const merged = await adapter.mergeMetadata?.(parts, ctx);
+      if (!merged) throw Errors.unsupported({ reason: "metadata merge is not supported" });
+      span.setAttribute("registry.virtual.result_count", parts.length);
+      return metadataResponse(merged);
     },
   );
 }
@@ -154,6 +417,10 @@ export async function dispatchVirtual(
         throw Errors.unsupported({ reason: "writes are not allowed on virtual repositories" });
       if (match.entry.handlerId === "search")
         return dispatchVirtualSearch(adapter, match, req, ctx);
+      const metadataName = metadataPackageName(match);
+      if (metadataName && adapter.generateMetadata && adapter.mergeMetadata) {
+        return dispatchVirtualMetadata(adapter, metadataName, req, ctx);
+      }
       const members = await loadVirtualMembers(ctx.repo.id);
       span.setAttribute("registry.virtual.member_count", members.length);
       let last: Response | null = null;
@@ -188,7 +455,7 @@ export async function dispatchVirtual(
               });
               return null;
             }
-            const response = await adapterResponse(adapter, match, req, memberCtx);
+            const response = await adapterResponseOrRegistryError(adapter, match, req, memberCtx);
             memberSpan.setAttribute("http.response.status_code", response.status);
             return response;
           },
@@ -207,7 +474,14 @@ export async function dispatchVirtual(
         }
         last = res;
       }
-      return last ?? Errors.notFound().toResponse();
+      return (
+        last ??
+        registryErrorResponseForFormat(adapter.format, {
+          status: 404,
+          code: "NOT_FOUND",
+          message: "not found",
+        })
+      );
     },
   );
 }

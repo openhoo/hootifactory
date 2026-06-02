@@ -3,6 +3,7 @@ import {
   createPackageVersion,
   Errors,
   type FormatAdapter,
+  type FormatMetadata,
   findOrCreatePackage,
   type HttpMethod,
   isArtifactBlocked,
@@ -161,6 +162,65 @@ export class NpmAdapter implements FormatAdapter {
       return principal.ownerUsername ?? principal.tokenName ?? `token:${principal.tokenId}`;
     }
     return "anonymous";
+  }
+
+  async generateMetadata(name: string, ctx: RepoContext): Promise<FormatMetadata | null> {
+    name = parseRegistryInput(NpmLegacyPackageNameSchema, name, {
+      code: "NAME_INVALID",
+      message: "invalid package name",
+    });
+    const pkg = await this.findPackage(ctx, name);
+    if (!pkg) return null;
+    const versions = await this.liveVersions(ctx, pkg.id);
+    const tags = await this.distTags(ctx, pkg.id);
+    return {
+      contentType: "application/json; charset=utf-8",
+      body: JSON.stringify(buildPackument(name, versions, tags)),
+    };
+  }
+
+  async mergeMetadata(parts: FormatMetadata[]): Promise<FormatMetadata> {
+    const decoder = new TextDecoder();
+    const docs = parts
+      .map((part) => {
+        const body = typeof part.body === "string" ? part.body : decoder.decode(part.body);
+        try {
+          return JSON.parse(body) as Record<string, unknown>;
+        } catch {
+          return null;
+        }
+      })
+      .filter((doc): doc is Record<string, unknown> => doc != null);
+    const first = docs[0] ?? {};
+    const versions: Record<string, unknown> = {};
+    const distTags: Record<string, unknown> = {};
+    const time: Record<string, unknown> = {};
+    for (const doc of docs) {
+      for (const [version, manifest] of Object.entries(
+        (doc.versions as Record<string, unknown> | undefined) ?? {},
+      )) {
+        if (!Object.hasOwn(versions, version)) versions[version] = manifest;
+      }
+      for (const [tag, version] of Object.entries(
+        (doc["dist-tags"] as Record<string, unknown> | undefined) ?? {},
+      )) {
+        if (!Object.hasOwn(distTags, tag)) distTags[tag] = version;
+      }
+      for (const [key, value] of Object.entries(
+        (doc.time as Record<string, unknown> | undefined) ?? {},
+      )) {
+        if (!Object.hasOwn(time, key)) time[key] = value;
+      }
+    }
+    return {
+      contentType: "application/json; charset=utf-8",
+      body: JSON.stringify({
+        ...first,
+        "dist-tags": distTags,
+        versions,
+        time,
+      }),
+    };
   }
 
   private async packument(name: string, req: Request, ctx: RepoContext): Promise<Response> {

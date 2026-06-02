@@ -373,6 +373,47 @@ test.describe("virtual + proxy repositories (Dockerized real npm)", () => {
     expect(existsSync(join(dir, "node_modules", pkgB, "index.js"))).toBe(true);
   });
 
+  test("virtual repo merges package metadata across member repos", async ({ baseURL }) => {
+    test.setTimeout(120_000);
+    const owner = await setupOwner(baseURL!);
+    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "t" })).json())
+      .secret as string;
+    const a = (
+      await repoFrom(
+        await createRepo(owner.ctx, owner.orgId, { name: "npm-meta-a", format: "npm" }),
+      )
+    ).repository;
+    const b = (
+      await repoFrom(
+        await createRepo(owner.ctx, owner.orgId, { name: "npm-meta-b", format: "npm" }),
+      )
+    ).repository;
+    const v = (
+      await repoFrom(
+        await createRepo(owner.ctx, owner.orgId, {
+          name: "npm-meta-virt",
+          format: "npm",
+          kind: "virtual",
+        }),
+      )
+    ).repository;
+    await owner.ctx.post(`/api/repositories/${v.id}/members`, {
+      data: { memberRepoId: a.id, position: 0 },
+    });
+    await owner.ctx.post(`/api/repositories/${v.id}/members`, {
+      data: { memberRepoId: b.id, position: 1 },
+    });
+
+    const pkg = `virtmeta-${Date.now().toString(36)}`;
+    publish(baseURL!, a.mountPath, token, pkg, "1.0.0", "first");
+    publish(baseURL!, b.mountPath, token, pkg, "1.1.0", "second");
+
+    const packument = await (await owner.ctx.get(`/${v.mountPath}/${pkg}`)).json();
+    expect(Object.keys(packument.versions)).toEqual(["1.0.0", "1.1.0"]);
+    expect(packument.versions["1.1.0"].dist.tarball).toContain(`/${v.mountPath}/`);
+    expect(packument.versions["1.1.0"].dist.tarball).not.toContain(`/${b.mountPath}/`);
+  });
+
   test("virtual repo search merges readable member repos", async ({ baseURL }) => {
     test.setTimeout(120_000);
     const owner = await setupOwner(baseURL!);
