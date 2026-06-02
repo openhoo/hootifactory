@@ -29,7 +29,6 @@ import { computeDigest, isValidDigest } from "@hootifactory/storage";
 import { OCI_MEDIA_TYPES, type OciManifest } from "@hootifactory/types";
 import { cancelUpload, patchUpload, putUpload, startUpload, uploadStatus } from "./oci-uploads";
 import {
-  acceptsMediaType,
   assertImageName,
   assertTag,
   manifestAnnotations,
@@ -349,7 +348,7 @@ export class DockerAdapter implements FormatAdapter {
   private async getManifest(
     image: string,
     reference: string,
-    req: Request,
+    _req: Request,
     ctx: RepoContext,
     headOnly: boolean,
   ): Promise<Response> {
@@ -358,9 +357,6 @@ export class DockerAdapter implements FormatAdapter {
     if (!m) throw Errors.manifestUnknown({ reference });
     if (await isArtifactBlocked(ctx, m.digest))
       throw Errors.denied({ reason: "blocked by scan policy" });
-    if (!acceptsMediaType(req.headers.get("accept"), m.mediaType)) {
-      throw Errors.manifestUnknown({ reference, mediaType: m.mediaType });
-    }
     const headers = {
       "content-type": m.mediaType,
       "docker-content-digest": m.digest,

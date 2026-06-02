@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { computeMountPath, isValidRepositoryName, mountSegment } from "./repo";
+import {
+  computeMountPath,
+  isValidRepositoryName,
+  isValidRepositoryNameForFormat,
+  mountSegment,
+} from "./repo";
 
 describe("repository path helpers", () => {
   test("maps OCI-family formats to the shared v2 mount segment", () => {
@@ -21,5 +26,14 @@ describe("repository path helpers", () => {
     expect(isValidRepositoryName("bad/name")).toBe(false);
     expect(isValidRepositoryName("bad..name")).toBe(false);
     expect(isValidRepositoryName("x".repeat(257))).toBe(false);
+  });
+
+  test("requires OCI-family repository names to satisfy lowercase OCI grammar", () => {
+    expect(isValidRepositoryNameForFormat("docker", "containers")).toBe(true);
+    expect(isValidRepositoryNameForFormat("oci", "artifacts")).toBe(true);
+    expect(isValidRepositoryNameForFormat("helm", "charts")).toBe(true);
+    expect(isValidRepositoryNameForFormat("docker", "Containers")).toBe(false);
+    expect(isValidRepositoryNameForFormat("oci", "bad..name")).toBe(false);
+    expect(isValidRepositoryNameForFormat("npm", "MixedCase")).toBe(true);
   });
 });

@@ -8,6 +8,7 @@ import {
   formatRegistry,
   isUniqueViolation,
   isValidRepositoryName,
+  isValidRepositoryNameForFormat,
 } from "@hootifactory/core";
 import {
   and,
@@ -293,6 +294,15 @@ uiRouter.post("/orgs/:orgId/repositories", async (c) => {
   const format = body.format as PackageFormat;
   if (!formatRegistry.has(format)) {
     return c.json({ error: `unsupported repository format '${body.format}'` }, 400);
+  }
+  if (!isValidRepositoryNameForFormat(format, body.name)) {
+    return c.json(
+      {
+        error:
+          "repository name is invalid for this format; OCI-family repositories must be lowercase",
+      },
+      400,
+    );
   }
   const parsedKind = RepoKindSchema.safeParse(body.kind ?? "hosted");
   if (!parsedKind.success) {

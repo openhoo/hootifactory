@@ -86,6 +86,19 @@ test.describe("repositories", () => {
     }
   });
 
+  test("OCI-family repository names must be lowercase", async ({ baseURL }) => {
+    const owner = await setupOwner(baseURL!);
+    for (const format of ["docker", "oci", "helm"]) {
+      const res = await createRepo(owner.ctx, owner.orgId, { name: `Upper${format}`, format });
+      expect(res.status()).toBe(400);
+      expect(await res.text()).toContain("OCI-family repositories must be lowercase");
+    }
+
+    expect(
+      (await createRepo(owner.ctx, owner.orgId, { name: "MixedCase", format: "npm" })).status(),
+    ).toBe(201);
+  });
+
   test("unsupported formats are rejected", async ({ baseURL }) => {
     const owner = await setupOwner(baseURL!);
     for (const format of ["generic", "maven"]) {

@@ -387,9 +387,7 @@ test.describe("docker registry protocol authorization", () => {
     expect(stillThere.status()).toBe(200);
   });
 
-  test("manifest references, media types, and Accept negotiation follow OCI rules", async ({
-    baseURL,
-  }) => {
+  test("manifest references and media types follow OCI rules", async ({ baseURL }) => {
     const owner = await setupOwner(baseURL!);
     const repo = (
       await (
@@ -432,11 +430,12 @@ test.describe("docker registry protocol authorization", () => {
     expect(accepted.status()).toBe(200);
     expect(accepted.headers()["content-type"]).toBe(OCI_MEDIA_TYPES.manifestV1);
 
-    const unacceptable = await owner.ctx.get(`/${repo.mountPath}/strict/manifests/v1`, {
+    const narrowAccept = await owner.ctx.get(`/${repo.mountPath}/strict/manifests/v1`, {
       headers: { accept: OCI_MEDIA_TYPES.imageIndexV1 },
     });
-    expect(unacceptable.status()).toBe(404);
-    expect((await unacceptable.json()).errors[0].code).toBe("MANIFEST_UNKNOWN");
+    expect(narrowAccept.status()).toBe(200);
+    expect(narrowAccept.headers()["content-type"]).toBe(OCI_MEDIA_TYPES.manifestV1);
+    expect(await narrowAccept.text()).toBe(manifest);
 
     const badTag = await owner.ctx.put(`/${repo.mountPath}/strict/manifests/bad:tag`, {
       headers: { "content-type": OCI_MEDIA_TYPES.manifestV1 },
