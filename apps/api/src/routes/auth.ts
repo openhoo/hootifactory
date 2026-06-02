@@ -1,6 +1,5 @@
 import {
   consumeAuthEmailToken,
-  createAuthEmailToken,
   createOidcAuthorizationRequest,
   hashPassword,
   OidcEmailLinkRequiredError,
@@ -42,6 +41,7 @@ import {
   setOidcStateCookie,
 } from "./auth-helpers";
 import { createOidcLinkEmail } from "./auth-oidc-link";
+import { createPasswordResetEmail } from "./auth-password-reset";
 import {
   ConfirmLinkQuerySchema,
   LoginBodySchema,
@@ -250,19 +250,13 @@ authRouter.post("/password-reset/request", async (c) => {
   const [user] = await db.select().from(users).where(eq(users.email, email)).limit(1);
   if (user?.isActive && user.passwordHash) {
     try {
-      const { token, secret } = await createAuthEmailToken({
-        purpose: "password_reset",
+      const { job } = await createPasswordResetEmail({
         userId: user.id,
         email: user.email,
         ttlSeconds: env.AUTH_PASSWORD_RESET_TTL_SECONDS,
+        publicUrl,
       });
-      await enqueueEmail({
-        template: "password_reset",
-        to: user.email,
-        resetUrl: publicUrl(`/reset-password?token=${encodeURIComponent(secret)}`),
-        expiresAt: token.expiresAt.toISOString(),
-        deliveryKey: `password-reset-${token.id}`,
-      });
+      await enqueueEmail(job);
       logger.info("password reset email queued", { userId: user.id });
       audit({
         action: "auth.password_reset_email",
