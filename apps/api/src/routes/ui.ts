@@ -41,6 +41,7 @@ import {
   CreateRepositoryBodySchema,
 } from "./ui-schemas";
 import { registerTokenRoutes } from "./ui-tokens";
+import { validateVirtualMemberCandidate, validateVirtualMemberParent } from "./ui-virtual-members";
 
 export const uiRouter = new Hono<AppEnv>();
 
@@ -157,28 +158,24 @@ uiRouter.get("/packages/:packageId/versions", async (c) => {
 uiRouter.post("/repositories/:repoId/members", async (c) => {
   const guard = await requireRepositoryAccessFromParam(c, "admin");
   if (!guard.ok) return guard.response;
-  if (guard.repo.kind !== "virtual") {
-    return c.json({ error: "members can only be added to virtual repositories" }, 400);
+  const parentValidation = validateVirtualMemberParent(guard.repo);
+  if (!parentValidation.ok) {
+    return c.json({ error: parentValidation.error }, parentValidation.status);
   }
   const parsedBody = await validateJsonBody(c, AddMemberBodySchema, "invalid member request");
   if (!parsedBody.ok) return parsedBody.response;
   const body = parsedBody.data;
 
-  const [member] = await db
+  const [memberCandidate] = await db
     .select()
     .from(repositories)
     .where(eq(repositories.id, body.memberRepoId))
     .limit(1);
-  if (!member) return c.json({ error: "member repository not found" }, 404);
-  if (member.id === guard.repo.id) {
-    return c.json({ error: "virtual repositories cannot include themselves" }, 400);
+  const memberValidation = validateVirtualMemberCandidate(guard.repo, memberCandidate);
+  if (!memberValidation.ok) {
+    return c.json({ error: memberValidation.error }, memberValidation.status);
   }
-  if (member.format !== guard.repo.format) {
-    return c.json({ error: "virtual repository members must use the same format" }, 400);
-  }
-  if (member.kind !== "hosted") {
-    return c.json({ error: "virtual repository members must be hosted repositories" }, 400);
-  }
+  const { member } = memberValidation;
   const memberDecision = await authorize(c.get("principal"), "read", {
     type: "repository",
     orgId: member.orgId,
