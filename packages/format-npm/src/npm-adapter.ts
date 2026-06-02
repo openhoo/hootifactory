@@ -45,13 +45,18 @@ import {
 } from "./npm-integrity";
 import { parseNpmPublishRequest, resolveNpmPublishDistTags } from "./npm-publish";
 import {
+  buildNpmSearchObject,
+  buildNpmSearchResponse,
+  type NpmSearchObject,
+  parseNpmSearchQuery,
+} from "./npm-search";
+import {
   basename,
   isValidDistTag,
   isValidLegacyNpmName,
   isValidNpmVersion,
   NpmDistTagSchema,
   NpmLegacyPackageNameSchema,
-  NpmSearchQuerySchema,
   NpmTarballFilenameSchema,
   NpmVersionSchema,
   packagePath,
@@ -632,16 +637,7 @@ export class NpmAdapter implements FormatAdapter {
   }
 
   private async searchHandler(req: Request, ctx: RepoContext): Promise<Response> {
-    const url = new URL(req.url);
-    const { text, from, size } = parseRegistryInput(
-      NpmSearchQuerySchema,
-      {
-        text: url.searchParams.get("text") ?? undefined,
-        from: url.searchParams.get("from") ?? undefined,
-        size: url.searchParams.get("size") ?? undefined,
-      },
-      { code: "PAGINATION_NUMBER_INVALID", message: "invalid search query" },
-    );
+    const { text, from, size } = parseNpmSearchQuery(req.url);
     const where = and(
       eq(packages.repositoryId, ctx.repo.id),
       text ? like(packages.name, `%${text}%`) : sql`true`,
@@ -649,7 +645,7 @@ export class NpmAdapter implements FormatAdapter {
     const totalRows = await ctx.db.select({ value: count() }).from(packages).where(where);
     const rows = await ctx.db.select().from(packages).where(where).limit(size).offset(from);
 
-    const objects: Record<string, unknown>[] = [];
+    const objects: NpmSearchObject[] = [];
     for (const p of rows) {
       const versions = await ctx.db
         .select()
@@ -661,28 +657,16 @@ export class NpmAdapter implements FormatAdapter {
       const tags = await this.distTags(ctx, p.id);
       const version = tags.latest ?? versions[0]!.version;
       const selected = versions.find((v) => v.version === version) ?? versions[0]!;
-      const manifest =
-        (selected.metadata as { manifest?: Record<string, unknown> } | undefined)?.manifest ?? {};
-      objects.push({
-        package: {
-          name: p.name,
-          version: selected.version,
-          description: typeof manifest.description === "string" ? manifest.description : "",
-          keywords: Array.isArray(manifest.keywords) ? manifest.keywords : [],
-          date: selected.createdAt.toISOString(),
-          links: { npm: `${ctx.baseUrl}/${ctx.repo.mountPath}/${packagePath(p.name)}` },
-          publisher: { username: "hootifactory", email: "" },
-          maintainers: [{ username: "hootifactory", email: "" }],
-        },
-        score: { final: 1, detail: { quality: 1, popularity: 1, maintenance: 1 } },
-        searchScore: 1,
-      });
+      objects.push(
+        buildNpmSearchObject({
+          packageName: p.name,
+          selected,
+          baseUrl: ctx.baseUrl,
+          mountPath: ctx.repo.mountPath,
+        }),
+      );
     }
 
-    return Response.json({
-      objects,
-      total: totalRows[0]?.value ?? 0,
-      time: new Date().toISOString(),
-    });
+    return Response.json(buildNpmSearchResponse({ objects, total: totalRows[0]?.value ?? 0 }));
   }
 }
