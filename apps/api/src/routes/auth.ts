@@ -41,6 +41,7 @@ import {
   readSessionCookie,
   setOidcStateCookie,
 } from "./auth-helpers";
+import { createOidcLinkEmail } from "./auth-oidc-link";
 import {
   ConfirmLinkQuerySchema,
   LoginBodySchema,
@@ -129,21 +130,16 @@ authRouter.get("/oidc/callback", async (c) => {
         });
         return c.redirect(loginRedirect("sso_link_unavailable"));
       }
-      const { token, secret } = await createAuthEmailToken({
-        purpose: "oidc_link",
+      const { job } = await createOidcLinkEmail({
         userId: err.userId,
         email: err.email,
+        claims,
+        returnTo: state.returnTo,
         ttlSeconds: env.AUTH_OIDC_LINK_TTL_SECONDS,
-        metadata: { claims, returnTo: state.returnTo },
-      });
-      await enqueueEmail({
-        template: "oidc_link",
-        to: err.email,
-        linkUrl: publicUrl(`/api/auth/oidc/link/confirm?token=${encodeURIComponent(secret)}`),
         providerName: env.AUTH_OIDC_NAME,
-        expiresAt: token.expiresAt.toISOString(),
-        deliveryKey: `oidc-link-${token.id}`,
+        publicUrl,
       });
+      await enqueueEmail(job);
       addSpanEvent("auth.oidc_link_email_sent");
       logger.info("OIDC link confirmation email queued", { userId: err.userId });
       audit({
