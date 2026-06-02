@@ -15,8 +15,10 @@ export type Principal =
   | {
       kind: "token";
       tokenId: string;
+      tokenName?: string;
       orgId: string;
       ownerUserId: string | null;
+      ownerUsername?: string | null;
       scopes: TokenScope[];
       role: RoleName | null;
       isRobot: boolean;

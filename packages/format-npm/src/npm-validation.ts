@@ -9,10 +9,16 @@ export function packagePath(name: string): string {
   return encodeURIComponent(name);
 }
 
-/** npm package-name rules (subset): optional scope, url-safe, <=214 chars. */
+/** npm new-package rules: optional scope, URL-safe, lowercase-only, <=214 chars. */
 export function isValidNpmName(name: string): boolean {
   if (!name || name.length > 214) return false;
   return /^(@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/.test(name);
+}
+
+/** npm legacy read/proxy rules: old public packages may contain uppercase letters. */
+export function isValidLegacyNpmName(name: string): boolean {
+  if (!name || name.length > 214) return false;
+  return /^(@[A-Za-z0-9-~][A-Za-z0-9-._~]*\/)?[A-Za-z0-9-~][A-Za-z0-9-._~]*$/.test(name);
 }
 
 export function isValidNpmVersion(version: string): boolean {
@@ -39,6 +45,11 @@ export const NpmPackageNameSchema = z
   .min(1)
   .max(214)
   .refine(isValidNpmName, "invalid npm package name");
+export const NpmLegacyPackageNameSchema = z
+  .string()
+  .min(1)
+  .max(214)
+  .refine(isValidLegacyNpmName, "invalid npm package name");
 export const NpmVersionSchema = z
   .string()
   .min(1)

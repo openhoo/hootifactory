@@ -84,7 +84,7 @@ test.describe("npm registry (Dockerized real CLI)", () => {
     writeFileSync(join(pubDir, "index.js"), `module.exports = ${JSON.stringify(pkgName)};\n`);
     writeFileSync(join(pubDir, ".npmrc"), npmrc);
 
-    expect(npm(["whoami", "--registry", registry], pubDir).trim()).toBe("token");
+    expect(npm(["whoami", "--registry", registry], pubDir).trim()).toBe(owner.username);
     npm(["publish", "--registry", registry, "--access", "public"], pubDir);
     npm(["dist-tag", "add", `${pkgName}@1.0.0`, "beta", "--registry", registry], pubDir);
     const tags = npm(["dist-tag", "ls", pkgName, "--registry", registry], pubDir);

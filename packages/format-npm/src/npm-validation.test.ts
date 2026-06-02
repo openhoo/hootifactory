@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   basename,
   isValidDistTag,
+  isValidLegacyNpmName,
   isValidNpmName,
   isValidNpmVersion,
   packagePath,
@@ -12,7 +13,11 @@ describe("npm validation helpers", () => {
     expect(isValidNpmName("left-pad")).toBe(true);
     expect(isValidNpmName("@scope/pkg.name")).toBe(true);
     expect(isValidNpmName("BadName")).toBe(false);
+    expect(isValidLegacyNpmName("BadName")).toBe(true);
+    expect(isValidLegacyNpmName("JSONStream")).toBe(true);
+    expect(isValidLegacyNpmName("@Scope/LegacyPkg")).toBe(true);
     expect(isValidNpmName("@scope/")).toBe(false);
+    expect(isValidLegacyNpmName("@scope/")).toBe(false);
     expect(packagePath("@scope/pkg")).toBe("%40scope%2Fpkg");
     expect(basename("@scope/pkg")).toBe("pkg");
   });

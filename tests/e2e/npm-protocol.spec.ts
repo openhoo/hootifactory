@@ -77,6 +77,15 @@ test.describe("npm protocol publish validation", () => {
       expect(res.status()).toBe(400);
     }
 
+    const invalidVersion = await owner.ctx.put(`/${repo.mountPath}/${pkg}`, {
+      data: npmPayload({
+        name: pkg,
+        version: "not-a-version",
+        attachmentData: encoded,
+      }),
+    });
+    expect(await invalidVersion.json()).toEqual({ error: "invalid package version" });
+
     const packument = await owner.ctx.get(`/${repo.mountPath}/${pkg}`);
     expect(packument.status()).toBe(404);
   });
@@ -137,6 +146,57 @@ test.describe("npm protocol publish validation", () => {
     expect(packages.packages.find((p: { name: string }) => p.name === pkg)?.latestVersion).toBe(
       "1.0.0",
     );
+  });
+
+  test("metadata-only PUT updates deprecation without re-uploading tarballs", async ({
+    baseURL,
+  }) => {
+    const owner = await setupOwner(baseURL!);
+    const repo = (
+      await (
+        await createRepo(owner.ctx, owner.orgId, { name: uniq("npm-deprecate"), format: "npm" })
+      ).json()
+    ).repository as { mountPath: string };
+    const pkg = `deprecate${Date.now().toString(36)}`;
+    const bytes = Buffer.from("deprecate tarball");
+
+    const publish = await owner.ctx.put(`/${repo.mountPath}/${pkg}`, {
+      data: npmPayload({
+        name: pkg,
+        version: "1.0.0",
+        attachmentData: bytes.toString("base64"),
+      }),
+    });
+    expect(publish.status()).toBe(201);
+
+    const deprecate = await owner.ctx.put(`/${repo.mountPath}/${pkg}`, {
+      data: {
+        name: pkg,
+        versions: {
+          "1.0.0": { name: pkg, version: "1.0.0", deprecated: "use 2.x" },
+        },
+        _attachments: {},
+      },
+    });
+    expect(deprecate.status()).toBe(200);
+    let packument = await (await owner.ctx.get(`/${repo.mountPath}/${pkg}`)).json();
+    expect(packument.versions["1.0.0"].deprecated).toBe("use 2.x");
+    expect(packument.versions["1.0.0"].dist.shasum).toBe(
+      createHash("sha1").update(bytes).digest("hex"),
+    );
+
+    const undeprecate = await owner.ctx.put(`/${repo.mountPath}/${pkg}`, {
+      data: {
+        name: pkg,
+        versions: {
+          "1.0.0": { name: pkg, version: "1.0.0", deprecated: "" },
+        },
+        _attachments: {},
+      },
+    });
+    expect(undeprecate.status()).toBe(200);
+    packument = await (await owner.ctx.get(`/${repo.mountPath}/${pkg}`)).json();
+    expect(packument.versions["1.0.0"].deprecated).toBe("");
   });
 
   test("latest dist-tag mutations keep repository package metadata in sync", async ({

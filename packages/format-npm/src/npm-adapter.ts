@@ -44,9 +44,10 @@ import {
 import {
   basename,
   isValidDistTag,
-  isValidNpmName,
+  isValidLegacyNpmName,
   isValidNpmVersion,
   NpmDistTagSchema,
+  NpmLegacyPackageNameSchema,
   NpmPackageNameSchema,
   NpmPublishBodySchema,
   NpmSearchQuerySchema,
@@ -100,14 +101,7 @@ export class NpmAdapter implements FormatAdapter {
         return Response.json({});
       case "whoami":
         return Response.json({
-          username:
-            ctx.principal.kind === "user"
-              ? ctx.principal.username
-              : ctx.principal.kind === "token"
-                ? "token"
-                : ctx.principal.kind === "registryToken"
-                  ? ctx.principal.subject
-                  : "anonymous",
+          username: this.whoamiUsername(ctx),
         });
       case "search":
         return this.searchHandler(req, ctx);
@@ -159,8 +153,18 @@ export class NpmAdapter implements FormatAdapter {
     return out;
   }
 
+  private whoamiUsername(ctx: RepoContext): string {
+    const principal = ctx.principal;
+    if (principal.kind === "user") return principal.username;
+    if (principal.kind === "registryToken") return principal.subject;
+    if (principal.kind === "token") {
+      return principal.ownerUsername ?? principal.tokenName ?? `token:${principal.tokenId}`;
+    }
+    return "anonymous";
+  }
+
   private async packument(name: string, req: Request, ctx: RepoContext): Promise<Response> {
-    name = parseRegistryInput(NpmPackageNameSchema, name, {
+    name = parseRegistryInput(NpmLegacyPackageNameSchema, name, {
       code: "NAME_INVALID",
       message: "invalid package name",
     });
@@ -182,7 +186,7 @@ export class NpmAdapter implements FormatAdapter {
     req: Request,
     ctx: RepoContext,
   ): Promise<Response> {
-    name = parseRegistryInput(NpmPackageNameSchema, name, {
+    name = parseRegistryInput(NpmLegacyPackageNameSchema, name, {
       code: "NAME_INVALID",
       message: "invalid package name",
     });
@@ -226,6 +230,10 @@ export class NpmAdapter implements FormatAdapter {
 
     const attachments = body._attachments ?? {};
     const versions = body.versions ?? {};
+    const metadataOnly = Object.keys(attachments).length === 0;
+    if (metadataOnly) {
+      return this.updateMetadataOnly(name, versions, body["dist-tags"] ?? {}, ctx);
+    }
     const base = basename(name);
     const publishVersions: PublishVersion[] = [];
     for (const [ver, manifestRaw] of Object.entries(versions)) {
@@ -401,8 +409,98 @@ export class NpmAdapter implements FormatAdapter {
     return row?.id;
   }
 
+  private async updateMetadataOnly(
+    name: string,
+    incomingVersions: Record<string, Record<string, unknown>>,
+    distTags: Record<string, string>,
+    ctx: RepoContext,
+  ): Promise<Response> {
+    const entries = Object.entries(incomingVersions);
+    if (!entries.length) {
+      return Response.json({ error: "publish payload must include a version" }, { status: 400 });
+    }
+
+    const pkg = await this.findPackage(ctx, name);
+    if (!pkg) {
+      return Response.json(
+        { error: `missing tarball attachment for ${entries[0]![0]}` },
+        { status: 400 },
+      );
+    }
+
+    const liveRows = await this.liveVersions(ctx, pkg.id);
+    const liveByVersion = new Map(liveRows.map((row) => [row.version, row]));
+    const versionIds = new Map<string, string>();
+    for (const [ver, manifestRaw] of entries) {
+      parseRegistryInput(NpmVersionSchema, ver, {
+        code: "MANIFEST_INVALID",
+        message: "invalid package version",
+      });
+      const live = liveByVersion.get(ver);
+      if (!live) return Response.json({ error: `version not found: ${ver}` }, { status: 404 });
+      if (manifestRaw.name !== undefined && manifestRaw.name !== name) {
+        return Response.json(
+          { error: "version manifest name does not match URL" },
+          { status: 400 },
+        );
+      }
+      if (manifestRaw.version !== undefined && manifestRaw.version !== ver) {
+        return Response.json(
+          { error: "version manifest version does not match version key" },
+          { status: 400 },
+        );
+      }
+      versionIds.set(ver, live.id);
+      if (!Object.hasOwn(manifestRaw, "deprecated")) continue;
+
+      const metadata = (live.metadata as Record<string, unknown> | null) ?? {};
+      const manifest = (metadata.manifest as Record<string, unknown> | undefined) ?? {
+        name,
+        version: ver,
+      };
+      await upsertPackageVersion(ctx, {
+        packageId: pkg.id,
+        version: ver,
+        metadata: {
+          ...metadata,
+          manifest: {
+            ...manifest,
+            name,
+            version: ver,
+            deprecated: manifestRaw.deprecated,
+          },
+        },
+        sizeBytes: live.sizeBytes,
+      });
+    }
+
+    for (const [tag, ver] of Object.entries(distTags)) {
+      parseRegistryInput(NpmDistTagSchema, tag, {
+        code: "TAG_INVALID",
+        message: "invalid dist-tag",
+      });
+      parseRegistryInput(NpmVersionSchema, ver, {
+        code: "MANIFEST_INVALID",
+        message: `dist-tag ${tag} points to an invalid version`,
+      });
+      const versionId = versionIds.get(ver) ?? (await this.versionId(ctx, pkg.id, ver));
+      if (!versionId) {
+        return Response.json(
+          { error: `dist-tag ${tag} points to an unknown version` },
+          { status: 400 },
+        );
+      }
+      await setDistTag(ctx, pkg.id, tag, versionId);
+      if (tag === "latest") {
+        await ctx.db.update(packages).set({ latestVersion: ver }).where(eq(packages.id, pkg.id));
+      }
+    }
+
+    return Response.json({ success: true }, { status: 200 });
+  }
+
   private async distTagsList(name: string, ctx: RepoContext): Promise<Response> {
-    name = parseRegistryInput(NpmPackageNameSchema, name, {
+    name = parseRegistryInput(NpmLegacyPackageNameSchema, name, {
       code: "NAME_INVALID",
       message: "invalid package name",
     });
@@ -417,7 +515,7 @@ export class NpmAdapter implements FormatAdapter {
     req: Request,
     ctx: RepoContext,
   ): Promise<Response> {
-    name = parseRegistryInput(NpmPackageNameSchema, name, {
+    name = parseRegistryInput(NpmLegacyPackageNameSchema, name, {
       code: "NAME_INVALID",
       message: "invalid package name",
     });
@@ -442,7 +540,7 @@ export class NpmAdapter implements FormatAdapter {
   }
 
   private async distTagDelete(name: string, tag: string, ctx: RepoContext): Promise<Response> {
-    name = parseRegistryInput(NpmPackageNameSchema, name, {
+    name = parseRegistryInput(NpmLegacyPackageNameSchema, name, {
       code: "NAME_INVALID",
       message: "invalid package name",
     });
@@ -463,7 +561,7 @@ export class NpmAdapter implements FormatAdapter {
 
   /** Pull-through: mirror an upstream package (all versions) into this proxy repo. */
   async proxyIngest(pkgName: string, upstreamBase: string, ctx: RepoContext): Promise<boolean> {
-    if (!isValidNpmName(pkgName)) return false;
+    if (!isValidLegacyNpmName(pkgName)) return false;
     let upstreamHost = "";
     try {
       upstreamHost = new URL(upstreamBase).host;

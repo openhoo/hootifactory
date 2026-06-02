@@ -72,13 +72,15 @@ export async function resolveToken(secret: string): Promise<Principal | null> {
   const [row] = await db.select().from(apiTokens).where(eq(apiTokens.tokenHash, hash)).limit(1);
   if (!row || row.revokedAt) return null;
   if (row.expiresAt && row.expiresAt.getTime() < Date.now()) return null;
+  let ownerUsername: string | null = null;
   if (row.ownerUserId) {
     const [owner] = await db
-      .select({ isActive: users.isActive })
+      .select({ isActive: users.isActive, username: users.username })
       .from(users)
       .where(eq(users.id, row.ownerUserId))
       .limit(1);
     if (!owner?.isActive) return null;
+    ownerUsername = owner.username;
   }
 
   // best-effort last-used bookkeeping. `.catch()` both executes the lazy Drizzle
@@ -93,8 +95,10 @@ export async function resolveToken(secret: string): Promise<Principal | null> {
   return {
     kind: "token",
     tokenId: row.id,
+    tokenName: row.name,
     orgId: row.orgId,
     ownerUserId: row.ownerUserId,
+    ownerUsername,
     scopes: row.scopes,
     role: row.role,
     isRobot: row.type === "robot",

@@ -47,6 +47,17 @@ export async function adapterResponse(
         });
         return response;
       } catch (err) {
+        if (adapter.format === "npm" && err instanceof RegistryError) {
+          const response = Response.json({ error: err.message }, { status: err.status });
+          span.setAttribute("http.response.status_code", response.status);
+          logger.debug("registry adapter error", {
+            format: adapter.format,
+            repo: ctx.repo.name,
+            handler: match.entry.handlerId,
+            code: err.code,
+          });
+          return response;
+        }
         if (isRegistryMiss(err)) {
           const response =
             adapter.format === "npm"
