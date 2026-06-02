@@ -23,12 +23,20 @@ export function roleAllows(role: RoleName, action: Action): boolean {
   return ROLE_ACTIONS[role].includes(action);
 }
 
+export function isRoleName(value: unknown): value is RoleName {
+  return typeof value === "string" && Object.hasOwn(ROLE_RANK, value);
+}
+
+export function roleOutranks(candidate: RoleName, current: RoleName): boolean {
+  return ROLE_RANK[candidate] > ROLE_RANK[current];
+}
+
 /** Pick the higher-privilege of two roles. */
 export function maxRole(a: RoleName, b: RoleName): RoleName {
-  return ROLE_RANK[a] >= ROLE_RANK[b] ? a : b;
+  return roleOutranks(b, a) ? b : a;
 }
 
 /** Pick the lower-privilege of two roles. */
 export function minRole(a: RoleName, b: RoleName): RoleName {
-  return ROLE_RANK[a] <= ROLE_RANK[b] ? a : b;
+  return roleOutranks(a, b) ? b : a;
 }

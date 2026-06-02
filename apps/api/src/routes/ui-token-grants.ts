@@ -1,4 +1,4 @@
-import { ROLE_RANK, type RoleName, resolveUserRole, roleAllows } from "@hootifactory/auth";
+import { type RoleName, resolveUserRole, roleAllows, roleOutranks } from "@hootifactory/auth";
 import { db, eq, repositories } from "@hootifactory/db";
 import type { ParsedTokenScope } from "./ui-schemas";
 import { scopeMayTargetRepo } from "./ui-token-scope";
@@ -19,7 +19,7 @@ export async function validateTokenGrant({
   scopes,
 }: TokenGrantRequest): Promise<TokenGrantResult> {
   const creatorRole = await resolveUserRole(userId, orgId);
-  if (requestedRole && (!creatorRole || ROLE_RANK[requestedRole] > ROLE_RANK[creatorRole])) {
+  if (requestedRole && (!creatorRole || roleOutranks(requestedRole, creatorRole))) {
     return { ok: false, error: "cannot grant a role above your own" };
   }
 
@@ -38,7 +38,7 @@ export async function validateTokenGrant({
   if (requestedRole) {
     for (const repo of orgRepos) {
       const repoRole = await resolveUserRole(userId, orgId, repo.id);
-      if (!repoRole || ROLE_RANK[requestedRole] > ROLE_RANK[repoRole]) {
+      if (!repoRole || roleOutranks(requestedRole, repoRole)) {
         return {
           ok: false,
           error: `cannot grant role '${requestedRole}' on repository '${repo.name}'`,

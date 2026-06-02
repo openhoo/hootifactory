@@ -1,4 +1,4 @@
-import { ROLE_RANK, type RoleName } from "@hootifactory/auth";
+import { type RoleName, roleOutranks } from "@hootifactory/auth";
 import { db, eq, externalRoleGrants, memberships, organizations } from "@hootifactory/db";
 
 export type AccessibleOrg = {
@@ -15,7 +15,7 @@ export function mergeAccessibleOrgs(
   const byId = new Map<string, AccessibleOrg>();
   for (const org of [...membershipOrgs, ...externalOrgs]) {
     const existing = byId.get(org.id);
-    if (!existing || ROLE_RANK[org.role] > ROLE_RANK[existing.role]) byId.set(org.id, org);
+    if (!existing || roleOutranks(org.role, existing.role)) byId.set(org.id, org);
   }
   return [...byId.values()].sort((a, b) => a.slug.localeCompare(b.slug));
 }

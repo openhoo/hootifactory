@@ -1,5 +1,5 @@
 import type { OidcGroupGrant, OidcGroupMappings } from "./oidc-types";
-import { ROLE_RANK, type RoleName } from "./permissions";
+import { isRoleName, type RoleName, roleOutranks } from "./permissions";
 
 // ── legacy single-org mapping ────────────────────────────────────────────────
 // `mapGroupsToRole` / `groupRoleMap` (OidcProviderConfig) is the legacy single-org
@@ -16,8 +16,8 @@ export function mapGroupsToRole(
 ): RoleName | null {
   let best: RoleName | null = null;
   for (const g of groups) {
-    const mapped = groupRoleMap[g] as RoleName | undefined;
-    if (mapped && ROLE_RANK[mapped] && (!best || ROLE_RANK[mapped] > ROLE_RANK[best])) {
+    const mapped = groupRoleMap[g];
+    if (isRoleName(mapped) && (!best || roleOutranks(mapped, best))) {
       best = mapped;
     }
   }
@@ -37,7 +37,7 @@ export function mapGroupsToOrgRoles(
     const grants = Object.hasOwn(groupMappings, group) ? groupMappings[group] : undefined;
     for (const grant of grants ?? []) {
       const existing = byOrg.get(grant.org);
-      if (!existing || ROLE_RANK[grant.role] > ROLE_RANK[existing.role]) {
+      if (!existing || roleOutranks(grant.role, existing.role)) {
         byOrg.set(grant.org, { org: grant.org, role: grant.role, groups: [group] });
       } else if (existing.role === grant.role && !existing.groups.includes(group)) {
         existing.groups.push(group);
