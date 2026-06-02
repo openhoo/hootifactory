@@ -12,8 +12,12 @@ import { db, eq, users } from "@hootifactory/db";
 import { logger, withSpan } from "@hootifactory/observability";
 import type { Context } from "hono";
 import { getCookie } from "hono/cookie";
-import type { AppEnv } from "../types";
-import { parseAuthorizationHeader, parseNugetApiKeyHeader } from "./auth-credentials";
+import type { AppEnv, AuthSource } from "../types";
+import {
+  type ParsedAuthorizationHeader,
+  parseAuthorizationHeader,
+  parseNugetApiKeyHeader,
+} from "./auth-credentials";
 
 export const SESSION_COOKIE = "hoot_session";
 
@@ -26,6 +30,20 @@ function isRegistryPath(url: string): boolean {
   return pathname === "/v2" || pathname === "/v2/" || pathname.startsWith("/v2/");
 }
 
+function sourcedPrincipal(c: Context<AppEnv>, source: AuthSource, principal: Principal): Principal {
+  c.set("authSource", source);
+  return principal;
+}
+
+async function resolveHootToken(
+  c: Context<AppEnv>,
+  token: string,
+  source: AuthSource,
+): Promise<Principal | null> {
+  const principal = await resolveToken(token);
+  return principal ? sourcedPrincipal(c, source, principal) : null;
+}
+
 async function userPrincipalById(userId: string): Promise<Principal | null> {
   const [u] = await db
     .select({ id: users.id, username: users.username, isActive: users.isActive })
@@ -34,6 +52,74 @@ async function userPrincipalById(userId: string): Promise<Principal | null> {
     .limit(1);
   if (!u?.isActive) return null;
   return { kind: "user", userId: u.id, username: u.username };
+}
+
+async function authenticateBearer(c: Context<AppEnv>, token: string): Promise<Principal> {
+  if (token.startsWith(TOKEN_PREFIX)) {
+    const principal = await resolveHootToken(c, token, "authorization");
+    if (principal) return principal;
+    invalidCredentials();
+  }
+
+  // OCI registry Bearer JWT (issued by /token).
+  try {
+    const verified = await verifyRegistryToken(token, REGISTRY_TOKEN_SERVICE);
+    return sourcedPrincipal(c, "authorization", {
+      kind: "registryToken",
+      subject: verified.subject ?? "anonymous",
+      access: verified.access,
+    });
+  } catch {
+    if (isRegistryPath(c.req.url)) {
+      c.set("authSource", "authorization");
+      c.set("registryAuthFailure", "invalid_token");
+      return { kind: "anonymous" };
+    }
+    invalidCredentials();
+  }
+}
+
+async function authenticateBasic(
+  c: Context<AppEnv>,
+  username: string,
+  password: string,
+): Promise<Principal> {
+  if (password.startsWith(TOKEN_PREFIX)) {
+    const principal = await resolveHootToken(c, password, "authorization");
+    if (principal) return principal;
+  }
+  const principal = await authenticateUserPassword(username, password);
+  if (principal) return sourcedPrincipal(c, "authorization", principal);
+  invalidCredentials();
+}
+
+async function authenticateAuthorization(
+  c: Context<AppEnv>,
+  authz: ParsedAuthorizationHeader,
+): Promise<Principal> {
+  if (authz.kind === "bearer") return authenticateBearer(c, authz.token);
+  if (authz.kind === "basic") return authenticateBasic(c, authz.username, authz.password);
+  if (authz.kind === "bareToken") {
+    // Bare token (Cargo sends the token with no scheme).
+    const principal = await resolveHootToken(c, authz.token, "authorization");
+    if (principal) return principal;
+  }
+  invalidCredentials();
+}
+
+async function authenticateNugetApiKey(c: Context<AppEnv>, token: string): Promise<Principal> {
+  const principal = await resolveHootToken(c, token, "nugetApiKey");
+  if (principal) return principal;
+  invalidCredentials();
+}
+
+async function authenticateSession(c: Context<AppEnv>): Promise<Principal | null> {
+  const session = getCookie(c, SESSION_COOKIE);
+  if (!session) return null;
+  const resolved = await resolveSession(session);
+  if (!resolved) return null;
+  const principal = await userPrincipalById(resolved.userId);
+  return principal ? sourcedPrincipal(c, "session", principal) : null;
 }
 
 // A valid argon2id hash used to equalize timing when the username is unknown, so
@@ -64,82 +150,17 @@ async function authenticateInner(c: Context<AppEnv>): Promise<Principal> {
   const authz = parseAuthorizationHeader(c.req.header("authorization"));
   if (authz?.kind === "invalid") invalidCredentials();
   if (authz) {
-    if (authz.kind === "bearer") {
-      if (authz.token.startsWith(TOKEN_PREFIX)) {
-        const p = await resolveToken(authz.token);
-        if (p) {
-          c.set("authSource", "authorization");
-          return p;
-        }
-        invalidCredentials();
-      } else {
-        // OCI registry Bearer JWT (issued by /token).
-        try {
-          const verified = await verifyRegistryToken(authz.token, REGISTRY_TOKEN_SERVICE);
-          c.set("authSource", "authorization");
-          return {
-            kind: "registryToken",
-            subject: verified.subject ?? "anonymous",
-            access: verified.access,
-          };
-        } catch {
-          if (isRegistryPath(c.req.url)) {
-            c.set("authSource", "authorization");
-            c.set("registryAuthFailure", "invalid_token");
-            return { kind: "anonymous" };
-          }
-          invalidCredentials();
-        }
-      }
-    } else if (authz.kind === "basic") {
-      if (authz.password.startsWith(TOKEN_PREFIX)) {
-        const p = await resolveToken(authz.password);
-        if (p) {
-          c.set("authSource", "authorization");
-          return p;
-        }
-      }
-      const up = await authenticateUserPassword(authz.username, authz.password);
-      if (up) {
-        c.set("authSource", "authorization");
-        return up;
-      }
-      invalidCredentials();
-    } else if (authz.kind === "bareToken") {
-      // Bare token (Cargo sends the token with no scheme).
-      const p = await resolveToken(authz.token);
-      if (p) {
-        c.set("authSource", "authorization");
-        return p;
-      }
-      invalidCredentials();
-    }
+    return authenticateAuthorization(c, authz);
   }
 
   // NuGet clients (dotnet/nuget push) send the credential as an API key header,
   // never in Authorization. Treat it as a Hootifactory scoped token.
   const apiKey = parseNugetApiKeyHeader(c.req.header("x-nuget-apikey"));
   if (apiKey?.kind === "invalid") invalidCredentials();
-  if (apiKey) {
-    const p = await resolveToken(apiKey.token);
-    if (p) {
-      c.set("authSource", "nugetApiKey");
-      return p;
-    }
-    invalidCredentials();
-  }
+  if (apiKey) return authenticateNugetApiKey(c, apiKey.token);
 
-  const session = getCookie(c, SESSION_COOKIE);
-  if (session) {
-    const s = await resolveSession(session);
-    if (s) {
-      const p = await userPrincipalById(s.userId);
-      if (p) {
-        c.set("authSource", "session");
-        return p;
-      }
-    }
-  }
+  const sessionPrincipal = await authenticateSession(c);
+  if (sessionPrincipal) return sessionPrincipal;
 
   c.set("authSource", "anonymous");
   return { kind: "anonymous" };
