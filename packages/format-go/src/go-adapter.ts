@@ -17,17 +17,16 @@ import {
   storeBlobWithRef,
 } from "@hootifactory/core";
 import { and, asc, eq, isNull, packageVersions } from "@hootifactory/db";
+import { parseGoUploadRequest, validateGoUploadPlan } from "./go-upload";
 import {
   decodeBang,
   GoModuleSchema,
-  GoUploadFieldsSchema,
   GoVersionFileSchema,
   type GoVersionMeta,
   GoVersionSchema,
   isPseudoVersion,
   pickLatest,
 } from "./go-validation";
-import { decodeModuleDirective, readZipEntryText, validateGoModuleZip } from "./go-zip";
 
 /** Go module proxy (GOPROXY protocol) + a custom upload endpoint for hosted modules. */
 export class GoAdapter implements FormatAdapter {
@@ -160,27 +159,8 @@ export class GoAdapter implements FormatAdapter {
     req: Request,
     ctx: RepoContext,
   ): Promise<Response> {
-    const version = parseRegistryInput(GoVersionSchema, decodeBang(versionRaw), {
-      code: "MANIFEST_INVALID",
-      message: "version must be a canonical Go semver (e.g. v1.2.3)",
-    });
-    const form = await req.formData();
-    const modField = form.get("mod");
-    const zipField = form.get("zip");
-    const rawMod =
-      typeof modField === "string"
-        ? modField
-        : modField instanceof File
-          ? await modField.text()
-          : `module ${moduleName}\n`;
-    const fields = parseRegistryInput(
-      GoUploadFieldsSchema,
-      { mod: rawMod, zip: zipField },
-      { code: "MANIFEST_INVALID", message: "invalid Go upload form" },
-    );
-    const mod = fields.mod;
-    const zipFile = fields.zip;
-    const zipBytes = new Uint8Array(await zipFile.arrayBuffer());
+    const upload = await parseGoUploadRequest(moduleName, versionRaw, req);
+    const { metadata, scope, version, zipBytes } = upload;
     const existingPkg = await findPackageByName(ctx, moduleName);
     if (existingPkg) {
       const [existing] = await ctx.db
@@ -192,19 +172,8 @@ export class GoAdapter implements FormatAdapter {
         .limit(1);
       if (existing) return Response.json({ error: "version already exists" }, { status: 409 });
     }
-
-    const zipError = validateGoModuleZip(zipBytes, moduleName, version);
-    if (zipError)
-      return Response.json({ error: `invalid module zip: ${zipError}` }, { status: 400 });
-    const zipMod = readZipEntryText(zipBytes, `${moduleName}@${version}/go.mod`);
-    const declaredModule = decodeModuleDirective(mod);
-    const zipModule = zipMod ? decodeModuleDirective(zipMod) : null;
-    if (declaredModule !== moduleName || zipModule !== moduleName) {
-      return Response.json(
-        { error: "go.mod module path does not match upload URL" },
-        { status: 400 },
-      );
-    }
+    const uploadError = validateGoUploadPlan(moduleName, upload);
+    if (uploadError) return Response.json(uploadError.body, { status: uploadError.status });
     const pkg =
       existingPkg ??
       (await findOrCreatePackage({
@@ -216,19 +185,17 @@ export class GoAdapter implements FormatAdapter {
     const stored = await storeBlobWithRef(ctx, {
       data: zipBytes,
       kind: "generic_file",
-      scope: `${moduleName}@${version}.zip`,
+      scope,
       mediaType: "application/zip",
     });
     const meta: GoVersionMeta = {
-      mod,
+      ...metadata,
       zipDigest: stored.digest,
-      zipSize: zipBytes.length,
-      time: new Date().toISOString(),
     };
     const result = await commitVersionOrReleaseBlob(ctx, {
       stored,
       kind: "generic_file",
-      scope: `${moduleName}@${version}.zip`,
+      scope,
       packageId: pkg.id,
       version,
       metadata: meta as unknown as Record<string, unknown>,
