@@ -1,7 +1,7 @@
-import { hashPassword, resetPasswordWithToken, revokeSession } from "@hootifactory/auth";
+import { hashPassword, revokeSession } from "@hootifactory/auth";
 import { env } from "@hootifactory/config";
 import { isUniqueViolation } from "@hootifactory/core";
-import { db, eq, users } from "@hootifactory/db";
+import { db, users } from "@hootifactory/db";
 import {
   addSpanEvent,
   logger,
@@ -11,31 +11,21 @@ import {
 import { Hono } from "hono";
 import { authenticateUserPassword } from "../middleware/authenticate";
 import type { AppEnv } from "../types";
-import { errorMessage, validateJsonBody } from "../validation";
+import { validateJsonBody } from "../validation";
 import {
   clientIp,
   createRequestSession,
   deleteSessionCookie,
-  enqueueEmail,
-  publicUrl,
   readSessionCookie,
 } from "./auth-helpers";
 import { registerOidcRoutes } from "./auth-oidc-routes";
-import { createPasswordResetEmail } from "./auth-password-reset";
-import {
-  LoginBodySchema,
-  PasswordResetConfirmBodySchema,
-  PasswordResetRequestBodySchema,
-  RegisterBodySchema,
-} from "./auth-schemas";
+import { registerPasswordResetRoutes } from "./auth-password-reset-routes";
+import { LoginBodySchema, RegisterBodySchema } from "./auth-schemas";
 import {
   clearLoginFailures,
   loginIsThrottled,
   loginThrottleKey,
-  passwordResetIsThrottled,
-  passwordResetThrottleKey,
   recordLoginFailure,
-  recordPasswordResetRequest,
 } from "./auth-throttle";
 import { audit } from "./http";
 
@@ -56,92 +46,7 @@ authRouter.get("/methods", (c) =>
 );
 
 registerOidcRoutes(authRouter);
-
-authRouter.post("/password-reset/request", async (c) => {
-  const parsedBody = await validateJsonBody(
-    c,
-    PasswordResetRequestBodySchema,
-    "invalid password reset request",
-  );
-  if (!parsedBody.ok) return parsedBody.response;
-  const { email } = parsedBody.data;
-  const ip = clientIp(c);
-  const throttleKey = passwordResetThrottleKey(email, ip);
-  const throttle = passwordResetIsThrottled(throttleKey);
-  if (throttle.throttled) {
-    addSpanEvent("auth.password_reset_rate_limited", {
-      "auth.retry_after_seconds": throttle.retryAfter,
-    });
-    logger.warn("password reset request rejected by throttle", {
-      ip,
-      retryAfter: throttle.retryAfter,
-    });
-    return c.json({ error: "too many password reset requests, try again later" }, 429, {
-      "retry-after": String(throttle.retryAfter),
-    });
-  }
-  recordPasswordResetRequest(throttleKey);
-
-  if (!env.EMAIL_ENABLED) {
-    logger.debug("password reset request ignored because email is disabled");
-    return c.json({ ok: true });
-  }
-
-  const [user] = await db.select().from(users).where(eq(users.email, email)).limit(1);
-  if (user?.isActive && user.passwordHash) {
-    try {
-      const { job } = await createPasswordResetEmail({
-        userId: user.id,
-        email: user.email,
-        ttlSeconds: env.AUTH_PASSWORD_RESET_TTL_SECONDS,
-        publicUrl,
-      });
-      await enqueueEmail(job);
-      logger.info("password reset email queued", { userId: user.id });
-      audit({
-        action: "auth.password_reset_email",
-        result: "success",
-        resourceType: "user",
-        resourceId: user.id,
-        ip,
-      });
-    } catch (err) {
-      const message = errorMessage(err);
-      addSpanEvent("auth.password_reset_email_failed", { "error.message": message });
-      logger.error("password reset email failed", { error: message });
-      audit({
-        action: "auth.password_reset_email",
-        result: "failure",
-        resourceType: "user",
-        resourceId: user.id,
-        ip,
-        detail: { error: message },
-      });
-    }
-  }
-
-  return c.json({ ok: true });
-});
-
-authRouter.post("/password-reset/confirm", async (c) => {
-  const parsedBody = await validateJsonBody(
-    c,
-    PasswordResetConfirmBodySchema,
-    "invalid password reset confirmation",
-  );
-  if (!parsedBody.ok) return parsedBody.response;
-  const reset = await resetPasswordWithToken(parsedBody.data.token, parsedBody.data.password);
-  if (!reset) return c.json({ error: "invalid or expired reset token" }, 400);
-  logger.info("password reset confirmed", { userId: reset.userId });
-  audit({
-    action: "auth.password_reset_confirm",
-    result: "success",
-    resourceType: "user",
-    resourceId: reset.userId,
-    ip: clientIp(c),
-  });
-  return c.json({ ok: true });
-});
+registerPasswordResetRoutes(authRouter);
 
 authRouter.post("/register", async (c) => {
   if (!env.AUTH_ALLOW_REGISTRATION) {
