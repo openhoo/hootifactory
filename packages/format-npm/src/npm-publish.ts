@@ -1,9 +1,9 @@
 import { parseRegistryInput } from "@hootifactory/core";
+import { parseNpmDistTagAssignment } from "./npm-dist-tags";
 import { decodeBase64 } from "./npm-http";
 import type { PublishVersion } from "./npm-integrity";
 import {
   basename,
-  NpmDistTagSchema,
   NpmPackageNameSchema,
   NpmPublishBodySchema,
   NpmVersionSchema,
@@ -114,21 +114,16 @@ export async function resolveNpmPublishDistTags(
   const publishedVersionSet = new Set(publishedVersions);
   const existingVersionIds = new Map<string, string>();
   for (const [tag, version] of Object.entries(distTags)) {
-    parseRegistryInput(NpmDistTagSchema, tag, {
-      code: "TAG_INVALID",
-      message: "invalid dist-tag",
+    const distTag = parseNpmDistTagAssignment(tag, version, {
+      versionMessage: `dist-tag ${tag} points to an invalid version`,
     });
-    parseRegistryInput(NpmVersionSchema, version, {
-      code: "MANIFEST_INVALID",
-      message: `dist-tag ${tag} points to an invalid version`,
-    });
-    if (publishedVersionSet.has(version)) continue;
+    if (publishedVersionSet.has(distTag.version)) continue;
 
-    const existingVersionId = await resolveExistingVersionId(version);
+    const existingVersionId = await resolveExistingVersionId(distTag.version);
     if (!existingVersionId) {
-      return { ok: false, error: `dist-tag ${tag} points to an unknown version` };
+      return { ok: false, error: `dist-tag ${distTag.tag} points to an unknown version` };
     }
-    existingVersionIds.set(version, existingVersionId);
+    existingVersionIds.set(distTag.version, existingVersionId);
   }
   return { ok: true, existingVersionIds };
 }

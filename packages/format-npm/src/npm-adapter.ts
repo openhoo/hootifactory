@@ -33,6 +33,11 @@ import {
   sql,
   versionTags,
 } from "@hootifactory/db";
+import {
+  parseNpmDistTag,
+  parseNpmDistTagAssignment,
+  parseNpmDistTagRequestBody,
+} from "./npm-dist-tags";
 import { ifNoneMatch, responseBytes, responseJson } from "./npm-http";
 import {
   type NpmDist,
@@ -63,7 +68,6 @@ import {
   isValidDistTag,
   isValidLegacyNpmName,
   isValidNpmVersion,
-  NpmDistTagSchema,
   NpmLegacyPackageNameSchema,
   NpmTarballFilenameSchema,
   NpmVersionSchema,
@@ -427,24 +431,23 @@ export class NpmAdapter implements FormatAdapter {
     }
 
     for (const [tag, ver] of Object.entries(distTags)) {
-      parseRegistryInput(NpmDistTagSchema, tag, {
-        code: "TAG_INVALID",
-        message: "invalid dist-tag",
+      const distTag = parseNpmDistTagAssignment(tag, ver, {
+        versionMessage: `dist-tag ${tag} points to an invalid version`,
       });
-      parseRegistryInput(NpmVersionSchema, ver, {
-        code: "MANIFEST_INVALID",
-        message: `dist-tag ${tag} points to an invalid version`,
-      });
-      const versionId = versionIds.get(ver) ?? (await this.versionId(ctx, pkg.id, ver));
+      const versionId =
+        versionIds.get(distTag.version) ?? (await this.versionId(ctx, pkg.id, distTag.version));
       if (!versionId) {
         return Response.json(
-          { error: `dist-tag ${tag} points to an unknown version` },
+          { error: `dist-tag ${distTag.tag} points to an unknown version` },
           { status: 400 },
         );
       }
-      await setDistTag(ctx, pkg.id, tag, versionId);
-      if (tag === "latest") {
-        await ctx.db.update(packages).set({ latestVersion: ver }).where(eq(packages.id, pkg.id));
+      await setDistTag(ctx, pkg.id, distTag.tag, versionId);
+      if (distTag.tag === "latest") {
+        await ctx.db
+          .update(packages)
+          .set({ latestVersion: distTag.version })
+          .where(eq(packages.id, pkg.id));
       }
     }
 
@@ -467,12 +470,8 @@ export class NpmAdapter implements FormatAdapter {
     name = parseNpmName(name);
     const pkg = await this.findPackage(ctx, name);
     if (!pkg) return Response.json({ error: "Not found" }, { status: 404 });
-    tag = parseRegistryInput(NpmDistTagSchema, tag, {
-      code: "TAG_INVALID",
-      message: "invalid dist-tag",
-    });
-    const version = (await req.text()).replace(/^"|"$/g, "").trim();
-    parseNpmVersion(version);
+    tag = parseNpmDistTag(tag);
+    const version = parseNpmDistTagRequestBody(await req.text());
     const versionId = await this.versionId(ctx, pkg.id, version);
     if (!versionId) return Response.json({ error: "version not found" }, { status: 404 });
     await setDistTag(ctx, pkg.id, tag, versionId);
@@ -486,10 +485,7 @@ export class NpmAdapter implements FormatAdapter {
     name = parseNpmName(name);
     const pkg = await this.findPackage(ctx, name);
     if (!pkg) return Response.json({ error: "Not found" }, { status: 404 });
-    tag = parseRegistryInput(NpmDistTagSchema, tag, {
-      code: "TAG_INVALID",
-      message: "invalid dist-tag",
-    });
+    tag = parseNpmDistTag(tag);
     await ctx.db
       .delete(versionTags)
       .where(and(eq(versionTags.packageId, pkg.id), eq(versionTags.tag, tag)));
