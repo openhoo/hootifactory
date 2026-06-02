@@ -1,12 +1,4 @@
-import {
-  Errors,
-  formatRegistry,
-  type HttpMethod,
-  matchRoute,
-  type ResolvedRepo,
-  type RouteMatch,
-  resolveRepository,
-} from "@hootifactory/core";
+import { Errors, formatRegistry, type HttpMethod, resolveRepository } from "@hootifactory/core";
 import {
   logger,
   recordRegistryRequest,
@@ -19,40 +11,12 @@ import { buildRepoContext } from "./context";
 import { authorizeRoute, registryAuthorizationDeniedResponse } from "./registry-auth";
 import { dispatchByRepoKind } from "./registry-dispatch";
 import { registryErrorResponseForFormat } from "./registry-error-format";
+import { resolveRegistryRouteMatch } from "./registry-route-match";
 import { repoFormatSpanAttributes, stripBodyForFallbackHead } from "./registry-utils";
 import { serveWebFallback } from "./registry-web";
 import type { AppEnv } from "./types";
 
 const OCI_BEARER_FORMATS = new Set(["docker", "oci", "helm"]);
-
-/**
- * Resolve the route match for a request, applying the HEAD->GET fallback and
- * setting the route span attributes. Throws when no route matches.
- */
-function resolveRouteMatch(
-  repo: ResolvedRepo,
-  method: HttpMethod,
-  rest: string,
-): { match: RouteMatch; fellBackToGet: boolean } {
-  const routes = formatRegistry.routesFor(repo.format);
-  let match = matchRoute(routes, method, rest);
-  let fellBackToGet = false;
-  if (!match && method === "HEAD") {
-    match = matchRoute(routes, "GET", rest);
-    fellBackToGet = Boolean(match);
-  }
-  if (!match) {
-    logger.debug("registry route not found", { repo: repo.name, format: repo.format, rest });
-    if (repo.mountPath.startsWith("v2/")) throw Errors.nameUnknown({ path: rest });
-    throw Errors.notFound({ path: rest });
-  }
-  setActiveSpanAttributes({
-    "registry.handler": match.entry.handlerId,
-    "registry.route": match.entry.pattern,
-    "registry.path.rest": rest,
-  });
-  return { match, fellBackToGet };
-}
 
 /**
  * Catch-all registry dispatch: resolve repo -> adapter -> route -> authorize ->
@@ -109,7 +73,13 @@ export async function handleRegistryRequest(c: Context<AppEnv>): Promise<Respons
       const adapter = formatRegistry.lookup(repo.format);
       if (!adapter) throw Errors.unsupported({ format: repo.format });
 
-      const { match, fellBackToGet } = resolveRouteMatch(repo, method, rest);
+      const { match, fellBackToGet, spanAttributes } = resolveRegistryRouteMatch(
+        repo,
+        formatRegistry.routesFor(repo.format),
+        method,
+        rest,
+      );
+      setActiveSpanAttributes(spanAttributes);
 
       const principal = c.get("principal");
       if (principal.kind === "registryToken" && !OCI_BEARER_FORMATS.has(repo.format)) {
