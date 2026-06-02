@@ -1,20 +1,10 @@
-import {
-  authorize,
-  createApiToken,
-  type Decision,
-  httpStatusForDenial,
-  type Principal,
-  revokeToken,
-  rotateToken,
-} from "@hootifactory/auth";
+import { authorize, createApiToken, revokeToken, rotateToken } from "@hootifactory/auth";
 import {
   addUpstream,
   addVirtualMember,
   applyRetention,
   createRepository,
   isUniqueViolation,
-  z,
-  zodIssueTree,
 } from "@hootifactory/core";
 import {
   and,
@@ -34,12 +24,37 @@ import {
   scanPolicies,
   users,
 } from "@hootifactory/db";
-import type { Context } from "hono";
 import { Hono } from "hono";
-import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { describeRoute, openAPIRouteHandler, resolver } from "hono-openapi";
 import type { AppEnv } from "../types";
-import { uuidParam } from "../validation";
+import {
+  ArtifactIdParamsSchema,
+  artifactWithRepository,
+  authorizationDenied,
+  authorizeArtifact,
+  authorizePackage,
+  authorizePolicy,
+  authorizeRepository,
+  dataResponse,
+  doc,
+  errorResponse,
+  listAccessibleRepositories,
+  listResponse,
+  OrgIdParamsSchema,
+  OrgTokenParamsSchema,
+  PackageIdParamsSchema,
+  packageWithRepository,
+  principalActor,
+  RepoIdParamsSchema,
+  repositoryById,
+  requireOrg,
+  requireRepository,
+  TokenIdParamsSchema,
+  tokenResource,
+  validateJsonV1,
+  validatePagination,
+  validateV1,
+} from "./api-v1-helpers";
 import { audit } from "./http";
 import { repositoryDto, tokenDto } from "./ui-dto";
 import { listAccessibleOrgs } from "./ui-orgs";
@@ -62,258 +77,6 @@ import { validateProxyUpstreamParent, validateProxyUpstreamUrl } from "./ui-upst
 import { validateVirtualMemberCandidate, validateVirtualMemberParent } from "./ui-virtual-members";
 
 export const apiV1Router = new Hono<AppEnv>();
-
-const PaginationQuerySchema = z.strictObject({
-  limit: z.coerce.number().int().min(1).max(500).default(100),
-  offset: z.coerce.number().int().min(0).default(0),
-});
-
-const OrgIdParamsSchema = z.strictObject({ orgId: uuidParam });
-const RepoIdParamsSchema = z.strictObject({ repoId: uuidParam });
-const PackageIdParamsSchema = z.strictObject({ packageId: uuidParam });
-const ArtifactIdParamsSchema = z.strictObject({ artifactId: uuidParam });
-const TokenIdParamsSchema = z.strictObject({ tokenId: uuidParam });
-const OrgTokenParamsSchema = z.strictObject({ orgId: uuidParam, tokenId: uuidParam });
-
-type ValidationResult<T> = { ok: true; data: T } | { ok: false; response: Response };
-
-function dataResponse(
-  c: Context<AppEnv>,
-  data: unknown,
-  status: ContentfulStatusCode = 200,
-): Response {
-  return c.json({ data }, status);
-}
-
-function listResponse(
-  c: Context<AppEnv>,
-  data: unknown[],
-  pagination: { limit: number; offset: number; total: number },
-): Response {
-  return c.json({ data, pagination });
-}
-
-function errorResponse(
-  c: Context<AppEnv>,
-  status: ContentfulStatusCode,
-  code: string,
-  message: string,
-  issues?: unknown,
-): Response {
-  return c.json({ error: { code, message, ...(issues ? { issues } : {}) } }, status);
-}
-
-function validateV1<T extends z.ZodType>(
-  c: Context<AppEnv>,
-  schema: T,
-  input: unknown,
-  message: string,
-): ValidationResult<z.output<T>> {
-  const parsed = schema.safeParse(input);
-  if (parsed.success) return { ok: true, data: parsed.data };
-  return {
-    ok: false,
-    response: errorResponse(c, 400, "BAD_REQUEST", message, zodIssueTree(parsed.error)),
-  };
-}
-
-async function validateJsonV1<T extends z.ZodType>(
-  c: Context<AppEnv>,
-  schema: T,
-  message: string,
-): Promise<ValidationResult<z.output<T>>> {
-  let body: unknown;
-  try {
-    body = await c.req.json();
-  } catch {
-    return { ok: false, response: errorResponse(c, 400, "BAD_REQUEST", "invalid JSON body") };
-  }
-  return validateV1(c, schema, body, message);
-}
-
-function validatePagination(c: Context<AppEnv>) {
-  return validateV1(c, PaginationQuerySchema, c.req.query(), "invalid pagination query");
-}
-
-function principalActor(principal: Principal) {
-  return {
-    userId: principal.kind === "user" ? principal.userId : null,
-    tokenId: principal.kind === "token" ? principal.tokenId : null,
-  };
-}
-
-function authorizationDenied(c: Context<AppEnv>, decision: Decision): Response {
-  const status = httpStatusForDenial(decision);
-  return errorResponse(
-    c,
-    status,
-    status === 401 ? "UNAUTHENTICATED" : "FORBIDDEN",
-    decision.reason ?? (status === 401 ? "authentication required" : "access denied"),
-  );
-}
-
-async function requireOrg(
-  c: Context<AppEnv>,
-  orgId: string,
-  action: "read" | "write" | "delete" | "admin",
-) {
-  const decision = await authorize(c.get("principal"), action, { type: "org", orgId });
-  if (decision.allowed) return undefined;
-  return authorizationDenied(c, decision);
-}
-
-async function repositoryById(repoId: string) {
-  const [repo] = await db.select().from(repositories).where(eq(repositories.id, repoId)).limit(1);
-  return repo;
-}
-
-async function authorizeRepository(
-  c: Context<AppEnv>,
-  repo: typeof repositories.$inferSelect,
-  action: "read" | "write" | "delete" | "admin",
-) {
-  const decision = await authorize(c.get("principal"), action, {
-    type: "repository",
-    orgId: repo.orgId,
-    repositoryId: repo.id,
-    repositoryName: repo.name,
-    visibility: repo.visibility,
-  });
-  if (decision.allowed) return undefined;
-  return authorizationDenied(c, decision);
-}
-
-async function requireRepository(
-  c: Context<AppEnv>,
-  repoId: string,
-  action: "read" | "write" | "delete" | "admin",
-): Promise<
-  { ok: true; repo: typeof repositories.$inferSelect } | { ok: false; response: Response }
-> {
-  const repo = await repositoryById(repoId);
-  if (!repo)
-    return { ok: false, response: errorResponse(c, 404, "NOT_FOUND", "repository not found") };
-  const response = await authorizeRepository(c, repo, action);
-  if (response) return { ok: false, response };
-  return { ok: true, repo };
-}
-
-async function packageWithRepository(packageId: string) {
-  const [row] = await db
-    .select({ pkg: packages, repo: repositories })
-    .from(packages)
-    .innerJoin(repositories, eq(packages.repositoryId, repositories.id))
-    .where(eq(packages.id, packageId))
-    .limit(1);
-  return row;
-}
-
-async function authorizePackage(
-  c: Context<AppEnv>,
-  row: { pkg: typeof packages.$inferSelect; repo: typeof repositories.$inferSelect },
-  action: "read" | "write" | "delete" | "admin",
-) {
-  const decision = await authorize(c.get("principal"), action, {
-    type: "package",
-    orgId: row.repo.orgId,
-    repositoryId: row.repo.id,
-    repositoryName: row.repo.name,
-    packageName: row.pkg.name,
-    visibility: row.repo.visibility,
-  });
-  if (decision.allowed) return undefined;
-  return authorizationDenied(c, decision);
-}
-
-async function artifactWithRepository(artifactId: string) {
-  const [row] = await db
-    .select({ art: artifacts, repo: repositories })
-    .from(artifacts)
-    .innerJoin(repositories, eq(artifacts.repositoryId, repositories.id))
-    .where(eq(artifacts.id, artifactId))
-    .limit(1);
-  return row;
-}
-
-async function authorizeArtifact(
-  c: Context<AppEnv>,
-  row: { art: typeof artifacts.$inferSelect; repo: typeof repositories.$inferSelect },
-  action: "read" | "write" | "delete" | "admin",
-) {
-  const decision = await authorize(c.get("principal"), action, {
-    type: "artifact",
-    orgId: row.repo.orgId,
-    repositoryId: row.repo.id,
-    repositoryName: row.repo.name,
-    artifactRef: row.art.digest,
-    visibility: row.repo.visibility,
-  });
-  if (decision.allowed) return undefined;
-  return authorizationDenied(c, decision);
-}
-
-async function authorizePolicy(
-  c: Context<AppEnv>,
-  input: {
-    orgId: string;
-    policy: "scan" | "quota" | "retention";
-    action: "read" | "write" | "delete" | "admin";
-    repo?: typeof repositories.$inferSelect;
-  },
-) {
-  const decision = await authorize(c.get("principal"), input.action, {
-    type: "policy",
-    orgId: input.orgId,
-    repositoryId: input.repo?.id,
-    repositoryName: input.repo?.name,
-    policy: input.policy,
-    visibility: input.repo?.visibility,
-  });
-  if (decision.allowed) return undefined;
-  return authorizationDenied(c, decision);
-}
-
-async function tokenResource(
-  c: Context<AppEnv>,
-  token: typeof apiTokens.$inferSelect,
-  action: "read" | "write" | "delete" | "admin",
-) {
-  const principal = c.get("principal");
-  const target = principal.kind === "token" && principal.tokenId === token.id ? "self" : "org";
-  const decision = await authorize(principal, action, {
-    type: "token",
-    orgId: token.orgId,
-    tokenId: token.id,
-    tokenTarget: target,
-  });
-  if (decision.allowed) return undefined;
-  return authorizationDenied(c, decision);
-}
-
-async function listAccessibleRepositories(orgId: string, c: Context<AppEnv>) {
-  const rows = await db.select().from(repositories).where(eq(repositories.orgId, orgId));
-  const accessible = [];
-  for (const repo of rows) {
-    const response = await authorizeRepository(c, repo, "read");
-    if (!response) accessible.push(repo);
-  }
-  return accessible;
-}
-
-function doc(summary: string, tag: string) {
-  return describeRoute({
-    tags: [tag],
-    summary,
-    responses: {
-      200: { description: "Success" },
-      201: { description: "Created" },
-      400: { description: "Bad request" },
-      401: { description: "Authentication required" },
-      403: { description: "Forbidden" },
-      404: { description: "Not found" },
-    },
-  });
-}
 
 apiV1Router.get("/docs", describeRoute({ hide: true }), (c) =>
   c.html(`<!doctype html>
