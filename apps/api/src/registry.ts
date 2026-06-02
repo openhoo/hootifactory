@@ -17,6 +17,7 @@ import type { Context } from "hono";
 import { buildRepoContext } from "./context";
 import { adapterResponse } from "./registry-adapter";
 import { appendBearerChallengeError, authorizeRoute } from "./registry-auth";
+import { registryErrorResponseForFormat } from "./registry-error-format";
 import { dispatchProxy } from "./registry-proxy";
 import { stripBodyForFallbackHead } from "./registry-utils";
 import { dispatchVirtual } from "./registry-virtual";
@@ -101,7 +102,19 @@ export async function handleRegistryRequest(c: Context<AppEnv>): Promise<Respons
           repo: repo.name,
           format: repo.format,
         });
-        throw Errors.denied("OCI registry bearer tokens are only valid for OCI repositories");
+        const response = registryErrorResponseForFormat(repo.format, {
+          status: 403,
+          code: "DENIED",
+          message: "OCI registry bearer tokens are only valid for OCI repositories",
+        });
+        recordRegistryRequest({
+          method,
+          format: repo.format,
+          repoKind: repo.kind,
+          statusCode: response.status,
+          outcome: "denied",
+        });
+        return response;
       }
       const ctx = buildRepoContext(repo, principal);
 
@@ -141,20 +154,14 @@ export async function handleRegistryRequest(c: Context<AppEnv>): Promise<Respons
         });
         if ((status === 401 || bearerError === "insufficient_scope") && adapter.authChallenge) {
           const challenge = adapter.authChallenge(perm, ctx);
-          const response = new Response(
-            JSON.stringify({
-              errors: [
-                { code: "UNAUTHORIZED", message: decision.reason ?? "authentication required" },
-              ],
-            }),
-            {
-              status: challenge.status,
-              headers: {
-                "www-authenticate": appendBearerChallengeError(challenge.header, bearerError),
-                "content-type": "application/json",
-              },
+          const response = registryErrorResponseForFormat(repo.format, {
+            status: challenge.status,
+            code: "UNAUTHORIZED",
+            message: decision.reason ?? "authentication required",
+            headers: {
+              "www-authenticate": appendBearerChallengeError(challenge.header, bearerError),
             },
-          );
+          });
           recordRegistryRequest({
             method,
             format: repo.format,
@@ -171,9 +178,12 @@ export async function handleRegistryRequest(c: Context<AppEnv>): Promise<Respons
           statusCode: status,
           outcome: "denied",
         });
-        throw status === 401
-          ? Errors.unauthorized(decision.reason)
-          : Errors.denied(decision.reason);
+        return registryErrorResponseForFormat(repo.format, {
+          status,
+          code: status === 401 ? "UNAUTHORIZED" : "DENIED",
+          message:
+            decision.reason ?? (status === 401 ? "authentication required" : "access denied"),
+        });
       }
 
       const res =

@@ -20,4 +20,33 @@ test.describe("registry dispatch", () => {
     expect(r.status()).toBe(401);
     expect(r.headers()["www-authenticate"]).toContain("Bearer");
   });
+
+  test("non-OCI private repo auth denials use format-native error envelopes", async ({
+    baseURL,
+  }) => {
+    const owner = await setupOwner(baseURL!);
+    const anon = await anonContext(baseURL!);
+    const cases = [
+      { format: "npm", path: (mountPath: string) => `/${mountPath}/left-pad` },
+      { format: "pypi", path: (mountPath: string) => `/${mountPath}/simple/` },
+      { format: "cargo", path: (mountPath: string) => `/${mountPath}/config.json` },
+      { format: "nuget", path: (mountPath: string) => `/${mountPath}/v3/index.json` },
+    ] as const;
+
+    for (const item of cases) {
+      const repo = (
+        await (
+          await createRepo(owner.ctx, owner.orgId, { name: uniq(item.format), format: item.format })
+        ).json()
+      ).repository as { mountPath: string };
+      const res = await anon.get(item.path(repo.mountPath));
+      expect(res.status()).toBe(401);
+      const body = await res.json();
+      if (item.format === "cargo") {
+        expect(body.errors[0]).toEqual({ detail: "authentication required" });
+      } else {
+        expect(body).toEqual({ error: "authentication required" });
+      }
+    }
+  });
 });

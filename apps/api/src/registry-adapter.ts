@@ -6,6 +6,7 @@ import {
   type RouteMatch,
 } from "@hootifactory/core";
 import { logger, withSpan } from "@hootifactory/observability";
+import { registryErrorResponseForFormat } from "./registry-error-format";
 
 const REGISTRY_MISS_CODES = new Set<OciErrorCode>([
   "BLOB_UNKNOWN",
@@ -16,10 +17,6 @@ const REGISTRY_MISS_CODES = new Set<OciErrorCode>([
 
 function isRegistryMiss(err: unknown): err is RegistryError {
   return err instanceof RegistryError && err.status === 404 && REGISTRY_MISS_CODES.has(err.code);
-}
-
-function cargoErrorResponse(err: RegistryError): Response {
-  return Response.json({ errors: [{ detail: err.message }] }, { status: err.status });
 }
 
 export async function adapterResponse(
@@ -51,19 +48,13 @@ export async function adapterResponse(
         });
         return response;
       } catch (err) {
-        if (adapter.format === "npm" && err instanceof RegistryError) {
-          const response = Response.json({ error: err.message }, { status: err.status });
-          span.setAttribute("http.response.status_code", response.status);
-          logger.debug("registry adapter error", {
-            format: adapter.format,
-            repo: ctx.repo.name,
-            handler: match.entry.handlerId,
+        if (err instanceof RegistryError && !["docker", "helm", "oci"].includes(adapter.format)) {
+          const response = registryErrorResponseForFormat(adapter.format, {
+            status: err.status,
             code: err.code,
+            message: err.message,
+            detail: err.detail,
           });
-          return response;
-        }
-        if (adapter.format === "cargo" && err instanceof RegistryError) {
-          const response = cargoErrorResponse(err);
           span.setAttribute("http.response.status_code", response.status);
           logger.debug("registry adapter error", {
             format: adapter.format,

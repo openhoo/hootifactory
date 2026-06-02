@@ -110,6 +110,22 @@ test.describe("authentication", () => {
     expect((await me.json()).principal.kind).toBe("token");
   });
 
+  test("basic auth decodes UTF-8 usernames and passwords", async ({ baseURL }) => {
+    const ctx = await anonContext(baseURL!);
+    const username = uniq("utf8");
+    const password = "paessword-ö-1234";
+    const reg = await ctx.post("/api/auth/register", {
+      data: { username, email: `${username}@e2e.test`, password },
+    });
+    expect(reg.status()).toBe(201);
+
+    const anon = await anonContext(baseURL!);
+    const basic = Buffer.from(`${username}:${password}`, "utf8").toString("base64");
+    const me = await anon.get("/api/me", { headers: { authorization: `Basic ${basic}` } });
+    expect(me.status()).toBe(200);
+    expect((await me.json()).principal.username).toBe(username);
+  });
+
   test("garbage bearer -> 401 on /api/me", async ({ baseURL }) => {
     const anon = await anonContext(baseURL!);
     const me = await anon.get("/api/me", { headers: { authorization: "Bearer hoot_garbage" } });

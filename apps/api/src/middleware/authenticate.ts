@@ -17,6 +17,7 @@ import type { AppEnv } from "../types";
 export const SESSION_COOKIE = "hoot_session";
 const AuthorizationHeaderSchema = z.string().trim().min(1).max(16_384);
 const NugetApiKeyHeaderSchema = z.string().trim().min(1).max(4096);
+const basicAuthDecoder = new TextDecoder("utf-8", { fatal: true });
 
 function invalidCredentials(): never {
   throw Errors.unauthorized("invalid authorization credentials");
@@ -25,6 +26,19 @@ function invalidCredentials(): never {
 function isRegistryPath(url: string): boolean {
   const pathname = new URL(url).pathname;
   return pathname === "/v2" || pathname === "/v2/" || pathname.startsWith("/v2/");
+}
+
+function decodeBasicCredentials(value: string): string | null {
+  try {
+    const binary = atob(value.trim());
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return basicAuthDecoder.decode(bytes);
+  } catch {
+    return null;
+  }
 }
 
 async function userPrincipalById(userId: string): Promise<Principal | null> {
@@ -96,12 +110,8 @@ async function authenticateInner(c: Context<AppEnv>): Promise<Principal> {
         }
       }
     } else if (authz.startsWith("Basic ")) {
-      let decoded = "";
-      try {
-        decoded = atob(authz.slice(6).trim());
-      } catch {
-        invalidCredentials();
-      }
+      const decoded = decodeBasicCredentials(authz.slice(6));
+      if (!decoded) invalidCredentials();
       const idx = decoded.indexOf(":");
       if (idx >= 0) {
         const user = decoded.slice(0, idx);
