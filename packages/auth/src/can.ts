@@ -11,6 +11,18 @@ export interface CanInput {
   effectiveRole?: RoleName | null;
 }
 
+/** A token's effective role: the explicitly-resolved role, else the principal's own role. */
+function tokenRole(
+  principal: Extract<Principal, { kind: "token" }>,
+  effectiveRole?: RoleName | null,
+): RoleName | null {
+  return effectiveRole !== undefined ? effectiveRole : (principal.role ?? null);
+}
+
+function denyRole(reason: string): Decision {
+  return { allowed: false, code: "insufficient_role", reason };
+}
+
 /**
  * The single authoritative authorization decision. Pure and synchronous so it
  * is exhaustively unit-testable. Role resolution + DB lookups happen in
@@ -42,13 +54,9 @@ export function can({ principal, action, resource, effectiveRole }: CanInput): D
     if (principal.scopes.length > 0) {
       const name = resource.repositoryName;
       if (name && scopeGrants(principal.scopes, name, action)) {
-        const role = effectiveRole !== undefined ? effectiveRole : (principal.role ?? null);
+        const role = tokenRole(principal, effectiveRole);
         if (!role || !roleAllows(role, action)) {
-          return {
-            allowed: false,
-            code: "insufficient_role",
-            reason: `token role does not grant '${action}'`,
-          };
+          return denyRole(`token role does not grant '${action}'`);
         }
         return { allowed: true };
       }
@@ -59,9 +67,9 @@ export function can({ principal, action, resource, effectiveRole }: CanInput): D
       };
     }
     // Only truly scope-less tokens inherit a role (robot role, or owner's membership role).
-    const role = effectiveRole !== undefined ? effectiveRole : (principal.role ?? null);
+    const role = tokenRole(principal, effectiveRole);
     if (role && roleAllows(role, action)) return { allowed: true };
-    return { allowed: false, code: "insufficient_role", reason: `role does not grant '${action}'` };
+    return denyRole(`role does not grant '${action}'`);
   }
 
   // ── registry token (OCI Bearer JWT) ───────────────────────────────────────
@@ -90,9 +98,5 @@ export function can({ principal, action, resource, effectiveRole }: CanInput): D
     return { allowed: false, code: "not_member", reason: "no role in this organization" };
   }
   if (roleAllows(effectiveRole, action)) return { allowed: true };
-  return {
-    allowed: false,
-    code: "insufficient_role",
-    reason: `role '${effectiveRole}' does not grant '${action}'`,
-  };
+  return denyRole(`role '${effectiveRole}' does not grant '${action}'`);
 }

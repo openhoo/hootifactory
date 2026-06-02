@@ -1,19 +1,21 @@
 import { env } from "@hootifactory/config";
 import {
-  createPackageVersion,
+  basicAuthChallenge,
+  commitVersionOrReleaseBlob,
   Errors,
   type FormatAdapter,
   type FormatMetadata,
+  findLiveVersion,
   findOrCreatePackage,
+  findPackageByName,
   type HttpMethod,
-  isArtifactBlocked,
   type Permission,
   parseRegistryInput,
   type RepoContext,
   type RouteEntry,
   type RouteMatch,
-  releaseBlobRef,
   safeFetch,
+  serveBlobIfClean,
   setDistTag,
   storeBlobWithRef,
   upsertPackageVersion,
@@ -58,6 +60,20 @@ import {
 } from "./npm-validation";
 import { buildPackument } from "./packument";
 
+function parseNpmName(name: string): string {
+  return parseRegistryInput(NpmLegacyPackageNameSchema, name, {
+    code: "NAME_INVALID",
+    message: "invalid package name",
+  });
+}
+
+function parseNpmVersion(version: string): string {
+  return parseRegistryInput(NpmVersionSchema, version, {
+    code: "MANIFEST_INVALID",
+    message: "invalid package version",
+  });
+}
+
 export class NpmAdapter implements FormatAdapter {
   readonly format = "npm" as const;
   readonly capabilities = {
@@ -92,9 +108,7 @@ export class NpmAdapter implements FormatAdapter {
     };
   }
 
-  authChallenge() {
-    return { header: 'Basic realm="hootifactory"', status: 401 as const };
-  }
+  authChallenge = basicAuthChallenge;
 
   async handle(match: RouteMatch, req: Request, ctx: RepoContext): Promise<Response> {
     switch (match.entry.handlerId) {
@@ -128,12 +142,7 @@ export class NpmAdapter implements FormatAdapter {
   }
 
   private async findPackage(ctx: RepoContext, name: string) {
-    const [pkg] = await ctx.db
-      .select()
-      .from(packages)
-      .where(and(eq(packages.repositoryId, ctx.repo.id), eq(packages.name, name)))
-      .limit(1);
-    return pkg ?? null;
+    return findPackageByName(ctx, name);
   }
 
   private async liveVersions(ctx: RepoContext, packageId: string) {
@@ -165,10 +174,7 @@ export class NpmAdapter implements FormatAdapter {
   }
 
   async generateMetadata(name: string, ctx: RepoContext): Promise<FormatMetadata | null> {
-    name = parseRegistryInput(NpmLegacyPackageNameSchema, name, {
-      code: "NAME_INVALID",
-      message: "invalid package name",
-    });
+    name = parseNpmName(name);
     const pkg = await this.findPackage(ctx, name);
     if (!pkg) return null;
     const versions = await this.liveVersions(ctx, pkg.id);
@@ -224,10 +230,7 @@ export class NpmAdapter implements FormatAdapter {
   }
 
   private async packument(name: string, req: Request, ctx: RepoContext): Promise<Response> {
-    name = parseRegistryInput(NpmLegacyPackageNameSchema, name, {
-      code: "NAME_INVALID",
-      message: "invalid package name",
-    });
+    name = parseNpmName(name);
     const pkg = await this.findPackage(ctx, name);
     if (!pkg) return Response.json({ error: "Not found" }, { status: 404 });
     const versions = await this.liveVersions(ctx, pkg.id);
@@ -246,10 +249,7 @@ export class NpmAdapter implements FormatAdapter {
     req: Request,
     ctx: RepoContext,
   ): Promise<Response> {
-    name = parseRegistryInput(NpmLegacyPackageNameSchema, name, {
-      code: "NAME_INVALID",
-      message: "invalid package name",
-    });
+    name = parseNpmName(name);
     filename = parseRegistryInput(NpmTarballFilenameSchema, filename, {
       code: "NAME_INVALID",
       message: "invalid tarball filename",
@@ -264,13 +264,14 @@ export class NpmAdapter implements FormatAdapter {
     if (!dist || !(await ctx.blobs.exists(dist.blobDigest))) {
       return Response.json({ error: "Not found" }, { status: 404 });
     }
-    if (await isArtifactBlocked(ctx, dist.blobDigest)) {
-      return Response.json({ error: "artifact blocked by scan policy" }, { status: 403 });
-    }
     const etag = `"${dist.shasum}"`;
-    if (ifNoneMatch(req, etag)) return new Response(null, { status: 304, headers: { etag } });
-    return new Response(ctx.blobs.get(dist.blobDigest), {
-      headers: { "content-type": "application/octet-stream", etag },
+    return serveBlobIfClean(ctx, {
+      digest: dist.blobDigest,
+      contentType: "application/octet-stream",
+      extraHeaders: { etag },
+      blocked: () => Response.json({ error: "artifact blocked by scan policy" }, { status: 403 }),
+      notModified: () =>
+        ifNoneMatch(req, etag) ? new Response(null, { status: 304, headers: { etag } }) : null,
     });
   }
 
@@ -297,10 +298,7 @@ export class NpmAdapter implements FormatAdapter {
     const base = basename(name);
     const publishVersions: PublishVersion[] = [];
     for (const [ver, manifestRaw] of Object.entries(versions)) {
-      parseRegistryInput(NpmVersionSchema, ver, {
-        code: "MANIFEST_INVALID",
-        message: "invalid package version",
-      });
+      parseNpmVersion(ver);
       const manifest = { ...(manifestRaw as Record<string, unknown>) };
       if (manifest.name !== undefined && manifest.name !== name) {
         return Response.json(
@@ -411,32 +409,23 @@ export class NpmAdapter implements FormatAdapter {
         integrity,
         size: tarball.length,
       };
-      const versionId = await createPackageVersion(ctx, {
+      const result = await commitVersionOrReleaseBlob(ctx, {
+        stored,
+        kind: "npm_tarball",
+        scope: `${name}@${ver}`,
         packageId: pkg.id,
         version: ver,
         metadata: { manifest, dist },
         sizeBytes: tarball.length,
+        scan: { name, version: ver, mediaType: "application/octet-stream" },
       });
-      if (!versionId) {
-        if (stored.refCreated) {
-          await releaseBlobRef(ctx, {
-            digest: stored.digest,
-            kind: "npm_tarball",
-            scope: `${name}@${ver}`,
-          });
-        }
+      if ("conflict" in result) {
         return Response.json(
           { error: `cannot publish over the previously published version ${ver}` },
           { status: 403 },
         );
       }
-      versionIds.set(ver, versionId);
-      await ctx.enqueueScan({
-        digest: stored.digest,
-        name,
-        version: ver,
-        mediaType: "application/octet-stream",
-      });
+      versionIds.set(ver, result.versionId);
     }
 
     for (const [tag, ver] of Object.entries(distTags)) {
@@ -455,18 +444,7 @@ export class NpmAdapter implements FormatAdapter {
   }
 
   private async versionId(ctx: RepoContext, packageId: string, version: string) {
-    const [row] = await ctx.db
-      .select({ id: packageVersions.id })
-      .from(packageVersions)
-      .where(
-        and(
-          eq(packageVersions.packageId, packageId),
-          eq(packageVersions.version, version),
-          isNull(packageVersions.deletedAt),
-        ),
-      )
-      .limit(1);
-    return row?.id;
+    return (await findLiveVersion(ctx, packageId, version))?.id;
   }
 
   private async updateMetadataOnly(
@@ -492,10 +470,7 @@ export class NpmAdapter implements FormatAdapter {
     const liveByVersion = new Map(liveRows.map((row) => [row.version, row]));
     const versionIds = new Map<string, string>();
     for (const [ver, manifestRaw] of entries) {
-      parseRegistryInput(NpmVersionSchema, ver, {
-        code: "MANIFEST_INVALID",
-        message: "invalid package version",
-      });
+      parseNpmVersion(ver);
       const live = liveByVersion.get(ver);
       if (!live) return Response.json({ error: `version not found: ${ver}` }, { status: 404 });
       if (manifestRaw.name !== undefined && manifestRaw.name !== name) {
@@ -560,10 +535,7 @@ export class NpmAdapter implements FormatAdapter {
   }
 
   private async distTagsList(name: string, ctx: RepoContext): Promise<Response> {
-    name = parseRegistryInput(NpmLegacyPackageNameSchema, name, {
-      code: "NAME_INVALID",
-      message: "invalid package name",
-    });
+    name = parseNpmName(name);
     const pkg = await this.findPackage(ctx, name);
     if (!pkg) return Response.json({}, { status: 404 });
     return Response.json(await this.distTags(ctx, pkg.id));
@@ -575,10 +547,7 @@ export class NpmAdapter implements FormatAdapter {
     req: Request,
     ctx: RepoContext,
   ): Promise<Response> {
-    name = parseRegistryInput(NpmLegacyPackageNameSchema, name, {
-      code: "NAME_INVALID",
-      message: "invalid package name",
-    });
+    name = parseNpmName(name);
     const pkg = await this.findPackage(ctx, name);
     if (!pkg) return Response.json({ error: "Not found" }, { status: 404 });
     tag = parseRegistryInput(NpmDistTagSchema, tag, {
@@ -586,10 +555,7 @@ export class NpmAdapter implements FormatAdapter {
       message: "invalid dist-tag",
     });
     const version = (await req.text()).replace(/^"|"$/g, "").trim();
-    parseRegistryInput(NpmVersionSchema, version, {
-      code: "MANIFEST_INVALID",
-      message: "invalid package version",
-    });
+    parseNpmVersion(version);
     const versionId = await this.versionId(ctx, pkg.id, version);
     if (!versionId) return Response.json({ error: "version not found" }, { status: 404 });
     await setDistTag(ctx, pkg.id, tag, versionId);
@@ -600,10 +566,7 @@ export class NpmAdapter implements FormatAdapter {
   }
 
   private async distTagDelete(name: string, tag: string, ctx: RepoContext): Promise<Response> {
-    name = parseRegistryInput(NpmLegacyPackageNameSchema, name, {
-      code: "NAME_INVALID",
-      message: "invalid package name",
-    });
+    name = parseNpmName(name);
     const pkg = await this.findPackage(ctx, name);
     if (!pkg) return Response.json({ error: "Not found" }, { status: 404 });
     tag = parseRegistryInput(NpmDistTagSchema, tag, {

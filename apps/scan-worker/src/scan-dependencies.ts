@@ -1,5 +1,6 @@
 import { and, db, eq, packages, packageVersions } from "@hootifactory/db";
 import { withSpan } from "@hootifactory/observability";
+import { asRecord } from "@hootifactory/scanning";
 
 export interface DependencyTarget {
   repositoryId: string;
@@ -165,10 +166,6 @@ function stringRecord(value: unknown): Record<string, string> {
     if (typeof item === "string") entries.push([key, item]);
   }
   return Object.fromEntries(entries);
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return isRecord(value) ? value : null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

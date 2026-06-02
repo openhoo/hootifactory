@@ -15,7 +15,7 @@ import {
 } from "@hootifactory/db";
 import { blobStore } from "@hootifactory/storage";
 import type { PackageFormat, Visibility } from "@hootifactory/types";
-import type { ResolvedRepo } from "./format/adapter";
+import type { RepoContext, ResolvedRepo } from "./format/adapter";
 import { deleteUnreferencedCasBlob, releaseRepoDigestTx } from "./service";
 
 const V2_FORMATS = new Set<PackageFormat>(["docker", "oci", "helm"]);
@@ -104,6 +104,19 @@ export async function findOrCreatePackage(opts: {
   return row;
 }
 
+/** Find a package by exact name within the request's repository (no normalization). */
+export async function findPackageByName(
+  ctx: RepoContext,
+  name: string,
+): Promise<PackageRow | null> {
+  const [row] = await ctx.db
+    .select()
+    .from(packages)
+    .where(and(eq(packages.repositoryId, ctx.repo.id), eq(packages.name, name)))
+    .limit(1);
+  return row ?? null;
+}
+
 export type PackageVersionRow = typeof packageVersions.$inferSelect;
 
 export async function findVersion(
@@ -114,6 +127,26 @@ export async function findVersion(
     .select()
     .from(packageVersions)
     .where(and(eq(packageVersions.packageId, packageId), eq(packageVersions.version, version)))
+    .limit(1);
+  return row ?? null;
+}
+
+/** Find a single live (not soft-deleted) version by (packageId, version). */
+export async function findLiveVersion(
+  ctx: RepoContext,
+  packageId: string,
+  version: string,
+): Promise<PackageVersionRow | null> {
+  const [row] = await ctx.db
+    .select()
+    .from(packageVersions)
+    .where(
+      and(
+        eq(packageVersions.packageId, packageId),
+        eq(packageVersions.version, version),
+        isNull(packageVersions.deletedAt),
+      ),
+    )
     .limit(1);
   return row ?? null;
 }
@@ -176,6 +209,13 @@ function versionBlobDigests(metadata: unknown): string[] {
   return [...out];
 }
 
+/** Fan-in the blob digests referenced across a set of version rows. */
+function collectVersionDigests(rows: { metadata: unknown }[]): Set<string> {
+  const out = new Set<string>();
+  for (const r of rows) for (const d of versionBlobDigests(r.metadata)) out.add(d);
+  return out;
+}
+
 /**
  * Soft-delete versions beyond the newest `keepLastN` per package, atomically,
  * and reclaim blob references (and CAS bytes/quota) for any digest no surviving
@@ -218,7 +258,7 @@ export async function applyRetention(repositoryId: string, keepLastN: number): P
         .set({ deletedAt: new Date() })
         .where(inArray(packageVersions.id, prunedIds));
       count += toPrune.length;
-      for (const v of toPrune) for (const d of versionBlobDigests(v.metadata)) prunedDigests.add(d);
+      for (const d of collectVersionDigests(toPrune)) prunedDigests.add(d);
 
       const deletedTags = await tx
         .delete(versionTags)
@@ -247,8 +287,7 @@ export async function applyRetention(repositoryId: string, keepLastN: number): P
         .from(packageVersions)
         .innerJoin(packages, eq(packageVersions.packageId, packages.id))
         .where(and(eq(packages.repositoryId, repositoryId), isNull(packageVersions.deletedAt)));
-      const liveDigests = new Set<string>();
-      for (const r of live) for (const d of versionBlobDigests(r.metadata)) liveDigests.add(d);
+      const liveDigests = collectVersionDigests(live);
 
       for (const digest of prunedDigests) {
         if (liveDigests.has(digest)) continue;

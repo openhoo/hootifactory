@@ -41,6 +41,10 @@ export async function validateJsonBody<T extends ZodType>(
   return validateInput(c, schema, body, message);
 }
 
+export function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 export const uuidParam = z.uuid();
 
 export const uuidParams = {

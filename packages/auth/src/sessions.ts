@@ -1,12 +1,12 @@
 import { and, db, eq, isNull, sessions } from "@hootifactory/db";
-
-function sha256hex(input: string): string {
-  const h = new Bun.CryptoHasher("sha256");
-  h.update(input);
-  return h.digest("hex");
-}
+import { randomSecret, sha256hex } from "./secret";
 
 const DEFAULT_TTL_SECONDS = 60 * 60 * 24 * 7;
+
+/** Predicate matching a user's non-revoked sessions. */
+export function activeSessionsForUser(userId: string) {
+  return and(eq(sessions.userId, userId), isNull(sessions.revokedAt));
+}
 
 export interface CreateSessionOptions {
   ttlSeconds?: number;
@@ -18,7 +18,7 @@ export async function createSession(
   userId: string,
   opts: CreateSessionOptions = {},
 ): Promise<{ secret: string; expiresAt: Date }> {
-  const secret = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url");
+  const secret = randomSecret();
   const ttl = opts.ttlSeconds ?? DEFAULT_TTL_SECONDS;
   const expiresAt = new Date(Date.now() + ttl * 1000);
   await db.insert(sessions).values({
@@ -49,8 +49,5 @@ export async function revokeSession(secret: string): Promise<void> {
 }
 
 export async function revokeSessionsForUser(userId: string): Promise<void> {
-  await db
-    .update(sessions)
-    .set({ revokedAt: new Date() })
-    .where(and(eq(sessions.userId, userId), isNull(sessions.revokedAt)));
+  await db.update(sessions).set({ revokedAt: new Date() }).where(activeSessionsForUser(userId));
 }

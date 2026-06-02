@@ -8,6 +8,10 @@ export class ApiError extends Error {
   }
 }
 
+export function apiErrorMessage(e: unknown, fallback = "failed"): string {
+  return e instanceof ApiError ? e.message : fallback;
+}
+
 async function req<T = unknown>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch(path, {
     method,

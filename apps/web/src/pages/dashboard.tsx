@@ -1,20 +1,14 @@
-import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { Boxes, Building2, ChevronRight, Layers, Plus, ShieldCheck } from "lucide-react";
 import { useMemo } from "react";
-import { EmptyState, FormatBadge, PageTitle, Pill, StatCard } from "@/components/common";
+import { EmptyState, FormatBadge, PageTitle, StatCard, VisibilityPill } from "@/components/common";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Loading, useOrg } from "@/layout/app-shell";
-import { api } from "@/lib/api";
+import { Loading, useOrg, useRepos } from "@/layout/app-shell";
 
 export function DashboardPage() {
   const { selected } = useOrg();
-  const repos = useQuery({
-    queryKey: ["repos", selected?.id],
-    queryFn: () => api.repos(selected!.id),
-    enabled: !!selected,
-  });
+  const repos = useRepos();
   const list = repos.data?.repositories ?? [];
   const byFormat = useMemo(
     () =>
@@ -91,9 +85,7 @@ export function DashboardPage() {
                     </Link>
                     <div className="flex shrink-0 items-center gap-2">
                       <FormatBadge format={r.format} />
-                      <Pill tone={r.visibility === "public" ? "success" : "neutral"}>
-                        {r.visibility}
-                      </Pill>
+                      <VisibilityPill visibility={r.visibility} />
                     </div>
                   </li>
                 ))}

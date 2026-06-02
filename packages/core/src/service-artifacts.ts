@@ -27,3 +27,31 @@ export async function isArtifactBlocked(ctx: RepoContext, digest: string): Promi
   if (policy?.mode === "enforce") return row?.state !== "clean";
   return false;
 }
+
+/**
+ * Serve a CAS blob's bytes unless scan policy blocks it. The caller supplies the
+ * content-type, any extra response headers (e.g. etag), and a `blocked` factory
+ * that builds the format-specific 403 response.
+ *
+ * The scan-policy block check ALWAYS runs first. A conditional-GET caller must
+ * pass its 304 short-circuit via `notModified` (evaluated only after the block
+ * check passes) rather than short-circuiting before the call — otherwise a
+ * blocked artifact could be answered with a 304 instead of a 403.
+ */
+export async function serveBlobIfClean(
+  ctx: RepoContext,
+  opts: {
+    digest: string;
+    contentType: string;
+    extraHeaders?: Record<string, string>;
+    blocked: () => Response;
+    notModified?: () => Response | null;
+  },
+): Promise<Response> {
+  if (await isArtifactBlocked(ctx, opts.digest)) return opts.blocked();
+  const notModified = opts.notModified?.();
+  if (notModified) return notModified;
+  return new Response(ctx.blobs.get(opts.digest), {
+    headers: { "content-type": opts.contentType, ...opts.extraHeaders },
+  });
+}

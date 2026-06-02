@@ -1,4 +1,4 @@
-import type { OciErrorCode } from "@hootifactory/core";
+import type { OciErrorCode, RegistryError } from "@hootifactory/core";
 import type { PackageFormat } from "@hootifactory/types";
 
 const NON_OCI_ERROR_OBJECT_FORMATS = new Set<PackageFormat>(["go", "npm", "nuget", "pypi"]);
@@ -37,4 +37,13 @@ export function registryErrorResponseForFormat(
     },
     { status: input.status, headers: input.headers },
   );
+}
+
+export function registryErrorToFormatResponse(format: PackageFormat, err: RegistryError): Response {
+  return registryErrorResponseForFormat(format, {
+    status: err.status,
+    code: err.code,
+    message: err.message,
+    detail: err.detail,
+  });
 }

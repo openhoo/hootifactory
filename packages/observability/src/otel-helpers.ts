@@ -1,7 +1,15 @@
 import { env } from "@hootifactory/config";
+import { trace } from "@opentelemetry/api";
 import { SeverityNumber } from "@opentelemetry/api-logs";
-import { ATTR_HTTP_REQUEST_METHOD, ATTR_URL_SCHEME } from "@opentelemetry/semantic-conventions";
+import {
+  ATTR_HTTP_REQUEST_METHOD,
+  ATTR_SERVER_ADDRESS,
+  ATTR_URL_SCHEME,
+} from "@opentelemetry/semantic-conventions";
+import { INSTRUMENTATION_NAME } from "./constants";
 import type { LogLevel, Signal } from "./types";
+
+export const appTracer = () => trace.getTracer(INSTRUMENTATION_NAME, env.OTEL_SERVICE_VERSION);
 
 export function endpointFor(signal: Signal): string | undefined {
   const specific =
@@ -46,7 +54,7 @@ export function baseHttpAttributes(method: string, url: URL, route: string) {
   return {
     [ATTR_HTTP_REQUEST_METHOD]: method,
     [ATTR_URL_SCHEME]: url.protocol.replace(/:$/, ""),
-    "server.address": url.hostname,
+    [ATTR_SERVER_ADDRESS]: url.hostname,
     "url.path": url.pathname,
     "http.route": route,
   };

@@ -1,5 +1,6 @@
 import { Check, Copy } from "lucide-react";
 import {
+  type ComponentProps,
   cloneElement,
   isValidElement,
   type ReactElement,
@@ -13,6 +14,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
+import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 
 /** Page heading with an optional subtitle and a right-aligned action slot. */
@@ -200,5 +202,23 @@ export function Pill({
       <span className="size-1.5 rounded-full bg-current" />
       {children}
     </span>
+  );
+}
+
+/** Pill that maps a repository visibility string to a success/neutral tone. */
+export function VisibilityPill({ visibility }: { visibility: string }) {
+  return <Pill tone={visibility === "public" ? "success" : "neutral"}>{visibility}</Pill>;
+}
+
+/** Submit button that swaps its label for a spinner while pending. */
+export function SubmitButton({
+  pending,
+  children,
+  ...props
+}: { pending: boolean; children: ReactNode } & ComponentProps<typeof Button>) {
+  return (
+    <Button {...props} type="submit" disabled={pending}>
+      {pending ? <Spinner /> : children}
+    </Button>
   );
 }

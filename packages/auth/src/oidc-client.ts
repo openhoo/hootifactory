@@ -1,5 +1,6 @@
 import * as client from "openid-client";
-import { extractGroups, extractStringClaim, mapGroupsToOrgRoles } from "./oidc-claims";
+import { extractGroups, extractStringClaim } from "./oidc-claim-path";
+import { mapGroupsToOrgRoles } from "./oidc-claims";
 import { safeOidcReturnTo } from "./oidc-state";
 import type { OidcCallbackClaims, OidcProviderConfig, SignedOidcState } from "./oidc-types";
 

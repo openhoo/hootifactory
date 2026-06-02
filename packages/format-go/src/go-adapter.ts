@@ -1,8 +1,11 @@
 import {
-  createPackageVersion,
+  basicAuthChallenge,
+  commitVersionOrReleaseBlob,
   Errors,
   type FormatAdapter,
+  findLiveVersion,
   findOrCreatePackage,
+  findPackageByName,
   type HttpMethod,
   isArtifactBlocked,
   type Permission,
@@ -10,10 +13,10 @@ import {
   type RepoContext,
   type RouteEntry,
   type RouteMatch,
-  releaseBlobRef,
+  readWritePermission,
   storeBlobWithRef,
 } from "@hootifactory/core";
-import { and, asc, eq, isNull, packages, packageVersions } from "@hootifactory/db";
+import { and, asc, eq, isNull, packageVersions } from "@hootifactory/db";
 import {
   decodeBang,
   GoModuleSchema,
@@ -46,12 +49,10 @@ export class GoAdapter implements FormatAdapter {
   }
 
   requiredPermission(method: HttpMethod): Permission {
-    return { action: method === "GET" || method === "HEAD" ? "read" : "write" };
+    return readWritePermission(method);
   }
 
-  authChallenge() {
-    return { header: 'Basic realm="hootifactory"', status: 401 as const };
-  }
+  authChallenge = basicAuthChallenge;
 
   async handle(match: RouteMatch, req: Request, ctx: RepoContext): Promise<Response> {
     const moduleName = parseRegistryInput(GoModuleSchema, decodeBang(match.params.module ?? ""), {
@@ -72,15 +73,6 @@ export class GoAdapter implements FormatAdapter {
     }
   }
 
-  private async findPackage(ctx: RepoContext, name: string) {
-    const [pkg] = await ctx.db
-      .select()
-      .from(packages)
-      .where(and(eq(packages.repositoryId, ctx.repo.id), eq(packages.name, name)))
-      .limit(1);
-    return pkg ?? null;
-  }
-
   private async versions(ctx: RepoContext, packageId: string) {
     return ctx.db
       .select({
@@ -96,7 +88,7 @@ export class GoAdapter implements FormatAdapter {
   private async list(moduleName: string, ctx: RepoContext): Promise<Response> {
     // Unknown module → 404 so the client falls through the proxy chain. An empty
     // 200 would falsely assert "known module, no versions".
-    const pkg = await this.findPackage(ctx, moduleName);
+    const pkg = await findPackageByName(ctx, moduleName);
     if (!pkg) throw Errors.notFound();
     const rows = await this.versions(ctx, pkg.id);
     return new Response(
@@ -111,7 +103,7 @@ export class GoAdapter implements FormatAdapter {
   }
 
   private async latest(moduleName: string, ctx: RepoContext): Promise<Response> {
-    const pkg = await this.findPackage(ctx, moduleName);
+    const pkg = await findPackageByName(ctx, moduleName);
     if (!pkg) throw Errors.notFound();
     const rows = await this.versions(ctx, pkg.id);
     const latestVer = pickLatest(rows.map((r) => r.version));
@@ -129,7 +121,7 @@ export class GoAdapter implements FormatAdapter {
       code: "NAME_INVALID",
       message: "invalid Go version file",
     });
-    const pkg = await this.findPackage(ctx, moduleName);
+    const pkg = await findPackageByName(ctx, moduleName);
     if (!pkg) throw Errors.notFound();
     const dot = file.lastIndexOf(".");
     if (dot < 0) throw Errors.notFound();
@@ -138,17 +130,7 @@ export class GoAdapter implements FormatAdapter {
       message: "invalid Go version",
     });
     const ext = file.slice(dot + 1);
-    const [row] = await ctx.db
-      .select({ metadata: packageVersions.metadata, createdAt: packageVersions.createdAt })
-      .from(packageVersions)
-      .where(
-        and(
-          eq(packageVersions.packageId, pkg.id),
-          eq(packageVersions.version, version),
-          isNull(packageVersions.deletedAt),
-        ),
-      )
-      .limit(1);
+    const row = await findLiveVersion(ctx, pkg.id, version);
     if (!row) throw Errors.notFound();
     const meta = row.metadata as unknown as GoVersionMeta;
 
@@ -199,7 +181,7 @@ export class GoAdapter implements FormatAdapter {
     const mod = fields.mod;
     const zipFile = fields.zip;
     const zipBytes = new Uint8Array(await zipFile.arrayBuffer());
-    const existingPkg = await this.findPackage(ctx, moduleName);
+    const existingPkg = await findPackageByName(ctx, moduleName);
     if (existingPkg) {
       const [existing] = await ctx.db
         .select({ id: packageVersions.id })
@@ -243,28 +225,19 @@ export class GoAdapter implements FormatAdapter {
       zipSize: zipBytes.length,
       time: new Date().toISOString(),
     };
-    const versionId = await createPackageVersion(ctx, {
+    const result = await commitVersionOrReleaseBlob(ctx, {
+      stored,
+      kind: "generic_file",
+      scope: `${moduleName}@${version}.zip`,
       packageId: pkg.id,
       version,
       metadata: meta as unknown as Record<string, unknown>,
       sizeBytes: zipBytes.length,
+      scan: { name: moduleName, version, mediaType: "application/zip" },
     });
-    if (!versionId) {
-      if (stored.refCreated) {
-        await releaseBlobRef(ctx, {
-          digest: stored.digest,
-          kind: "generic_file",
-          scope: `${moduleName}@${version}.zip`,
-        });
-      }
+    if ("conflict" in result) {
       return Response.json({ error: "version already exists" }, { status: 409 });
     }
-    await ctx.enqueueScan({
-      digest: stored.digest,
-      name: moduleName,
-      version,
-      mediaType: "application/zip",
-    });
     return Response.json({ ok: true, module: moduleName, version });
   }
 }

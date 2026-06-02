@@ -1,17 +1,20 @@
 import {
-  createPackageVersion,
+  basicAuthChallenge,
+  commitVersionOrReleaseBlob,
   Errors,
   type FormatAdapter,
+  findLiveVersion,
   findOrCreatePackage,
+  findPackageByName,
   findVersion,
   type HttpMethod,
-  isArtifactBlocked,
   type Permission,
   parseRegistryInput,
   type RepoContext,
   type RouteEntry,
   type RouteMatch,
-  releaseBlobRef,
+  readWritePermission,
+  serveBlobIfClean,
   storeBlobWithRef,
 } from "@hootifactory/core";
 import { and, eq, isNull, packages, packageVersions } from "@hootifactory/db";
@@ -29,6 +32,21 @@ import {
   normalizeNugetVersion,
 } from "./nuget-validation";
 import { extractNuspecMeta } from "./nuspec";
+
+function parseNugetId(id: string): string {
+  return parseRegistryInput(NugetIdSchema, id, {
+    code: "NAME_INVALID",
+    message: "invalid package id",
+  });
+}
+
+function parseNugetVersionInput(version: string): string {
+  return parseRegistryInput(NugetVersionInputSchema, version, {
+    code: "MANIFEST_UNKNOWN",
+    message: "invalid package version",
+    status: 404,
+  });
+}
 
 /**
  * NuGet v3. The consumption surface (service index + flat container) is
@@ -59,12 +77,10 @@ export class NugetAdapter implements FormatAdapter {
   }
 
   requiredPermission(method: HttpMethod): Permission {
-    return { action: method === "GET" || method === "HEAD" ? "read" : "write" };
+    return readWritePermission(method);
   }
 
-  authChallenge() {
-    return { header: 'Basic realm="hootifactory"', status: 401 as const };
-  }
+  authChallenge = basicAuthChallenge;
 
   async handle(match: RouteMatch, req: Request, ctx: RepoContext): Promise<Response> {
     const base = `${ctx.baseUrl}/${ctx.repo.mountPath}`;
@@ -106,12 +122,7 @@ export class NugetAdapter implements FormatAdapter {
   }
 
   private async findPkg(ctx: RepoContext, id: string) {
-    const [pkg] = await ctx.db
-      .select()
-      .from(packages)
-      .where(and(eq(packages.repositoryId, ctx.repo.id), eq(packages.name, id.toLowerCase())))
-      .limit(1);
-    return pkg ?? null;
+    return findPackageByName(ctx, id.toLowerCase());
   }
 
   private async listVersions(
@@ -132,10 +143,7 @@ export class NugetAdapter implements FormatAdapter {
   }
 
   private async versions(id: string, ctx: RepoContext): Promise<Response> {
-    id = parseRegistryInput(NugetIdSchema, id, {
-      code: "NAME_INVALID",
-      message: "invalid package id",
-    });
+    id = parseNugetId(id);
     const pkg = await this.findPkg(ctx, id);
     if (!pkg) return new Response("Not Found", { status: 404 });
     const rows = await this.listVersions(ctx, pkg.id, { includeUnlisted: true });
@@ -180,10 +188,7 @@ export class NugetAdapter implements FormatAdapter {
   }
 
   private async registration(id: string, base: string, ctx: RepoContext): Promise<Response> {
-    id = parseRegistryInput(NugetIdSchema, id, {
-      code: "NAME_INVALID",
-      message: "invalid package id",
-    });
+    id = parseNugetId(id);
     const pkg = await this.findPkg(ctx, id);
     if (!pkg) return new Response("Not Found", { status: 404 });
     const rows = await this.listVersions(ctx, pkg.id, { includeUnlisted: true });
@@ -218,32 +223,15 @@ export class NugetAdapter implements FormatAdapter {
     base: string,
     ctx: RepoContext,
   ): Promise<Response> {
-    id = parseRegistryInput(NugetIdSchema, id, {
-      code: "NAME_INVALID",
-      message: "invalid package id",
-    });
+    id = parseNugetId(id);
     if (!file.toLowerCase().endsWith(".json")) throw Errors.notFound();
     const rawVersion = file.slice(0, -".json".length);
-    const version = parseRegistryInput(NugetVersionInputSchema, rawVersion, {
-      code: "MANIFEST_UNKNOWN",
-      message: "invalid package version",
-      status: 404,
-    });
+    const version = parseNugetVersionInput(rawVersion);
     const norm = normalizeNugetVersion(version);
     if (!norm) throw Errors.notFound();
     const pkg = await this.findPkg(ctx, id);
     if (!pkg) return new Response("Not Found", { status: 404 });
-    const [row] = await ctx.db
-      .select({ version: packageVersions.version, metadata: packageVersions.metadata })
-      .from(packageVersions)
-      .where(
-        and(
-          eq(packageVersions.packageId, pkg.id),
-          eq(packageVersions.version, norm),
-          isNull(packageVersions.deletedAt),
-        ),
-      )
-      .limit(1);
+    const row = await findLiveVersion(ctx, pkg.id, norm);
     if (!row) throw Errors.notFound();
     return Response.json(
       this.registrationItem({
@@ -303,15 +291,8 @@ export class NugetAdapter implements FormatAdapter {
     file: string,
     ctx: RepoContext,
   ): Promise<Response> {
-    id = parseRegistryInput(NugetIdSchema, id, {
-      code: "NAME_INVALID",
-      message: "invalid package id",
-    });
-    version = parseRegistryInput(NugetVersionInputSchema, version, {
-      code: "MANIFEST_UNKNOWN",
-      message: "invalid package version",
-      status: 404,
-    });
+    id = parseNugetId(id);
+    version = parseNugetVersionInput(version);
     file = parseRegistryInput(NugetFileSchema, file, {
       code: "NAME_INVALID",
       message: "invalid package filename",
@@ -324,17 +305,7 @@ export class NugetAdapter implements FormatAdapter {
     const ext = file.toLowerCase().endsWith(".nuspec") ? "nuspec" : "nupkg";
     const expected = `${id.toLowerCase()}.${norm}.${ext}`;
     if (file && file.toLowerCase() !== expected) throw Errors.notFound();
-    const [v] = await ctx.db
-      .select({ metadata: packageVersions.metadata })
-      .from(packageVersions)
-      .where(
-        and(
-          eq(packageVersions.packageId, pkg.id),
-          eq(packageVersions.version, norm),
-          isNull(packageVersions.deletedAt),
-        ),
-      )
-      .limit(1);
+    const v = await findLiveVersion(ctx, pkg.id, norm);
     const digest = (v?.metadata as unknown as NugetVersionMeta | undefined)?.nupkgDigest;
     if (!digest || !(await ctx.blobs.exists(digest))) throw Errors.notFound();
     if (file.toLowerCase().endsWith(".nuspec")) {
@@ -343,11 +314,10 @@ export class NugetAdapter implements FormatAdapter {
         { headers: { "content-type": "application/xml; charset=utf-8" } },
       );
     }
-    if (await isArtifactBlocked(ctx, digest)) {
-      return new Response("blocked by scan policy", { status: 403 });
-    }
-    return new Response(ctx.blobs.get(digest), {
-      headers: { "content-type": "application/octet-stream" },
+    return serveBlobIfClean(ctx, {
+      digest,
+      contentType: "application/octet-stream",
+      blocked: () => new Response("blocked by scan policy", { status: 403 }),
     });
   }
 
@@ -357,30 +327,13 @@ export class NugetAdapter implements FormatAdapter {
     listed: boolean,
     ctx: RepoContext,
   ): Promise<Response> {
-    id = parseRegistryInput(NugetIdSchema, id, {
-      code: "NAME_INVALID",
-      message: "invalid package id",
-    });
-    version = parseRegistryInput(NugetVersionInputSchema, version, {
-      code: "MANIFEST_UNKNOWN",
-      message: "invalid package version",
-      status: 404,
-    });
+    id = parseNugetId(id);
+    version = parseNugetVersionInput(version);
     const pkg = await this.findPkg(ctx, id);
     if (!pkg) throw Errors.notFound();
     const norm = normalizeNugetVersion(version);
     if (!norm) throw Errors.notFound();
-    const [row] = await ctx.db
-      .select({ id: packageVersions.id, metadata: packageVersions.metadata })
-      .from(packageVersions)
-      .where(
-        and(
-          eq(packageVersions.packageId, pkg.id),
-          eq(packageVersions.version, norm),
-          isNull(packageVersions.deletedAt),
-        ),
-      )
-      .limit(1);
+    const row = await findLiveVersion(ctx, pkg.id, norm);
     if (!row) throw Errors.notFound();
     const metadata = (row.metadata ?? {}) as unknown as NugetVersionMeta;
     await ctx.db
@@ -464,7 +417,10 @@ export class NugetAdapter implements FormatAdapter {
       scope: file,
       mediaType: "application/octet-stream",
     });
-    const versionId = await createPackageVersion(ctx, {
+    const result = await commitVersionOrReleaseBlob(ctx, {
+      stored,
+      kind: "generic_file",
+      scope: file,
       packageId: pkg.id,
       version,
       metadata: {
@@ -476,23 +432,15 @@ export class NugetAdapter implements FormatAdapter {
         dependencyGroups: meta.dependencyGroups,
       },
       sizeBytes: bytes.length,
+      scan: {
+        name: lower,
+        version,
+        mediaType: "application/octet-stream",
+      },
     });
-    if (!versionId) {
-      if (stored.refCreated) {
-        await releaseBlobRef(ctx, {
-          digest: stored.digest,
-          kind: "generic_file",
-          scope: file,
-        });
-      }
+    if ("conflict" in result) {
       return new Response(null, { status: 409 });
     }
-    await ctx.enqueueScan({
-      digest: stored.digest,
-      name: lower,
-      version,
-      mediaType: "application/octet-stream",
-    });
     return new Response(null, { status: 201 });
   }
 }

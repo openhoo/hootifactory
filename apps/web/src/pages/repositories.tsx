@@ -2,12 +2,20 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { Boxes, Package, Plus, Search, Terminal } from "lucide-react";
 import { useMemo, useState } from "react";
-import { Code, EmptyState, Field, FormatBadge, PageTitle, Pill } from "@/components/common";
+import {
+  Code,
+  EmptyState,
+  Field,
+  FormatBadge,
+  PageTitle,
+  Pill,
+  SubmitButton,
+  VisibilityPill,
+} from "@/components/common";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
-import { Spinner } from "@/components/ui/spinner";
 import {
   Table,
   TableBody,
@@ -16,8 +24,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Loading, useOrg } from "@/layout/app-shell";
-import { ApiError, api } from "@/lib/api";
+import { Loading, useOrg, useRepos } from "@/layout/app-shell";
+import { api, apiErrorMessage } from "@/lib/api";
 import { snippetsFor } from "@/lib/format";
 
 const FORMATS = ["npm", "docker", "oci", "pypi", "helm", "nuget", "go", "cargo"];
@@ -31,11 +39,7 @@ export function ReposPage() {
   const [query, setQuery] = useState("");
   const [error, setError] = useState("");
 
-  const repos = useQuery({
-    queryKey: ["repos", selected?.id],
-    queryFn: () => api.repos(selected!.id),
-    enabled: !!selected,
-  });
+  const repos = useRepos();
 
   const create = useMutation({
     mutationFn: () => api.createRepo(selected!.id, { name, format }),
@@ -45,7 +49,7 @@ export function ReposPage() {
       setName("");
       setError("");
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : "failed"),
+    onError: (e) => setError(apiErrorMessage(e)),
   });
 
   const all = repos.data?.repositories ?? [];
@@ -114,14 +118,9 @@ export function ReposPage() {
                   ))}
                 </NativeSelect>
               </Field>
-              <Button
-                type="submit"
-                className="h-9"
-                disabled={create.isPending}
-                data-testid="repo-create"
-              >
-                {create.isPending ? <Spinner /> : "Create"}
-              </Button>
+              <SubmitButton pending={create.isPending} className="h-9" data-testid="repo-create">
+                Create
+              </SubmitButton>
               {error && <span className="self-center text-sm text-destructive">{error}</span>}
             </form>
           </CardContent>
@@ -158,9 +157,7 @@ export function ReposPage() {
                   </TableCell>
                   <TableCell className="text-muted-foreground capitalize">{r.kind}</TableCell>
                   <TableCell className="pr-4">
-                    <Pill tone={r.visibility === "public" ? "success" : "neutral"}>
-                      {r.visibility}
-                    </Pill>
+                    <VisibilityPill visibility={r.visibility} />
                   </TableCell>
                 </TableRow>
               ))}
@@ -214,9 +211,7 @@ export function RepoDetailPage({ repoId }: { repoId: string }) {
       <PageTitle
         description={
           <span className="inline-flex flex-wrap items-center gap-2">
-            <Pill tone={repo.visibility === "public" ? "success" : "neutral"}>
-              {repo.visibility}
-            </Pill>
+            <VisibilityPill visibility={repo.visibility} />
             <span className="capitalize">{repo.kind}</span>
             <span className="text-muted-foreground/50">·</span>
             <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">

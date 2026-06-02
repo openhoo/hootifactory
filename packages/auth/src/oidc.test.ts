@@ -76,7 +76,11 @@ describe("OIDC group -> role mapping", () => {
     };
     const signed = signOidcState(payload, "test-secret");
     expect(verifyOidcState(signed, "test-secret")).toEqual(payload);
-    expect(verifyOidcState(`${signed.slice(0, -1)}0`, "test-secret")).toBeNull();
+    // Corrupt the final signature character with a guaranteed-different hex digit
+    // so the HMAC never matches. (A fixed "0" was a no-op ~1/16 of the time, when
+    // the signature already ended in "0" — the source of the flake.)
+    const tampered = `${signed.slice(0, -1)}${signed.endsWith("0") ? "1" : "0"}`;
+    expect(verifyOidcState(tampered, "test-secret")).toBeNull();
     expect(verifyOidcState(signed, "wrong-secret")).toBeNull();
     expect(verifyOidcState(`${signed}.extra`, "test-secret")).toBeNull();
     expect(verifyOidcState("not-json.signature", "test-secret")).toBeNull();

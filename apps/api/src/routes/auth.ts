@@ -12,7 +12,6 @@ import {
   signOidcState,
   syncOidcUser,
   verifyOidcState,
-  writeAudit,
 } from "@hootifactory/auth";
 import { env } from "@hootifactory/config";
 import { isUniqueViolation } from "@hootifactory/core";
@@ -26,7 +25,7 @@ import {
 import { Hono } from "hono";
 import { authenticateUserPassword } from "../middleware/authenticate";
 import type { AppEnv } from "../types";
-import { validateJsonBody } from "../validation";
+import { errorMessage, validateJsonBody } from "../validation";
 import {
   browserFacingUrl,
   clientIp,
@@ -60,8 +59,13 @@ import {
   recordLoginFailure,
   recordPasswordResetRequest,
 } from "./auth-throttle";
+import { audit } from "./http";
 
 export const authRouter = new Hono<AppEnv>();
+
+function oidcAuditDetail(claims: { issuer: string; subject: string }) {
+  return { issuer: claims.issuer, subject: claims.subject };
+}
 
 authRouter.get("/methods", (c) =>
   c.json({
@@ -109,7 +113,7 @@ authRouter.get("/oidc/callback", async (c) => {
     setSessionCookie(c, secret, expiresAt);
     setActiveSpanAttributes({ "enduser.id": user.id, "auth.event": "oidc_login" });
     logger.info("OIDC login succeeded", { userId: user.id, issuer: claims.issuer });
-    void writeAudit({
+    audit({
       action: "auth.oidc_login",
       result: "success",
       resourceType: "user",
@@ -120,7 +124,7 @@ authRouter.get("/oidc/callback", async (c) => {
         groups: claims.groups,
         grants: claims.grants.map((grant) => ({ org: grant.org, role: grant.role })),
       },
-    }).catch(() => {});
+    });
     return c.redirect(state.returnTo);
   } catch (err) {
     if (claims && err instanceof OidcEmailLinkRequiredError) {
@@ -147,23 +151,23 @@ authRouter.get("/oidc/callback", async (c) => {
       });
       addSpanEvent("auth.oidc_link_email_sent");
       logger.info("OIDC link confirmation email queued", { userId: err.userId });
-      void writeAudit({
+      audit({
         action: "auth.oidc_link_email",
         result: "success",
         resourceType: "user",
         resourceId: err.userId,
-        detail: { issuer: claims.issuer, subject: claims.subject },
-      }).catch(() => {});
+        detail: oidcAuditDetail(claims),
+      });
       return c.redirect(loginNoticeRedirect("sso_link_email"));
     }
-    const message = err instanceof Error ? err.message : String(err);
+    const message = errorMessage(err);
     addSpanEvent("auth.oidc_login_failed", { "auth.failure": message });
     logger.warn("OIDC login failed", { error: message });
-    void writeAudit({
+    audit({
       action: "auth.oidc_login",
       result: "failure",
       detail: { error: message },
-    }).catch(() => {});
+    });
     return c.redirect(loginRedirect());
   }
 });
@@ -204,24 +208,24 @@ authRouter.get("/oidc/link/confirm", async (c) => {
     setSessionCookie(c, secret, expiresAt);
     setActiveSpanAttributes({ "enduser.id": user.id, "auth.event": "oidc_link_confirm" });
     logger.info("OIDC link confirmation succeeded", { userId: user.id, issuer: claims.issuer });
-    void writeAudit({
+    audit({
       action: "auth.oidc_link_confirm",
       result: "success",
       resourceType: "user",
       resourceId: user.id,
-      detail: { issuer: claims.issuer, subject: claims.subject },
-    }).catch(() => {});
+      detail: oidcAuditDetail(claims),
+    });
     return c.redirect(safeOidcReturnTo(returnTo));
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = errorMessage(err);
     logger.warn("OIDC link confirmation failed", { error: message });
-    void writeAudit({
+    audit({
       action: "auth.oidc_link_confirm",
       result: "failure",
       resourceType: "user",
       resourceId: token.userId,
       detail: { error: message },
-    }).catch(() => {});
+    });
     return c.redirect(loginRedirect("sso_link_invalid"));
   }
 });
@@ -273,25 +277,25 @@ authRouter.post("/password-reset/request", async (c) => {
         deliveryKey: `password-reset-${token.id}`,
       });
       logger.info("password reset email queued", { userId: user.id });
-      void writeAudit({
+      audit({
         action: "auth.password_reset_email",
         result: "success",
         resourceType: "user",
         resourceId: user.id,
         ip,
-      }).catch(() => {});
+      });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errorMessage(err);
       addSpanEvent("auth.password_reset_email_failed", { "error.message": message });
       logger.error("password reset email failed", { error: message });
-      void writeAudit({
+      audit({
         action: "auth.password_reset_email",
         result: "failure",
         resourceType: "user",
         resourceId: user.id,
         ip,
         detail: { error: message },
-      }).catch(() => {});
+      });
     }
   }
 
@@ -308,13 +312,13 @@ authRouter.post("/password-reset/confirm", async (c) => {
   const reset = await resetPasswordWithToken(parsedBody.data.token, parsedBody.data.password);
   if (!reset) return c.json({ error: "invalid or expired reset token" }, 400);
   logger.info("password reset confirmed", { userId: reset.userId });
-  void writeAudit({
+  audit({
     action: "auth.password_reset_confirm",
     result: "success",
     resourceType: "user",
     resourceId: reset.userId,
     ip: clientIp(c),
-  }).catch(() => {});
+  });
   return c.json({ ok: true });
 });
 
@@ -377,12 +381,12 @@ authRouter.post("/login", async (c) => {
   if (throttle.throttled) {
     addSpanEvent("auth.login_rate_limited", { "auth.retry_after_seconds": throttle.retryAfter });
     logger.warn("login rejected by throttle", { ip, retryAfter: throttle.retryAfter });
-    void writeAudit({
+    audit({
       action: "auth.login",
       result: "failure",
       ip,
       detail: { username, reason: "rate_limited" },
-    }).catch(() => {});
+    });
     return c.json({ error: "too many login attempts, try again later" }, 429, {
       "retry-after": String(throttle.retryAfter),
     });
@@ -394,7 +398,7 @@ authRouter.post("/login", async (c) => {
     const failure = recordLoginFailure(throttleKey);
     addSpanEvent("auth.login_failed", { "auth.failed_attempts": failure.count });
     logger.warn("login failed", { ip, attempts: failure.count });
-    void writeAudit({
+    audit({
       action: "auth.login",
       result: "failure",
       ip,
@@ -403,20 +407,20 @@ authRouter.post("/login", async (c) => {
         attempts: failure.count,
         resetAt: new Date(failure.resetAt).toISOString(),
       },
-    }).catch(() => {});
+    });
     return c.json({ error: "invalid credentials" }, 401);
   }
   clearLoginFailures(throttleKey);
   setActiveSpanAttributes({ "enduser.id": principal.userId, "auth.event": "login" });
   logger.info("login succeeded", { userId: principal.userId, ip });
-  void writeAudit({
+  audit({
     action: "auth.login",
     result: "success",
     ip,
     principal,
     resourceType: "user",
     resourceId: principal.userId,
-  }).catch(() => {});
+  });
   const { secret, expiresAt } = await createSession(principal.userId, {
     ip: c.req.header("x-forwarded-for") ?? undefined,
     userAgent: c.req.header("user-agent") ?? undefined,

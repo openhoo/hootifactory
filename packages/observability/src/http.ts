@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { env } from "@hootifactory/config";
 import {
   type Attributes,
   context,
@@ -12,13 +11,17 @@ import {
 import {
   ATTR_HTTP_REQUEST_METHOD,
   ATTR_HTTP_RESPONSE_STATUS_CODE,
-  ATTR_SERVER_ADDRESS,
-  ATTR_URL_SCHEME,
 } from "@opentelemetry/semantic-conventions";
-import { INSTRUMENTATION_NAME } from "./constants";
 import { currentCorrelationContext, headersGetter, withCorrelationContext } from "./correlation";
 import { instruments } from "./metrics";
-import { defaultHttpRoute, exceptionFor, messageFor, statusCodeForError } from "./otel-helpers";
+import {
+  appTracer,
+  baseHttpAttributes,
+  defaultHttpRoute,
+  exceptionFor,
+  messageFor,
+  statusCodeForError,
+} from "./otel-helpers";
 import type { HttpRequestTelemetry } from "./types";
 
 export async function instrumentHttpRequest<T>(
@@ -28,19 +31,13 @@ export async function instrumentHttpRequest<T>(
   const method = request.method.toUpperCase();
   const url = new URL(request.url);
   const parentContext = propagation.extract(ROOT_CONTEXT, request.headers, headersGetter);
-  const tracer = trace.getTracer(INSTRUMENTATION_NAME, env.OTEL_SERVICE_VERSION);
+  const tracer = appTracer();
   const route = defaultHttpRoute(url.pathname);
   const span = tracer.startSpan(
     `${method} ${route}`,
     {
       kind: SpanKind.SERVER,
-      attributes: {
-        [ATTR_HTTP_REQUEST_METHOD]: method,
-        [ATTR_URL_SCHEME]: url.protocol.replace(/:$/, ""),
-        [ATTR_SERVER_ADDRESS]: url.hostname,
-        "url.path": url.pathname,
-        "http.route": route,
-      },
+      attributes: baseHttpAttributes(method, url, route),
     },
     parentContext,
   );

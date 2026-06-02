@@ -1,9 +1,11 @@
-import { authorize, createApiToken, revokeToken, writeAudit } from "@hootifactory/auth";
+import { authorize, createApiToken, revokeToken } from "@hootifactory/auth";
 import { and, apiTokens, db, desc, eq, users } from "@hootifactory/db";
 import type { Hono } from "hono";
 import type { AppEnv } from "../types";
 import { uuidParams, validateJsonBody, validateParams } from "../validation";
+import { audit } from "./http";
 import { tokenDto } from "./ui-dto";
+import { requireUserPrincipal } from "./ui-repository-access";
 import { CreateTokenBodySchema } from "./ui-schemas";
 import { validateTokenGrant } from "./ui-token-grants";
 
@@ -12,8 +14,9 @@ export function registerTokenRoutes(router: Hono<AppEnv>): void {
     const parsedParams = validateParams(c, uuidParams.orgId);
     if (!parsedParams.ok) return parsedParams.response;
     const { orgId } = parsedParams.data;
-    const p = c.get("principal");
-    if (p.kind !== "user") return c.json({ error: "login required" }, 401);
+    const user = requireUserPrincipal(c);
+    if (!user.ok) return user.response;
+    const p = user.principal;
     const adminDecision = await authorize(p, "admin", { type: "org", orgId });
     const readDecision = adminDecision.allowed
       ? adminDecision
@@ -48,8 +51,9 @@ export function registerTokenRoutes(router: Hono<AppEnv>): void {
     const parsedParams = validateParams(c, uuidParams.orgToken);
     if (!parsedParams.ok) return parsedParams.response;
     const { orgId, tokenId } = parsedParams.data;
-    const p = c.get("principal");
-    if (p.kind !== "user") return c.json({ error: "login required" }, 401);
+    const user = requireUserPrincipal(c);
+    if (!user.ok) return user.response;
+    const p = user.principal;
     const [tok] = await db.select().from(apiTokens).where(eq(apiTokens.id, tokenId)).limit(1);
     if (!tok || tok.orgId !== orgId) return c.json({ error: "token not found" }, 404);
     const isOwner = tok.ownerUserId === p.userId;
@@ -58,14 +62,14 @@ export function registerTokenRoutes(router: Hono<AppEnv>): void {
       if (!decision.allowed) return c.json({ error: "forbidden" }, 403);
     }
     await revokeToken(tokenId);
-    void writeAudit({
+    audit({
       orgId,
       action: "token.revoke",
       result: "success",
       resourceType: "token",
       resourceId: tokenId,
       principal: p,
-    }).catch(() => {});
+    });
     return c.json({ ok: true });
   });
 
@@ -73,8 +77,9 @@ export function registerTokenRoutes(router: Hono<AppEnv>): void {
     const parsedParams = validateParams(c, uuidParams.orgId);
     if (!parsedParams.ok) return parsedParams.response;
     const { orgId } = parsedParams.data;
-    const p = c.get("principal");
-    if (p.kind !== "user") return c.json({ error: "login required" }, 401);
+    const user = requireUserPrincipal(c);
+    if (!user.ok) return user.response;
+    const p = user.principal;
     const decision = await authorize(p, "read", { type: "org", orgId });
     if (!decision.allowed) return c.json({ error: decision.reason }, 403);
 
@@ -102,7 +107,7 @@ export function registerTokenRoutes(router: Hono<AppEnv>): void {
       role: requestedRole,
       expiresAt,
     });
-    void writeAudit({
+    audit({
       orgId,
       action: "token.create",
       result: "success",
@@ -110,7 +115,7 @@ export function registerTokenRoutes(router: Hono<AppEnv>): void {
       resourceId: token.id,
       principal: p,
       detail: { name: token.name, type: token.type },
-    }).catch(() => {});
+    });
     return c.json({ token: tokenDto(token, p.username), secret }, 201);
   });
 }

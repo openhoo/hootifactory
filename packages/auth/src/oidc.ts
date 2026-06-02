@@ -1,3 +1,4 @@
+export * from "./oidc-claim-path";
 export * from "./oidc-claims";
 export * from "./oidc-client";
 export * from "./oidc-state";

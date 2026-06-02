@@ -3,26 +3,11 @@ import type { NormalizedFinding } from "@hootifactory/scan-core";
 import { normalizeSeverity } from "@hootifactory/scan-core";
 import {
   DEFAULT_SCANNER_IMAGES,
-  detectScanners,
-  runScannerCli,
+  runScannerAndParse,
   type ScannerRuntimeOptions,
 } from "./scanner-runtime";
 
-/** Run Syft (SBOM) + Grype (vuln) over a path, when installed. Returns [] otherwise. */
-export async function runGrypeIfAvailable(
-  target: string,
-  options: ScannerRuntimeOptions = {},
-): Promise<NormalizedFinding[]> {
-  if (!detectScanners(options).grype) return [];
-  const resolvedTarget = resolve(target);
-  const text = await runScannerCli({
-    args: [resolvedTarget, "-o", "json"],
-    hostBins: ["grype"],
-    image: options.grypeImage ?? DEFAULT_SCANNER_IMAGES.grype,
-    options,
-    target: resolvedTarget,
-  });
-  if (!text) throw new Error("grype produced no output");
+function parseGrypeMatches(text: string): NormalizedFinding[] {
   const data = JSON.parse(text) as {
     matches?: {
       vulnerability?: { id?: string; severity?: string; fix?: { versions?: string[] } };
@@ -38,4 +23,21 @@ export async function runGrypeIfAvailable(
     purl: match.artifact?.purl,
     fixedVersion: match.vulnerability?.fix?.versions?.[0],
   }));
+}
+
+/** Run Syft (SBOM) + Grype (vuln) over a path, when installed. Returns [] otherwise. */
+export async function runGrypeIfAvailable(
+  target: string,
+  options: ScannerRuntimeOptions = {},
+): Promise<NormalizedFinding[]> {
+  const resolvedTarget = resolve(target);
+  return runScannerAndParse("grype", {
+    args: [resolvedTarget, "-o", "json"],
+    hostBins: ["grype"],
+    image: options.grypeImage ?? DEFAULT_SCANNER_IMAGES.grype,
+    options,
+    parse: parseGrypeMatches,
+    requireOutput: true,
+    target: resolvedTarget,
+  });
 }

@@ -18,6 +18,7 @@ import { tokenRouter } from "./routes/token";
 import { uiRouter } from "./routes/ui";
 import { v2VersionCheck } from "./routes/v2";
 import type { AppEnv } from "./types";
+import { errorMessage } from "./validation";
 
 initializeObservability({ serviceRole: "api" });
 
@@ -63,7 +64,7 @@ app.onError((err, c) => {
     }
     return err.toResponse();
   }
-  logger.error("unhandled error", { error: err instanceof Error ? err.message : String(err) });
+  logger.error("unhandled error", { error: errorMessage(err) });
   return c.json({ errors: [{ code: "INTERNAL", message: "internal server error" }] }, 500);
 });
 

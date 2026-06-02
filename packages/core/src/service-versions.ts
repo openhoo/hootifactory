@@ -1,4 +1,4 @@
-import { and, blobRefs, blobs, eq, packageVersions, sql, versionTags } from "@hootifactory/db";
+import { and, blobRefs, blobs, eq, packageVersions, versionTags } from "@hootifactory/db";
 import { computeDigest } from "@hootifactory/storage";
 import type { RepoContext } from "./format/adapter";
 import {
@@ -8,6 +8,8 @@ import {
   ensureActiveBlobTx,
   incrementBlobRefCountTx,
   insertBlobRefTx,
+  lockDigestsTx,
+  releaseBlobRef,
   type StoredBlob,
 } from "./service-blobs";
 import {
@@ -28,6 +30,37 @@ export function publisherOf(ctx: RepoContext): {
   if (p.kind === "token")
     return { publishedByUserId: p.ownerUserId, publishedByTokenId: p.tokenId };
   return { publishedByUserId: null, publishedByTokenId: null };
+}
+
+interface PackageVersionInput {
+  packageId: string;
+  version: string;
+  metadata: Record<string, unknown>;
+  sizeBytes: number;
+}
+
+/** The shared `packageVersions` insert values (org, package, version, metadata, size + publisher). */
+function packageVersionValues(
+  ctx: RepoContext,
+  opts: PackageVersionInput,
+  publisher: ReturnType<typeof publisherOf>,
+) {
+  return {
+    orgId: ctx.repo.orgId,
+    packageId: opts.packageId,
+    version: opts.version,
+    metadata: opts.metadata,
+    sizeBytes: opts.sizeBytes,
+    ...publisher,
+  };
+}
+
+/** The shared onConflictDoUpdate config for the (packageId, version) unique key. */
+function packageVersionConflictUpdate(opts: PackageVersionInput) {
+  return {
+    target: [packageVersions.packageId, packageVersions.version],
+    set: { metadata: opts.metadata, sizeBytes: opts.sizeBytes, deletedAt: null },
+  };
 }
 
 export async function upsertPackageVersion(
@@ -56,18 +89,8 @@ export async function upsertPackageVersion(
     if (!existing) assertArtifactQuotaRowAllows(quota, 1);
     const [row] = await tx
       .insert(packageVersions)
-      .values({
-        orgId: ctx.repo.orgId,
-        packageId: opts.packageId,
-        version: opts.version,
-        metadata: opts.metadata,
-        sizeBytes: opts.sizeBytes,
-        ...publisher,
-      })
-      .onConflictDoUpdate({
-        target: [packageVersions.packageId, packageVersions.version],
-        set: { metadata: opts.metadata, sizeBytes: opts.sizeBytes, deletedAt: null },
-      })
+      .values(packageVersionValues(ctx, opts, publisher))
+      .onConflictDoUpdate(packageVersionConflictUpdate(opts))
       .returning({ id: packageVersions.id });
     if (!row) throw new Error("failed to upsert package version");
     if (!existing) await adjustArtifactsUsedTx(tx, ctx.repo.orgId, 1);
@@ -102,12 +125,10 @@ export async function upsertPackageVersionWithBlobRef(
 
   try {
     const result = await ctx.db.transaction(async (tx) => {
-      const locks = [
-        ...new Set([digest, previousDigestInput].filter((d): d is string => !!d)),
-      ].sort();
-      for (const lockDigest of locks) {
-        await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${lockDigest}, 0))`);
-      }
+      await lockDigestsTx(
+        tx,
+        [digest, previousDigestInput].filter((d): d is string => !!d),
+      );
       const rawPut = await ctx.blobs.put(opts.blob.data);
       const put = { ...rawPut, refCreated: false };
       putForCleanup = put;
@@ -170,18 +191,8 @@ export async function upsertPackageVersionWithBlobRef(
 
       const [versionRow] = await tx
         .insert(packageVersions)
-        .values({
-          orgId: ctx.repo.orgId,
-          packageId: opts.packageId,
-          version: opts.version,
-          metadata: opts.metadata,
-          sizeBytes: opts.sizeBytes,
-          ...publisher,
-        })
-        .onConflictDoUpdate({
-          target: [packageVersions.packageId, packageVersions.version],
-          set: { metadata: opts.metadata, sizeBytes: opts.sizeBytes, deletedAt: null },
-        })
+        .values(packageVersionValues(ctx, opts, publisher))
+        .onConflictDoUpdate(packageVersionConflictUpdate(opts))
         .returning({ id: packageVersions.id });
       if (!versionRow) throw new Error("failed to upsert package version");
       if (!existingVersion) await adjustArtifactsUsedTx(tx, ctx.repo.orgId, 1);
@@ -220,14 +231,7 @@ export async function createPackageVersion(
     const quota = await lockOrgQuotaTx(tx, ctx.repo.orgId);
     const [row] = await tx
       .insert(packageVersions)
-      .values({
-        orgId: ctx.repo.orgId,
-        packageId: opts.packageId,
-        version: opts.version,
-        metadata: opts.metadata,
-        sizeBytes: opts.sizeBytes,
-        ...publisher,
-      })
+      .values(packageVersionValues(ctx, opts, publisher))
       .onConflictDoNothing()
       .returning({ id: packageVersions.id });
     if (!row) return null;
@@ -235,6 +239,46 @@ export async function createPackageVersion(
     await adjustArtifactsUsedTx(tx, ctx.repo.orgId, 1);
     return row.id;
   });
+}
+
+/**
+ * Shared publish tail for blob-backed formats: create the package version, and
+ * if the version already exists (conflict) release the just-created blob ref and
+ * report the conflict; otherwise enqueue a scan for the stored blob. Used by the
+ * cargo/go/nuget adapters, whose only divergence is the 409 / success response.
+ */
+export async function commitVersionOrReleaseBlob(
+  ctx: RepoContext,
+  opts: {
+    stored: StoredBlob;
+    kind: BlobRefKind;
+    scope: string;
+    packageId: string;
+    version: string;
+    metadata: Record<string, unknown>;
+    sizeBytes: number;
+    scan: { name?: string; version?: string; mediaType?: string };
+  },
+): Promise<{ versionId: string } | { conflict: true }> {
+  const versionId = await createPackageVersion(ctx, {
+    packageId: opts.packageId,
+    version: opts.version,
+    metadata: opts.metadata,
+    sizeBytes: opts.sizeBytes,
+  });
+  if (!versionId) {
+    if (opts.stored.refCreated) {
+      await releaseBlobRef(ctx, { digest: opts.stored.digest, kind: opts.kind, scope: opts.scope });
+    }
+    return { conflict: true };
+  }
+  await ctx.enqueueScan({
+    digest: opts.stored.digest,
+    name: opts.scan.name,
+    version: opts.scan.version,
+    mediaType: opts.scan.mediaType,
+  });
+  return { versionId };
 }
 
 export async function setDistTag(

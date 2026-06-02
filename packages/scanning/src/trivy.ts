@@ -3,9 +3,9 @@ import type { NormalizedFinding } from "@hootifactory/scan-core";
 import { normalizeSeverity } from "@hootifactory/scan-core";
 import { asRecord, asString } from "./scanner-json";
 import {
+  coerceScannerOptions,
   DEFAULT_SCANNER_IMAGES,
-  detectScanners,
-  runScannerCli,
+  runScannerAndParse,
   type ScannerRuntimeOptions,
 } from "./scanner-runtime";
 
@@ -50,19 +50,15 @@ export async function runTrivyIfAvailable(
   target: string,
   serverUrlOrOptions?: string | ScannerRuntimeOptions,
 ): Promise<NormalizedFinding[]> {
-  const options =
-    typeof serverUrlOrOptions === "string"
-      ? { trivyServerUrl: serverUrlOrOptions }
-      : (serverUrlOrOptions ?? {});
-  if (!detectScanners(options).trivy) return [];
+  const options = coerceScannerOptions(serverUrlOrOptions, "trivyServerUrl");
   const resolvedTarget = resolve(target);
-  const text = await runScannerCli({
+  return runScannerAndParse("trivy", {
     args: trivyFsArgs(resolvedTarget, options.trivyServerUrl),
     hostBins: ["trivy"],
     image: options.trivyImage ?? DEFAULT_SCANNER_IMAGES.trivy,
     options,
+    parse: (text) => parseTrivyFindings(JSON.parse(text)),
+    requireOutput: true,
     target: resolvedTarget,
   });
-  if (!text) throw new Error("trivy produced no output");
-  return parseTrivyFindings(JSON.parse(text));
 }

@@ -1,19 +1,21 @@
 import {
-  createPackageVersion,
+  commitVersionOrReleaseBlob,
   Errors,
   type FormatAdapter,
+  findLiveVersion,
   findOrCreatePackage,
+  findPackageByName,
   type HttpMethod,
-  isArtifactBlocked,
   type Permission,
   parseRegistryInput,
   type RepoContext,
   type RouteEntry,
   type RouteMatch,
-  releaseBlobRef,
+  readWritePermission,
+  serveBlobIfClean,
   storeBlobWithRef,
 } from "@hootifactory/core";
-import { and, asc, eq, isNull, packages, packageVersions, users } from "@hootifactory/db";
+import { and, asc, eq, isNull, packageVersions, users } from "@hootifactory/db";
 import {
   buildCargoIndexEntry,
   cargoBlobScope,
@@ -36,6 +38,20 @@ function cargoError(detail: string, status: number): Response {
 
 function cargoOwnerId(userId: string): number {
   return Number.parseInt(userId.replaceAll("-", "").slice(0, 8), 16) >>> 0;
+}
+
+function parseCrateName(crate: string): string {
+  return parseRegistryInput(CargoCrateNameSchema, crate, {
+    code: "NAME_INVALID",
+    message: "invalid crate name",
+  });
+}
+
+function parseCrateVersion(version: string): string {
+  return parseRegistryInput(CargoVersionSchema, version, {
+    code: "MANIFEST_INVALID",
+    message: "invalid crate version",
+  });
 }
 
 /** Cargo sparse registry: config.json, sharded index, publish + download. */
@@ -63,7 +79,7 @@ export class CargoAdapter implements FormatAdapter {
   }
 
   requiredPermission(method: HttpMethod): Permission {
-    return { action: method === "GET" || method === "HEAD" ? "read" : "write" };
+    return readWritePermission(method);
   }
 
   authChallenge() {
@@ -98,13 +114,8 @@ export class CargoAdapter implements FormatAdapter {
     }
   }
 
-  private async findCrate(ctx: RepoContext, name: string) {
-    const [pkg] = await ctx.db
-      .select()
-      .from(packages)
-      .where(and(eq(packages.repositoryId, ctx.repo.id), eq(packages.name, name.toLowerCase())))
-      .limit(1);
-    return pkg ?? null;
+  private findCrate(ctx: RepoContext, name: string) {
+    return findPackageByName(ctx, name.toLowerCase());
   }
 
   private async index(path: string, ctx: RepoContext): Promise<Response> {
@@ -129,34 +140,17 @@ export class CargoAdapter implements FormatAdapter {
   }
 
   private async download(crate: string, version: string, ctx: RepoContext): Promise<Response> {
-    crate = parseRegistryInput(CargoCrateNameSchema, crate, {
-      code: "NAME_INVALID",
-      message: "invalid crate name",
-    });
-    version = parseRegistryInput(CargoVersionSchema, version, {
-      code: "MANIFEST_INVALID",
-      message: "invalid crate version",
-    });
+    crate = parseCrateName(crate);
+    version = parseCrateVersion(version);
     const pkg = await this.findCrate(ctx, crate);
     if (!pkg) throw Errors.notFound();
-    const [v] = await ctx.db
-      .select({ metadata: packageVersions.metadata })
-      .from(packageVersions)
-      .where(
-        and(
-          eq(packageVersions.packageId, pkg.id),
-          eq(packageVersions.version, version),
-          isNull(packageVersions.deletedAt),
-        ),
-      )
-      .limit(1);
+    const v = await findLiveVersion(ctx, pkg.id, version);
     const digest = (v?.metadata as unknown as CargoVersionMeta | undefined)?.crateDigest;
     if (!digest || !(await ctx.blobs.exists(digest))) throw Errors.notFound();
-    if (await isArtifactBlocked(ctx, digest)) {
-      return new Response("blocked by scan policy", { status: 403 });
-    }
-    return new Response(ctx.blobs.get(digest), {
-      headers: { "content-type": "application/octet-stream" },
+    return serveBlobIfClean(ctx, {
+      digest,
+      contentType: "application/octet-stream",
+      blocked: () => new Response("blocked by scan policy", { status: 403 }),
     });
   }
 
@@ -167,27 +161,11 @@ export class CargoAdapter implements FormatAdapter {
     yanked: boolean,
     ctx: RepoContext,
   ): Promise<Response> {
-    crate = parseRegistryInput(CargoCrateNameSchema, crate, {
-      code: "NAME_INVALID",
-      message: "invalid crate name",
-    });
-    version = parseRegistryInput(CargoVersionSchema, version, {
-      code: "MANIFEST_INVALID",
-      message: "invalid crate version",
-    });
+    crate = parseCrateName(crate);
+    version = parseCrateVersion(version);
     const pkg = await this.findCrate(ctx, crate);
     if (!pkg) throw Errors.notFound();
-    const [v] = await ctx.db
-      .select({ id: packageVersions.id, metadata: packageVersions.metadata })
-      .from(packageVersions)
-      .where(
-        and(
-          eq(packageVersions.packageId, pkg.id),
-          eq(packageVersions.version, version),
-          isNull(packageVersions.deletedAt),
-        ),
-      )
-      .limit(1);
+    const v = await findLiveVersion(ctx, pkg.id, version);
     if (!v) throw Errors.notFound();
     const meta = (v.metadata ?? {}) as { index?: Record<string, unknown> };
     await ctx.db
@@ -198,10 +176,7 @@ export class CargoAdapter implements FormatAdapter {
   }
 
   private async listOwners(crate: string, ctx: RepoContext): Promise<Response> {
-    crate = parseRegistryInput(CargoCrateNameSchema, crate, {
-      code: "NAME_INVALID",
-      message: "invalid crate name",
-    }).toLowerCase();
+    crate = parseCrateName(crate).toLowerCase();
     const pkg = await this.findCrate(ctx, crate);
     if (!pkg) throw Errors.notFound();
     const rows = await ctx.db
@@ -230,10 +205,7 @@ export class CargoAdapter implements FormatAdapter {
     action: "add" | "remove",
     ctx: RepoContext,
   ): Promise<Response> {
-    crate = parseRegistryInput(CargoCrateNameSchema, crate, {
-      code: "NAME_INVALID",
-      message: "invalid crate name",
-    }).toLowerCase();
+    crate = parseCrateName(crate).toLowerCase();
     const pkg = await this.findCrate(ctx, crate);
     if (!pkg) throw Errors.notFound();
     const rawBody = await req.json().catch(() => {
@@ -282,28 +254,23 @@ export class CargoAdapter implements FormatAdapter {
       mediaType: "application/octet-stream",
     });
     const indexEntry = buildCargoIndexEntry(meta, cksum);
-    const versionId = await createPackageVersion(ctx, {
+    const result = await commitVersionOrReleaseBlob(ctx, {
+      stored,
+      kind: "generic_file",
+      scope,
       packageId: pkg.id,
       version: meta.vers,
       metadata: { index: indexEntry, crateDigest: stored.digest },
       sizeBytes: crateBytes.length,
+      scan: {
+        name,
+        version: meta.vers,
+        mediaType: "application/octet-stream",
+      },
     });
-    if (!versionId) {
-      if (stored.refCreated) {
-        await releaseBlobRef(ctx, {
-          digest: stored.digest,
-          kind: "generic_file",
-          scope,
-        });
-      }
+    if ("conflict" in result) {
       return cargoError("version already exists", 409);
     }
-    await ctx.enqueueScan({
-      digest: stored.digest,
-      name,
-      version: meta.vers,
-      mediaType: "application/octet-stream",
-    });
     return Response.json({ warnings: { invalid_categories: [], invalid_badges: [], other: [] } });
   }
 }

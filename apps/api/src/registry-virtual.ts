@@ -14,8 +14,11 @@ import { addSpanEvent, logger, withSpan } from "@hootifactory/observability";
 import { buildRepoContext } from "./context";
 import { adapterResponse } from "./registry-adapter";
 import { authorizeRoute } from "./registry-auth";
-import { registryErrorResponseForFormat } from "./registry-error-format";
-import { headersWithoutContentLength, isReadMethod } from "./registry-utils";
+import {
+  registryErrorResponseForFormat,
+  registryErrorToFormatResponse,
+} from "./registry-error-format";
+import { headersWithoutContentLength, isReadMethod, repoSpanAttributes } from "./registry-utils";
 
 const NpmSearchWindowSchema = z.strictObject({
   from: z.coerce.number().int().min(0).max(10_000).default(0),
@@ -89,23 +92,17 @@ async function adapterResponseOrRegistryError(
     return await adapterResponse(adapter, match, req, ctx);
   } catch (err) {
     if (err instanceof RegistryError) {
-      return registryErrorResponseForFormat(adapter.format, {
-        status: err.status,
-        code: err.code,
-        message: err.message,
-        detail: err.detail,
-      });
+      return registryErrorToFormatResponse(adapter.format, err);
     }
     throw err;
   }
 }
 
-function registryErrorToResponse(adapter: FormatAdapter, err: RegistryError): Response {
+function virtualNotFound(adapter: FormatAdapter): Response {
   return registryErrorResponseForFormat(adapter.format, {
-    status: err.status,
-    code: err.code,
-    message: err.message,
-    detail: err.detail,
+    status: 404,
+    code: "NOT_FOUND",
+    message: "not found",
   });
 }
 
@@ -168,11 +165,7 @@ async function dispatchVirtualNpmSearch(
       for (const member of members) {
         await withSpan(
           "registry.virtual.search_member",
-          {
-            "registry.repository.id": member.id,
-            "registry.repository.name": member.name,
-            "registry.repository.kind": member.kind,
-          },
+          repoSpanAttributes(member),
           async (memberSpan) => {
             const memberCtx = buildRepoContext(member, ctx.principal);
             const { decision, permission } = await authorizeRoute(
@@ -243,11 +236,7 @@ async function dispatchVirtualNugetSearch(
       for (const member of members) {
         await withSpan(
           "registry.virtual.search_member",
-          {
-            "registry.repository.id": member.id,
-            "registry.repository.name": member.name,
-            "registry.repository.kind": member.kind,
-          },
+          repoSpanAttributes(member),
           async (memberSpan) => {
             const memberCtx = buildRepoContext(member, ctx.principal);
             const { decision, permission } = await authorizeRoute(
@@ -338,11 +327,7 @@ async function dispatchVirtualMetadata(
       for (const member of members) {
         await withSpan(
           "registry.virtual.metadata_member",
-          {
-            "registry.repository.id": member.id,
-            "registry.repository.name": member.name,
-            "registry.repository.kind": member.kind,
-          },
+          repoSpanAttributes(member),
           async (memberSpan) => {
             const memberCtx = buildRepoContext(member, ctx.principal);
             const { decision, permission } = await authorizeRoute(
@@ -372,7 +357,7 @@ async function dispatchVirtualMetadata(
               memberSpan.setAttribute("registry.virtual.member_found", part ? 1 : 0);
             } catch (err) {
               if (!(err instanceof RegistryError)) throw err;
-              const res = registryErrorToResponse(adapter, err);
+              const res = registryErrorToFormatResponse(adapter.format, err);
               memberSpan.setAttribute("http.response.status_code", res.status);
               last = res;
             }
@@ -380,14 +365,7 @@ async function dispatchVirtualMetadata(
         );
       }
       if (parts.length === 0) {
-        return (
-          last ??
-          registryErrorResponseForFormat(adapter.format, {
-            status: 404,
-            code: "NOT_FOUND",
-            message: "not found",
-          })
-        );
+        return last ?? virtualNotFound(adapter);
       }
       const merged = await adapter.mergeMetadata?.(parts, ctx);
       if (!merged) throw Errors.unsupported({ reason: "metadata merge is not supported" });
@@ -427,11 +405,7 @@ export async function dispatchVirtual(
       for (const member of members) {
         const res = await withSpan(
           "registry.virtual.member",
-          {
-            "registry.repository.id": member.id,
-            "registry.repository.name": member.name,
-            "registry.repository.kind": member.kind,
-          },
+          repoSpanAttributes(member),
           async (memberSpan) => {
             // Authorize against EACH member with its own org/visibility/name because
             // the request was only authorized against the virtual repo.
@@ -474,14 +448,7 @@ export async function dispatchVirtual(
         }
         last = res;
       }
-      return (
-        last ??
-        registryErrorResponseForFormat(adapter.format, {
-          status: 404,
-          code: "NOT_FOUND",
-          message: "not found",
-        })
-      );
+      return last ?? virtualNotFound(adapter);
     },
   );
 }

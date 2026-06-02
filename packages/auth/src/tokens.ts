@@ -1,18 +1,9 @@
 import { apiTokens, db, eq, type TokenScope, users } from "@hootifactory/db";
 import type { RoleName } from "./permissions";
 import type { Principal } from "./principal";
+import { randomSecret, sha256hex } from "./secret";
 
 export const TOKEN_PREFIX = "hoot_";
-
-function sha256hex(input: string): string {
-  const h = new Bun.CryptoHasher("sha256");
-  h.update(input);
-  return h.digest("hex");
-}
-
-function base64url(bytes: Uint8Array): string {
-  return Buffer.from(bytes).toString("base64url");
-}
 
 export function hashToken(secret: string): string {
   return sha256hex(secret);
@@ -26,8 +17,7 @@ export interface GeneratedToken {
 
 /** Generate a high-entropy opaque token. Only the hash + prefix are persisted. */
 export function generateTokenSecret(): GeneratedToken {
-  const raw = crypto.getRandomValues(new Uint8Array(32));
-  const secret = `${TOKEN_PREFIX}${base64url(raw)}`;
+  const secret = randomSecret(TOKEN_PREFIX);
   return { secret, prefix: secret.slice(0, 12), hash: sha256hex(secret) };
 }
 

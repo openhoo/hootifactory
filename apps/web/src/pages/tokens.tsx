@@ -1,11 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { KeyRound } from "lucide-react";
 import { useState } from "react";
-import { Code, EmptyState, Field, PageTitle, Pill } from "@/components/common";
+import { Code, EmptyState, Field, PageTitle, Pill, SubmitButton } from "@/components/common";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Spinner } from "@/components/ui/spinner";
 import {
   Table,
   TableBody,
@@ -70,14 +69,9 @@ export function TokensPage() {
                 />
               </Field>
             </div>
-            <Button
-              type="submit"
-              className="h-9"
-              disabled={create.isPending}
-              data-testid="token-create"
-            >
-              {create.isPending ? <Spinner /> : "Create token"}
-            </Button>
+            <SubmitButton pending={create.isPending} className="h-9" data-testid="token-create">
+              Create token
+            </SubmitButton>
           </form>
 
           {secret && (

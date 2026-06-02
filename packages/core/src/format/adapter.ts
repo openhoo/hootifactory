@@ -28,6 +28,16 @@ export interface Permission {
   repositoryName?: string;
 }
 
+/** Default permission: GET/HEAD are reads, everything else is a write. */
+export function readWritePermission(method: HttpMethod): Permission {
+  return { action: method === "GET" || method === "HEAD" ? "read" : "write" };
+}
+
+/** The shared HTTP-Basic `WWW-Authenticate` challenge (realm "hootifactory"). */
+export function basicAuthChallenge(): { header: string; status: 401 } {
+  return { header: 'Basic realm="hootifactory"', status: 401 as const };
+}
+
 export interface Logger {
   debug(msg: string, meta?: unknown): void;
   info(msg: string, meta?: unknown): void;

@@ -1,16 +1,8 @@
 import { createRemoteJWKSet, jwtVerify } from "jose";
+import { memoizeByKey } from "./memo";
 import type { VerifyIdTokenOptions } from "./oidc-types";
 
-const jwksCache = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
-
-function jwks(uri: string) {
-  let set = jwksCache.get(uri);
-  if (!set) {
-    set = createRemoteJWKSet(new URL(uri));
-    jwksCache.set(uri, set);
-  }
-  return set;
-}
+const jwks = memoizeByKey((uri: string) => createRemoteJWKSet(new URL(uri)));
 
 /**
  * Securely verify an OIDC id_token: RS256/ES256 signature against the provider

@@ -1,9 +1,14 @@
-import { httpStatusForDenial } from "@hootifactory/auth";
+import { type Decision, httpStatusForDenial } from "@hootifactory/auth";
 import {
   Errors,
+  type FormatAdapter,
   formatRegistry,
   type HttpMethod,
   matchRoute,
+  type Permission,
+  type RepoContext,
+  type ResolvedRepo,
+  type RouteMatch,
   resolveRepository,
 } from "@hootifactory/core";
 import {
@@ -15,16 +20,88 @@ import {
 } from "@hootifactory/observability";
 import type { Context } from "hono";
 import { buildRepoContext } from "./context";
-import { adapterResponse } from "./registry-adapter";
 import { appendBearerChallengeError, authorizeRoute } from "./registry-auth";
+import { dispatchByRepoKind } from "./registry-dispatch";
 import { registryErrorResponseForFormat } from "./registry-error-format";
-import { dispatchProxy } from "./registry-proxy";
-import { stripBodyForFallbackHead } from "./registry-utils";
-import { dispatchVirtual } from "./registry-virtual";
+import { repoFormatSpanAttributes, stripBodyForFallbackHead } from "./registry-utils";
 import { serveWebFallback } from "./registry-web";
-import type { AppEnv } from "./types";
+import type { AppEnv, RegistryAuthFailure } from "./types";
 
 const OCI_BEARER_FORMATS = new Set(["docker", "oci", "helm"]);
+
+/**
+ * Resolve the route match for a request, applying the HEAD->GET fallback and
+ * setting the route span attributes. Throws when no route matches.
+ */
+function resolveRouteMatch(
+  repo: ResolvedRepo,
+  method: HttpMethod,
+  rest: string,
+): { match: RouteMatch; fellBackToGet: boolean } {
+  const routes = formatRegistry.routesFor(repo.format);
+  let match = matchRoute(routes, method, rest);
+  let fellBackToGet = false;
+  if (!match && method === "HEAD") {
+    match = matchRoute(routes, "GET", rest);
+    fellBackToGet = Boolean(match);
+  }
+  if (!match) {
+    logger.debug("registry route not found", { repo: repo.name, format: repo.format, rest });
+    if (repo.mountPath.startsWith("v2/")) throw Errors.nameUnknown({ path: rest });
+    throw Errors.notFound({ path: rest });
+  }
+  setActiveSpanAttributes({
+    "registry.handler": match.entry.handlerId,
+    "registry.route": match.entry.pattern,
+    "registry.path.rest": rest,
+  });
+  return { match, fellBackToGet };
+}
+
+/**
+ * Build the response (and record the denial metric, via `deny`) for an
+ * authorization decision that was not allowed.
+ */
+function denialResponse(
+  repo: ResolvedRepo,
+  adapter: FormatAdapter,
+  ctx: RepoContext,
+  principal: RepoContext["principal"],
+  decision: Decision,
+  perm: Permission,
+  registryAuthFailure: RegistryAuthFailure | undefined,
+  deny: (input: Parameters<typeof registryErrorResponseForFormat>[1]) => Response,
+): Response {
+  const status = httpStatusForDenial(decision);
+  const bearerError =
+    registryAuthFailure ??
+    (principal.kind === "registryToken" && decision.code === "insufficient_scope"
+      ? "insufficient_scope"
+      : undefined);
+  logger.debug("registry authorization denied", {
+    repo: repo.name,
+    format: repo.format,
+    action: perm.action,
+    status,
+    reason: decision.reason ?? decision.code,
+  });
+  if ((status === 401 || bearerError === "insufficient_scope") && adapter.authChallenge) {
+    const challenge = adapter.authChallenge(perm, ctx);
+    return deny({
+      status: challenge.status,
+      code: "UNAUTHORIZED",
+      message: decision.reason ?? "authentication required",
+      headers: {
+        "www-authenticate": appendBearerChallengeError(challenge.header, bearerError),
+      },
+    });
+  }
+  return deny({
+    status,
+    code: status === 401 ? "UNAUTHORIZED" : "DENIED",
+    message: decision.reason ?? (status === 401 ? "authentication required" : "access denied"),
+  });
+}
 
 /**
  * Catch-all registry dispatch: resolve repo -> adapter -> route -> authorize ->
@@ -40,12 +117,7 @@ export async function handleRegistryRequest(c: Context<AppEnv>): Promise<Respons
       const resolved = await resolveRepository(url.pathname);
       span.setAttribute("registry.repository.resolved", Boolean(resolved));
       if (resolved) {
-        span.setAttributes({
-          "registry.repository.id": resolved.repo.id,
-          "registry.repository.name": resolved.repo.name,
-          "registry.repository.kind": resolved.repo.kind,
-          "registry.format": resolved.repo.format,
-        });
+        span.setAttributes(repoFormatSpanAttributes(resolved.repo, resolved.repo));
       }
       return resolved;
     },
@@ -69,32 +141,24 @@ export async function handleRegistryRequest(c: Context<AppEnv>): Promise<Respons
       "registry.repository": repo.name,
     },
     async () => {
-      setActiveSpanAttributes({
-        "registry.format": repo.format,
-        "registry.repository.id": repo.id,
-        "registry.repository.name": repo.name,
-        "registry.repository.kind": repo.kind,
-      });
+      setActiveSpanAttributes(repoFormatSpanAttributes(repo, repo));
+      const recordOutcome = (statusCode: number, outcome: "ok" | "denied" | "error") =>
+        recordRegistryRequest({
+          method,
+          format: repo.format,
+          repoKind: repo.kind,
+          statusCode,
+          outcome,
+        });
+      const deny = (input: Parameters<typeof registryErrorResponseForFormat>[1]) => {
+        const response = registryErrorResponseForFormat(repo.format, input);
+        recordOutcome(response.status, "denied");
+        return response;
+      };
       const adapter = formatRegistry.lookup(repo.format);
       if (!adapter) throw Errors.unsupported({ format: repo.format });
 
-      const routes = formatRegistry.routesFor(repo.format);
-      let match = matchRoute(routes, method, rest);
-      let fellBackToGet = false;
-      if (!match && method === "HEAD") {
-        match = matchRoute(routes, "GET", rest);
-        fellBackToGet = Boolean(match);
-      }
-      if (!match) {
-        logger.debug("registry route not found", { repo: repo.name, format: repo.format, rest });
-        if (repo.mountPath.startsWith("v2/")) throw Errors.nameUnknown({ path: rest });
-        throw Errors.notFound({ path: rest });
-      }
-      setActiveSpanAttributes({
-        "registry.handler": match.entry.handlerId,
-        "registry.route": match.entry.pattern,
-        "registry.path.rest": rest,
-      });
+      const { match, fellBackToGet } = resolveRouteMatch(repo, method, rest);
 
       const principal = c.get("principal");
       if (principal.kind === "registryToken" && !OCI_BEARER_FORMATS.has(repo.format)) {
@@ -102,19 +166,11 @@ export async function handleRegistryRequest(c: Context<AppEnv>): Promise<Respons
           repo: repo.name,
           format: repo.format,
         });
-        const response = registryErrorResponseForFormat(repo.format, {
+        return deny({
           status: 403,
           code: "DENIED",
           message: "OCI registry bearer tokens are only valid for OCI repositories",
         });
-        recordRegistryRequest({
-          method,
-          format: repo.format,
-          repoKind: repo.kind,
-          statusCode: response.status,
-          outcome: "denied",
-        });
-        return response;
       }
       const ctx = buildRepoContext(repo, principal);
 
@@ -139,66 +195,20 @@ export async function handleRegistryRequest(c: Context<AppEnv>): Promise<Respons
       setActiveSpanAttributes({ "auth.action": perm.action });
 
       if (!decision.allowed) {
-        const status = httpStatusForDenial(decision);
-        const bearerError =
-          c.get("registryAuthFailure") ??
-          (principal.kind === "registryToken" && decision.code === "insufficient_scope"
-            ? "insufficient_scope"
-            : undefined);
-        logger.debug("registry authorization denied", {
-          repo: repo.name,
-          format: repo.format,
-          action: perm.action,
-          status,
-          reason: decision.reason ?? decision.code,
-        });
-        if ((status === 401 || bearerError === "insufficient_scope") && adapter.authChallenge) {
-          const challenge = adapter.authChallenge(perm, ctx);
-          const response = registryErrorResponseForFormat(repo.format, {
-            status: challenge.status,
-            code: "UNAUTHORIZED",
-            message: decision.reason ?? "authentication required",
-            headers: {
-              "www-authenticate": appendBearerChallengeError(challenge.header, bearerError),
-            },
-          });
-          recordRegistryRequest({
-            method,
-            format: repo.format,
-            repoKind: repo.kind,
-            statusCode: response.status,
-            outcome: "denied",
-          });
-          return response;
-        }
-        recordRegistryRequest({
-          method,
-          format: repo.format,
-          repoKind: repo.kind,
-          statusCode: status,
-          outcome: "denied",
-        });
-        return registryErrorResponseForFormat(repo.format, {
-          status,
-          code: status === 401 ? "UNAUTHORIZED" : "DENIED",
-          message:
-            decision.reason ?? (status === 401 ? "authentication required" : "access denied"),
-        });
+        return denialResponse(
+          repo,
+          adapter,
+          ctx,
+          principal,
+          decision,
+          perm,
+          c.get("registryAuthFailure"),
+          deny,
+        );
       }
 
-      const res =
-        repo.kind === "virtual"
-          ? await dispatchVirtual(adapter, match, c.req.raw, ctx)
-          : repo.kind === "proxy"
-            ? await dispatchProxy(adapter, match, c.req.raw, ctx)
-            : await adapterResponse(adapter, match, c.req.raw, ctx);
-      recordRegistryRequest({
-        method,
-        format: repo.format,
-        repoKind: repo.kind,
-        statusCode: res.status,
-        outcome: res.status < 400 ? "ok" : "error",
-      });
+      const res = await dispatchByRepoKind(repo.kind, adapter, match, c.req.raw, ctx);
+      recordOutcome(res.status, res.status < 400 ? "ok" : "error");
       logger.debug("registry request completed", {
         repo: repo.name,
         format: repo.format,

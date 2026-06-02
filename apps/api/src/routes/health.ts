@@ -4,6 +4,7 @@ import { getBoss, QUEUES } from "@hootifactory/queue";
 import { blobStore } from "@hootifactory/storage";
 import { Hono } from "hono";
 import type { AppEnv } from "../types";
+import { errorMessage } from "../validation";
 
 export const healthRouter = new Hono<AppEnv>();
 
@@ -17,7 +18,7 @@ async function checkDependency(name: string, check: () => Promise<void>) {
       logger.debug("readiness dependency ok", { dependency: name });
       return { name, ok: true as const };
     } catch (err) {
-      const error = err instanceof Error ? err.message : String(err);
+      const error = errorMessage(err);
       span.setAttributes({ "health.dependency.ok": false, "error.message": error });
       logger.warn("readiness dependency failed", { dependency: name, error });
       return {

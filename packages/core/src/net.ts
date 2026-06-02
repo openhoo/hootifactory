@@ -148,28 +148,13 @@ export function assertPublicHttpUrl(raw: string): URL {
   return url;
 }
 
-export async function assertPublicResolvedUrl(
-  url: URL,
-  opts: { enforce?: boolean; lookupHost?: HostLookup } = {},
-): Promise<void> {
-  if (!(opts.enforce ?? isProduction)) return;
-  const hostname = url.hostname.replace(/^\[|\]$/g, "");
-  if (isPrivateHost(hostname)) {
-    throw new Error(`refusing to fetch a private/loopback/metadata host: ${url.hostname}`);
-  }
-  if (isIP(hostname) !== 0) return;
-  const addresses = await (opts.lookupHost ?? defaultLookup)(hostname);
-  if (addresses.length === 0) throw new Error(`could not resolve upstream host: ${hostname}`);
-  const blocked = addresses.find((a) => isPrivateHost(a.address));
-  if (blocked) {
-    throw new Error(
-      `refusing to fetch ${hostname}; DNS resolved to private/loopback/metadata address ${blocked.address}`,
-    );
-  }
-}
-
-async function publicResolvedAddress(url: URL, lookupHost?: HostLookup): Promise<string | null> {
-  if (!isProduction && !lookupHost) return null;
+/**
+ * Shared SSRF resolution guard: reject a private literal host, short-circuit on
+ * IP literals, otherwise resolve the host and reject if any resolved address is
+ * private/loopback/metadata. Returns the address to pin the connection to (the
+ * literal for IP hosts, the first resolved address otherwise).
+ */
+async function resolvePublicAddress(url: URL, lookupHost?: HostLookup): Promise<string | null> {
   const hostname = url.hostname.replace(/^\[|\]$/g, "");
   if (isPrivateHost(hostname)) {
     throw new Error(`refusing to fetch a private/loopback/metadata host: ${url.hostname}`);
@@ -184,6 +169,19 @@ async function publicResolvedAddress(url: URL, lookupHost?: HostLookup): Promise
     );
   }
   return addresses[0]?.address ?? null;
+}
+
+export async function assertPublicResolvedUrl(
+  url: URL,
+  opts: { enforce?: boolean; lookupHost?: HostLookup } = {},
+): Promise<void> {
+  if (!(opts.enforce ?? isProduction)) return;
+  await resolvePublicAddress(url, opts.lookupHost);
+}
+
+async function publicResolvedAddress(url: URL, lookupHost?: HostLookup): Promise<string | null> {
+  if (!isProduction && !lookupHost) return null;
+  return resolvePublicAddress(url, lookupHost);
 }
 
 function headersInit(init?: RequestInit["headers"]): Record<string, string> {

@@ -22,6 +22,15 @@ const OrgContext = createContext<OrgCtx>({ orgs: [], selected: null, setOrgId: (
 
 export const useOrg = () => useContext(OrgContext);
 
+export function useRepos() {
+  const { selected } = useOrg();
+  return useQuery({
+    queryKey: ["repos", selected?.id],
+    queryFn: () => api.repos(selected!.id),
+    enabled: !!selected,
+  });
+}
+
 export function Loading() {
   return (
     <div className="flex justify-center py-14">

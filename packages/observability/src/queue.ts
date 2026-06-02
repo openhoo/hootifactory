@@ -1,14 +1,13 @@
 import { randomUUID } from "node:crypto";
-import { env } from "@hootifactory/config";
 import {
   type Attributes,
   context,
   propagation,
+  type Span,
   SpanKind,
   SpanStatusCode,
   trace,
 } from "@opentelemetry/api";
-import { INSTRUMENTATION_NAME } from "./constants";
 import {
   recordGetter,
   scalarLogAttributes,
@@ -17,9 +16,44 @@ import {
 } from "./correlation";
 import { logger } from "./logger";
 import { instruments } from "./metrics";
-import { elapsedMs, exceptionFor, messageFor } from "./otel-helpers";
+import { appTracer, elapsedMs, exceptionFor, messageFor } from "./otel-helpers";
 import { withSpan } from "./span";
 import type { QueueBatchJob, QueueWorkStatus, TelemetryContextCarrier } from "./types";
+
+const MESSAGING_SYSTEM = "pg-boss";
+
+function queueBaseAttributes(queue: string): Attributes {
+  return {
+    "messaging.system": MESSAGING_SYSTEM,
+    "messaging.destination.name": queue,
+  };
+}
+
+type QueueWorkKind = { kind: "job" } | { kind: "batch"; jobCount: number };
+
+function finalizeQueueWork(
+  span: Span,
+  started: number,
+  status: QueueWorkStatus,
+  work: QueueWorkKind,
+  queue: string,
+): void {
+  const durationSeconds = (performance.now() - started) / 1000;
+  const metricAttributes = { queue, status };
+  if (work.kind === "job") {
+    instruments().queueActiveJobs.add(-1, { queue });
+    instruments().queueJobs.add(1, metricAttributes);
+    instruments().queueJobDuration.record(durationSeconds, metricAttributes);
+  } else {
+    instruments().queueBatches.add(1, metricAttributes);
+    instruments().queueBatchDuration.record(durationSeconds, metricAttributes);
+    instruments().queueBatchSize.record(work.jobCount, { queue });
+  }
+  span.setAttributes({
+    [`queue.${work.kind}.status`]: status,
+    [`queue.${work.kind}.duration_ms`]: durationSeconds * 1000,
+  });
+}
 
 export async function instrumentQueueJob<T>(
   queue: string,
@@ -28,10 +62,9 @@ export async function instrumentQueueJob<T>(
   handler: () => Promise<T>,
 ): Promise<T> {
   const parentContext = propagation.extract(context.active(), carrier?.trace ?? {}, recordGetter);
-  const tracer = trace.getTracer(INSTRUMENTATION_NAME, env.OTEL_SERVICE_VERSION);
+  const tracer = appTracer();
   const baseAttributes: Attributes = {
-    "messaging.system": "pg-boss",
-    "messaging.destination.name": queue,
+    ...queueBaseAttributes(queue),
     "messaging.operation.name": "process",
     ...attributes,
   };
@@ -89,15 +122,7 @@ export async function instrumentQueueJob<T>(
             });
             throw err;
           } finally {
-            const durationSeconds = (performance.now() - started) / 1000;
-            const metricAttributes = { queue, status };
-            instruments().queueActiveJobs.add(-1, { queue });
-            instruments().queueJobs.add(1, metricAttributes);
-            instruments().queueJobDuration.record(durationSeconds, metricAttributes);
-            span.setAttributes({
-              "queue.job.status": status,
-              "queue.job.duration_ms": durationSeconds * 1000,
-            });
+            finalizeQueueWork(span, started, status, { kind: "job" }, queue);
             span.end();
           }
         });
@@ -115,8 +140,7 @@ export async function instrumentQueueBatch<T>(
   const jobCount = jobs.length;
   const firstJobId = jobs[0]?.id;
   const attributes: Attributes = {
-    "messaging.system": "pg-boss",
-    "messaging.destination.name": queue,
+    ...queueBaseAttributes(queue),
     "messaging.batch.message_count": jobCount,
     ...(firstJobId ? { "messaging.message.id": firstJobId } : {}),
   };
@@ -139,15 +163,7 @@ export async function instrumentQueueBatch<T>(
         });
         throw err;
       } finally {
-        const durationSeconds = (performance.now() - started) / 1000;
-        const metricAttributes = { queue, status };
-        instruments().queueBatches.add(1, metricAttributes);
-        instruments().queueBatchDuration.record(durationSeconds, metricAttributes);
-        instruments().queueBatchSize.record(jobCount, { queue });
-        span.setAttributes({
-          "queue.batch.status": status,
-          "queue.batch.duration_ms": durationSeconds * 1000,
-        });
+        finalizeQueueWork(span, started, status, { kind: "batch", jobCount }, queue);
         if (status === "succeeded") {
           logger.debug("queue batch completed", {
             queue,

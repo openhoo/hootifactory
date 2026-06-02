@@ -12,6 +12,36 @@ import { type Action, maxRole, minRole, type RoleName } from "./permissions";
 import type { Decision, Principal, ResourceRef } from "./principal";
 
 /**
+ * Look up the role bound to a subject (user or token) for an org, optionally
+ * scoped to a repository. When repositoryId is omitted the org-wide binding
+ * (repositoryId IS NULL) is matched. Returns null when no binding exists.
+ */
+async function roleBindingRole(
+  subject: { userId: string } | { tokenId: string },
+  orgId: string,
+  repositoryId?: string,
+): Promise<RoleName | null> {
+  const subjectFilter =
+    "userId" in subject
+      ? eq(roleBindings.userId, subject.userId)
+      : eq(roleBindings.tokenId, subject.tokenId);
+  const [row] = await db
+    .select({ role: roleBindings.role })
+    .from(roleBindings)
+    .where(
+      and(
+        subjectFilter,
+        eq(roleBindings.orgId, orgId),
+        repositoryId
+          ? eq(roleBindings.repositoryId, repositoryId)
+          : isNull(roleBindings.repositoryId),
+      ),
+    )
+    .limit(1);
+  return row?.role ?? null;
+}
+
+/**
  * Resolve a user's effective role for an org/repository.
  * Precedence: a repo-scoped binding wins outright; otherwise org membership is
  * combined with any org-wide binding (higher of the two).
@@ -22,18 +52,8 @@ export async function resolveUserRole(
   repositoryId?: string,
 ): Promise<RoleName | null> {
   if (repositoryId) {
-    const [repoBinding] = await db
-      .select({ role: roleBindings.role })
-      .from(roleBindings)
-      .where(
-        and(
-          eq(roleBindings.userId, userId),
-          eq(roleBindings.orgId, orgId),
-          eq(roleBindings.repositoryId, repositoryId),
-        ),
-      )
-      .limit(1);
-    if (repoBinding) return repoBinding.role;
+    const repoBindingRole = await roleBindingRole({ userId }, orgId, repositoryId);
+    if (repoBindingRole) return repoBindingRole;
   }
 
   const [member] = await db
@@ -43,18 +63,8 @@ export async function resolveUserRole(
     .limit(1);
   let role: RoleName | null = member?.role ?? null;
 
-  const [orgBinding] = await db
-    .select({ role: roleBindings.role })
-    .from(roleBindings)
-    .where(
-      and(
-        eq(roleBindings.userId, userId),
-        eq(roleBindings.orgId, orgId),
-        isNull(roleBindings.repositoryId),
-      ),
-    )
-    .limit(1);
-  if (orgBinding) role = role ? maxRole(role, orgBinding.role) : orgBinding.role;
+  const orgBindingRole = await roleBindingRole({ userId }, orgId);
+  if (orgBindingRole) role = role ? maxRole(role, orgBindingRole) : orgBindingRole;
 
   const externalGrants = await db
     .select({ role: externalRoleGrants.role })
@@ -80,35 +90,11 @@ export async function effectiveRoleFor(
 
     let role: RoleName | null = null;
     if (principal.tokenId) {
-      const [repoBinding] = resource.repositoryId
-        ? await db
-            .select({ role: roleBindings.role })
-            .from(roleBindings)
-            .where(
-              and(
-                eq(roleBindings.tokenId, principal.tokenId),
-                eq(roleBindings.orgId, resource.orgId),
-                eq(roleBindings.repositoryId, resource.repositoryId),
-              ),
-            )
-            .limit(1)
-        : [];
-      if (repoBinding) role = repoBinding.role;
-
-      if (!role) {
-        const [orgBinding] = await db
-          .select({ role: roleBindings.role })
-          .from(roleBindings)
-          .where(
-            and(
-              eq(roleBindings.tokenId, principal.tokenId),
-              eq(roleBindings.orgId, resource.orgId),
-              isNull(roleBindings.repositoryId),
-            ),
-          )
-          .limit(1);
-        if (orgBinding) role = orgBinding.role;
-      }
+      const tokenId = principal.tokenId;
+      role =
+        (resource.repositoryId
+          ? await roleBindingRole({ tokenId }, resource.orgId, resource.repositoryId)
+          : null) ?? (await roleBindingRole({ tokenId }, resource.orgId));
     }
 
     role ??= principal.role;

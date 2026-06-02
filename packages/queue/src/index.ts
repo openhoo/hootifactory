@@ -66,4 +66,5 @@ export async function stopBoss(): Promise<void> {
   }
 }
 
+export { intEnv, type RunWorkerConfig, runWorker } from "./runtime";
 export type { PgBoss };

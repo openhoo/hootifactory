@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@hootifactory/config": "workspace:*",
     "@hootifactory/scan-core": "workspace:*"
   }
 }

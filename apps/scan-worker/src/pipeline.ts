@@ -27,6 +27,7 @@ import {
   runExternalScanners,
   scanDependencies,
   scanForMalware,
+  scannerOptionsFromEnv,
 } from "@hootifactory/scanning";
 import { blobStore } from "@hootifactory/storage";
 import { ociManifestReferences } from "@hootifactory/types";
@@ -37,6 +38,23 @@ export { dedupeFindings } from "./scan-policy";
 
 const OCI_FORMATS = new Set(["docker", "oci", "helm"]);
 
+// Shared pg unique-key for the scans table so the success upsert and the
+// failure upsert stay byte-for-byte aligned (drift would break idempotency).
+const SCAN_CONFLICT_TARGET = [
+  scans.artifactId,
+  scans.blobDigest,
+  scans.scanType,
+  scans.scanner,
+  scans.scannerVersion,
+  scans.dbVersion,
+];
+const SCAN_DEDUP_FIELDS = {
+  scanType: "vuln" as const,
+  scanner: "hootifactory-heuristic",
+  scannerVersion: "1",
+  dbVersion: "builtin",
+} as const;
+
 /** Run the scan pipeline for one artifact and apply the policy decision. */
 export async function processScan(artifactId: string): Promise<void> {
   await withLogAttributes({ "artifact.id": artifactId }, async () => {
@@ -46,22 +64,26 @@ export async function processScan(artifactId: string): Promise<void> {
   });
 }
 
-async function processScanInner(artifactId: string): Promise<void> {
+interface ScanContext {
+  art: typeof artifacts.$inferSelect;
+  repo: typeof repositories.$inferSelect;
+}
+
+/** Load and validate the artifact + repository, recording span/log state. */
+async function loadScanContext(artifactId: string): Promise<ScanContext | null> {
   const [art] = await withSpan("scan.load_artifact", { "artifact.id": artifactId }, () =>
     db.select().from(artifacts).where(eq(artifacts.id, artifactId)).limit(1),
   );
   if (!art) {
     addSpanEvent("scan.artifact_missing", { "artifact.id": artifactId });
     logger.warn("scan artifact missing", { artifactId });
-    return;
+    return null;
   }
   setActiveSpanAttributes({
     "artifact.digest": art.digest,
     "artifact.name": art.name ?? "",
     "artifact.version": art.version ?? "",
   });
-  const artName = art.name;
-  const artVersion = art.version;
   const [repo] = await withSpan(
     "scan.load_repository",
     { "registry.repository.id": art.repositoryId },
@@ -70,10 +92,8 @@ async function processScanInner(artifactId: string): Promise<void> {
   if (!repo) {
     addSpanEvent("scan.repository_missing", { "registry.repository.id": art.repositoryId });
     logger.warn("scan repository missing", { artifactId, repositoryId: art.repositoryId });
-    return;
+    return null;
   }
-  const repoId = repo.id;
-  const repoFormat = repo.format;
   setActiveSpanAttributes({
     "registry.format": repo.format,
     "registry.repository.id": repo.id,
@@ -85,6 +105,17 @@ async function processScanInner(artifactId: string): Promise<void> {
     repo: repo.name,
     format: repo.format,
   });
+  return { art, repo };
+}
+
+async function processScanInner(artifactId: string): Promise<void> {
+  const context = await loadScanContext(artifactId);
+  if (!context) return;
+  const { art, repo } = context;
+  const artName = art.name;
+  const artVersion = art.version;
+  const repoId = repo.id;
+  const repoFormat = repo.format;
 
   const { deps, osvEcosystem } = await collectPackageDependencies({
     repositoryId: repo.id,
@@ -138,17 +169,7 @@ async function processScanInner(artifactId: string): Promise<void> {
       const malwareFindings = scanForMalware(bytes);
       found.push(...malwareFindings);
       span.setAttribute("scan.malware.findings", malwareFindings.length);
-      const scannerOptions = {
-        clamavImage: env.CLAMAV_IMAGE,
-        trivyServerUrl: env.TRIVY_SERVER_URL,
-        clamavRestUrl: env.CLAMAV_REST_URL,
-        cliRuntime: env.SCANNER_CLI_RUNTIME,
-        timeoutMs: env.SCANNER_TIMEOUT_MS,
-        dockerCommand: env.SCANNER_DOCKER_COMMAND,
-        grypeImage: env.GRYPE_IMAGE,
-        syftImage: env.SYFT_IMAGE,
-        trivyImage: env.TRIVY_IMAGE,
-      };
+      const scannerOptions = scannerOptionsFromEnv();
       const scanners = detectScanners(scannerOptions);
       span.setAttributes({
         "scan.external.grype": Boolean(scanners.grype),
@@ -242,35 +263,11 @@ async function processScanInner(artifactId: string): Promise<void> {
   }
   if (!scannedBytePayload && Object.keys(deps).length === 0) {
     if (await isDeletedPackageVersion()) {
-      addSpanEvent("scan.skipped", { "scan.skip_reason": "package_version_deleted" });
-      await db
-        .update(artifacts)
-        .set({
-          state: "clean",
-          policyDecision: { skipped: "package_version_deleted", findings: 0 },
-        })
-        .where(eq(artifacts.id, art.id));
-      logger.info("scan artifact skipped", {
-        artifactId: art.id,
-        digest: art.digest,
-        reason: "package_version_deleted",
-      });
+      await markSkippedClean(art, "package_version_deleted");
       return;
     }
     if (scannedOciManifest && ociReferenceCount === 0) {
-      addSpanEvent("scan.skipped", { "scan.skip_reason": "oci_manifest_no_scannable_payload" });
-      await db
-        .update(artifacts)
-        .set({
-          state: "clean",
-          policyDecision: { skipped: "oci_manifest_no_scannable_payload", findings: 0 },
-        })
-        .where(eq(artifacts.id, art.id));
-      logger.info("scan artifact skipped", {
-        artifactId: art.id,
-        digest: art.digest,
-        reason: "oci_manifest_no_scannable_payload",
-      });
+      await markSkippedClean(art, "oci_manifest_no_scannable_payload");
       return;
     }
     throw new Error(`no scannable bytes available for artifact ${art.digest}`);
@@ -292,13 +289,19 @@ async function processScanInner(artifactId: string): Promise<void> {
   const results = dedupeFindings(found);
   setActiveSpanAttributes({ "scan.findings.count": results.length });
 
+  await persistScanResult(art, results);
+  await applyPolicyDecision(art, repo, results);
+}
+
+/** Upsert the per-artifact scan row and replace its findings with `results`. */
+async function persistScanResult(
+  art: typeof artifacts.$inferSelect,
+  results: NormalizedFinding[],
+): Promise<void> {
   const dedupKey = {
     artifactId: art.id,
     blobDigest: art.digest,
-    scanType: "vuln" as const,
-    scanner: "hootifactory-heuristic",
-    scannerVersion: "1",
-    dbVersion: "builtin",
+    ...SCAN_DEDUP_FIELDS,
   };
   // Upsert on the per-artifact key so retries replace that artifact's scan
   // result without coupling findings or lifecycle to another artifact that has
@@ -319,28 +322,11 @@ async function processScanInner(artifactId: string): Promise<void> {
           startedAt: new Date(),
           finishedAt: new Date(),
           sbomNativeJson: {
-            scanners: detectScanners({
-              clamavImage: env.CLAMAV_IMAGE,
-              trivyServerUrl: env.TRIVY_SERVER_URL,
-              clamavRestUrl: env.CLAMAV_REST_URL,
-              cliRuntime: env.SCANNER_CLI_RUNTIME,
-              timeoutMs: env.SCANNER_TIMEOUT_MS,
-              dockerCommand: env.SCANNER_DOCKER_COMMAND,
-              grypeImage: env.GRYPE_IMAGE,
-              syftImage: env.SYFT_IMAGE,
-              trivyImage: env.TRIVY_IMAGE,
-            }),
+            scanners: detectScanners(scannerOptionsFromEnv()),
           },
         })
         .onConflictDoUpdate({
-          target: [
-            scans.artifactId,
-            scans.blobDigest,
-            scans.scanType,
-            scans.scanner,
-            scans.scannerVersion,
-            scans.dbVersion,
-          ],
+          target: SCAN_CONFLICT_TARGET,
           set: { status: "succeeded", error: null, finishedAt: new Date() },
         })
         .returning({ id: scans.id }),
@@ -377,7 +363,14 @@ async function processScanInner(artifactId: string): Promise<void> {
       },
     );
   }
+}
 
+/** Load the repository policy, evaluate it against `results`, and persist the decision. */
+async function applyPolicyDecision(
+  art: typeof artifacts.$inferSelect,
+  repo: typeof repositories.$inferSelect,
+  results: NormalizedFinding[],
+): Promise<void> {
   const policy = await withSpan("scan.load_policy", { "registry.repository.name": repo.name }, () =>
     loadPolicy(repo.orgId, repo.name),
   );
@@ -411,6 +404,23 @@ async function processScanInner(artifactId: string): Promise<void> {
   });
 }
 
+/** Mark an artifact clean and skipped (no scannable payload) with the given reason. */
+async function markSkippedClean(art: typeof artifacts.$inferSelect, reason: string): Promise<void> {
+  addSpanEvent("scan.skipped", { "scan.skip_reason": reason });
+  await db
+    .update(artifacts)
+    .set({
+      state: "clean",
+      policyDecision: { skipped: reason, findings: 0 },
+    })
+    .where(eq(artifacts.id, art.id));
+  logger.info("scan artifact skipped", {
+    artifactId: art.id,
+    digest: art.digest,
+    reason,
+  });
+}
+
 /**
  * Record a durable failed-scan row for an artifact when processScan throws, so a
  * scan failure is observable (and recoverable on retry) instead of silently
@@ -427,23 +437,13 @@ export async function recordScanFailure(artifactId: string, err: unknown): Promi
     .values({
       artifactId: art.id,
       blobDigest: art.digest,
-      scanType: "vuln",
-      scanner: "hootifactory-heuristic",
-      scannerVersion: "1",
-      dbVersion: "builtin",
+      ...SCAN_DEDUP_FIELDS,
       status: "failed",
       error: message,
       finishedAt: new Date(),
     })
     .onConflictDoUpdate({
-      target: [
-        scans.artifactId,
-        scans.blobDigest,
-        scans.scanType,
-        scans.scanner,
-        scans.scannerVersion,
-        scans.dbVersion,
-      ],
+      target: SCAN_CONFLICT_TARGET,
       set: { status: "failed", error: message, finishedAt: new Date() },
     });
   await db

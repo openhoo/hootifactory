@@ -1,6 +1,11 @@
 import type { OidcGroupGrant, OidcGroupMappings } from "./oidc-types";
 import { ROLE_RANK, type RoleName } from "./permissions";
 
+// ── legacy single-org mapping ────────────────────────────────────────────────
+// `mapGroupsToRole` / `groupRoleMap` (OidcProviderConfig) is the legacy single-org
+// group->role mapping, retained for compatibility. New code should prefer the
+// multi-org path below; the active OIDC callback flow uses mapGroupsToOrgRoles.
+
 /**
  * Map IdP group claims to an org role using a provider's group->role map.
  * The highest-privilege matching role wins. Returns null if no group maps.
@@ -19,32 +24,9 @@ export function mapGroupsToRole(
   return best;
 }
 
-function claimValue(payload: Record<string, unknown>, claimPath: string): unknown {
-  let current: unknown = payload;
-  for (const part of claimPath.split(".")) {
-    if (!part || typeof current !== "object" || current === null || !(part in current)) {
-      return undefined;
-    }
-    current = (current as Record<string, unknown>)[part];
-  }
-  return current;
-}
-
-/** Extract group claims from an OIDC ID-token payload using the configured claim path. */
-export function extractGroups(payload: Record<string, unknown>, groupClaim: string): string[] {
-  const raw = claimValue(payload, groupClaim);
-  if (Array.isArray(raw)) return raw.filter((g): g is string => typeof g === "string");
-  if (typeof raw === "string") return [raw];
-  return [];
-}
-
-export function extractStringClaim(
-  payload: Record<string, unknown>,
-  claimPath: string,
-): string | null {
-  const raw = claimValue(payload, claimPath);
-  return typeof raw === "string" && raw.trim() ? raw.trim() : null;
-}
+// ── multi-org mapping (active) ───────────────────────────────────────────────
+// `mapGroupsToOrgRoles` / `groupMappings` is the active multi-org mapping used by
+// resolveOidcCallbackClaims (oidc-client.ts).
 
 export function mapGroupsToOrgRoles(
   groups: string[],

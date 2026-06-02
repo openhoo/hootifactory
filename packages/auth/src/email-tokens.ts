@@ -1,24 +1,16 @@
 import { and, authEmailTokens, db, eq, gt, isNull, sessions, users } from "@hootifactory/db";
 import { hashPassword } from "./password";
+import { randomSecret, sha256hex } from "./secret";
+import { activeSessionsForUser } from "./sessions";
 
 export type AuthEmailTokenPurpose = "password_reset" | "oidc_link";
-
-function sha256hex(input: string): string {
-  const h = new Bun.CryptoHasher("sha256");
-  h.update(input);
-  return h.digest("hex");
-}
-
-function base64url(bytes: Uint8Array): string {
-  return Buffer.from(bytes).toString("base64url");
-}
 
 export function hashAuthEmailToken(secret: string): string {
   return sha256hex(secret);
 }
 
 export function generateAuthEmailTokenSecret(): string {
-  return `hoot_email_${base64url(crypto.getRandomValues(new Uint8Array(32)))}`;
+  return randomSecret("hoot_email_");
 }
 
 export interface CreateAuthEmailTokenInput {
@@ -110,7 +102,7 @@ export async function resetPasswordWithToken(
     await tx
       .update(sessions)
       .set({ revokedAt: new Date() })
-      .where(and(eq(sessions.userId, token.userId), isNull(sessions.revokedAt)));
+      .where(activeSessionsForUser(token.userId));
     return { userId: token.userId };
   });
 }

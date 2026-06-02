@@ -1,4 +1,4 @@
-export { isArtifactBlocked, REGISTRY_TOKEN_SERVICE } from "./service-artifacts";
+export { isArtifactBlocked, REGISTRY_TOKEN_SERVICE, serveBlobIfClean } from "./service-artifacts";
 export {
   type BlobRefKind,
   deleteUnreferencedCasBlob,
@@ -10,6 +10,7 @@ export {
   storeBlobWithRef,
 } from "./service-blobs";
 export {
+  commitVersionOrReleaseBlob,
   createPackageVersion,
   publisherOf,
   setDistTag,

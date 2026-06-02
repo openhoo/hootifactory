@@ -32,6 +32,12 @@ const optionalNonEmptyString = z.preprocess(
   z.string().min(1).optional(),
 );
 
+/** A coerced, positive integer env value with a default. */
+const positiveInt = (def: number) => z.coerce.number().int().positive().default(def);
+
+/** A trimmed, non-empty string env value with a default. */
+const trimmedString = (def: string) => z.string().trim().min(1).default(def);
+
 const originList = z
   .string()
   .default("")
@@ -134,17 +140,13 @@ const EnvSchema = z
     OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: optionalHttpUrl,
     OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: optionalHttpUrl,
     OTEL_EXPORTER_OTLP_HEADERS: z.string().default(""),
-    OTEL_METRIC_EXPORT_INTERVAL_MS: z.coerce.number().int().positive().default(60_000),
+    OTEL_METRIC_EXPORT_INTERVAL_MS: positiveInt(60_000),
 
     // API server
-    API_PORT: z.coerce.number().int().positive().default(3000),
+    API_PORT: positiveInt(3000),
     API_HOST: z.string().default("0.0.0.0"),
     APP_PUBLIC_URL: absoluteUrl.default("http://localhost:3000"),
-    REGISTRY_MAX_UPLOAD_BYTES: z.coerce
-      .number()
-      .int()
-      .positive()
-      .default(100 * 1024 * 1024),
+    REGISTRY_MAX_UPLOAD_BYTES: positiveInt(100 * 1024 * 1024),
     REGISTRY_PUBLIC_URL: absoluteUrl.default("http://localhost:3000"),
     API_TRUSTED_ORIGINS: originList,
     /** When set, the API serves the built web UI (single-container deploys). */
@@ -168,43 +170,31 @@ const EnvSchema = z
     SESSION_SECRET: z.string().min(16).default("dev-session-secret-change-me-please-32chars"),
     AUTH_ALLOW_REGISTRATION: boolish.optional(),
     AUTH_ALLOW_ORG_CREATION: boolish.optional(),
-    AUTH_LOGIN_MAX_ATTEMPTS: z.coerce.number().int().positive().default(5),
-    AUTH_LOGIN_WINDOW_SECONDS: z.coerce.number().int().positive().default(60),
-    AUTH_PASSWORD_RESET_TTL_SECONDS: z.coerce
-      .number()
-      .int()
-      .positive()
-      .default(30 * 60),
-    AUTH_PASSWORD_RESET_MAX_ATTEMPTS: z.coerce.number().int().positive().default(3),
-    AUTH_PASSWORD_RESET_WINDOW_SECONDS: z.coerce
-      .number()
-      .int()
-      .positive()
-      .default(5 * 60),
-    AUTH_OIDC_LINK_TTL_SECONDS: z.coerce
-      .number()
-      .int()
-      .positive()
-      .default(15 * 60),
+    AUTH_LOGIN_MAX_ATTEMPTS: positiveInt(5),
+    AUTH_LOGIN_WINDOW_SECONDS: positiveInt(60),
+    AUTH_PASSWORD_RESET_TTL_SECONDS: positiveInt(30 * 60),
+    AUTH_PASSWORD_RESET_MAX_ATTEMPTS: positiveInt(3),
+    AUTH_PASSWORD_RESET_WINDOW_SECONDS: positiveInt(5 * 60),
+    AUTH_OIDC_LINK_TTL_SECONDS: positiveInt(15 * 60),
     AUTH_OIDC_ENABLED: boolish.default(false),
     AUTH_OIDC_NAME: z.string().trim().min(1).max(128).default("Single Sign-On"),
     AUTH_OIDC_ISSUER: optionalHttpUrl,
     AUTH_OIDC_CLIENT_ID: optionalNonEmptyString,
     AUTH_OIDC_CLIENT_SECRET: optionalNonEmptyString,
     AUTH_OIDC_SCOPES: oidcScopes,
-    AUTH_OIDC_GROUP_CLAIM: z.string().trim().min(1).default("groups"),
-    AUTH_OIDC_EMAIL_CLAIM: z.string().trim().min(1).default("email"),
-    AUTH_OIDC_USERNAME_CLAIM: z.string().trim().min(1).default("preferred_username"),
+    AUTH_OIDC_GROUP_CLAIM: trimmedString("groups"),
+    AUTH_OIDC_EMAIL_CLAIM: trimmedString("email"),
+    AUTH_OIDC_USERNAME_CLAIM: trimmedString("preferred_username"),
     AUTH_OIDC_GROUP_MAPPINGS: oidcGroupMappings,
     REGISTRY_JWT_PRIVATE_KEY: z.string().optional(),
     REGISTRY_JWT_PUBLIC_KEY: z.string().optional(),
-    REGISTRY_JWT_TTL: z.coerce.number().int().positive().default(300),
+    REGISTRY_JWT_TTL: positiveInt(300),
 
     // Email
     EMAIL_ENABLED: boolish.default(false),
-    EMAIL_FROM: z.string().trim().min(1).default("Hootifactory <noreply@localhost>"),
+    EMAIL_FROM: trimmedString("Hootifactory <noreply@localhost>"),
     EMAIL_SMTP_HOST: optionalNonEmptyString,
-    EMAIL_SMTP_PORT: z.coerce.number().int().positive().default(1025),
+    EMAIL_SMTP_PORT: positiveInt(1025),
     EMAIL_SMTP_SECURE: boolish.default(false),
     EMAIL_SMTP_USER: optionalNonEmptyString,
     EMAIL_SMTP_PASSWORD: optionalNonEmptyString,
@@ -212,7 +202,7 @@ const EnvSchema = z
     // Scanning (Phase 3)
     SCANNER_ENABLED: boolish.default(false),
     SCANNER_OSV: boolish.default(false),
-    SCANNER_TIMEOUT_MS: z.coerce.number().int().positive().default(120_000),
+    SCANNER_TIMEOUT_MS: positiveInt(120_000),
     SCANNER_CLI_RUNTIME: z.enum(["auto", "docker", "host", "disabled"]).default("docker"),
     SCANNER_DOCKER_COMMAND: z.string().default("docker"),
     SYFT_IMAGE: z.string().default("anchore/syft:latest"),
@@ -223,11 +213,7 @@ const EnvSchema = z
     TRIVY_SERVER_URL: optionalHttpUrl,
     OSV_API_URL: absoluteUrl.default("https://api.osv.dev"),
     SCAN_SCRATCH_DIR: z.string().default("./scratch"),
-    SCAN_MAX_BYTES: z.coerce
-      .number()
-      .int()
-      .positive()
-      .default(100 * 1024 * 1024),
+    SCAN_MAX_BYTES: positiveInt(100 * 1024 * 1024),
   })
   .superRefine((v, ctx) => {
     // Fail fast (never silently boot) when a production deployment still carries a

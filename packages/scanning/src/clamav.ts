@@ -2,9 +2,9 @@ import { resolve } from "node:path";
 import type { NormalizedFinding } from "@hootifactory/scan-core";
 import { asRecord, asString } from "./scanner-json";
 import {
+  coerceScannerOptions,
   DEFAULT_SCANNER_IMAGES,
-  detectScanners,
-  runScannerCli,
+  runScannerAndParse,
   type ScannerRuntimeOptions,
 } from "./scanner-runtime";
 
@@ -54,10 +54,7 @@ export async function runClamAvIfAvailable(
   bytes: Uint8Array,
   restUrlOrOptions?: string | ScannerRuntimeOptions,
 ): Promise<NormalizedFinding[]> {
-  const options =
-    typeof restUrlOrOptions === "string"
-      ? { clamavRestUrl: restUrlOrOptions }
-      : (restUrlOrOptions ?? {});
+  const options = coerceScannerOptions(restUrlOrOptions, "clamavRestUrl");
   if (options.clamavRestUrl) {
     const res = await fetch(options.clamavRestUrl, {
       method: "POST",
@@ -68,17 +65,15 @@ export async function runClamAvIfAvailable(
     if (!res.ok) throw new Error(`clamav REST returned ${res.status}`);
     return parseClamAvRestFindings(await res.json());
   }
-  if (!detectScanners(options).clamav) return [];
   const resolvedTarget = resolve(target);
-  const stdout = await runScannerCli({
+  return runScannerAndParse("clamav", {
     args: ["--no-summary", resolvedTarget],
     allowedExitCodes: [0, 1],
     dockerEntryPoint: "clamscan",
     hostBins: ["clamdscan", "clamscan"],
     image: options.clamavImage ?? DEFAULT_SCANNER_IMAGES.clamav,
     options,
+    parse: parseClamAvCliFindings,
     target: resolvedTarget,
   });
-  if (!stdout) return [];
-  return parseClamAvCliFindings(stdout);
 }

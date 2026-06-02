@@ -255,6 +255,7 @@
       "name": "@hootifactory/scanning",
       "version": "0.0.0",
       "dependencies": {
+        "@hootifactory/config": "workspace:*",
         "@hootifactory/scan-core": "workspace:*",
       },
     },

@@ -4,6 +4,7 @@ import { stopBoss } from "@hootifactory/queue";
 import { app } from "./app";
 import { registerAdapters } from "./bootstrap";
 import { logger } from "./lib/logger";
+import { errorMessage } from "./validation";
 
 registerAdapters();
 
@@ -35,7 +36,7 @@ const shutdown = async (signal: string) => {
     await shutdownObservability();
   } catch (err) {
     logger.error("error during shutdown", {
-      error: err instanceof Error ? err.message : String(err),
+      error: errorMessage(err),
     });
   } finally {
     process.exit(0);

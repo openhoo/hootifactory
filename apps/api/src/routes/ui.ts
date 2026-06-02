@@ -1,4 +1,4 @@
-import { authorize, ROLE_RANK, writeAudit } from "@hootifactory/auth";
+import { authorize, ROLE_RANK } from "@hootifactory/auth";
 import { env } from "@hootifactory/config";
 import {
   addUpstream,
@@ -28,9 +28,15 @@ import type { PackageFormat } from "@hootifactory/types";
 import { Hono } from "hono";
 import type { AppEnv } from "../types";
 import { uuidParams, validateJsonBody, validateParams } from "../validation";
+import { audit } from "./http";
 import { repositoryDto } from "./ui-dto";
 import { registerGovernanceRoutes } from "./ui-governance";
-import { authorizeRepository, requireRepositoryAccess } from "./ui-repository-access";
+import {
+  requireOrgAccess,
+  requireReadableParentRepo,
+  requireRepositoryAccessFromParam,
+  requireUserPrincipal,
+} from "./ui-repository-access";
 import {
   AddMemberBodySchema,
   AddUpstreamBodySchema,
@@ -85,8 +91,9 @@ uiRouter.post("/orgs", async (c) => {
   if (!env.AUTH_ALLOW_ORG_CREATION) {
     return c.json({ error: "org creation is disabled" }, 403);
   }
-  const p = c.get("principal");
-  if (p.kind !== "user") return c.json({ error: "login required" }, 401);
+  const user = requireUserPrincipal(c);
+  if (!user.ok) return user.response;
+  const p = user.principal;
   const parsedBody = await validateJsonBody(c, CreateOrgBodySchema, "invalid org request");
   if (!parsedBody.ok) return parsedBody.response;
   const body = parsedBody.data;
@@ -97,7 +104,7 @@ uiRouter.post("/orgs", async (c) => {
       .returning();
     if (!org) return c.json({ error: "failed to create org" }, 500);
     await db.insert(memberships).values({ orgId: org.id, userId: p.userId, role: "owner" });
-    void writeAudit({
+    audit({
       orgId: org.id,
       action: "org.create",
       result: "success",
@@ -105,7 +112,7 @@ uiRouter.post("/orgs", async (c) => {
       resourceId: org.id,
       principal: p,
       detail: { slug: org.slug },
-    }).catch(() => {});
+    });
     return c.json({ org }, 201);
   } catch (err) {
     if (isUniqueViolation(err)) {
@@ -119,20 +126,15 @@ uiRouter.get("/orgs/:orgId/repositories", async (c) => {
   const parsedParams = validateParams(c, uuidParams.orgId);
   if (!parsedParams.ok) return parsedParams.response;
   const { orgId } = parsedParams.data;
-  const decision = await authorize(c.get("principal"), "read", { type: "org", orgId });
-  if (!decision.allowed) {
-    return c.json({ error: decision.reason }, decision.code === "unauthenticated" ? 401 : 403);
-  }
+  const denied = await requireOrgAccess(c, orgId, "read");
+  if (denied) return denied;
   const rows = await db.select().from(repositories).where(eq(repositories.orgId, orgId));
   return c.json({ repositories: rows.map(repositoryDto) });
 });
 
 // ── content browsing ─────────────────────────────────────────────────────
 uiRouter.get("/repositories/:repoId", async (c) => {
-  const parsedParams = validateParams(c, uuidParams.repoId);
-  if (!parsedParams.ok) return parsedParams.response;
-  const { repoId } = parsedParams.data;
-  const access = await requireRepositoryAccess(c, repoId, "read");
+  const access = await requireRepositoryAccessFromParam(c, "read");
   if (!access.ok) return access.response;
   const { repo } = access;
   const countRows = await db
@@ -143,10 +145,7 @@ uiRouter.get("/repositories/:repoId", async (c) => {
 });
 
 uiRouter.get("/repositories/:repoId/packages", async (c) => {
-  const parsedParams = validateParams(c, uuidParams.repoId);
-  if (!parsedParams.ok) return parsedParams.response;
-  const { repoId } = parsedParams.data;
-  const access = await requireRepositoryAccess(c, repoId, "read");
+  const access = await requireRepositoryAccessFromParam(c, "read");
   if (!access.ok) return access.response;
   const { repo } = access;
   const rows = await db
@@ -169,9 +168,10 @@ uiRouter.get("/packages/:packageId/versions", async (c) => {
     .limit(1);
   const pkg = row?.pkg;
   const repo = row?.repo;
-  if (!pkg || !repo) return c.json({ error: "package not found" }, 404);
-  const denied = await authorizeRepository(c, "read", repo);
+  const denied = await requireReadableParentRepo(c, repo, "package not found");
   if (denied) return denied;
+  // unreachable at runtime (innerJoin); retained for type narrowing
+  if (!pkg) return c.json({ error: "package not found" }, 404);
   const rows = await db
     .select({
       version: packageVersions.version,
@@ -186,9 +186,7 @@ uiRouter.get("/packages/:packageId/versions", async (c) => {
 
 // ── proxy/virtual configuration ──────────────────────────────────────────
 uiRouter.post("/repositories/:repoId/members", async (c) => {
-  const parsedParams = validateParams(c, uuidParams.repoId);
-  if (!parsedParams.ok) return parsedParams.response;
-  const guard = await requireRepositoryAccess(c, parsedParams.data.repoId, "admin");
+  const guard = await requireRepositoryAccessFromParam(c, "admin");
   if (!guard.ok) return guard.response;
   if (guard.repo.kind !== "virtual") {
     return c.json({ error: "members can only be added to virtual repositories" }, 400);
@@ -224,7 +222,7 @@ uiRouter.post("/repositories/:repoId/members", async (c) => {
   }
 
   await addVirtualMember(guard.repo.id, body.memberRepoId, body.position ?? 0);
-  void writeAudit({
+  audit({
     orgId: guard.repo.orgId,
     action: "repository.member.add",
     result: "success",
@@ -232,14 +230,12 @@ uiRouter.post("/repositories/:repoId/members", async (c) => {
     resourceId: guard.repo.id,
     principal: c.get("principal"),
     detail: { memberRepoId: member.id, memberName: member.name, position: body.position ?? 0 },
-  }).catch(() => {});
+  });
   return c.json({ ok: true }, 201);
 });
 
 uiRouter.post("/repositories/:repoId/upstreams", async (c) => {
-  const parsedParams = validateParams(c, uuidParams.repoId);
-  if (!parsedParams.ok) return parsedParams.response;
-  const guard = await requireRepositoryAccess(c, parsedParams.data.repoId, "admin");
+  const guard = await requireRepositoryAccessFromParam(c, "admin");
   if (!guard.ok) return guard.response;
   if (guard.repo.kind !== "proxy") {
     return c.json({ error: "upstreams can only be added to proxy repositories" }, 400);
@@ -254,7 +250,7 @@ uiRouter.post("/repositories/:repoId/upstreams", async (c) => {
     return c.json({ error: err instanceof Error ? err.message : "invalid upstream url" }, 400);
   }
   await addUpstream(guard.repo.id, body.url, body.priority ?? 0);
-  void writeAudit({
+  audit({
     orgId: guard.repo.orgId,
     action: "repository.upstream.add",
     result: "success",
@@ -262,7 +258,7 @@ uiRouter.post("/repositories/:repoId/upstreams", async (c) => {
     resourceId: guard.repo.id,
     principal: c.get("principal"),
     detail: { url: body.url, priority: body.priority ?? 0 },
-  }).catch(() => {});
+  });
   return c.json({ ok: true }, 201);
 });
 
@@ -272,10 +268,8 @@ uiRouter.post("/orgs/:orgId/repositories", async (c) => {
   const parsedParams = validateParams(c, uuidParams.orgId);
   if (!parsedParams.ok) return parsedParams.response;
   const { orgId } = parsedParams.data;
-  const decision = await authorize(c.get("principal"), "admin", { type: "org", orgId });
-  if (!decision.allowed) {
-    return c.json({ error: decision.reason }, decision.code === "unauthenticated" ? 401 : 403);
-  }
+  const denied = await requireOrgAccess(c, orgId, "admin");
+  if (denied) return denied;
   const parsedBody = await validateJsonBody(
     c,
     CreateRepositoryBodySchema,
@@ -344,7 +338,7 @@ uiRouter.post("/orgs/:orgId/repositories", async (c) => {
       visibility,
       description: body.description,
     });
-    void writeAudit({
+    audit({
       orgId,
       action: "repository.create",
       result: "success",
@@ -352,7 +346,7 @@ uiRouter.post("/orgs/:orgId/repositories", async (c) => {
       resourceId: repo.id,
       principal: c.get("principal"),
       detail: { name: repo.name, format: repo.format, kind: repo.kind },
-    }).catch(() => {});
+    });
     return c.json({ repository: repositoryDto(repo) }, 201);
   } catch (err) {
     if (isUniqueViolation(err)) {

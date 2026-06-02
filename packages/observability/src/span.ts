@@ -1,14 +1,12 @@
-import { env } from "@hootifactory/config";
 import { type Attributes, context, type Span, SpanStatusCode, trace } from "@opentelemetry/api";
-import { INSTRUMENTATION_NAME } from "./constants";
-import { exceptionFor, messageFor } from "./otel-helpers";
+import { appTracer, exceptionFor, messageFor } from "./otel-helpers";
 
 export async function withSpan<T>(
   name: string,
   attributes: Attributes = {},
   handler: (span: Span) => Promise<T>,
 ): Promise<T> {
-  const tracer = trace.getTracer(INSTRUMENTATION_NAME, env.OTEL_SERVICE_VERSION);
+  const tracer = appTracer();
   const span = tracer.startSpan(name, { attributes }, context.active());
   return context.with(trace.setSpan(context.active(), span), async () => {
     try {

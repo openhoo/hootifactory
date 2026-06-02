@@ -1,17 +1,20 @@
 import {
+  basicAuthChallenge,
   createPackageVersion,
   Errors,
   type FormatAdapter,
   findOrCreatePackage,
+  findPackageByName,
   findVersion,
   type HttpMethod,
-  isArtifactBlocked,
   type Permission,
   parseRegistryInput,
   type RepoContext,
   type RouteEntry,
   type RouteMatch,
+  readWritePermission,
   releaseBlobRef,
+  serveBlobIfClean,
   storeBlobWithRef,
 } from "@hootifactory/core";
 import { and, eq, isNull, packages, packageVersions } from "@hootifactory/db";
@@ -52,12 +55,10 @@ export class PypiAdapter implements FormatAdapter {
   }
 
   requiredPermission(method: HttpMethod): Permission {
-    return { action: method === "GET" || method === "HEAD" ? "read" : "write" };
+    return readWritePermission(method);
   }
 
-  authChallenge() {
-    return { header: 'Basic realm="hootifactory"', status: 401 as const };
-  }
+  authChallenge = basicAuthChallenge;
 
   async handle(match: RouteMatch, req: Request, ctx: RepoContext): Promise<Response> {
     switch (match.entry.handlerId) {
@@ -72,15 +73,6 @@ export class PypiAdapter implements FormatAdapter {
       default:
         throw Errors.notFound();
     }
-  }
-
-  private async findPackage(ctx: RepoContext, name: string) {
-    const [pkg] = await ctx.db
-      .select()
-      .from(packages)
-      .where(and(eq(packages.repositoryId, ctx.repo.id), eq(packages.name, name)))
-      .limit(1);
-    return pkg ?? null;
   }
 
   private redirectToSlash(req: Request): Response | null {
@@ -179,7 +171,7 @@ export class PypiAdapter implements FormatAdapter {
       message: "invalid project name",
     });
     const name = normalizeName(projectRaw);
-    const pkg = await this.findPackage(ctx, name);
+    const pkg = await findPackageByName(ctx, name);
     if (!pkg) return new Response("Not Found", { status: 404 });
     // Live versions only — pruned releases must drop out of the PEP 503 index.
     const versions = await ctx.db
@@ -239,11 +231,10 @@ export class PypiAdapter implements FormatAdapter {
     if (!file || !(await ctx.blobs.exists(file.blobDigest))) {
       return new Response("Not Found", { status: 404 });
     }
-    if (await isArtifactBlocked(ctx, file.blobDigest)) {
-      return new Response("artifact blocked by scan policy", { status: 403 });
-    }
-    return new Response(ctx.blobs.get(file.blobDigest), {
-      headers: { "content-type": "application/octet-stream" },
+    return serveBlobIfClean(ctx, {
+      digest: file.blobDigest,
+      contentType: "application/octet-stream",
+      blocked: () => new Response("artifact blocked by scan policy", { status: 403 }),
     });
   }
 

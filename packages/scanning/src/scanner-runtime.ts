@@ -1,4 +1,5 @@
 import { dirname, resolve } from "node:path";
+import { env } from "@hootifactory/config";
 
 export interface AvailableScanners {
   syft: boolean;
@@ -27,6 +28,38 @@ export const DEFAULT_SCANNER_IMAGES = {
   trivy: "aquasec/trivy:latest",
   clamav: "clamav/clamav:latest",
 } as const;
+
+/** Build the runtime scanner options from the process environment. */
+export function scannerOptionsFromEnv(): ScannerRuntimeOptions {
+  return {
+    clamavImage: env.CLAMAV_IMAGE,
+    trivyServerUrl: env.TRIVY_SERVER_URL,
+    clamavRestUrl: env.CLAMAV_REST_URL,
+    cliRuntime: env.SCANNER_CLI_RUNTIME,
+    timeoutMs: env.SCANNER_TIMEOUT_MS,
+    dockerCommand: env.SCANNER_DOCKER_COMMAND,
+    grypeImage: env.GRYPE_IMAGE,
+    syftImage: env.SYFT_IMAGE,
+    trivyImage: env.TRIVY_IMAGE,
+  };
+}
+
+/**
+ * Normalize a legacy `string | ScannerRuntimeOptions` argument: a bare string is
+ * treated as the value for `stringKey`, otherwise the options object (or `{}`).
+ */
+type StringScannerOptionKey = {
+  [K in keyof ScannerRuntimeOptions]-?: NonNullable<ScannerRuntimeOptions[K]> extends string
+    ? K
+    : never;
+}[keyof ScannerRuntimeOptions];
+
+export function coerceScannerOptions(
+  arg: string | ScannerRuntimeOptions | undefined,
+  stringKey: StringScannerOptionKey,
+): ScannerRuntimeOptions {
+  return typeof arg === "string" ? { [stringKey]: arg } : (arg ?? {});
+}
 
 let dockerAvailableCache: Map<string, boolean> | null = null;
 
@@ -140,6 +173,44 @@ export async function runScannerCli(input: {
     throw new Error(`${command} exited ${exitCode}: ${stderr.slice(0, 1000)}`);
   }
   return text;
+}
+
+/**
+ * Run a CLI scanner over a target and parse its output, when the scanner is available.
+ * Returns `[]` when the scanner is unavailable. When `requireOutput` is true and the
+ * scanner produced no output, throws `${scanner} produced no output`; otherwise empty
+ * output yields `[]`.
+ */
+export async function runScannerAndParse<T>(
+  scanner: keyof AvailableScanners,
+  input: {
+    args: string[];
+    allowedExitCodes?: number[];
+    dockerEntryPoint?: string;
+    hostBins: string[];
+    image: string;
+    options: ScannerRuntimeOptions;
+    parse: (text: string) => T[];
+    requireOutput?: boolean;
+    target: string;
+  },
+): Promise<T[]> {
+  if (!detectScanners(input.options)[scanner]) return [];
+  const resolvedTarget = resolve(input.target);
+  const text = await runScannerCli({
+    args: input.args,
+    allowedExitCodes: input.allowedExitCodes,
+    dockerEntryPoint: input.dockerEntryPoint,
+    hostBins: input.hostBins,
+    image: input.image,
+    options: input.options,
+    target: resolvedTarget,
+  });
+  if (!text) {
+    if (input.requireOutput) throw new Error(`${scanner} produced no output`);
+    return [];
+  }
+  return input.parse(text);
 }
 
 /** Detect which external scanner clients can be run. Docker-backed clients are the default. */

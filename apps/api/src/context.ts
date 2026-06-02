@@ -6,6 +6,7 @@ import { addSpanEvent, captureTelemetryContext, withSpan } from "@hootifactory/o
 import { enqueue, QUEUES } from "@hootifactory/queue";
 import { blobStore } from "@hootifactory/storage";
 import { logger } from "./lib/logger";
+import { errorMessage } from "./validation";
 
 /** Assemble the per-request RepoContext injected into a format adapter. */
 export function buildRepoContext(repo: ResolvedRepo, principal: Principal): RepoContext {
@@ -64,7 +65,7 @@ export function buildRepoContext(repo: ResolvedRepo, principal: Principal): Repo
                 { retryLimit: 5, retryDelay: 30, retryBackoff: true },
               );
             } catch (err) {
-              const message = err instanceof Error ? err.message : String(err);
+              const message = errorMessage(err);
               await db
                 .update(artifacts)
                 .set({

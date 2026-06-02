@@ -2,6 +2,7 @@ import {
   Errors,
   type FormatAdapter,
   findOrCreatePackage,
+  findPackageByName,
   type HttpMethod,
   isArtifactBlocked,
   type Permission,
@@ -295,11 +296,7 @@ export class DockerAdapter implements FormatAdapter {
   }
 
   private async resolveManifest(image: string, reference: string, ctx: RepoContext) {
-    const [pkg] = await ctx.db
-      .select({ id: packages.id })
-      .from(packages)
-      .where(and(eq(packages.repositoryId, ctx.repo.id), eq(packages.name, image)))
-      .limit(1);
+    const pkg = await findPackageByName(ctx, image);
     if (!pkg) return null;
 
     if (reference.startsWith("sha256:")) {
@@ -376,11 +373,7 @@ export class DockerAdapter implements FormatAdapter {
       const scoped = await this.resolveManifest(image, reference, ctx);
       if (!scoped) throw Errors.manifestUnknown({ reference });
 
-      const [pkg] = await ctx.db
-        .select({ id: packages.id })
-        .from(packages)
-        .where(and(eq(packages.repositoryId, ctx.repo.id), eq(packages.name, image)))
-        .limit(1);
+      const pkg = await findPackageByName(ctx, image);
       if (!pkg) throw Errors.manifestUnknown({ reference });
 
       await ctx.db
@@ -407,11 +400,7 @@ export class DockerAdapter implements FormatAdapter {
       await this.releaseManifestBlobs(ctx, image, manifestBlobDigests(scoped.raw));
     } else {
       // Tag delete only removes the mutable pointer; the manifest + its blobs remain.
-      const [pkg] = await ctx.db
-        .select({ id: packages.id })
-        .from(packages)
-        .where(and(eq(packages.repositoryId, ctx.repo.id), eq(packages.name, image)))
-        .limit(1);
+      const pkg = await findPackageByName(ctx, image);
       if (!pkg) throw Errors.manifestUnknown({ reference });
       const deleted = await ctx.db
         .delete(ociTags)
@@ -442,11 +431,7 @@ export class DockerAdapter implements FormatAdapter {
     ctx: RepoContext,
     image: string,
   ): Promise<{ digest: string; raw: string }[]> {
-    const [pkg] = await ctx.db
-      .select({ id: packages.id })
-      .from(packages)
-      .where(and(eq(packages.repositoryId, ctx.repo.id), eq(packages.name, image)))
-      .limit(1);
+    const pkg = await findPackageByName(ctx, image);
     if (!pkg) return [];
 
     const tagRows = await ctx.db
@@ -500,11 +485,7 @@ export class DockerAdapter implements FormatAdapter {
 
   // ── tags ───────────────────────────────────────────────────────────────
   private async tagsList(image: string, req: Request, ctx: RepoContext): Promise<Response> {
-    const [pkg] = await ctx.db
-      .select({ id: packages.id })
-      .from(packages)
-      .where(and(eq(packages.repositoryId, ctx.repo.id), eq(packages.name, image)))
-      .limit(1);
+    const pkg = await findPackageByName(ctx, image);
     if (!pkg) throw Errors.nameUnknown({ image });
     const rows = await ctx.db
       .select({ tag: ociTags.tag })

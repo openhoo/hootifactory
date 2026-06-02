@@ -6,7 +6,8 @@ import {
   type RouteMatch,
 } from "@hootifactory/core";
 import { logger, withSpan } from "@hootifactory/observability";
-import { registryErrorResponseForFormat } from "./registry-error-format";
+import { registryErrorToFormatResponse } from "./registry-error-format";
+import { repoFormatSpanAttributes } from "./registry-utils";
 
 const REGISTRY_MISS_CODES = new Set<OciErrorCode>([
   "BLOB_UNKNOWN",
@@ -28,11 +29,7 @@ export async function adapterResponse(
   return withSpan(
     "registry.adapter.handle",
     {
-      "registry.format": adapter.format,
-      "registry.repository.id": ctx.repo.id,
-      "registry.repository.name": ctx.repo.name,
-      "registry.repository.kind": ctx.repo.kind,
-      "registry.handler": match.entry.handlerId,
+      ...repoFormatSpanAttributes(adapter, ctx.repo, match.entry.handlerId),
       "registry.route": match.entry.pattern,
       "http.request.method": req.method,
     },
@@ -49,12 +46,7 @@ export async function adapterResponse(
         return response;
       } catch (err) {
         if (err instanceof RegistryError && !["docker", "helm", "oci"].includes(adapter.format)) {
-          const response = registryErrorResponseForFormat(adapter.format, {
-            status: err.status,
-            code: err.code,
-            message: err.message,
-            detail: err.detail,
-          });
+          const response = registryErrorToFormatResponse(adapter.format, err);
           span.setAttribute("http.response.status_code", response.status);
           logger.debug("registry adapter error", {
             format: adapter.format,
