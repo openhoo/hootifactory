@@ -26,20 +26,20 @@ import {
   packageVersions,
   sql,
 } from "@hootifactory/db";
-import { OCI_MEDIA_TYPES } from "@hootifactory/types";
 import { parseOciManifestPutRequest } from "./oci-manifest-put";
+import {
+  buildOciReferrerDescriptor,
+  buildOciReferrersResponse,
+  parseOciReferrersQuery,
+} from "./oci-referrers";
 import { buildOciTagsListResponse } from "./oci-tags";
 import { cancelUpload, patchUpload, putUpload, startUpload, uploadStatus } from "./oci-uploads";
 import {
   assertImageName,
-  manifestAnnotations,
   manifestBlobDigests,
   OciDigestSchema,
-  OciReferrersQuerySchema,
   parseBlobRange,
-  parseManifestRaw,
   parseReference,
-  referrerArtifactType,
 } from "./oci-validation";
 
 const UPLOAD_CONTROL_HANDLERS = new Set([
@@ -481,22 +481,6 @@ export class DockerAdapter implements FormatAdapter {
   }
 
   // ── referrers ──────────────────────────────────────────────────────────
-  private referrersResponse(
-    manifests: {
-      mediaType: string;
-      digest: string;
-      size: number;
-      artifactType?: string;
-      annotations?: Record<string, string>;
-    }[],
-    headers: Record<string, string> = {},
-  ): Response {
-    return new Response(
-      JSON.stringify({ schemaVersion: 2, mediaType: OCI_MEDIA_TYPES.imageIndexV1, manifests }),
-      { status: 200, headers: { "content-type": OCI_MEDIA_TYPES.imageIndexV1, ...headers } },
-    );
-  }
-
   private async referrers(
     image: string,
     digest: string,
@@ -507,12 +491,7 @@ export class DockerAdapter implements FormatAdapter {
       code: "DIGEST_INVALID",
       message: "invalid subject digest",
     });
-    const url = new URL(req.url);
-    const { artifactType: artifactTypeFilter } = parseRegistryInput(
-      OciReferrersQuerySchema,
-      { artifactType: url.searchParams.get("artifactType") ?? undefined },
-      { code: "MANIFEST_INVALID", message: "invalid referrers query" },
-    );
+    const { artifactType: artifactTypeFilter } = parseOciReferrersQuery(req.url);
     const rows = await ctx.db
       .select()
       .from(ociManifests)
@@ -522,31 +501,11 @@ export class DockerAdapter implements FormatAdapter {
     const manifests = [];
     for (const m of rows) {
       if (!(await this.resolveManifest(image, m.digest, ctx))) continue;
-      const parsed = parseManifestRaw(m.raw);
-      const artifactType = referrerArtifactType(parsed, m.mediaType);
-      if (artifactTypeFilter && artifactType !== artifactTypeFilter) continue;
-      const descriptor: {
-        mediaType: string;
-        digest: string;
-        size: number;
-        artifactType?: string;
-        annotations?: Record<string, string>;
-      } = {
-        mediaType: m.mediaType,
-        digest: m.digest,
-        size: m.sizeBytes,
-      };
-      if (artifactType) descriptor.artifactType = artifactType;
-      const annotations = manifestAnnotations(parsed);
-      if (annotations) descriptor.annotations = annotations;
-      manifests.push({
-        ...descriptor,
-      });
+      const descriptor = buildOciReferrerDescriptor(m);
+      if (artifactTypeFilter && descriptor.artifactType !== artifactTypeFilter) continue;
+      manifests.push(descriptor);
     }
-    const headers: Record<string, string> = artifactTypeFilter
-      ? { "oci-filters-applied": "artifactType" }
-      : {};
-    return this.referrersResponse(manifests, headers);
+    return buildOciReferrersResponse({ manifests, artifactTypeFilter });
   }
 
   // ── blobs ──────────────────────────────────────────────────────────────
