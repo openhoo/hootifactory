@@ -8,15 +8,14 @@ import {
   type RepoContext,
   type RouteMatch,
 } from "@hootifactory/core";
-import { addSpanEvent, logger, withSpan } from "@hootifactory/observability";
-import { buildRepoContext } from "./context";
+import { logger, withSpan } from "@hootifactory/observability";
 import { adapterResponse } from "./registry-adapter";
-import { authorizeRoute } from "./registry-auth";
 import {
   registryErrorResponseForFormat,
   registryErrorToFormatResponse,
 } from "./registry-error-format";
 import { isReadMethod, repoSpanAttributes } from "./registry-utils";
+import { authorizeVirtualMember, virtualMemberSkipReason } from "./registry-virtual-member";
 import {
   metadataResponse,
   rewriteVirtualBody,
@@ -81,29 +80,21 @@ async function dispatchVirtualNpmSearch(
           "registry.virtual.search_member",
           repoSpanAttributes(member),
           async (memberSpan) => {
-            const memberCtx = buildRepoContext(member, ctx.principal);
-            const { decision, permission } = await authorizeRoute(
+            const authorization = await authorizeVirtualMember(
               adapter,
               req.method as HttpMethod,
               match,
-              memberCtx,
+              member,
+              ctx,
+              memberSpan,
             );
-            memberSpan.setAttributes({
-              "auth.action": permission.action,
-              "auth.decision": decision.allowed ? "allowed" : "denied",
-            });
-            if (!decision.allowed) {
-              addSpanEvent("registry.virtual.member_skipped", {
-                "auth.reason": decision.reason ?? decision.code,
-              });
-              return;
-            }
+            if (!authorization.decision.allowed) return;
 
             const res = await adapterResponseOrRegistryError(
               adapter,
               match,
               allNpmSearchResultsRequest(req),
-              memberCtx,
+              authorization.memberCtx,
             );
             memberSpan.setAttribute("http.response.status_code", res.status);
             if (res.status >= 400) return;
@@ -145,29 +136,21 @@ async function dispatchVirtualNugetSearch(
           "registry.virtual.search_member",
           repoSpanAttributes(member),
           async (memberSpan) => {
-            const memberCtx = buildRepoContext(member, ctx.principal);
-            const { decision, permission } = await authorizeRoute(
+            const authorization = await authorizeVirtualMember(
               adapter,
               req.method as HttpMethod,
               match,
-              memberCtx,
+              member,
+              ctx,
+              memberSpan,
             );
-            memberSpan.setAttributes({
-              "auth.action": permission.action,
-              "auth.decision": decision.allowed ? "allowed" : "denied",
-            });
-            if (!decision.allowed) {
-              addSpanEvent("registry.virtual.member_skipped", {
-                "auth.reason": decision.reason ?? decision.code,
-              });
-              return;
-            }
+            if (!authorization.decision.allowed) return;
 
             const res = await adapterResponseOrRegistryError(
               adapter,
               match,
               allNugetSearchResultsRequest(req),
-              memberCtx,
+              authorization.memberCtx,
             );
             memberSpan.setAttribute("http.response.status_code", res.status);
             if (res.status >= 400) return;
@@ -227,8 +210,7 @@ async function dispatchVirtualMetadata(
           "registry.virtual.metadata_member",
           repoSpanAttributes(member),
           async (memberSpan) => {
-            const memberCtx = buildRepoContext(member, ctx.principal);
-            const { decision, permission } = await authorizeRoute(
+            const authorization = await authorizeVirtualMember(
               adapter,
               req.method as HttpMethod,
               {
@@ -236,20 +218,13 @@ async function dispatchVirtualMetadata(
                 params: { pkg: name },
                 path: name,
               },
-              memberCtx,
+              member,
+              ctx,
+              memberSpan,
             );
-            memberSpan.setAttributes({
-              "auth.action": permission.action,
-              "auth.decision": decision.allowed ? "allowed" : "denied",
-            });
-            if (!decision.allowed) {
-              addSpanEvent("registry.virtual.member_skipped", {
-                "auth.reason": decision.reason ?? decision.code,
-              });
-              return;
-            }
+            if (!authorization.decision.allowed) return;
             try {
-              const part = await adapter.generateMetadata?.(name, memberCtx);
+              const part = await adapter.generateMetadata?.(name, authorization.memberCtx);
               if (part)
                 parts.push(rewriteVirtualMetadata(part, member.mountPath, ctx.repo.mountPath));
               memberSpan.setAttribute("registry.virtual.member_found", part ? 1 : 0);
@@ -307,27 +282,29 @@ export async function dispatchVirtual(
           async (memberSpan) => {
             // Authorize against EACH member with its own org/visibility/name because
             // the request was only authorized against the virtual repo.
-            const memberCtx = buildRepoContext(member, ctx.principal);
-            const { decision, permission } = await authorizeRoute(
+            const authorization = await authorizeVirtualMember(
               adapter,
               req.method as HttpMethod,
               match,
-              memberCtx,
+              member,
+              ctx,
+              memberSpan,
             );
-            memberSpan.setAttributes({
-              "auth.action": permission.action,
-              "auth.decision": decision.allowed ? "allowed" : "denied",
-            });
-            if (!decision.allowed) {
+            if (!authorization.decision.allowed) {
               logger.debug("virtual member skipped by authorization", {
                 virtualRepo: ctx.repo.name,
                 member: member.name,
-                action: permission.action,
-                reason: decision.reason ?? decision.code,
+                action: authorization.permission.action,
+                reason: virtualMemberSkipReason(authorization),
               });
               return null;
             }
-            const response = await adapterResponseOrRegistryError(adapter, match, req, memberCtx);
+            const response = await adapterResponseOrRegistryError(
+              adapter,
+              match,
+              req,
+              authorization.memberCtx,
+            );
             memberSpan.setAttribute("http.response.status_code", response.status);
             return response;
           },
