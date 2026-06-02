@@ -7,11 +7,11 @@
 export function memoizeByKey<K, V>(load: (key: K) => V): (key: K) => V {
   const cache = new Map<K, V>();
   return (key: K): V => {
-    let value = cache.get(key);
-    if (!value) {
-      value = load(key);
-      cache.set(key, value);
+    if (cache.has(key)) {
+      return cache.get(key) as V;
     }
+    const value = load(key);
+    cache.set(key, value);
     return value;
   };
 }

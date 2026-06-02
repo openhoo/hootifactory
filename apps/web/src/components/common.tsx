@@ -214,10 +214,11 @@ export function VisibilityPill({ visibility }: { visibility: string }) {
 export function SubmitButton({
   pending,
   children,
+  disabled,
   ...props
 }: { pending: boolean; children: ReactNode } & ComponentProps<typeof Button>) {
   return (
-    <Button {...props} type="submit" disabled={pending}>
+    <Button {...props} type="submit" disabled={pending || disabled}>
       {pending ? <Spinner /> : children}
     </Button>
   );
