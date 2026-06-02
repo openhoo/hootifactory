@@ -18,7 +18,13 @@ import {
   registryErrorResponseForFormat,
   registryErrorToFormatResponse,
 } from "./registry-error-format";
-import { headersWithoutContentLength, isReadMethod, repoSpanAttributes } from "./registry-utils";
+import { isReadMethod, repoSpanAttributes } from "./registry-utils";
+import {
+  metadataResponse,
+  rewriteVirtualBody,
+  rewriteVirtualMetadata,
+  shouldRewriteVirtualBody,
+} from "./registry-virtual-rewrite";
 
 const NpmSearchWindowSchema = z.strictObject({
   from: z.coerce.number().int().min(0).max(10_000).default(0),
@@ -38,48 +44,6 @@ interface NpmSearchBody {
 interface NugetSearchBody {
   data?: Array<Record<string, unknown> & { id?: unknown }>;
   totalHits?: number;
-}
-
-function shouldRewriteVirtualBody(contentType: string): boolean {
-  return contentType.includes("json") || contentType.includes("text/html");
-}
-
-async function rewriteVirtualBody(
-  res: Response,
-  memberMountPath: string,
-  virtualMountPath: string,
-): Promise<Response> {
-  const body = (await res.text()).split(`/${memberMountPath}/`).join(`/${virtualMountPath}/`);
-  return new Response(body, {
-    status: res.status,
-    headers: headersWithoutContentLength(res.headers),
-  });
-}
-
-function rewriteVirtualMetadata(
-  part: FormatMetadata,
-  memberMountPath: string,
-  virtualMountPath: string,
-): FormatMetadata {
-  if (memberMountPath === virtualMountPath || !shouldRewriteVirtualBody(part.contentType)) {
-    return part;
-  }
-  const body = typeof part.body === "string" ? part.body : new TextDecoder().decode(part.body);
-  const headers = { ...(part.headers ?? {}) };
-  delete headers["content-length"];
-  delete headers["Content-Length"];
-  return {
-    ...part,
-    body: body.split(`/${memberMountPath}/`).join(`/${virtualMountPath}/`),
-    headers,
-  };
-}
-
-function metadataResponse(part: FormatMetadata): Response {
-  const headers = new Headers(part.headers);
-  headers.set("content-type", part.contentType);
-  headers.delete("content-length");
-  return new Response(part.body, { headers });
 }
 
 async function adapterResponseOrRegistryError(
