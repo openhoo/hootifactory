@@ -1,12 +1,8 @@
-import { type Decision, httpStatusForDenial } from "@hootifactory/auth";
 import {
   Errors,
-  type FormatAdapter,
   formatRegistry,
   type HttpMethod,
   matchRoute,
-  type Permission,
-  type RepoContext,
   type ResolvedRepo,
   type RouteMatch,
   resolveRepository,
@@ -20,12 +16,12 @@ import {
 } from "@hootifactory/observability";
 import type { Context } from "hono";
 import { buildRepoContext } from "./context";
-import { appendBearerChallengeError, authorizeRoute } from "./registry-auth";
+import { authorizeRoute, registryAuthorizationDeniedResponse } from "./registry-auth";
 import { dispatchByRepoKind } from "./registry-dispatch";
 import { registryErrorResponseForFormat } from "./registry-error-format";
 import { repoFormatSpanAttributes, stripBodyForFallbackHead } from "./registry-utils";
 import { serveWebFallback } from "./registry-web";
-import type { AppEnv, RegistryAuthFailure } from "./types";
+import type { AppEnv } from "./types";
 
 const OCI_BEARER_FORMATS = new Set(["docker", "oci", "helm"]);
 
@@ -56,51 +52,6 @@ function resolveRouteMatch(
     "registry.path.rest": rest,
   });
   return { match, fellBackToGet };
-}
-
-/**
- * Build the response (and record the denial metric, via `deny`) for an
- * authorization decision that was not allowed.
- */
-function denialResponse(
-  repo: ResolvedRepo,
-  adapter: FormatAdapter,
-  ctx: RepoContext,
-  principal: RepoContext["principal"],
-  decision: Decision,
-  perm: Permission,
-  registryAuthFailure: RegistryAuthFailure | undefined,
-  deny: (input: Parameters<typeof registryErrorResponseForFormat>[1]) => Response,
-): Response {
-  const status = httpStatusForDenial(decision);
-  const bearerError =
-    registryAuthFailure ??
-    (principal.kind === "registryToken" && decision.code === "insufficient_scope"
-      ? "insufficient_scope"
-      : undefined);
-  logger.debug("registry authorization denied", {
-    repo: repo.name,
-    format: repo.format,
-    action: perm.action,
-    status,
-    reason: decision.reason ?? decision.code,
-  });
-  if ((status === 401 || bearerError === "insufficient_scope") && adapter.authChallenge) {
-    const challenge = adapter.authChallenge(perm, ctx);
-    return deny({
-      status: challenge.status,
-      code: "UNAUTHORIZED",
-      message: decision.reason ?? "authentication required",
-      headers: {
-        "www-authenticate": appendBearerChallengeError(challenge.header, bearerError),
-      },
-    });
-  }
-  return deny({
-    status,
-    code: status === 401 ? "UNAUTHORIZED" : "DENIED",
-    message: decision.reason ?? (status === 401 ? "authentication required" : "access denied"),
-  });
 }
 
 /**
@@ -195,16 +146,16 @@ export async function handleRegistryRequest(c: Context<AppEnv>): Promise<Respons
       setActiveSpanAttributes({ "auth.action": perm.action });
 
       if (!decision.allowed) {
-        return denialResponse(
+        return registryAuthorizationDeniedResponse({
           repo,
           adapter,
           ctx,
           principal,
           decision,
-          perm,
-          c.get("registryAuthFailure"),
+          permission: perm,
+          registryAuthFailure: c.get("registryAuthFailure"),
           deny,
-        );
+        });
       }
 
       const res = await dispatchByRepoKind(repo.kind, adapter, match, c.req.raw, ctx);
