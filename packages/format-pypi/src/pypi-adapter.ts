@@ -28,12 +28,14 @@ import {
   PypiProjectParamSchema,
 } from "./pypi-validation";
 import {
+  buildSimpleProjectFiles,
+  buildSimpleProjectJson,
+  buildSimpleRootJson,
   normalizeName,
   preferredSimpleResponse,
   renderProjectHtml,
   renderRootHtml,
   SIMPLE_JSON_CONTENT_TYPE,
-  type SimpleFile,
   simpleHtmlContentType,
 } from "./simple";
 
@@ -94,13 +96,9 @@ export class PypiAdapter implements FormatAdapter {
       .where(eq(packages.repositoryId, ctx.repo.id));
     const projects = rows.map((r) => r.name).sort();
     if (preferredSimpleResponse(req.headers.get("accept")) === "json") {
-      return Response.json(
-        {
-          meta: { "api-version": "1.1" },
-          projects: projects.map((name) => ({ name })),
-        },
-        { headers: { "content-type": SIMPLE_JSON_CONTENT_TYPE } },
-      );
+      return Response.json(buildSimpleRootJson(projects), {
+        headers: { "content-type": SIMPLE_JSON_CONTENT_TYPE },
+      });
     }
     return new Response(renderRootHtml(projects), {
       headers: { "content-type": simpleHtmlContentType(req.headers.get("accept")) },
@@ -157,37 +155,14 @@ export class PypiAdapter implements FormatAdapter {
       })
       .from(packageVersions)
       .where(and(eq(packageVersions.packageId, pkg.id), isNull(packageVersions.deletedAt)));
-    const files: SimpleFile[] = [];
-    for (const v of versions) {
-      const fileList = (v.metadata as { files?: PypiFileMeta[] })?.files ?? [];
-      for (const f of fileList) {
-        files.push({
-          filename: f.filename,
-          url: `${ctx.baseUrl}/${ctx.repo.mountPath}/files/${encodeURIComponent(f.filename)}`,
-          sha256: f.sha256,
-          requiresPython: f.requiresPython,
-          size: f.size,
-          uploadTime: v.createdAt.toISOString(),
-        });
-      }
-    }
+    const files = buildSimpleProjectFiles(versions, {
+      baseUrl: ctx.baseUrl,
+      mountPath: ctx.repo.mountPath,
+    });
     if (preferredSimpleResponse(req.headers.get("accept")) === "json") {
-      return Response.json(
-        {
-          meta: { "api-version": "1.1" },
-          name,
-          versions: versions.map((v) => v.version).sort(),
-          files: files.map((file) => ({
-            filename: file.filename,
-            url: file.url,
-            hashes: { sha256: file.sha256 },
-            ...(file.requiresPython ? { "requires-python": file.requiresPython } : {}),
-            size: file.size,
-            "upload-time": file.uploadTime,
-          })),
-        },
-        { headers: { "content-type": SIMPLE_JSON_CONTENT_TYPE } },
-      );
+      return Response.json(buildSimpleProjectJson(name, versions, files), {
+        headers: { "content-type": SIMPLE_JSON_CONTENT_TYPE },
+      });
     }
     return new Response(renderProjectHtml(name, files), {
       headers: { "content-type": simpleHtmlContentType(req.headers.get("accept")) },

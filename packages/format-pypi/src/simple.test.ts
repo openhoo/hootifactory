@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
+  buildSimpleProjectFiles,
+  buildSimpleProjectJson,
+  buildSimpleRootJson,
   isSafeDistributionFilename,
   isValidProjectName,
   LEGACY_HTML_CONTENT_TYPE,
@@ -49,6 +52,96 @@ describe("PyPI simple API rendering", () => {
     expect(html).toContain('<a href="alpha/">alpha</a>');
     expect(html).toContain('<a href="beta/">beta</a>');
     expect(html).toContain('content="1.0"');
+  });
+
+  test("builds simple root JSON from the supplied project order", () => {
+    expect(buildSimpleRootJson(["beta", "alpha"])).toEqual({
+      meta: { "api-version": "1.1" },
+      projects: [{ name: "beta" }, { name: "alpha" }],
+    });
+  });
+
+  test("builds simple project files from stored version metadata", () => {
+    expect(
+      buildSimpleProjectFiles(
+        [
+          {
+            version: "1.0.0",
+            createdAt: new Date("2026-01-02T03:04:05.000Z"),
+            metadata: {
+              files: [
+                {
+                  filename: "pkg name-1.0.0.tar.gz",
+                  sha256: "abc123",
+                  requiresPython: ">=3.11",
+                  size: 7,
+                },
+              ],
+            },
+          },
+          {
+            version: "2.0.0",
+            createdAt: new Date("2026-01-03T03:04:05.000Z"),
+            metadata: {},
+          },
+        ],
+        { baseUrl: "https://repo.test", mountPath: "org/pypi" },
+      ),
+    ).toEqual([
+      {
+        filename: "pkg name-1.0.0.tar.gz",
+        url: "https://repo.test/org/pypi/files/pkg%20name-1.0.0.tar.gz",
+        sha256: "abc123",
+        requiresPython: ">=3.11",
+        size: 7,
+        uploadTime: "2026-01-02T03:04:05.000Z",
+      },
+    ]);
+  });
+
+  test("builds simple project JSON with sorted versions and optional file metadata", () => {
+    expect(
+      buildSimpleProjectJson(
+        "pkg",
+        [{ version: "2.0.0" }, { version: "1.0.0" }],
+        [
+          {
+            filename: "pkg-1.0.0.tar.gz",
+            url: "https://repo.test/pkg-1.0.0.tar.gz",
+            sha256: "abc123",
+            requiresPython: ">=3.11",
+            size: 7,
+            uploadTime: "2026-01-02T03:04:05.000Z",
+          },
+          {
+            filename: "pkg-2.0.0.tar.gz",
+            url: "https://repo.test/pkg-2.0.0.tar.gz",
+            sha256: "def456",
+          },
+        ],
+      ),
+    ).toEqual({
+      meta: { "api-version": "1.1" },
+      name: "pkg",
+      versions: ["1.0.0", "2.0.0"],
+      files: [
+        {
+          filename: "pkg-1.0.0.tar.gz",
+          url: "https://repo.test/pkg-1.0.0.tar.gz",
+          hashes: { sha256: "abc123" },
+          "requires-python": ">=3.11",
+          size: 7,
+          "upload-time": "2026-01-02T03:04:05.000Z",
+        },
+        {
+          filename: "pkg-2.0.0.tar.gz",
+          url: "https://repo.test/pkg-2.0.0.tar.gz",
+          hashes: { sha256: "def456" },
+          size: undefined,
+          "upload-time": undefined,
+        },
+      ],
+    });
   });
 
   test("selects simple JSON only when its accept weight wins", () => {

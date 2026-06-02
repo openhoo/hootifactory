@@ -7,6 +7,38 @@ export interface SimpleFile {
   uploadTime?: string;
 }
 
+export interface SimpleVersionRow {
+  version: string;
+  metadata: unknown;
+  createdAt: Date;
+}
+
+export interface StoredSimpleFile {
+  filename: string;
+  sha256: string;
+  requiresPython?: string;
+  size?: number;
+}
+
+export interface SimpleRootJson {
+  meta: { "api-version": "1.1" };
+  projects: Array<{ name: string }>;
+}
+
+export interface SimpleProjectJson {
+  meta: { "api-version": "1.1" };
+  name: string;
+  versions: string[];
+  files: Array<{
+    filename: string;
+    url: string;
+    hashes: { sha256: string };
+    "requires-python"?: string;
+    size?: number;
+    "upload-time"?: string;
+  }>;
+}
+
 export const SIMPLE_JSON_CONTENT_TYPE = "application/vnd.pypi.simple.v1+json";
 export const SIMPLE_HTML_CONTENT_TYPE = "application/vnd.pypi.simple.v1+html; charset=utf-8";
 export const LEGACY_HTML_CONTENT_TYPE = "text/html; charset=utf-8";
@@ -57,6 +89,54 @@ ${links}
   </body>
 </html>
 `;
+}
+
+export function buildSimpleRootJson(projects: string[]): SimpleRootJson {
+  return {
+    meta: { "api-version": "1.1" },
+    projects: projects.map((name) => ({ name })),
+  };
+}
+
+export function buildSimpleProjectFiles(
+  versions: SimpleVersionRow[],
+  opts: { baseUrl: string; mountPath: string },
+): SimpleFile[] {
+  const files: SimpleFile[] = [];
+  for (const version of versions) {
+    const fileList = (version.metadata as { files?: StoredSimpleFile[] })?.files ?? [];
+    for (const file of fileList) {
+      files.push({
+        filename: file.filename,
+        url: `${opts.baseUrl}/${opts.mountPath}/files/${encodeURIComponent(file.filename)}`,
+        sha256: file.sha256,
+        requiresPython: file.requiresPython,
+        size: file.size,
+        uploadTime: version.createdAt.toISOString(),
+      });
+    }
+  }
+  return files;
+}
+
+export function buildSimpleProjectJson(
+  name: string,
+  versions: Array<{ version: string }>,
+  files: SimpleFile[],
+): SimpleProjectJson {
+  return {
+    meta: { "api-version": "1.1" },
+    name,
+    versions: versions.map((version) => version.version).sort(),
+    files: files.map((file) => ({
+      filename: file.filename,
+      url: file.url,
+      hashes: { sha256: file.sha256 },
+      ...(file.requiresPython ? { "requires-python": file.requiresPython } : {}),
+      size: file.size,
+      "upload-time": file.uploadTime,
+    })),
+  };
 }
 
 export function preferredSimpleResponse(acceptHeader: string | null): "json" | "html" {
