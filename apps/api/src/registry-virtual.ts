@@ -4,11 +4,9 @@ import {
   type FormatMetadata,
   type HttpMethod,
   loadVirtualMembers,
-  parseRegistryInput,
   RegistryError,
   type RepoContext,
   type RouteMatch,
-  z,
 } from "@hootifactory/core";
 import { addSpanEvent, logger, withSpan } from "@hootifactory/observability";
 import { buildRepoContext } from "./context";
@@ -25,26 +23,17 @@ import {
   rewriteVirtualMetadata,
   shouldRewriteVirtualBody,
 } from "./registry-virtual-rewrite";
-
-const NpmSearchWindowSchema = z.strictObject({
-  from: z.coerce.number().int().min(0).max(10_000).default(0),
-  size: z.coerce.number().int().min(0).max(100).default(20),
-});
-
-const NugetSearchWindowSchema = z.strictObject({
-  skip: z.coerce.number().int().min(0).max(10_000).default(0),
-  take: z.coerce.number().int().min(0).max(100).default(20),
-});
-
-interface NpmSearchBody {
-  objects?: Array<{ package?: { name?: unknown } }>;
-  total?: number;
-}
-
-interface NugetSearchBody {
-  data?: Array<Record<string, unknown> & { id?: unknown }>;
-  totalHits?: number;
-}
+import {
+  allNpmSearchResultsRequest,
+  allNugetSearchResultsRequest,
+  mergeNpmSearchBodies,
+  mergeNugetSearchBodies,
+  type NpmSearchBody,
+  type NugetSearchBody,
+  npmSearchWindow,
+  nugetSearchWindow,
+  parseNugetSearchBody,
+} from "./registry-virtual-search";
 
 async function adapterResponseOrRegistryError(
   adapter: FormatAdapter,
@@ -70,44 +59,6 @@ function virtualNotFound(adapter: FormatAdapter): Response {
   });
 }
 
-function npmSearchWindow(req: Request): { from: number; size: number } {
-  const url = new URL(req.url);
-  return parseRegistryInput(
-    NpmSearchWindowSchema,
-    {
-      from: url.searchParams.get("from") ?? undefined,
-      size: url.searchParams.get("size") ?? undefined,
-    },
-    { code: "PAGINATION_NUMBER_INVALID", message: "invalid search pagination" },
-  );
-}
-
-function nugetSearchWindow(req: Request): { skip: number; take: number } {
-  const url = new URL(req.url);
-  return parseRegistryInput(
-    NugetSearchWindowSchema,
-    {
-      skip: url.searchParams.get("skip") ?? undefined,
-      take: url.searchParams.get("take") ?? undefined,
-    },
-    { code: "PAGINATION_NUMBER_INVALID", message: "invalid search pagination" },
-  );
-}
-
-function allNpmSearchResultsRequest(req: Request): Request {
-  const url = new URL(req.url);
-  url.searchParams.set("from", "0");
-  url.searchParams.set("size", "10000");
-  return new Request(url.toString(), { method: req.method, headers: req.headers });
-}
-
-function allNugetSearchResultsRequest(req: Request): Request {
-  const url = new URL(req.url);
-  url.searchParams.set("skip", "0");
-  url.searchParams.set("take", "100");
-  return new Request(url.toString(), { method: req.method, headers: req.headers });
-}
-
 async function dispatchVirtualNpmSearch(
   adapter: FormatAdapter,
   match: RouteMatch,
@@ -124,8 +75,7 @@ async function dispatchVirtualNpmSearch(
     async (span) => {
       const members = await loadVirtualMembers(ctx.repo.id);
       span.setAttribute("registry.virtual.member_count", members.length);
-      const seen = new Set<string>();
-      const objects: unknown[] = [];
+      const bodies: NpmSearchBody[] = [];
       for (const member of members) {
         await withSpan(
           "registry.virtual.search_member",
@@ -159,20 +109,14 @@ async function dispatchVirtualNpmSearch(
             if (res.status >= 400) return;
             const body = (await res.json().catch(() => null)) as NpmSearchBody | null;
             memberSpan.setAttribute("registry.virtual.member_total", body?.total ?? 0);
-            for (const object of body?.objects ?? []) {
-              const name = object.package?.name;
-              if (typeof name !== "string" || seen.has(name)) continue;
-              seen.add(name);
-              objects.push(object);
-            }
+            if (body) bodies.push(body);
           },
         );
       }
-      const { from, size } = npmSearchWindow(req);
-      span.setAttribute("registry.virtual.result_count", objects.length);
+      const result = mergeNpmSearchBodies(bodies, npmSearchWindow(req));
+      span.setAttribute("registry.virtual.result_count", result.total);
       return Response.json({
-        objects: objects.slice(from, from + size),
-        total: objects.length,
+        ...result,
         time: new Date().toISOString(),
       });
     },
@@ -195,8 +139,7 @@ async function dispatchVirtualNugetSearch(
     async (span) => {
       const members = await loadVirtualMembers(ctx.repo.id);
       span.setAttribute("registry.virtual.member_count", members.length);
-      const seen = new Set<string>();
-      const data: NonNullable<NugetSearchBody["data"]> = [];
+      const bodies: NugetSearchBody[] = [];
       for (const member of members) {
         await withSpan(
           "registry.virtual.search_member",
@@ -228,28 +171,19 @@ async function dispatchVirtualNugetSearch(
             );
             memberSpan.setAttribute("http.response.status_code", res.status);
             if (res.status >= 400) return;
-            const text = (await res.text())
-              .split(`/${member.mountPath}/`)
-              .join(`/${ctx.repo.mountPath}/`);
-            const body = JSON.parse(text) as NugetSearchBody;
+            const body = parseNugetSearchBody(
+              await res.text(),
+              member.mountPath,
+              ctx.repo.mountPath,
+            );
             memberSpan.setAttribute("registry.virtual.member_total", body.totalHits ?? 0);
-            for (const item of body.data ?? []) {
-              const id = item.id;
-              if (typeof id !== "string") continue;
-              const key = id.toLowerCase();
-              if (seen.has(key)) continue;
-              seen.add(key);
-              data.push(item);
-            }
+            bodies.push(body);
           },
         );
       }
-      const { skip, take } = nugetSearchWindow(req);
-      span.setAttribute("registry.virtual.result_count", data.length);
-      return Response.json({
-        totalHits: data.length,
-        data: data.slice(skip, skip + take),
-      });
+      const result = mergeNugetSearchBodies(bodies, nugetSearchWindow(req));
+      span.setAttribute("registry.virtual.result_count", result.totalHits);
+      return Response.json(result);
     },
   );
 }
