@@ -1,32 +1,16 @@
 import { applyRetention } from "@hootifactory/core";
-import {
-  and,
-  artifacts,
-  db,
-  desc,
-  eq,
-  findings,
-  isNull,
-  quotas,
-  repositories,
-  scanPolicies,
-} from "@hootifactory/db";
+import { artifacts, db, desc, eq, findings, repositories, scanPolicies } from "@hootifactory/db";
 import type { Hono } from "hono";
 import type { AppEnv } from "../types";
 import { uuidParams, validateJsonBody, validateParams } from "../validation";
 import { audit } from "./http";
-import { calculateOrgQuotaUsage, upsertOrgQuota } from "./ui-quota";
+import { registerQuotaRoutes } from "./ui-quota-routes";
 import {
   requireOrgAccess,
   requireReadableParentRepo,
   requireRepositoryAccessFromParam,
 } from "./ui-repository-access";
-import {
-  isValidScanPolicyPattern,
-  QuotaBodySchema,
-  RetentionBodySchema,
-  ScanPolicyBodySchema,
-} from "./ui-schemas";
+import { isValidScanPolicyPattern, RetentionBodySchema, ScanPolicyBodySchema } from "./ui-schemas";
 
 export function registerGovernanceRoutes(router: Hono<AppEnv>): void {
   router.post("/orgs/:orgId/scan-policies", async (c) => {
@@ -136,45 +120,7 @@ export function registerGovernanceRoutes(router: Hono<AppEnv>): void {
     return c.json({ findings: rows });
   });
 
-  router.get("/orgs/:orgId/quota", async (c) => {
-    const parsedParams = validateParams(c, uuidParams.orgId);
-    if (!parsedParams.ok) return parsedParams.response;
-    const { orgId } = parsedParams.data;
-    const denied = await requireOrgAccess(c, orgId, "read");
-    if (denied) return denied;
-    const [q] = await db
-      .select()
-      .from(quotas)
-      .where(and(eq(quotas.orgId, orgId), isNull(quotas.repositoryId)))
-      .limit(1);
-    return c.json({
-      maxStorageBytes: q?.maxStorageBytes ?? null,
-      usedStorageBytes: q?.usedStorageBytes ?? 0,
-    });
-  });
-
-  router.post("/orgs/:orgId/quota", async (c) => {
-    const parsedParams = validateParams(c, uuidParams.orgId);
-    if (!parsedParams.ok) return parsedParams.response;
-    const { orgId } = parsedParams.data;
-    const denied = await requireOrgAccess(c, orgId, "admin");
-    if (denied) return denied;
-    const parsedBody = await validateJsonBody(c, QuotaBodySchema, "invalid quota request");
-    if (!parsedBody.ok) return parsedBody.response;
-    const maxStorageBytes = parsedBody.data.maxStorageBytes ?? null;
-    const maxArtifacts = parsedBody.data.maxArtifacts ?? null;
-    const usage = await calculateOrgQuotaUsage(orgId);
-    await upsertOrgQuota(orgId, { maxStorageBytes, maxArtifacts }, usage);
-    audit({
-      orgId,
-      action: "quota.set",
-      result: "success",
-      resourceType: "quota",
-      principal: c.get("principal"),
-      detail: { maxStorageBytes },
-    });
-    return c.json({ ok: true });
-  });
+  registerQuotaRoutes(router);
 
   router.post("/repositories/:repoId/retention/apply", async (c) => {
     const guard = await requireRepositoryAccessFromParam(c, "admin");
