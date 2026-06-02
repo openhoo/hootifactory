@@ -21,13 +21,16 @@ import { and, eq, isNull, packages, packageVersions } from "@hootifactory/db";
 import { parseNugetPublishRequest } from "./nuget-publish";
 import { buildNugetRegistrationIndex, buildNugetRegistrationItem } from "./nuget-registration";
 import {
+  buildNugetSearchResponse,
+  buildNugetSearchResult,
+  filterNugetSearchVersions,
+  parseNugetSearchQuery,
+} from "./nuget-search";
+import {
   compareNugetVersions,
   escapeXml,
-  isPrereleaseNugetVersion,
-  isSemVer2NugetVersion,
   NugetFileSchema,
   NugetIdSchema,
-  NugetSearchQuerySchema,
   NugetVersionInputSchema,
   type NugetVersionMeta,
   normalizeNugetVersion,
@@ -195,18 +198,7 @@ export class NugetAdapter implements FormatAdapter {
   }
 
   private async nugetSearch(req: Request, base: string, ctx: RepoContext): Promise<Response> {
-    const url = new URL(req.url);
-    const query = parseRegistryInput(
-      NugetSearchQuerySchema,
-      {
-        q: url.searchParams.get("q") ?? undefined,
-        skip: url.searchParams.get("skip") ?? undefined,
-        take: url.searchParams.get("take") ?? undefined,
-        prerelease: url.searchParams.get("prerelease") ?? undefined,
-        semVerLevel: url.searchParams.get("semVerLevel") ?? undefined,
-      },
-      { code: "MANIFEST_INVALID", message: "invalid search query" },
-    );
+    const query = parseNugetSearchQuery(req.url);
     const rows = await ctx.db
       .select({ id: packages.id, name: packages.name })
       .from(packages)
@@ -214,35 +206,17 @@ export class NugetAdapter implements FormatAdapter {
     const data = [];
     for (const pkg of rows) {
       if (query.q && !pkg.name.toLowerCase().includes(query.q)) continue;
-      const versions = (await this.listVersions(ctx, pkg.id)).filter((version) => {
-        const metadata = version.metadata as unknown as NugetVersionMeta;
-        if (!query.includePrerelease && isPrereleaseNugetVersion(version.version)) return false;
-        if (!query.includeSemVer2 && (metadata.semVer2 ?? isSemVer2NugetVersion(version.version))) {
-          return false;
-        }
-        return true;
-      });
-      if (versions.length === 0) continue;
-      const latest = versions.at(-1)!;
-      const latestMetadata = latest.metadata as unknown as NugetVersionMeta;
-      const lower = pkg.name.toLowerCase();
-      data.push({
-        id: latestMetadata.displayId ?? pkg.name,
-        version: latest.version,
-        versions: versions.map((v) => ({
-          version: v.version,
-          downloads: 0,
-          "@id": `${base}/v3/registrations/${lower}/${v.version}.json`,
+      const versions = filterNugetSearchVersions(
+        (await this.listVersions(ctx, pkg.id)).map((version) => ({
+          version: version.version,
+          metadata: version.metadata as unknown as NugetVersionMeta,
         })),
-        packageTypes: [],
-        registration: `${base}/v3/registrations/${lower}/index.json`,
-        totalDownloads: 0,
-      });
+        query,
+      );
+      if (versions.length === 0) continue;
+      data.push(buildNugetSearchResult({ packageName: pkg.name, versions, base }));
     }
-    return Response.json({
-      totalHits: data.length,
-      data: data.slice(query.skip, query.skip + query.take),
-    });
+    return Response.json(buildNugetSearchResponse(data, query));
   }
 
   private async download(
