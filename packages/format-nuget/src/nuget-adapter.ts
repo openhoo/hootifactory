@@ -18,7 +18,7 @@ import {
   storeBlobWithRef,
 } from "@hootifactory/core";
 import { and, eq, isNull, packages, packageVersions } from "@hootifactory/db";
-import { extractMultipartFile, MultipartContentTypeSchema } from "./nuget-multipart";
+import { parseNugetPublishRequest } from "./nuget-publish";
 import {
   compareNugetVersions,
   escapeXml,
@@ -26,13 +26,11 @@ import {
   isSemVer2NugetVersion,
   NugetFileSchema,
   NugetIdSchema,
-  NugetPublishQuerySchema,
   NugetSearchQuerySchema,
   NugetVersionInputSchema,
   type NugetVersionMeta,
   normalizeNugetVersion,
 } from "./nuget-validation";
-import { extractNuspecMeta } from "./nuspec";
 
 function parseNugetId(id: string): string {
   return parseRegistryInput(NugetIdSchema, id, {
@@ -354,73 +352,22 @@ export class NugetAdapter implements FormatAdapter {
   }
 
   private async publish(req: Request, ctx: RepoContext): Promise<Response> {
-    const url = new URL(req.url);
-    const query = parseRegistryInput(
-      NugetPublishQuerySchema,
-      {
-        id: url.searchParams.get("id") || undefined,
-        version: url.searchParams.get("version") || undefined,
-      },
-      { code: "MANIFEST_INVALID", message: "invalid publish query" },
-    );
-    let id = query.id ?? "";
-    let version = query.version ?? "";
+    const parsed = await parseNugetPublishRequest(req);
+    if (!parsed.ok) {
+      return Response.json({ error: parsed.error.error }, { status: parsed.error.status });
+    }
+    const { bytes, file, lowerId, metadata, version } = parsed.plan;
 
-    // Accept the raw .nupkg body or a multipart part (real `dotnet nuget push`
-    // sends a positional file part, not a named "package" field).
-    let bytes: Uint8Array;
-    const ct = req.headers.get("content-type") ?? "";
-    if (ct.includes("multipart/form-data")) {
-      parseRegistryInput(MultipartContentTypeSchema, ct, {
-        code: "MANIFEST_INVALID",
-        message: "invalid multipart content-type",
-      });
-      const body = new Uint8Array(await req.arrayBuffer());
-      const file = extractMultipartFile(ct, body);
-      if (!file) return Response.json({ error: "missing package" }, { status: 400 });
-      bytes = file;
-    } else {
-      bytes = new Uint8Array(await req.arrayBuffer());
-    }
-
-    const meta = extractNuspecMeta(bytes);
-    if (!meta) {
-      return Response.json(
-        { error: "could not determine package id and version" },
-        { status: 400 },
-      );
-    }
-    const metaId = parseRegistryInput(NugetIdSchema, meta.id, {
-      code: "MANIFEST_INVALID",
-      message: "invalid nuspec package id",
-    });
-    if (id && id.toLowerCase() !== metaId.toLowerCase()) {
-      return Response.json({ error: "package id does not match nuspec" }, { status: 400 });
-    }
-    id = id || metaId;
-
-    const normalizedMetaVersion = normalizeNugetVersion(meta.version);
-    const normalizedQueryVersion = version ? normalizeNugetVersion(version) : normalizedMetaVersion;
-    if (!normalizedMetaVersion || !normalizedQueryVersion) {
-      return Response.json({ error: "invalid package version" }, { status: 400 });
-    }
-    if (normalizedQueryVersion !== normalizedMetaVersion) {
-      return Response.json({ error: "package version does not match nuspec" }, { status: 400 });
-    }
-    version = normalizedMetaVersion;
-
-    const lower = id.toLowerCase();
     const pkg = await findOrCreatePackage({
       orgId: ctx.repo.orgId,
       repositoryId: ctx.repo.id,
-      name: lower,
+      name: lowerId,
     });
     // NuGet packages are immutable. A retention tombstone still reserves the
     // normalized package version, so old bytes cannot be replaced by re-push.
     const existing = await findVersion(pkg.id, version);
     if (existing) return new Response(null, { status: 409 });
 
-    const file = `${lower}.${version}.nupkg`;
     const stored = await storeBlobWithRef(ctx, {
       data: bytes,
       kind: "generic_file",
@@ -434,16 +381,12 @@ export class NugetAdapter implements FormatAdapter {
       packageId: pkg.id,
       version,
       metadata: {
+        ...metadata,
         nupkgDigest: stored.digest,
-        file,
-        displayId: id,
-        listed: true,
-        semVer2: isSemVer2NugetVersion(meta.version),
-        dependencyGroups: meta.dependencyGroups,
       },
       sizeBytes: bytes.length,
       scan: {
-        name: lower,
+        name: lowerId,
         version,
         mediaType: "application/octet-stream",
       },
