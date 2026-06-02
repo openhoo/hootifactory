@@ -18,16 +18,14 @@ import {
   storeBlobWithRef,
 } from "@hootifactory/core";
 import { and, eq, isNull, packages, packageVersions } from "@hootifactory/db";
-import { computeDigest, digestHex } from "@hootifactory/storage";
+import { digestHex } from "@hootifactory/storage";
+import { parsePypiUploadRequest } from "./pypi-upload";
 import {
   type AddPypiFileResult,
-  filenameVersionMatches,
   normalizePypiVersionMetadata,
   type PypiFileMeta,
   PypiFilenameSchema,
   PypiProjectParamSchema,
-  PypiUploadFieldsSchema,
-  parsePypiFilename,
 } from "./pypi-validation";
 import {
   normalizeName,
@@ -216,59 +214,15 @@ export class PypiAdapter implements FormatAdapter {
   }
 
   private async upload(req: Request, ctx: RepoContext): Promise<Response> {
-    const form = await req.formData();
-    const content = form.get("content");
-    if (!(content instanceof File)) {
-      return Response.json({ error: "missing file content" }, { status: 400 });
-    }
-    const fields = parseRegistryInput(
-      PypiUploadFieldsSchema,
-      {
-        name: form.get("name"),
-        version: form.get("version"),
-        sha256_digest: form.get("sha256_digest") || undefined,
-        requires_python: form.get("requires_python") || undefined,
-        filetype: form.get("filetype") || undefined,
-      },
-      { code: "MANIFEST_INVALID", message: "invalid upload metadata" },
-    );
-    const rawName = fields.name;
-    const version = fields.version;
-    const name = normalizeName(rawName);
-    const bytes = new Uint8Array(await content.arrayBuffer());
-    const filename = content.name;
-    parseRegistryInput(PypiFilenameSchema, filename, {
-      code: "NAME_INVALID",
-      message: "invalid distribution filename",
-    });
-    const filenameIdentity = parsePypiFilename(filename);
-    if (
-      !filenameIdentity ||
-      normalizeName(filenameIdentity.name) !== name ||
-      !filenameVersionMatches(version, filenameIdentity.version)
-    ) {
-      return Response.json(
-        { message: "filename does not match submitted package name and version" },
-        { status: 400 },
-      );
-    }
+    const parsed = await parsePypiUploadRequest(req);
+    if (!parsed.ok) return Response.json(parsed.error.body, { status: parsed.error.status });
+    const { bytes, filename, filetype, name, rawName, requiresPython, version } = parsed.plan;
 
     // PyPI files are immutable: reject a re-upload of an existing filename,
     // including files hidden by retention.
     if ((await this.allFiles(ctx)).some((f) => f.filename === filename)) {
       return Response.json({ message: "File already exists." }, { status: 409 });
     }
-    // Validate the client-declared sha256 against the actual bytes before storing.
-    const claimed = fields.sha256_digest;
-    const actualSha = digestHex(computeDigest(bytes));
-    if (claimed && claimed.toLowerCase() !== actualSha) {
-      return Response.json(
-        { message: "sha256_digest does not match uploaded content" },
-        { status: 400 },
-      );
-    }
-    const requiresPython = fields.requires_python;
-    const filetype = fields.filetype;
 
     const pkg = await findOrCreatePackage({
       orgId: ctx.repo.orgId,
