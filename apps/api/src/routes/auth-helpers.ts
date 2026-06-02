@@ -1,4 +1,4 @@
-import type { OidcProviderConfig } from "@hootifactory/auth";
+import { createSession, type OidcProviderConfig } from "@hootifactory/auth";
 import { env } from "@hootifactory/config";
 import type { EmailJob } from "@hootifactory/email";
 import { captureTelemetryContext } from "@hootifactory/observability";
@@ -108,6 +108,19 @@ export function setSessionCookie(c: Context<AppEnv>, secret: string, expiresAt: 
     secure: env.NODE_ENV === "production",
     expires: expiresAt,
   });
+}
+
+export async function createRequestSession(
+  c: Context<AppEnv>,
+  userId: string,
+  options: { includeUserAgent?: boolean } = {},
+): Promise<void> {
+  const { secret, expiresAt } = await createSession(userId, {
+    ip: c.req.header("x-forwarded-for") ?? undefined,
+    userAgent:
+      options.includeUserAgent === false ? undefined : (c.req.header("user-agent") ?? undefined),
+  });
+  setSessionCookie(c, secret, expiresAt);
 }
 
 export function deleteSessionCookie(c: Context<AppEnv>): void {

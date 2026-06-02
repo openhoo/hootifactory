@@ -2,7 +2,6 @@ import {
   consumeAuthEmailToken,
   createAuthEmailToken,
   createOidcAuthorizationRequest,
-  createSession,
   hashPassword,
   OidcEmailLinkRequiredError,
   resetPasswordWithToken,
@@ -29,6 +28,7 @@ import { errorMessage, validateJsonBody } from "../validation";
 import {
   browserFacingUrl,
   clientIp,
+  createRequestSession,
   deleteOidcStateCookie,
   deleteSessionCookie,
   enqueueEmail,
@@ -40,7 +40,6 @@ import {
   readOidcStateCookie,
   readSessionCookie,
   setOidcStateCookie,
-  setSessionCookie,
 } from "./auth-helpers";
 import {
   ConfirmLinkQuerySchema,
@@ -106,11 +105,7 @@ authRouter.get("/oidc/callback", async (c) => {
   try {
     claims = await resolveOidcCallbackClaims(config, browserFacingUrl(c), state);
     const user = await syncOidcUser(claims);
-    const { secret, expiresAt } = await createSession(user.id, {
-      ip: c.req.header("x-forwarded-for") ?? undefined,
-      userAgent: c.req.header("user-agent") ?? undefined,
-    });
-    setSessionCookie(c, secret, expiresAt);
+    await createRequestSession(c, user.id);
     setActiveSpanAttributes({ "enduser.id": user.id, "auth.event": "oidc_login" });
     logger.info("OIDC login succeeded", { userId: user.id, issuer: claims.issuer });
     audit({
@@ -201,11 +196,7 @@ authRouter.get("/oidc/link/confirm", async (c) => {
   try {
     const user = await syncOidcUser(claims, { allowExistingEmailLink: true });
     if (user.id !== token.userId) return c.redirect(loginRedirect("sso_link_invalid"));
-    const { secret, expiresAt } = await createSession(user.id, {
-      ip: c.req.header("x-forwarded-for") ?? undefined,
-      userAgent: c.req.header("user-agent") ?? undefined,
-    });
-    setSessionCookie(c, secret, expiresAt);
+    await createRequestSession(c, user.id);
     setActiveSpanAttributes({ "enduser.id": user.id, "auth.event": "oidc_link_confirm" });
     logger.info("OIDC link confirmation succeeded", { userId: user.id, issuer: claims.issuer });
     audit({
@@ -352,10 +343,7 @@ authRouter.post("/register", async (c) => {
         .returning(),
     );
     if (!user) return c.json({ error: "failed to create user" }, 500);
-    const { secret, expiresAt } = await createSession(user.id, {
-      ip: c.req.header("x-forwarded-for") ?? undefined,
-    });
-    setSessionCookie(c, secret, expiresAt);
+    await createRequestSession(c, user.id, { includeUserAgent: false });
     setActiveSpanAttributes({ "enduser.id": user.id, "auth.event": "registration" });
     logger.info("user registered", { userId: user.id });
     return c.json({ user: { id: user.id, username: user.username, email: user.email } }, 201);
@@ -421,11 +409,7 @@ authRouter.post("/login", async (c) => {
     resourceType: "user",
     resourceId: principal.userId,
   });
-  const { secret, expiresAt } = await createSession(principal.userId, {
-    ip: c.req.header("x-forwarded-for") ?? undefined,
-    userAgent: c.req.header("user-agent") ?? undefined,
-  });
-  setSessionCookie(c, secret, expiresAt);
+  await createRequestSession(c, principal.userId);
   return c.json({ user: { id: principal.userId, username: principal.username } });
 });
 
