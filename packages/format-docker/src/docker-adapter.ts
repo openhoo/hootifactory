@@ -28,6 +28,7 @@ import {
 } from "@hootifactory/db";
 import { OCI_MEDIA_TYPES } from "@hootifactory/types";
 import { parseOciManifestPutRequest } from "./oci-manifest-put";
+import { buildOciTagsListResponse } from "./oci-tags";
 import { cancelUpload, patchUpload, putUpload, startUpload, uploadStatus } from "./oci-uploads";
 import {
   assertImageName,
@@ -35,8 +36,6 @@ import {
   manifestBlobDigests,
   OciDigestSchema,
   OciReferrersQuerySchema,
-  OciTagPageSizeSchema,
-  OciTagSchema,
   parseBlobRange,
   parseManifestRaw,
   parseReference,
@@ -471,37 +470,14 @@ export class DockerAdapter implements FormatAdapter {
       .select({ tag: ociTags.tag })
       .from(ociTags)
       .where(eq(ociTags.packageId, pkg.id));
-    let tags = rows.map((r) => r.tag).sort();
-    const url = new URL(req.url);
-    // `last` is a cursor: return tags strictly after it (lexically).
-    const lastRaw = url.searchParams.get("last");
-    const last =
-      lastRaw == null
-        ? undefined
-        : parseRegistryInput(OciTagSchema, lastRaw, {
-            code: "TAG_INVALID",
-            message: "invalid tag cursor",
-          });
-    if (last) {
-      tags = tags.filter((t) => t > last);
-    }
-    // `n` is a page size: absent => all; present (incl. 0) => at most n.
-    const nRaw = url.searchParams.get("n");
-    let truncated = false;
-    if (nRaw !== null) {
-      const n = parseRegistryInput(OciTagPageSizeSchema, nRaw, {
-        code: "PAGINATION_NUMBER_INVALID",
-        message: "invalid tag page size",
-      });
-      truncated = tags.length > n;
-      tags = tags.slice(0, n);
-    }
-    const headers: Record<string, string> = { "content-type": "application/json" };
-    if (truncated && tags.length > 0) {
-      const next = encodeURIComponent(tags[tags.length - 1] ?? "");
-      headers.link = `<${ctx.baseUrl}/${ctx.repo.mountPath}/${image}/tags/list?n=${nRaw}&last=${next}>; rel="next"`;
-    }
-    return new Response(JSON.stringify({ name: this.fullName(ctx, image), tags }), { headers });
+    return buildOciTagsListResponse({
+      baseUrl: ctx.baseUrl,
+      mountPath: ctx.repo.mountPath,
+      image,
+      name: this.fullName(ctx, image),
+      tags: rows.map((r) => r.tag),
+      url: req.url,
+    });
   }
 
   // ── referrers ──────────────────────────────────────────────────────────
