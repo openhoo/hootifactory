@@ -5,10 +5,7 @@ import {
   addVirtualMember,
   assertPublicHttpUrl,
   createRepository,
-  formatRegistry,
   isUniqueViolation,
-  isValidRepositoryName,
-  isValidRepositoryNameForFormat,
 } from "@hootifactory/core";
 import {
   and,
@@ -24,7 +21,6 @@ import {
   packageVersions,
   repositories,
 } from "@hootifactory/db";
-import type { PackageFormat } from "@hootifactory/types";
 import { Hono } from "hono";
 import type { AppEnv } from "../types";
 import { uuidParams, validateJsonBody, validateParams } from "../validation";
@@ -37,13 +33,12 @@ import {
   requireRepositoryAccessFromParam,
   requireUserPrincipal,
 } from "./ui-repository-access";
+import { resolveCreateRepositoryRequest } from "./ui-repository-create";
 import {
   AddMemberBodySchema,
   AddUpstreamBodySchema,
   CreateOrgBodySchema,
   CreateRepositoryBodySchema,
-  RepoKindSchema,
-  VisibilitySchema,
 } from "./ui-schemas";
 import { registerTokenRoutes } from "./ui-tokens";
 
@@ -276,51 +271,9 @@ uiRouter.post("/orgs/:orgId/repositories", async (c) => {
     "invalid repository request",
   );
   if (!parsedBody.ok) return parsedBody.response;
-  const body = parsedBody.data;
-  if (!isValidRepositoryName(body.name)) {
-    return c.json(
-      {
-        error: "repository name must be path-safe: letters, numbers, dots, underscores, or dashes",
-      },
-      400,
-    );
-  }
-  const format = body.format as PackageFormat;
-  if (!formatRegistry.has(format)) {
-    return c.json({ error: `unsupported repository format '${body.format}'` }, 400);
-  }
-  if (!isValidRepositoryNameForFormat(format, body.name)) {
-    return c.json(
-      {
-        error:
-          "repository name is invalid for this format; OCI-family repositories must be lowercase",
-      },
-      400,
-    );
-  }
-  const parsedKind = RepoKindSchema.safeParse(body.kind ?? "hosted");
-  if (!parsedKind.success) {
-    return c.json({ error: `unsupported repository kind '${String(body.kind)}'` }, 400);
-  }
-  const kind = parsedKind.data;
-  const parsedVisibility = VisibilitySchema.safeParse(body.visibility ?? "private");
-  if (!parsedVisibility.success) {
-    return c.json({ error: `unsupported repository visibility '${String(body.visibility)}'` }, 400);
-  }
-  const visibility = parsedVisibility.data;
-  const adapter = formatRegistry.lookup(format);
-  if (kind === "proxy" && !adapter?.proxyIngest) {
-    return c.json(
-      { error: `proxy repositories are not supported for format '${body.format}'` },
-      400,
-    );
-  }
-  if (kind === "virtual" && !adapter?.capabilities.virtualizable) {
-    return c.json(
-      { error: `virtual repositories are not supported for format '${body.format}'` },
-      400,
-    );
-  }
+  const resolvedRequest = resolveCreateRepositoryRequest(parsedBody.data);
+  if (!resolvedRequest.ok) return c.json({ error: resolvedRequest.error }, 400);
+  const request = resolvedRequest.request;
   const [org] = await db
     .select({ slug: organizations.slug })
     .from(organizations)
@@ -332,11 +285,11 @@ uiRouter.post("/orgs/:orgId/repositories", async (c) => {
     const repo = await createRepository({
       orgId,
       orgSlug: org.slug,
-      name: body.name,
-      format,
-      kind,
-      visibility,
-      description: body.description,
+      name: request.name,
+      format: request.format,
+      kind: request.kind,
+      visibility: request.visibility,
+      description: request.description,
     });
     audit({
       orgId,
@@ -350,7 +303,7 @@ uiRouter.post("/orgs/:orgId/repositories", async (c) => {
     return c.json({ repository: repositoryDto(repo) }, 201);
   } catch (err) {
     if (isUniqueViolation(err)) {
-      return c.json({ error: `repository '${body.name}' already exists` }, 409);
+      return c.json({ error: `repository '${request.name}' already exists` }, 409);
     }
     throw err;
   }

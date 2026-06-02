@@ -55,6 +55,7 @@ export const CreateRepositoryBodySchema = z.strictObject({
   visibility: z.unknown().optional(),
   description: OptionalDescriptionSchema,
 });
+export type CreateRepositoryBody = z.output<typeof CreateRepositoryBodySchema>;
 
 const TokenScopeSchema = z
   .strictObject({
