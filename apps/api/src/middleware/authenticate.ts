@@ -7,17 +7,15 @@ import {
   verifyPassword,
   verifyRegistryToken,
 } from "@hootifactory/auth";
-import { Errors, REGISTRY_TOKEN_SERVICE, z } from "@hootifactory/core";
+import { Errors, REGISTRY_TOKEN_SERVICE } from "@hootifactory/core";
 import { db, eq, users } from "@hootifactory/db";
 import { logger, withSpan } from "@hootifactory/observability";
 import type { Context } from "hono";
 import { getCookie } from "hono/cookie";
 import type { AppEnv } from "../types";
+import { parseAuthorizationHeader, parseNugetApiKeyHeader } from "./auth-credentials";
 
 export const SESSION_COOKIE = "hoot_session";
-const AuthorizationHeaderSchema = z.string().trim().min(1).max(16_384);
-const NugetApiKeyHeaderSchema = z.string().trim().min(1).max(4096);
-const basicAuthDecoder = new TextDecoder("utf-8", { fatal: true });
 
 function invalidCredentials(): never {
   throw Errors.unauthorized("invalid authorization credentials");
@@ -26,19 +24,6 @@ function invalidCredentials(): never {
 function isRegistryPath(url: string): boolean {
   const pathname = new URL(url).pathname;
   return pathname === "/v2" || pathname === "/v2/" || pathname.startsWith("/v2/");
-}
-
-function decodeBasicCredentials(value: string): string | null {
-  try {
-    const binary = atob(value.trim());
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) {
-      bytes[i] = binary.charCodeAt(i);
-    }
-    return basicAuthDecoder.decode(bytes);
-  } catch {
-    return null;
-  }
 }
 
 async function userPrincipalById(userId: string): Promise<Principal | null> {
@@ -76,15 +61,12 @@ export async function authenticateUserPassword(
  * no credentials default to anonymous.
  */
 async function authenticateInner(c: Context<AppEnv>): Promise<Principal> {
-  const rawAuthz = c.req.header("authorization");
-  const parsedAuthz = rawAuthz ? AuthorizationHeaderSchema.safeParse(rawAuthz) : null;
-  if (rawAuthz && !parsedAuthz?.success) invalidCredentials();
-  const authz = parsedAuthz?.success ? parsedAuthz.data : undefined;
+  const authz = parseAuthorizationHeader(c.req.header("authorization"));
+  if (authz?.kind === "invalid") invalidCredentials();
   if (authz) {
-    if (authz.startsWith("Bearer ")) {
-      const tok = authz.slice(7).trim();
-      if (tok.startsWith(TOKEN_PREFIX)) {
-        const p = await resolveToken(tok);
+    if (authz.kind === "bearer") {
+      if (authz.token.startsWith(TOKEN_PREFIX)) {
+        const p = await resolveToken(authz.token);
         if (p) {
           c.set("authSource", "authorization");
           return p;
@@ -93,7 +75,7 @@ async function authenticateInner(c: Context<AppEnv>): Promise<Principal> {
       } else {
         // OCI registry Bearer JWT (issued by /token).
         try {
-          const verified = await verifyRegistryToken(tok, REGISTRY_TOKEN_SERVICE);
+          const verified = await verifyRegistryToken(authz.token, REGISTRY_TOKEN_SERVICE);
           c.set("authSource", "authorization");
           return {
             kind: "registryToken",
@@ -109,54 +91,41 @@ async function authenticateInner(c: Context<AppEnv>): Promise<Principal> {
           invalidCredentials();
         }
       }
-    } else if (authz.startsWith("Basic ")) {
-      const decoded = decodeBasicCredentials(authz.slice(6));
-      if (!decoded) invalidCredentials();
-      const idx = decoded.indexOf(":");
-      if (idx >= 0) {
-        const user = decoded.slice(0, idx);
-        const pass = decoded.slice(idx + 1);
-        if (pass.startsWith(TOKEN_PREFIX)) {
-          const p = await resolveToken(pass);
-          if (p) {
-            c.set("authSource", "authorization");
-            return p;
-          }
-        }
-        const up = await authenticateUserPassword(user, pass);
-        if (up) {
+    } else if (authz.kind === "basic") {
+      if (authz.password.startsWith(TOKEN_PREFIX)) {
+        const p = await resolveToken(authz.password);
+        if (p) {
           c.set("authSource", "authorization");
-          return up;
+          return p;
         }
       }
+      const up = await authenticateUserPassword(authz.username, authz.password);
+      if (up) {
+        c.set("authSource", "authorization");
+        return up;
+      }
       invalidCredentials();
-    } else if (authz.startsWith(TOKEN_PREFIX)) {
+    } else if (authz.kind === "bareToken") {
       // Bare token (Cargo sends the token with no scheme).
-      const p = await resolveToken(authz.trim());
+      const p = await resolveToken(authz.token);
       if (p) {
         c.set("authSource", "authorization");
         return p;
       }
-      invalidCredentials();
-    } else {
       invalidCredentials();
     }
   }
 
   // NuGet clients (dotnet/nuget push) send the credential as an API key header,
   // never in Authorization. Treat it as a Hootifactory scoped token.
-  const rawApiKey = c.req.header("x-nuget-apikey");
-  const parsedApiKey = rawApiKey ? NugetApiKeyHeaderSchema.safeParse(rawApiKey) : null;
-  if (rawApiKey && !parsedApiKey?.success) invalidCredentials();
-  const apiKey = parsedApiKey?.success ? parsedApiKey.data : undefined;
-  if (apiKey?.startsWith(TOKEN_PREFIX)) {
-    const p = await resolveToken(apiKey.trim());
+  const apiKey = parseNugetApiKeyHeader(c.req.header("x-nuget-apikey"));
+  if (apiKey?.kind === "invalid") invalidCredentials();
+  if (apiKey) {
+    const p = await resolveToken(apiKey.token);
     if (p) {
       c.set("authSource", "nugetApiKey");
       return p;
     }
-    invalidCredentials();
-  } else if (apiKey) {
     invalidCredentials();
   }
 
