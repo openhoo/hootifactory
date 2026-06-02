@@ -1,3 +1,5 @@
+import type { FormatMetadata } from "@hootifactory/core";
+
 export interface VersionRow {
   version: string;
   metadata: unknown;
@@ -41,5 +43,49 @@ export function buildPackument(
     time,
     ...(latestManifest?.description ? { description: latestManifest.description } : {}),
     ...(latestManifest?.readme ? { readme: latestManifest.readme } : {}),
+  };
+}
+
+export function mergePackuments(parts: FormatMetadata[]): FormatMetadata {
+  const decoder = new TextDecoder();
+  const docs = parts
+    .map((part) => {
+      const body = typeof part.body === "string" ? part.body : decoder.decode(part.body);
+      try {
+        return JSON.parse(body) as Record<string, unknown>;
+      } catch {
+        return null;
+      }
+    })
+    .filter((doc): doc is Record<string, unknown> => doc != null);
+  const first = docs[0] ?? {};
+  const versions: Record<string, unknown> = {};
+  const distTags: Record<string, unknown> = {};
+  const time: Record<string, unknown> = {};
+  for (const doc of docs) {
+    for (const [version, manifest] of Object.entries(
+      (doc.versions as Record<string, unknown> | undefined) ?? {},
+    )) {
+      if (!Object.hasOwn(versions, version)) versions[version] = manifest;
+    }
+    for (const [tag, version] of Object.entries(
+      (doc["dist-tags"] as Record<string, unknown> | undefined) ?? {},
+    )) {
+      if (!Object.hasOwn(distTags, tag)) distTags[tag] = version;
+    }
+    for (const [key, value] of Object.entries(
+      (doc.time as Record<string, unknown> | undefined) ?? {},
+    )) {
+      if (!Object.hasOwn(time, key)) time[key] = value;
+    }
+  }
+  return {
+    contentType: "application/json; charset=utf-8",
+    body: JSON.stringify({
+      ...first,
+      "dist-tags": distTags,
+      versions,
+      time,
+    }),
   };
 }
