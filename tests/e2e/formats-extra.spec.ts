@@ -544,11 +544,15 @@ test.describe("nuget v3 (protocol)", () => {
     const afterUnlist = await (
       await owner.ctx.get(`/${repo.mountPath}/v3-flatcontainer/${lower}/index.json`)
     ).json();
-    expect(afterUnlist.versions).toEqual(["1.0.0"]);
+    expect(afterUnlist.versions).toEqual(["1.0.0", "1.0.1"]);
     const unlistedDownload = await owner.ctx.get(
       `/${repo.mountPath}/v3-flatcontainer/${lower}/1.0.1/${lower}.1.0.1.nupkg`,
     );
     expect(unlistedDownload.status()).toBe(200);
+    const unlistedLeaf = await (
+      await owner.ctx.get(`/${repo.mountPath}/v3/registrations/${lower}/1.0.1.json`)
+    ).json();
+    expect(unlistedLeaf.catalogEntry).toMatchObject({ id: pkgId, version: "1.0.1", listed: false });
 
     const relist = await owner.ctx.post(`/${repo.mountPath}/v3/package/${pkgId}/1.0.1`);
     expect(relist.status()).toBe(200);
@@ -587,6 +591,11 @@ test.describe("nuget v3 (protocol)", () => {
     ).json();
     expect(reg.items[0].lower).toBe("1.0.1");
     expect(reg.items[0].upper).toBe("1.0.1");
+    const leaf = await (
+      await owner.ctx.get(`/${repo.mountPath}/v3/registrations/${lower}/1.0.1.json`)
+    ).json();
+    expect(leaf.catalogEntry.version).toBe("1.0.1");
+    expect(leaf.registrationLeafUrl).toContain(`/v3/registrations/${lower}/1.0.1.json`);
 
     const prunedDownload = await owner.ctx.get(
       `/${repo.mountPath}/v3-flatcontainer/${lower}/1.0.0/${lower}.1.0.0.nupkg`,
@@ -598,6 +607,55 @@ test.describe("nuget v3 (protocol)", () => {
       data: createNupkg(pkgId, "1.0.0"),
     });
     expect(republishPruned.status()).toBe(409);
+  });
+
+  test("search respects prerelease, semVerLevel, and SearchQueryService/3.5.0 shape", async ({
+    baseURL,
+  }) => {
+    const owner = await setupOwner(baseURL!);
+    const repo = (
+      await (
+        await createRepo(owner.ctx, owner.orgId, {
+          name: "nugets-search",
+          format: "nuget",
+          visibility: "public",
+        })
+      ).json()
+    ).repository as { mountPath: string };
+
+    const id = Date.now().toString(36);
+    const pkgId = `Hoot.Search${id}`;
+    const lower = pkgId.toLowerCase();
+    for (const version of ["1.0.0", "1.1.0-beta.1"]) {
+      const push = await owner.ctx.put(`/${repo.mountPath}/v3/package`, {
+        headers: { "content-type": "application/octet-stream" },
+        data: createNupkg(pkgId, version),
+      });
+      expect(push.status()).toBe(201);
+    }
+
+    const stable = await (
+      await owner.ctx.get(`/${repo.mountPath}/v3/query?q=${lower}&semVerLevel=2.0.0`)
+    ).json();
+    expect(stable.totalHits).toBe(1);
+    expect(stable.data[0]).toMatchObject({ id: pkgId, version: "1.0.0", packageTypes: [] });
+    expect(stable.data[0].versions.map((v: { version: string }) => v.version)).toEqual(["1.0.0"]);
+
+    const prerelease = await (
+      await owner.ctx.get(
+        `/${repo.mountPath}/v3/query?q=${lower}&prerelease=true&semVerLevel=2.0.0`,
+      )
+    ).json();
+    expect(prerelease.data[0].version).toBe("1.1.0-beta.1");
+    expect(prerelease.data[0].versions.map((v: { version: string }) => v.version)).toEqual([
+      "1.0.0",
+      "1.1.0-beta.1",
+    ]);
+
+    const semver1 = await (
+      await owner.ctx.get(`/${repo.mountPath}/v3/query?q=${lower}&prerelease=true`)
+    ).json();
+    expect(semver1.data[0].version).toBe("1.0.0");
   });
 });
 

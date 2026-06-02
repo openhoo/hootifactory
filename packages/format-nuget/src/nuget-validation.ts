@@ -4,7 +4,9 @@ import type { NuspecDependencyGroup } from "./nuspec";
 export interface NugetVersionMeta {
   nupkgDigest: string;
   file: string;
+  displayId?: string;
   listed?: boolean;
+  semVer2?: boolean;
   dependencyGroups?: NuspecDependencyGroup[];
 }
 
@@ -58,6 +60,17 @@ export function normalizeNugetVersion(version: string): string | null {
 
   const prerelease = prereleaseRaw ? `-${prereleaseRaw.toLowerCase()}` : "";
   return numbers.join(".") + prerelease;
+}
+
+export function isPrereleaseNugetVersion(version: string): boolean {
+  return version.includes("-");
+}
+
+export function isSemVer2NugetVersion(version: string): boolean {
+  const normalized = version.trim();
+  if (normalized.includes("+")) return true;
+  const dash = normalized.indexOf("-");
+  return dash >= 0 && normalized.slice(dash + 1).includes(".");
 }
 
 /** Compare two normalized NuGet versions (numeric core; a release outranks its prerelease). */

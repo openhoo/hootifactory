@@ -19,6 +19,8 @@ import { extractMultipartFile, MultipartContentTypeSchema } from "./nuget-multip
 import {
   compareNugetVersions,
   escapeXml,
+  isPrereleaseNugetVersion,
+  isSemVer2NugetVersion,
   NugetFileSchema,
   NugetIdSchema,
   NugetPublishQuerySchema,
@@ -52,6 +54,7 @@ export class NugetAdapter implements FormatAdapter {
       { method: "GET", pattern: "/v3-flatcontainer/:id/index.json", handlerId: "versions" },
       { method: "GET", pattern: "/v3-flatcontainer/:id/:version/:file", handlerId: "download" },
       { method: "GET", pattern: "/v3/registrations/:id/index.json", handlerId: "registration" },
+      { method: "GET", pattern: "/v3/registrations/:id/:file", handlerId: "registrationLeaf" },
     ];
   }
 
@@ -95,6 +98,8 @@ export class NugetAdapter implements FormatAdapter {
         );
       case "registration":
         return this.registration(match.params.id ?? "", base, ctx);
+      case "registrationLeaf":
+        return this.registrationLeaf(match.params.id ?? "", match.params.file ?? "", base, ctx);
       default:
         throw Errors.notFound();
     }
@@ -133,9 +138,45 @@ export class NugetAdapter implements FormatAdapter {
     });
     const pkg = await this.findPkg(ctx, id);
     if (!pkg) return new Response("Not Found", { status: 404 });
-    const rows = await this.listVersions(ctx, pkg.id);
+    const rows = await this.listVersions(ctx, pkg.id, { includeUnlisted: true });
     if (rows.length === 0) return new Response("Not Found", { status: 404 });
     return Response.json({ versions: rows.map((r) => r.version) });
+  }
+
+  private registrationItem(input: {
+    id: string;
+    version: string;
+    metadata: NugetVersionMeta;
+    base: string;
+  }) {
+    const lower = input.id.toLowerCase();
+    const displayId = input.metadata.displayId ?? input.id;
+    const leaf = `${input.base}/v3/registrations/${lower}/${input.version}.json`;
+    const content = `${input.base}/v3-flatcontainer/${lower}/${input.version}/${lower}.${input.version}.nupkg`;
+    const dependencyGroups = (input.metadata.dependencyGroups ?? []).map((group) => ({
+      ...(group.targetFramework ? { targetFramework: group.targetFramework } : {}),
+      dependencies: group.dependencies.map((dep) => ({
+        id: dep.id,
+        range: dep.range,
+        registration: `${input.base}/v3/registrations/${dep.id.toLowerCase()}/index.json`,
+      })),
+    }));
+    return {
+      "@id": leaf,
+      "@type": "Package",
+      catalogEntry: {
+        "@id": leaf,
+        "@type": "PackageDetails",
+        id: displayId,
+        version: input.version,
+        listed: input.metadata.listed !== false,
+        packageContent: content,
+        ...(dependencyGroups.length > 0 ? { dependencyGroups } : {}),
+      },
+      packageContent: content,
+      registrationLeafUrl: leaf,
+      registration: `${input.base}/v3/registrations/${lower}/index.json`,
+    };
   }
 
   private async registration(id: string, base: string, ctx: RepoContext): Promise<Response> {
@@ -148,34 +189,14 @@ export class NugetAdapter implements FormatAdapter {
     const rows = await this.listVersions(ctx, pkg.id, { includeUnlisted: true });
     const lower = id.toLowerCase();
     const registrationUrl = `${base}/v3/registrations/${lower}/index.json`;
-    const items = rows.map((r) => {
-      const metadata = r.metadata as unknown as NugetVersionMeta;
-      const leaf = `${base}/v3/registrations/${lower}/${r.version}.json`;
-      const content = `${base}/v3-flatcontainer/${lower}/${r.version}/${lower}.${r.version}.nupkg`;
-      const dependencyGroups = (metadata.dependencyGroups ?? []).map((group) => ({
-        ...(group.targetFramework ? { targetFramework: group.targetFramework } : {}),
-        dependencies: group.dependencies.map((dep) => ({
-          id: dep.id,
-          range: dep.range,
-          registration: `${base}/v3/registrations/${dep.id.toLowerCase()}/index.json`,
-        })),
-      }));
-      return {
-        "@id": leaf,
-        "@type": "Package",
-        catalogEntry: {
-          "@id": leaf,
-          "@type": "PackageDetails",
-          id,
-          version: r.version,
-          listed: metadata.listed !== false,
-          packageContent: content,
-          ...(dependencyGroups.length > 0 ? { dependencyGroups } : {}),
-        },
-        packageContent: content,
-        registration: registrationUrl,
-      };
-    });
+    const items = rows.map((r) =>
+      this.registrationItem({
+        id,
+        version: r.version,
+        metadata: r.metadata as unknown as NugetVersionMeta,
+        base,
+      }),
+    );
     const pages =
       rows.length === 0
         ? []
@@ -191,11 +212,56 @@ export class NugetAdapter implements FormatAdapter {
     return Response.json({ count: pages.length, items: pages });
   }
 
+  private async registrationLeaf(
+    id: string,
+    file: string,
+    base: string,
+    ctx: RepoContext,
+  ): Promise<Response> {
+    id = parseRegistryInput(NugetIdSchema, id, {
+      code: "NAME_INVALID",
+      message: "invalid package id",
+    });
+    if (!file.toLowerCase().endsWith(".json")) throw Errors.notFound();
+    const rawVersion = file.slice(0, -".json".length);
+    const version = parseRegistryInput(NugetVersionInputSchema, rawVersion, {
+      code: "MANIFEST_UNKNOWN",
+      message: "invalid package version",
+      status: 404,
+    });
+    const norm = normalizeNugetVersion(version);
+    if (!norm) throw Errors.notFound();
+    const pkg = await this.findPkg(ctx, id);
+    if (!pkg) return new Response("Not Found", { status: 404 });
+    const [row] = await ctx.db
+      .select({ version: packageVersions.version, metadata: packageVersions.metadata })
+      .from(packageVersions)
+      .where(
+        and(
+          eq(packageVersions.packageId, pkg.id),
+          eq(packageVersions.version, norm),
+          isNull(packageVersions.deletedAt),
+        ),
+      )
+      .limit(1);
+    if (!row) throw Errors.notFound();
+    return Response.json(
+      this.registrationItem({
+        id,
+        version: row.version,
+        metadata: row.metadata as unknown as NugetVersionMeta,
+        base,
+      }),
+    );
+  }
+
   private async nugetSearch(req: Request, base: string, ctx: RepoContext): Promise<Response> {
     const url = new URL(req.url);
     const q = (url.searchParams.get("q") ?? "").trim().toLowerCase();
     const skip = Math.max(0, Number(url.searchParams.get("skip") ?? 0) || 0);
     const take = Math.min(100, Math.max(0, Number(url.searchParams.get("take") ?? 20) || 20));
+    const includePrerelease = (url.searchParams.get("prerelease") ?? "").toLowerCase() === "true";
+    const includeSemVer2 = (url.searchParams.get("semVerLevel") ?? "") === "2.0.0";
     const rows = await ctx.db
       .select({ id: packages.id, name: packages.name })
       .from(packages)
@@ -203,18 +269,27 @@ export class NugetAdapter implements FormatAdapter {
     const data = [];
     for (const pkg of rows) {
       if (q && !pkg.name.toLowerCase().includes(q)) continue;
-      const versions = await this.listVersions(ctx, pkg.id);
+      const versions = (await this.listVersions(ctx, pkg.id)).filter((version) => {
+        const metadata = version.metadata as unknown as NugetVersionMeta;
+        if (!includePrerelease && isPrereleaseNugetVersion(version.version)) return false;
+        if (!includeSemVer2 && (metadata.semVer2 ?? isSemVer2NugetVersion(version.version))) {
+          return false;
+        }
+        return true;
+      });
       if (versions.length === 0) continue;
       const latest = versions.at(-1)!;
+      const latestMetadata = latest.metadata as unknown as NugetVersionMeta;
       const lower = pkg.name.toLowerCase();
       data.push({
-        id: pkg.name,
+        id: latestMetadata.displayId ?? pkg.name,
         version: latest.version,
         versions: versions.map((v) => ({
           version: v.version,
           downloads: 0,
           "@id": `${base}/v3/registrations/${lower}/${v.version}.json`,
         })),
+        packageTypes: [],
         registration: `${base}/v3/registrations/${lower}/index.json`,
         totalDownloads: 0,
       });
@@ -397,6 +472,7 @@ export class NugetAdapter implements FormatAdapter {
         file,
         displayId: id,
         listed: true,
+        semVer2: isSemVer2NugetVersion(meta.version),
         dependencyGroups: meta.dependencyGroups,
       },
       sizeBytes: bytes.length,

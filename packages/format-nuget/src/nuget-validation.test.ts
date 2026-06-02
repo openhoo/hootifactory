@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { compareNugetVersions, escapeXml, normalizeNugetVersion } from "./nuget-validation";
+import {
+  compareNugetVersions,
+  escapeXml,
+  isPrereleaseNugetVersion,
+  isSemVer2NugetVersion,
+  normalizeNugetVersion,
+} from "./nuget-validation";
 
 describe("NuGet validation helpers", () => {
   test("normalizes package versions to the NuGet server form", () => {
@@ -20,6 +26,14 @@ describe("NuGet validation helpers", () => {
       "1.0.0",
       "2.0.0",
     ]);
+  });
+
+  test("classifies prerelease and SemVer2 package versions", () => {
+    expect(isPrereleaseNugetVersion("1.0.0-beta")).toBe(true);
+    expect(isPrereleaseNugetVersion("1.0.0")).toBe(false);
+    expect(isSemVer2NugetVersion("1.0.0+build.7")).toBe(true);
+    expect(isSemVer2NugetVersion("1.0.0-beta.1")).toBe(true);
+    expect(isSemVer2NugetVersion("1.0.0-beta")).toBe(false);
   });
 
   test("escapes XML text used in generated nuspec responses", () => {
