@@ -6,12 +6,10 @@ import {
   artifacts,
   db,
   eq,
-  findings as findingsTable,
   ociManifests,
   packages,
   packageVersions,
   repositories,
-  scans,
 } from "@hootifactory/db";
 import {
   addSpanEvent,
@@ -32,28 +30,13 @@ import {
 import { blobStore } from "@hootifactory/storage";
 import { ociManifestReferences } from "@hootifactory/types";
 import { collectPackageDependencies } from "./scan-dependencies";
-import { dedupeFindings, evaluateScanPolicy, loadPolicy } from "./scan-policy";
+import { dedupeFindings } from "./scan-policy";
+import { applyPolicyDecision, markSkippedClean, persistScanResult } from "./scan-results";
 
 export { dedupeFindings } from "./scan-policy";
+export { recordScanFailure } from "./scan-results";
 
 const OCI_FORMATS = new Set(["docker", "oci", "helm"]);
-
-// Shared pg unique-key for the scans table so the success upsert and the
-// failure upsert stay byte-for-byte aligned (drift would break idempotency).
-const SCAN_CONFLICT_TARGET = [
-  scans.artifactId,
-  scans.blobDigest,
-  scans.scanType,
-  scans.scanner,
-  scans.scannerVersion,
-  scans.dbVersion,
-];
-const SCAN_DEDUP_FIELDS = {
-  scanType: "vuln" as const,
-  scanner: "hootifactory-heuristic",
-  scannerVersion: "1",
-  dbVersion: "builtin",
-} as const;
 
 /** Run the scan pipeline for one artifact and apply the policy decision. */
 export async function processScan(artifactId: string): Promise<void> {
@@ -291,170 +274,4 @@ async function processScanInner(artifactId: string): Promise<void> {
 
   await persistScanResult(art, results);
   await applyPolicyDecision(art, repo, results);
-}
-
-/** Upsert the per-artifact scan row and replace its findings with `results`. */
-async function persistScanResult(
-  art: typeof artifacts.$inferSelect,
-  results: NormalizedFinding[],
-): Promise<void> {
-  const dedupKey = {
-    artifactId: art.id,
-    blobDigest: art.digest,
-    ...SCAN_DEDUP_FIELDS,
-  };
-  // Upsert on the per-artifact key so retries replace that artifact's scan
-  // result without coupling findings or lifecycle to another artifact that has
-  // the same digest.
-  const [scan] = await withSpan(
-    "scan.persist_result",
-    {
-      "artifact.id": art.id,
-      "artifact.digest": art.digest,
-      "scan.findings.count": results.length,
-    },
-    () =>
-      db
-        .insert(scans)
-        .values({
-          ...dedupKey,
-          status: "succeeded",
-          startedAt: new Date(),
-          finishedAt: new Date(),
-          sbomNativeJson: {
-            scanners: detectScanners(scannerOptionsFromEnv()),
-          },
-        })
-        .onConflictDoUpdate({
-          target: SCAN_CONFLICT_TARGET,
-          set: { status: "succeeded", error: null, finishedAt: new Date() },
-        })
-        .returning({ id: scans.id }),
-  );
-
-  const scanId = scan?.id;
-  if (scanId) {
-    // Idempotent: replace this artifact's findings on (re)scan.
-    await withSpan(
-      "scan.persist_findings",
-      { "scan.id": scanId, "scan.findings.count": results.length },
-      async () => {
-        await db.delete(findingsTable).where(eq(findingsTable.artifactId, art.id));
-        if (results.length) {
-          await db.insert(findingsTable).values(
-            results.map((f) => ({
-              scanId,
-              artifactId: art.id,
-              type: f.type,
-              vulnId: f.vulnId,
-              aliases: f.aliases,
-              purl: f.purl,
-              packageName: f.packageName,
-              packageVersion: f.packageVersion,
-              severity: f.severity,
-              cvssScore: f.cvssScore,
-              fixedVersion: f.fixedVersion,
-              title: f.title,
-              description: f.description,
-              data: f.data ?? null,
-            })),
-          );
-        }
-      },
-    );
-  }
-}
-
-/** Load the repository policy, evaluate it against `results`, and persist the decision. */
-async function applyPolicyDecision(
-  art: typeof artifacts.$inferSelect,
-  repo: typeof repositories.$inferSelect,
-  results: NormalizedFinding[],
-): Promise<void> {
-  const policy = await withSpan("scan.load_policy", { "registry.repository.name": repo.name }, () =>
-    loadPolicy(repo.orgId, repo.name),
-  );
-  const policyEvaluation = evaluateScanPolicy(results, policy);
-
-  await db
-    .update(artifacts)
-    .set({
-      state: policyEvaluation.state,
-      policyDecision: {
-        highest: policyEvaluation.highest,
-        findings: results.length,
-        mode: policyEvaluation.mode,
-        threshold: policyEvaluation.threshold,
-        reasons: policyEvaluation.reasons,
-      },
-    })
-    .where(eq(artifacts.id, art.id));
-  setActiveSpanAttributes({
-    "scan.policy.mode": policyEvaluation.mode,
-    "scan.policy.result": policyEvaluation.state,
-    "scan.findings.highest_severity": policyEvaluation.highest,
-  });
-  logger.info("scan artifact completed", {
-    artifactId: art.id,
-    digest: art.digest,
-    repo: repo.name,
-    state: policyEvaluation.state,
-    findings: results.length,
-    highest: policyEvaluation.highest,
-  });
-}
-
-/** Mark an artifact clean and skipped (no scannable payload) with the given reason. */
-async function markSkippedClean(art: typeof artifacts.$inferSelect, reason: string): Promise<void> {
-  addSpanEvent("scan.skipped", { "scan.skip_reason": reason });
-  await db
-    .update(artifacts)
-    .set({
-      state: "clean",
-      policyDecision: { skipped: reason, findings: 0 },
-    })
-    .where(eq(artifacts.id, art.id));
-  logger.info("scan artifact skipped", {
-    artifactId: art.id,
-    digest: art.digest,
-    reason,
-  });
-}
-
-/**
- * Record a durable failed-scan row for an artifact when processScan throws, so a
- * scan failure is observable (and recoverable on retry) instead of silently
- * leaving the artifact 'pending'.
- */
-export async function recordScanFailure(artifactId: string, err: unknown): Promise<void> {
-  const [art] = await withSpan("scan.record_failure", { "artifact.id": artifactId }, () =>
-    db.select().from(artifacts).where(eq(artifacts.id, artifactId)).limit(1),
-  );
-  if (!art) return;
-  const message = (err instanceof Error ? err.message : String(err)).slice(0, 2000);
-  await db
-    .insert(scans)
-    .values({
-      artifactId: art.id,
-      blobDigest: art.digest,
-      ...SCAN_DEDUP_FIELDS,
-      status: "failed",
-      error: message,
-      finishedAt: new Date(),
-    })
-    .onConflictDoUpdate({
-      target: SCAN_CONFLICT_TARGET,
-      set: { status: "failed", error: message, finishedAt: new Date() },
-    });
-  await db
-    .update(artifacts)
-    .set({
-      policyDecision: {
-        scanStatus: "failed",
-        error: message,
-        failedAt: new Date().toISOString(),
-      },
-    })
-    .where(eq(artifacts.id, art.id));
-  logger.warn("scan failure recorded", { artifactId, digest: art.digest, error: message });
 }
