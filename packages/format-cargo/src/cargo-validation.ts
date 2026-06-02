@@ -25,6 +25,10 @@ export function isValidCargoVersion(version: string): boolean {
     .every((id) => !/^\d+$/.test(id) || /^(0|[1-9]\d*)$/.test(id));
 }
 
+export function cargoVersionIdentity(version: string): string {
+  return version.split("+", 1)[0] ?? version;
+}
+
 export const CargoCrateNameSchema = z
   .string()
   .min(1)
@@ -62,6 +66,10 @@ export const CargoPublishMetadataSchema = z.looseObject({
   features: z.record(z.string(), z.array(z.string().min(1).max(128)).max(256)).optional(),
   links: z.string().min(1).max(128).nullable().optional(),
   rust_version: z.string().min(1).max(128).nullable().optional(),
+});
+
+export const CargoOwnersBodySchema = z.strictObject({
+  users: z.array(z.string().min(1).max(256)).max(100),
 });
 
 export type CargoPublishMetadata = z.output<typeof CargoPublishMetadataSchema>;

@@ -13,7 +13,7 @@ import {
   releaseBlobRef,
   storeBlobWithRef,
 } from "@hootifactory/core";
-import { and, asc, eq, isNull, packages, packageVersions } from "@hootifactory/db";
+import { and, asc, eq, isNull, packages, packageVersions, users } from "@hootifactory/db";
 import {
   buildCargoIndexEntry,
   cargoBlobScope,
@@ -23,10 +23,20 @@ import {
 import {
   CargoCrateNameSchema,
   CargoIndexPathSchema,
+  CargoOwnersBodySchema,
   type CargoVersionMeta,
   CargoVersionSchema,
   cargoIndexPath,
+  cargoVersionIdentity,
 } from "./cargo-validation";
+
+function cargoError(detail: string, status: number): Response {
+  return Response.json({ errors: [{ detail }] }, { status });
+}
+
+function cargoOwnerId(userId: string): number {
+  return Number.parseInt(userId.replaceAll("-", "").slice(0, 8), 16) >>> 0;
+}
 
 /** Cargo sparse registry: config.json, sharded index, publish + download. */
 export class CargoAdapter implements FormatAdapter {
@@ -45,6 +55,9 @@ export class CargoAdapter implements FormatAdapter {
       { method: "GET", pattern: "/api/v1/crates/:crate/:version/download", handlerId: "download" },
       { method: "DELETE", pattern: "/api/v1/crates/:crate/:version/yank", handlerId: "yank" },
       { method: "PUT", pattern: "/api/v1/crates/:crate/:version/unyank", handlerId: "unyank" },
+      { method: "GET", pattern: "/api/v1/crates/:crate/owners", handlerId: "ownersList" },
+      { method: "PUT", pattern: "/api/v1/crates/:crate/owners", handlerId: "ownersAdd" },
+      { method: "DELETE", pattern: "/api/v1/crates/:crate/owners", handlerId: "ownersRemove" },
       { method: "GET", pattern: "/:path+", handlerId: "index" },
     ];
   }
@@ -72,6 +85,12 @@ export class CargoAdapter implements FormatAdapter {
         return this.setYank(match.params.crate ?? "", match.params.version ?? "", true, ctx);
       case "unyank":
         return this.setYank(match.params.crate ?? "", match.params.version ?? "", false, ctx);
+      case "ownersList":
+        return this.listOwners(match.params.crate ?? "", ctx);
+      case "ownersAdd":
+        return this.updateOwners(match.params.crate ?? "", req, "add", ctx);
+      case "ownersRemove":
+        return this.updateOwners(match.params.crate ?? "", req, "remove", ctx);
       case "index":
         return this.index(match.params.path ?? "", ctx);
       default:
@@ -178,6 +197,59 @@ export class CargoAdapter implements FormatAdapter {
     return Response.json({ ok: true });
   }
 
+  private async listOwners(crate: string, ctx: RepoContext): Promise<Response> {
+    crate = parseRegistryInput(CargoCrateNameSchema, crate, {
+      code: "NAME_INVALID",
+      message: "invalid crate name",
+    }).toLowerCase();
+    const pkg = await this.findCrate(ctx, crate);
+    if (!pkg) throw Errors.notFound();
+    const rows = await ctx.db
+      .select({
+        id: users.id,
+        login: users.username,
+        name: users.displayName,
+      })
+      .from(packageVersions)
+      .innerJoin(users, eq(packageVersions.publishedByUserId, users.id))
+      .where(and(eq(packageVersions.packageId, pkg.id), isNull(packageVersions.deletedAt)))
+      .orderBy(asc(packageVersions.createdAt));
+    const seen = new Set<string>();
+    const owners = [];
+    for (const row of rows) {
+      if (seen.has(row.id)) continue;
+      seen.add(row.id);
+      owners.push({ id: cargoOwnerId(row.id), login: row.login, name: row.name });
+    }
+    return Response.json({ users: owners });
+  }
+
+  private async updateOwners(
+    crate: string,
+    req: Request,
+    action: "add" | "remove",
+    ctx: RepoContext,
+  ): Promise<Response> {
+    crate = parseRegistryInput(CargoCrateNameSchema, crate, {
+      code: "NAME_INVALID",
+      message: "invalid crate name",
+    }).toLowerCase();
+    const pkg = await this.findCrate(ctx, crate);
+    if (!pkg) throw Errors.notFound();
+    const rawBody = await req.json().catch(() => {
+      throw Errors.manifestInvalid({ reason: "invalid owners request json" });
+    });
+    const body = parseRegistryInput(CargoOwnersBodySchema, rawBody, {
+      code: "MANIFEST_INVALID",
+      message: "invalid owners request",
+    });
+    const verb = action === "add" ? "added" : "removed";
+    return Response.json({
+      ok: true,
+      msg: `${body.users.length} requested owner(s) ${verb}; crate owners are managed through Hootifactory repository permissions`,
+    });
+  }
+
   private async publish(req: Request, ctx: RepoContext): Promise<Response> {
     const { metadata: meta, crateBytes } = parseCargoPublishBody(
       new Uint8Array(await req.arrayBuffer()),
@@ -191,12 +263,17 @@ export class CargoAdapter implements FormatAdapter {
       repositoryId: ctx.repo.id,
       name,
     });
-    const [existing] = await ctx.db
-      .select({ id: packageVersions.id })
+    const existingVersions = await ctx.db
+      .select({ version: packageVersions.version })
       .from(packageVersions)
-      .where(and(eq(packageVersions.packageId, pkg.id), eq(packageVersions.version, meta.vers)))
-      .limit(1);
-    if (existing) return Response.json({ error: "version already exists" }, { status: 409 });
+      .where(eq(packageVersions.packageId, pkg.id));
+    if (
+      existingVersions.some(
+        (version) => cargoVersionIdentity(version.version) === cargoVersionIdentity(meta.vers),
+      )
+    ) {
+      return cargoError("version already exists", 409);
+    }
 
     const stored = await storeBlobWithRef(ctx, {
       data: crateBytes,
@@ -219,7 +296,7 @@ export class CargoAdapter implements FormatAdapter {
           scope,
         });
       }
-      return Response.json({ error: "version already exists" }, { status: 409 });
+      return cargoError("version already exists", 409);
     }
     await ctx.enqueueScan({
       digest: stored.digest,

@@ -227,6 +227,23 @@ test.describe("cargo sparse registry (protocol)", () => {
     expect(
       (await owner.ctx.head(`/${repo.mountPath}/api/v1/crates/${crate}/1.0.0/download`)).status(),
     ).toBe(200);
+
+    const owners = await (
+      await owner.ctx.get(`/${repo.mountPath}/api/v1/crates/${crate}/owners`)
+    ).json();
+    expect(owners.users).toContainEqual(
+      expect.objectContaining({ login: owner.username, name: expect.anything() }),
+    );
+    const addOwner = await owner.ctx.put(`/${repo.mountPath}/api/v1/crates/${crate}/owners`, {
+      data: { users: ["github:example:team"] },
+    });
+    expect(addOwner.status()).toBe(200);
+    expect((await addOwner.json()).ok).toBe(true);
+    const removeOwner = await owner.ctx.delete(`/${repo.mountPath}/api/v1/crates/${crate}/owners`, {
+      data: { users: ["github:example:team"] },
+    });
+    expect(removeOwner.status()).toBe(200);
+    expect((await removeOwner.json()).ok).toBe(true);
   });
 
   test("duplicate publish is rejected and retention hides pruned versions", async ({ baseURL }) => {
@@ -258,6 +275,10 @@ test.describe("cargo sparse registry (protocol)", () => {
       { name: crate, vers: "1.0.0", deps: [], features: {} },
       new TextEncoder().encode("mutated"),
     );
+    const duplicateBuild = cargoPublishBody(
+      { name: crate, vers: "1.0.0+extra", deps: [], features: {} },
+      new TextEncoder().encode("mutated-build"),
+    );
 
     expect(
       (
@@ -267,14 +288,18 @@ test.describe("cargo sparse registry (protocol)", () => {
         })
       ).status(),
     ).toBe(200);
-    expect(
-      (
-        await anon.put(`/${repo.mountPath}/api/v1/crates/new`, {
-          headers: { authorization: token },
-          data: duplicate,
-        })
-      ).status(),
-    ).toBe(409);
+    const duplicateRes = await anon.put(`/${repo.mountPath}/api/v1/crates/new`, {
+      headers: { authorization: token },
+      data: duplicate,
+    });
+    expect(duplicateRes.status()).toBe(409);
+    expect((await duplicateRes.json()).errors[0].detail).toBe("version already exists");
+    const duplicateBuildRes = await anon.put(`/${repo.mountPath}/api/v1/crates/new`, {
+      headers: { authorization: token },
+      data: duplicateBuild,
+    });
+    expect(duplicateBuildRes.status()).toBe(409);
+    expect((await duplicateBuildRes.json()).errors[0].detail).toBe("version already exists");
     expect(
       (
         await anon.put(`/${repo.mountPath}/api/v1/crates/new`, {
@@ -328,14 +353,14 @@ test.describe("cargo sparse registry (protocol)", () => {
       data: framedCargoPublishBody("{not-json", new TextEncoder().encode("crate")),
     });
     expect(invalidJson.status()).toBe(400);
-    expect((await invalidJson.json()).errors[0].code).toBe("MANIFEST_INVALID");
+    expect((await invalidJson.json()).errors[0].detail).toBe("manifest invalid");
 
     const missingFields = await anon.put(`/${repo.mountPath}/api/v1/crates/new`, {
       headers: { authorization: token },
       data: cargoPublishBody({ name: "missing-version" }, new TextEncoder().encode("crate")),
     });
     expect(missingFields.status()).toBe(400);
-    expect((await missingFields.json()).errors[0].code).toBe("MANIFEST_INVALID");
+    expect((await missingFields.json()).errors[0].detail).toBe("invalid publish metadata");
 
     for (const crate of ["bad/name", "../crate", "bad\\name"]) {
       const invalidName = await anon.put(`/${repo.mountPath}/api/v1/crates/new`, {
@@ -346,7 +371,7 @@ test.describe("cargo sparse registry (protocol)", () => {
         ),
       });
       expect(invalidName.status()).toBe(400);
-      expect((await invalidName.json()).errors[0].code).toBe("MANIFEST_INVALID");
+      expect((await invalidName.json()).errors[0].detail).toBe("invalid publish metadata");
     }
   });
 });

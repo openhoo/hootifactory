@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { CargoAdapter } from "./cargo-adapter";
-import { cargoIndexPath, isValidCargoCrateName, isValidCargoVersion } from "./cargo-validation";
+import {
+  cargoIndexPath,
+  cargoVersionIdentity,
+  isValidCargoCrateName,
+  isValidCargoVersion,
+} from "./cargo-validation";
 
 describe("Cargo adapter", () => {
   test("computes sparse index paths for short and long crate names", () => {
@@ -22,6 +27,21 @@ describe("Cargo adapter", () => {
     expect(isValidCargoVersion("1.2.3-alpha.1+build.5")).toBe(true);
     expect(isValidCargoVersion("1.2.3-alpha.01")).toBe(false);
     expect(isValidCargoVersion("01.2.3")).toBe(false);
+    expect(cargoVersionIdentity("1.2.3+build.5")).toBe("1.2.3");
+  });
+
+  test("declares publish, yank, owner, download, and index routes", () => {
+    expect(new CargoAdapter().routes()).toEqual([
+      { method: "GET", pattern: "/config.json", handlerId: "config" },
+      { method: "PUT", pattern: "/api/v1/crates/new", handlerId: "publish" },
+      { method: "GET", pattern: "/api/v1/crates/:crate/:version/download", handlerId: "download" },
+      { method: "DELETE", pattern: "/api/v1/crates/:crate/:version/yank", handlerId: "yank" },
+      { method: "PUT", pattern: "/api/v1/crates/:crate/:version/unyank", handlerId: "unyank" },
+      { method: "GET", pattern: "/api/v1/crates/:crate/owners", handlerId: "ownersList" },
+      { method: "PUT", pattern: "/api/v1/crates/:crate/owners", handlerId: "ownersAdd" },
+      { method: "DELETE", pattern: "/api/v1/crates/:crate/owners", handlerId: "ownersRemove" },
+      { method: "GET", pattern: "/:path+", handlerId: "index" },
+    ]);
   });
 
   test("uses read permissions for reads and write permissions for mutations", () => {

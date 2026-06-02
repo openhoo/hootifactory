@@ -18,6 +18,10 @@ function isRegistryMiss(err: unknown): err is RegistryError {
   return err instanceof RegistryError && err.status === 404 && REGISTRY_MISS_CODES.has(err.code);
 }
 
+function cargoErrorResponse(err: RegistryError): Response {
+  return Response.json({ errors: [{ detail: err.message }] }, { status: err.status });
+}
+
 export async function adapterResponse(
   adapter: FormatAdapter,
   match: RouteMatch,
@@ -49,6 +53,17 @@ export async function adapterResponse(
       } catch (err) {
         if (adapter.format === "npm" && err instanceof RegistryError) {
           const response = Response.json({ error: err.message }, { status: err.status });
+          span.setAttribute("http.response.status_code", response.status);
+          logger.debug("registry adapter error", {
+            format: adapter.format,
+            repo: ctx.repo.name,
+            handler: match.entry.handlerId,
+            code: err.code,
+          });
+          return response;
+        }
+        if (adapter.format === "cargo" && err instanceof RegistryError) {
+          const response = cargoErrorResponse(err);
           span.setAttribute("http.response.status_code", response.status);
           logger.debug("registry adapter error", {
             format: adapter.format,
