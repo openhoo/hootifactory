@@ -19,6 +19,7 @@ import {
 } from "@hootifactory/core";
 import { and, eq, isNull, packages, packageVersions } from "@hootifactory/db";
 import { parseNugetPublishRequest } from "./nuget-publish";
+import { buildNugetRegistrationIndex, buildNugetRegistrationItem } from "./nuget-registration";
 import {
   compareNugetVersions,
   escapeXml,
@@ -150,70 +151,21 @@ export class NugetAdapter implements FormatAdapter {
     return Response.json({ versions: rows.map((r) => r.version) });
   }
 
-  private registrationItem(input: {
-    id: string;
-    version: string;
-    metadata: NugetVersionMeta;
-    base: string;
-  }) {
-    const lower = input.id.toLowerCase();
-    const displayId = input.metadata.displayId ?? input.id;
-    const leaf = `${input.base}/v3/registrations/${lower}/${input.version}.json`;
-    const content = `${input.base}/v3-flatcontainer/${lower}/${input.version}/${lower}.${input.version}.nupkg`;
-    const dependencyGroups = (input.metadata.dependencyGroups ?? []).map((group) => ({
-      ...(group.targetFramework ? { targetFramework: group.targetFramework } : {}),
-      dependencies: group.dependencies.map((dep) => ({
-        id: dep.id,
-        range: dep.range,
-        registration: `${input.base}/v3/registrations/${dep.id.toLowerCase()}/index.json`,
-      })),
-    }));
-    return {
-      "@id": leaf,
-      "@type": "Package",
-      catalogEntry: {
-        "@id": leaf,
-        "@type": "PackageDetails",
-        id: displayId,
-        version: input.version,
-        listed: input.metadata.listed !== false,
-        packageContent: content,
-        ...(dependencyGroups.length > 0 ? { dependencyGroups } : {}),
-      },
-      packageContent: content,
-      registrationLeafUrl: leaf,
-      registration: `${input.base}/v3/registrations/${lower}/index.json`,
-    };
-  }
-
   private async registration(id: string, base: string, ctx: RepoContext): Promise<Response> {
     id = parseNugetId(id);
     const pkg = await this.findPkg(ctx, id);
     if (!pkg) return new Response("Not Found", { status: 404 });
     const rows = await this.listVersions(ctx, pkg.id, { includeUnlisted: true });
-    const lower = id.toLowerCase();
-    const registrationUrl = `${base}/v3/registrations/${lower}/index.json`;
-    const items = rows.map((r) =>
-      this.registrationItem({
+    return Response.json(
+      buildNugetRegistrationIndex({
         id,
-        version: r.version,
-        metadata: r.metadata as unknown as NugetVersionMeta,
         base,
+        versions: rows.map((row) => ({
+          version: row.version,
+          metadata: row.metadata as unknown as NugetVersionMeta,
+        })),
       }),
     );
-    const pages =
-      rows.length === 0
-        ? []
-        : [
-            {
-              "@id": registrationUrl,
-              count: items.length,
-              lower: rows[0]?.version,
-              upper: rows[rows.length - 1]?.version,
-              items,
-            },
-          ];
-    return Response.json({ count: pages.length, items: pages });
   }
 
   private async registrationLeaf(
@@ -233,7 +185,7 @@ export class NugetAdapter implements FormatAdapter {
     const row = await findLiveVersion(ctx, pkg.id, norm);
     if (!row) throw Errors.notFound();
     return Response.json(
-      this.registrationItem({
+      buildNugetRegistrationItem({
         id,
         version: row.version,
         metadata: row.metadata as unknown as NugetVersionMeta,
