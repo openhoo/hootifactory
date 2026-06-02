@@ -7,6 +7,7 @@ import { audit } from "./http";
 import { tokenDto } from "./ui-dto";
 import { requireUserPrincipal } from "./ui-repository-access";
 import { CreateTokenBodySchema } from "./ui-schemas";
+import { resolveCreateTokenRequest } from "./ui-token-create";
 import { validateTokenGrant } from "./ui-token-grants";
 
 export function registerTokenRoutes(router: Hono<AppEnv>): void {
@@ -85,27 +86,24 @@ export function registerTokenRoutes(router: Hono<AppEnv>): void {
 
     const parsedBody = await validateJsonBody(c, CreateTokenBodySchema, "invalid token request");
     if (!parsedBody.ok) return parsedBody.response;
-    const body = parsedBody.data;
-    const tokenName = body.name;
-    const tokenType = body.type;
-    const scopes = body.scopes;
-    const requestedRole = body.role ?? (scopes.length > 0 ? undefined : "developer");
-    const expiresAt =
-      body.expiresAt === undefined
-        ? new Date(Date.now() + 90 * 24 * 60 * 60 * 1000)
-        : body.expiresAt;
+    const request = resolveCreateTokenRequest(parsedBody.data);
 
-    const grant = await validateTokenGrant({ userId: p.userId, orgId, requestedRole, scopes });
+    const grant = await validateTokenGrant({
+      userId: p.userId,
+      orgId,
+      requestedRole: request.requestedRole,
+      scopes: request.scopes,
+    });
     if (!grant.ok) return c.json({ error: grant.error }, 403);
 
     const { token, secret } = await createApiToken({
       orgId,
       ownerUserId: p.userId,
-      name: tokenName,
-      type: tokenType,
-      scopes,
-      role: requestedRole,
-      expiresAt,
+      name: request.name,
+      type: request.type,
+      scopes: request.scopes,
+      role: request.requestedRole,
+      expiresAt: request.expiresAt,
     });
     audit({
       orgId,

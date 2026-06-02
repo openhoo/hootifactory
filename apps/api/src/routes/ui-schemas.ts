@@ -77,6 +77,7 @@ export const CreateTokenBodySchema = z.strictObject({
   role: RoleNameSchema.optional(),
   expiresAt: z.union([z.iso.datetime().transform((value) => new Date(value)), z.null()]).optional(),
 });
+export type CreateTokenBody = z.output<typeof CreateTokenBodySchema>;
 
 export function isValidScanPolicyPattern(pattern: string): boolean {
   return isValidRepositoryPattern(pattern);
