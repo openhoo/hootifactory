@@ -26,16 +26,13 @@ import {
   packageVersions,
   sql,
 } from "@hootifactory/db";
-import { computeDigest, isValidDigest } from "@hootifactory/storage";
-import { OCI_MEDIA_TYPES, type OciManifest } from "@hootifactory/types";
+import { OCI_MEDIA_TYPES } from "@hootifactory/types";
+import { parseOciManifestPutRequest } from "./oci-manifest-put";
 import { cancelUpload, patchUpload, putUpload, startUpload, uploadStatus } from "./oci-uploads";
 import {
   assertImageName,
-  assertTag,
   manifestAnnotations,
   manifestBlobDigests,
-  manifestManifestDigests,
-  manifestMediaType,
   OciDigestSchema,
   OciReferrersQuerySchema,
   OciTagPageSizeSchema,
@@ -44,10 +41,7 @@ import {
   parseManifestRaw,
   parseReference,
   referrerArtifactType,
-  validateDescriptor,
-  validateManifest,
 } from "./oci-validation";
-import { bodyBytes } from "./upload-state";
 
 const UPLOAD_CONTROL_HANDLERS = new Set([
   "startUpload",
@@ -156,28 +150,21 @@ export class DockerAdapter implements FormatAdapter {
     req: Request,
     ctx: RepoContext,
   ): Promise<Response> {
-    const ref = parseReference(reference);
-    const bytes = await bodyBytes(req);
-    const digest = computeDigest(bytes);
-    // If the client addressed the manifest by digest, it must match the content.
-    if (ref.kind === "digest" && ref.value !== digest) {
-      throw Errors.digestInvalid({ expected: reference, got: digest });
-    }
-    const raw = new TextDecoder().decode(bytes);
-    let parsed: OciManifest;
-    try {
-      parsed = JSON.parse(raw) as OciManifest;
-    } catch {
-      throw Errors.manifestInvalid();
-    }
-    const mediaType = manifestMediaType(req, parsed);
-    validateManifest(parsed, mediaType);
+    const manifestPut = await parseOciManifestPutRequest(reference, req);
+    const {
+      acceptedTags,
+      bytes,
+      digest,
+      mediaType,
+      parsed,
+      raw,
+      ref,
+      referencedBlobs,
+      subjectDigest,
+    } = manifestPut;
     const config = parsed.config;
-    const subjectDigest = typeof parsed.subject?.digest === "string" ? parsed.subject.digest : null;
-    if (parsed.subject) validateDescriptor(parsed.subject, "subject");
 
     // Reject an image manifest that references blobs not yet uploaded to this repo.
-    const referencedBlobs = manifestBlobDigests(raw);
     if (referencedBlobs.length > 0) {
       const present = await ctx.db
         .select({ digest: blobRefs.digest })
@@ -200,13 +187,10 @@ export class DockerAdapter implements FormatAdapter {
       name: image,
     });
 
-    const referencedManifests = manifestManifestDigests(raw);
+    const referencedManifests = manifestPut.referencedManifests;
     if (referencedManifests.length > 0) {
       const missing: string[] = [];
       for (const manifestDigest of referencedManifests) {
-        if (!isValidDigest(manifestDigest)) {
-          throw Errors.digestInvalid({ reason: "manifest descriptor digest is invalid" });
-        }
         if (!(await this.resolveManifest(image, manifestDigest, ctx))) missing.push(manifestDigest);
       }
       if (missing.length > 0) throw Errors.manifestBlobUnknown({ missing });
@@ -240,10 +224,6 @@ export class DockerAdapter implements FormatAdapter {
     // Tag (mutable pointer) + a UI-visible version when reference is not a digest.
     // Digest-addressed pushes still record the image->digest ownership so a
     // scoped token for another image cannot later fetch the manifest by digest.
-    const url = new URL(req.url);
-    const acceptedTags =
-      ref.kind === "tag" ? [ref.value] : [...new Set(url.searchParams.getAll("tag"))];
-    for (const tag of acceptedTags) assertTag(tag);
     if (acceptedTags.length > 0) {
       for (const tag of acceptedTags) {
         await ctx.db
@@ -285,7 +265,7 @@ export class DockerAdapter implements FormatAdapter {
       location: `${ctx.baseUrl}/${ctx.repo.mountPath}/${image}/manifests/${digest}`,
       "docker-content-digest": digest,
     };
-    if (subjectDigest) headers["oci-subject"] = subjectDigest;
+    if (manifestPut.subjectDigest) headers["oci-subject"] = manifestPut.subjectDigest;
     if (ref.kind === "digest" && acceptedTags.length > 0) {
       headers["oci-tag"] = acceptedTags.join(", ");
     }
