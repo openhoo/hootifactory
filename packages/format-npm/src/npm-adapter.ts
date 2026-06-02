@@ -34,16 +34,16 @@ import {
   versionTags,
 } from "@hootifactory/db";
 import { computeDigest } from "@hootifactory/storage";
-import { decodeBase64, ifNoneMatch, responseBytes, responseJson } from "./npm-http";
+import { ifNoneMatch, responseBytes, responseJson } from "./npm-http";
 import {
   type NpmDist,
-  type PublishVersion,
   sha1hex,
   sha1hexText,
   sha512b64,
   upstreamDistMatchesBytes,
   upstreamDistMatchesStored,
 } from "./npm-integrity";
+import { parseNpmPublishRequest, resolveNpmPublishDistTags } from "./npm-publish";
 import {
   basename,
   isValidDistTag,
@@ -51,8 +51,6 @@ import {
   isValidNpmVersion,
   NpmDistTagSchema,
   NpmLegacyPackageNameSchema,
-  NpmPackageNameSchema,
-  NpmPublishBodySchema,
   NpmSearchQuerySchema,
   NpmTarballFilenameSchema,
   NpmVersionSchema,
@@ -237,89 +235,35 @@ export class NpmAdapter implements FormatAdapter {
 
   private async publish(name: string, req: Request, ctx: RepoContext): Promise<Response> {
     const rawBody = await req.json().catch(() => null);
-    const body = parseRegistryInput(NpmPublishBodySchema, rawBody, {
-      code: "MANIFEST_INVALID",
-      message: "invalid publish payload",
-    });
-    name = parseRegistryInput(NpmPackageNameSchema, name, {
-      code: "NAME_INVALID",
-      message: "invalid package name",
-    });
-    if (body.name && body.name !== name) {
-      return Response.json({ error: "package name in body does not match URL" }, { status: 400 });
+    const parsed = parseNpmPublishRequest(name, rawBody);
+    if (!parsed.ok) {
+      return Response.json({ error: parsed.error.error }, { status: parsed.error.status });
+    }
+    if (parsed.plan.kind === "metadataOnly") {
+      return this.updateMetadataOnly(
+        parsed.plan.name,
+        parsed.plan.versions,
+        parsed.plan.distTags,
+        ctx,
+      );
     }
 
-    const attachments = body._attachments ?? {};
-    const versions = body.versions ?? {};
-    const metadataOnly = Object.keys(attachments).length === 0;
-    if (metadataOnly) {
-      return this.updateMetadataOnly(name, versions, body["dist-tags"] ?? {}, ctx);
-    }
-    const base = basename(name);
-    const publishVersions: PublishVersion[] = [];
-    for (const [ver, manifestRaw] of Object.entries(versions)) {
-      parseNpmVersion(ver);
-      const manifest = { ...(manifestRaw as Record<string, unknown>) };
-      if (manifest.name !== undefined && manifest.name !== name) {
-        return Response.json(
-          { error: "version manifest name does not match URL" },
-          { status: 400 },
-        );
-      }
-      if (manifest.version !== undefined && manifest.version !== ver) {
-        return Response.json(
-          { error: "version manifest version does not match version key" },
-          { status: 400 },
-        );
-      }
-      manifest.name = name;
-      manifest.version = ver;
-      const attKey =
-        [`${name}-${ver}.tgz`, `${base}-${ver}.tgz`].find((k) => attachments[k]) ?? undefined;
-      if (!attKey) {
-        return Response.json({ error: `missing tarball attachment for ${ver}` }, { status: 400 });
-      }
-      const tarball = decodeBase64(attachments[attKey]?.data);
-      if (!tarball) {
-        return Response.json({ error: `invalid tarball attachment for ${ver}` }, { status: 400 });
-      }
-      publishVersions.push({ version: ver, manifest, tarball });
-    }
-    if (!publishVersions.length) {
-      return Response.json({ error: "publish payload must include a version" }, { status: 400 });
-    }
-
-    const distTags = { ...(body["dist-tags"] ?? {}) };
-    if (body["dist-tags"] === undefined && publishVersions.length === 1) {
-      distTags.latest = publishVersions[0]!.version;
-    }
-    const publishVersionSet = new Set(publishVersions.map((v) => v.version));
+    name = parsed.plan.name;
+    const publishVersions = parsed.plan.versions;
+    const distTags = parsed.plan.distTags;
     const existingPkg = await this.findPackage(ctx, name);
-    const existingTagVersionIds = new Map<string, string>();
-    for (const [tag, ver] of Object.entries(distTags)) {
-      parseRegistryInput(NpmDistTagSchema, tag, {
-        code: "TAG_INVALID",
-        message: "invalid dist-tag",
-      });
-      parseRegistryInput(NpmVersionSchema, ver, {
-        code: "MANIFEST_INVALID",
-        message: `dist-tag ${tag} points to an invalid version`,
-      });
-      if (!publishVersionSet.has(ver)) {
-        const existingVersionId = existingPkg
-          ? await this.versionId(ctx, existingPkg.id, ver)
-          : null;
-        if (!existingVersionId) {
-          return Response.json(
-            { error: `dist-tag ${tag} points to an unknown version` },
-            { status: 400 },
-          );
-        }
-        existingTagVersionIds.set(ver, existingVersionId);
-      }
+    const distTagTargets = await resolveNpmPublishDistTags(
+      distTags,
+      publishVersions.map((version) => version.version),
+      (version) =>
+        existingPkg ? this.versionId(ctx, existingPkg.id, version) : Promise.resolve(null),
+    );
+    if (!distTagTargets.ok) {
+      return Response.json({ error: distTagTargets.error }, { status: 400 });
     }
 
     const scope = name.startsWith("@") ? (name.split("/")[0] ?? null) : null;
+    const base = basename(name);
     const pkg =
       existingPkg ??
       (await findOrCreatePackage({
@@ -389,7 +333,7 @@ export class NpmAdapter implements FormatAdapter {
     }
 
     for (const [tag, ver] of Object.entries(distTags)) {
-      const versionId = versionIds.get(ver) ?? existingTagVersionIds.get(ver);
+      const versionId = versionIds.get(ver) ?? distTagTargets.existingVersionIds.get(ver);
       if (!versionId) throw new Error(`validated npm dist-tag ${tag} lost version ${ver}`);
       await setDistTag(ctx, pkg.id, tag, versionId);
     }
@@ -404,7 +348,7 @@ export class NpmAdapter implements FormatAdapter {
   }
 
   private async versionId(ctx: RepoContext, packageId: string, version: string) {
-    return (await findLiveVersion(ctx, packageId, version))?.id;
+    return (await findLiveVersion(ctx, packageId, version))?.id ?? null;
   }
 
   private async updateMetadataOnly(
