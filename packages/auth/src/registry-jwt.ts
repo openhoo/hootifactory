@@ -33,10 +33,12 @@ async function getKeys(): Promise<Keys> {
       // single-process dev/test run, but tokens won't verify across replicas and
       // are invalidated on restart. Production is already required to set the keys
       // (enforced by the config schema); warn loudly for any other environment.
-      console.warn(
-        "[registry-jwt] REGISTRY_JWT_PRIVATE_KEY/PUBLIC_KEY unset — using an EPHEMERAL keypair. " +
-          "OCI Bearer tokens will not survive restarts and are invalid across multiple API replicas.",
-      );
+      if (env.NODE_ENV !== "test") {
+        console.warn(
+          "[registry-jwt] REGISTRY_JWT_PRIVATE_KEY/PUBLIC_KEY unset — using an EPHEMERAL keypair. " +
+            "OCI Bearer tokens will not survive restarts and are invalid across multiple API replicas.",
+        );
+      }
       const { privateKey, publicKey } = await generateKeyPair("RS256", { extractable: true });
       return { privateKey, publicKey, kid: "ephemeral" };
     })();

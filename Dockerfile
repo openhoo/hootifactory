@@ -1,6 +1,6 @@
 # Multi-stage build for the Hootifactory API + scan-worker (single image).
 # The same image runs the API (default) or the scan-worker (CMD override).
-FROM oven/bun:1.3 AS build
+FROM oven/bun:1.3.14 AS build
 WORKDIR /app
 COPY package.json bun.lock tsconfig.base.json biome.json drizzle.config.ts ./
 COPY packages ./packages
@@ -10,7 +10,7 @@ RUN bun install --frozen-lockfile
 # Build the web UI (served by the API via WEB_DIST).
 RUN cd apps/web && bun run build
 
-FROM oven/bun:1.3 AS runtime
+FROM oven/bun:1.3.14 AS runtime
 WORKDIR /app
 COPY --from=build /app /app
 ENV NODE_ENV=production \
