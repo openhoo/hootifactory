@@ -7,6 +7,10 @@ export interface SimpleFile {
   uploadTime?: string;
 }
 
+export const SIMPLE_JSON_CONTENT_TYPE = "application/vnd.pypi.simple.v1+json";
+export const SIMPLE_HTML_CONTENT_TYPE = "application/vnd.pypi.simple.v1+html; charset=utf-8";
+export const LEGACY_HTML_CONTENT_TYPE = "text/html; charset=utf-8";
+
 function escapeHtml(s: string): string {
   return s
     .replace(/&/g, "&amp;")
@@ -53,6 +57,33 @@ ${links}
   </body>
 </html>
 `;
+}
+
+export function preferredSimpleResponse(acceptHeader: string | null): "json" | "html" {
+  const accept = acceptHeader ?? "";
+  const weighted = accept.split(",").map((part) => {
+    const [media = "", ...params] = part.trim().split(";");
+    const qParam = params.find((param) => param.trim().startsWith("q="));
+    const q = qParam ? Number.parseFloat(qParam.split("=", 2)[1] ?? "0") : 1;
+    return { media: media.trim().toLowerCase(), q: Number.isFinite(q) ? q : 0 };
+  });
+  const jsonQ =
+    weighted.find((part) => part.media === SIMPLE_JSON_CONTENT_TYPE)?.q ??
+    weighted.find((part) => part.media === "application/json")?.q ??
+    0;
+  const htmlQ =
+    Math.max(
+      weighted.find((part) => part.media === "text/html")?.q ?? 0,
+      weighted.find((part) => part.media === "application/vnd.pypi.simple.v1+html")?.q ?? 0,
+      weighted.find((part) => part.media === "*/*")?.q ?? 0,
+    ) || (accept ? 0 : 1);
+  return jsonQ > 0 && jsonQ >= htmlQ ? "json" : "html";
+}
+
+export function simpleHtmlContentType(acceptHeader: string | null): string {
+  return (acceptHeader ?? "").toLowerCase().includes("application/vnd.pypi.simple")
+    ? SIMPLE_HTML_CONTENT_TYPE
+    : LEGACY_HTML_CONTENT_TYPE;
 }
 
 /** PEP 503 name normalization. */

@@ -29,11 +29,15 @@ import {
   PypiUploadFieldsSchema,
   parsePypiFilename,
 } from "./pypi-validation";
-import { normalizeName, renderProjectHtml, renderRootHtml, type SimpleFile } from "./simple";
-
-const SIMPLE_JSON_CONTENT_TYPE = "application/vnd.pypi.simple.v1+json";
-const SIMPLE_HTML_CONTENT_TYPE = "application/vnd.pypi.simple.v1+html; charset=utf-8";
-const LEGACY_HTML_CONTENT_TYPE = "text/html; charset=utf-8";
+import {
+  normalizeName,
+  preferredSimpleResponse,
+  renderProjectHtml,
+  renderRootHtml,
+  SIMPLE_JSON_CONTENT_TYPE,
+  type SimpleFile,
+  simpleHtmlContentType,
+} from "./simple";
 
 export class PypiAdapter implements FormatAdapter {
   readonly format = "pypi" as const;
@@ -82,33 +86,6 @@ export class PypiAdapter implements FormatAdapter {
     return new Response(null, { status: 308, headers: { location: url.toString() } });
   }
 
-  private simpleContentType(req: Request): "json" | "html" {
-    const accept = req.headers.get("accept") ?? "";
-    const weighted = accept.split(",").map((part) => {
-      const [media = "", ...params] = part.trim().split(";");
-      const qParam = params.find((param) => param.trim().startsWith("q="));
-      const q = qParam ? Number.parseFloat(qParam.split("=", 2)[1] ?? "0") : 1;
-      return { media: media.trim().toLowerCase(), q: Number.isFinite(q) ? q : 0 };
-    });
-    const jsonQ =
-      weighted.find((part) => part.media === SIMPLE_JSON_CONTENT_TYPE)?.q ??
-      weighted.find((part) => part.media === "application/json")?.q ??
-      0;
-    const htmlQ =
-      Math.max(
-        weighted.find((part) => part.media === "text/html")?.q ?? 0,
-        weighted.find((part) => part.media === "application/vnd.pypi.simple.v1+html")?.q ?? 0,
-        weighted.find((part) => part.media === "*/*")?.q ?? 0,
-      ) || (accept ? 0 : 1);
-    return jsonQ > 0 && jsonQ >= htmlQ ? "json" : "html";
-  }
-
-  private htmlContentType(req: Request): string {
-    return (req.headers.get("accept") ?? "").toLowerCase().includes("application/vnd.pypi.simple")
-      ? SIMPLE_HTML_CONTENT_TYPE
-      : LEGACY_HTML_CONTENT_TYPE;
-  }
-
   private async simpleRoot(req: Request, ctx: RepoContext): Promise<Response> {
     const redirect = this.redirectToSlash(req);
     if (redirect) return redirect;
@@ -118,7 +95,7 @@ export class PypiAdapter implements FormatAdapter {
       .from(packages)
       .where(eq(packages.repositoryId, ctx.repo.id));
     const projects = rows.map((r) => r.name).sort();
-    if (this.simpleContentType(req) === "json") {
+    if (preferredSimpleResponse(req.headers.get("accept")) === "json") {
       return Response.json(
         {
           meta: { "api-version": "1.1" },
@@ -128,7 +105,7 @@ export class PypiAdapter implements FormatAdapter {
       );
     }
     return new Response(renderRootHtml(projects), {
-      headers: { "content-type": this.htmlContentType(req) },
+      headers: { "content-type": simpleHtmlContentType(req.headers.get("accept")) },
     });
   }
 
@@ -196,7 +173,7 @@ export class PypiAdapter implements FormatAdapter {
         });
       }
     }
-    if (this.simpleContentType(req) === "json") {
+    if (preferredSimpleResponse(req.headers.get("accept")) === "json") {
       return Response.json(
         {
           meta: { "api-version": "1.1" },
@@ -215,7 +192,7 @@ export class PypiAdapter implements FormatAdapter {
       );
     }
     return new Response(renderProjectHtml(name, files), {
-      headers: { "content-type": this.htmlContentType(req) },
+      headers: { "content-type": simpleHtmlContentType(req.headers.get("accept")) },
     });
   }
 

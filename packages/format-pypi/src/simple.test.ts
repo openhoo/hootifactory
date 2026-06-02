@@ -2,9 +2,14 @@ import { describe, expect, test } from "bun:test";
 import {
   isSafeDistributionFilename,
   isValidProjectName,
+  LEGACY_HTML_CONTENT_TYPE,
   normalizeName,
+  preferredSimpleResponse,
   renderProjectHtml,
   renderRootHtml,
+  SIMPLE_HTML_CONTENT_TYPE,
+  SIMPLE_JSON_CONTENT_TYPE,
+  simpleHtmlContentType,
 } from "./simple";
 
 describe("PyPI simple API rendering", () => {
@@ -44,5 +49,24 @@ describe("PyPI simple API rendering", () => {
     expect(html).toContain('<a href="alpha/">alpha</a>');
     expect(html).toContain('<a href="beta/">beta</a>');
     expect(html).toContain('content="1.0"');
+  });
+
+  test("selects simple JSON only when its accept weight wins", () => {
+    expect(preferredSimpleResponse(null)).toBe("html");
+    expect(preferredSimpleResponse(`${SIMPLE_JSON_CONTENT_TYPE}; q=0.5, text/html; q=0.4`)).toBe(
+      "json",
+    );
+    expect(preferredSimpleResponse("application/json, text/html")).toBe("json");
+    expect(preferredSimpleResponse(`${SIMPLE_JSON_CONTENT_TYPE}; q=0, text/html; q=1`)).toBe(
+      "html",
+    );
+    expect(preferredSimpleResponse(`${SIMPLE_JSON_CONTENT_TYPE}; q=0.2, */*; q=0.9`)).toBe("html");
+  });
+
+  test("keeps vendor HTML content type for simple API accept headers", () => {
+    expect(simpleHtmlContentType(`${SIMPLE_JSON_CONTENT_TYPE}; q=0`)).toBe(
+      SIMPLE_HTML_CONTENT_TYPE,
+    );
+    expect(simpleHtmlContentType("text/html")).toBe(LEGACY_HTML_CONTENT_TYPE);
   });
 });
