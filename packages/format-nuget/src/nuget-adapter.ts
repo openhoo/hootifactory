@@ -27,6 +27,7 @@ import {
   NugetFileSchema,
   NugetIdSchema,
   NugetPublishQuerySchema,
+  NugetSearchQuerySchema,
   NugetVersionInputSchema,
   type NugetVersionMeta,
   normalizeNugetVersion,
@@ -245,22 +246,28 @@ export class NugetAdapter implements FormatAdapter {
 
   private async nugetSearch(req: Request, base: string, ctx: RepoContext): Promise<Response> {
     const url = new URL(req.url);
-    const q = (url.searchParams.get("q") ?? "").trim().toLowerCase();
-    const skip = Math.max(0, Number(url.searchParams.get("skip") ?? 0) || 0);
-    const take = Math.min(100, Math.max(0, Number(url.searchParams.get("take") ?? 20) || 20));
-    const includePrerelease = (url.searchParams.get("prerelease") ?? "").toLowerCase() === "true";
-    const includeSemVer2 = (url.searchParams.get("semVerLevel") ?? "") === "2.0.0";
+    const query = parseRegistryInput(
+      NugetSearchQuerySchema,
+      {
+        q: url.searchParams.get("q") ?? undefined,
+        skip: url.searchParams.get("skip") ?? undefined,
+        take: url.searchParams.get("take") ?? undefined,
+        prerelease: url.searchParams.get("prerelease") ?? undefined,
+        semVerLevel: url.searchParams.get("semVerLevel") ?? undefined,
+      },
+      { code: "MANIFEST_INVALID", message: "invalid search query" },
+    );
     const rows = await ctx.db
       .select({ id: packages.id, name: packages.name })
       .from(packages)
       .where(eq(packages.repositoryId, ctx.repo.id));
     const data = [];
     for (const pkg of rows) {
-      if (q && !pkg.name.toLowerCase().includes(q)) continue;
+      if (query.q && !pkg.name.toLowerCase().includes(query.q)) continue;
       const versions = (await this.listVersions(ctx, pkg.id)).filter((version) => {
         const metadata = version.metadata as unknown as NugetVersionMeta;
-        if (!includePrerelease && isPrereleaseNugetVersion(version.version)) return false;
-        if (!includeSemVer2 && (metadata.semVer2 ?? isSemVer2NugetVersion(version.version))) {
+        if (!query.includePrerelease && isPrereleaseNugetVersion(version.version)) return false;
+        if (!query.includeSemVer2 && (metadata.semVer2 ?? isSemVer2NugetVersion(version.version))) {
           return false;
         }
         return true;
@@ -282,7 +289,10 @@ export class NugetAdapter implements FormatAdapter {
         totalDownloads: 0,
       });
     }
-    return Response.json({ totalHits: data.length, data: data.slice(skip, skip + take) });
+    return Response.json({
+      totalHits: data.length,
+      data: data.slice(query.skip, query.skip + query.take),
+    });
   }
 
   private async download(

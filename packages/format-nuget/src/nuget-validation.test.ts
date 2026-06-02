@@ -4,6 +4,7 @@ import {
   escapeXml,
   isPrereleaseNugetVersion,
   isSemVer2NugetVersion,
+  NugetSearchQuerySchema,
   normalizeNugetVersion,
 } from "./nuget-validation";
 
@@ -38,5 +39,38 @@ describe("NuGet validation helpers", () => {
 
   test("escapes XML text used in generated nuspec responses", () => {
     expect(escapeXml(`A&B<"C">`)).toBe("A&amp;B&lt;&quot;C&quot;&gt;");
+  });
+
+  test("normalizes search query text, paging bounds, and protocol flags", () => {
+    expect(
+      NugetSearchQuerySchema.parse({
+        q: "  Foo  ",
+        skip: "2.9",
+        take: "250",
+        prerelease: "TRUE",
+        semVerLevel: "2.0.0",
+      }),
+    ).toEqual({
+      q: "foo",
+      skip: 2,
+      take: 100,
+      includePrerelease: true,
+      includeSemVer2: true,
+    });
+
+    expect(
+      NugetSearchQuerySchema.parse({
+        skip: "-1",
+        take: "0",
+        prerelease: "false",
+        semVerLevel: "1.0.0",
+      }),
+    ).toEqual({
+      q: "",
+      skip: 0,
+      take: 20,
+      includePrerelease: false,
+      includeSemVer2: false,
+    });
   });
 });

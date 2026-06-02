@@ -38,6 +38,22 @@ export const NugetPublishQuerySchema = z.strictObject({
   version: NugetVersionInputSchema.optional(),
 });
 
+export const NugetSearchQuerySchema = z
+  .strictObject({
+    q: z.string().optional(),
+    skip: z.string().optional(),
+    take: z.string().optional(),
+    prerelease: z.string().optional(),
+    semVerLevel: z.string().optional(),
+  })
+  .transform((query) => ({
+    q: (query.q ?? "").trim().toLowerCase(),
+    skip: boundedSearchInteger(query.skip, { fallback: 0, min: 0 }),
+    take: boundedSearchInteger(query.take, { fallback: 20, min: 1, max: 100 }),
+    includePrerelease: (query.prerelease ?? "").toLowerCase() === "true",
+    includeSemVer2: query.semVerLevel === "2.0.0",
+  }));
+
 /** NuGet version normalization: drop a zero 4th segment + build metadata, lowercase prerelease. */
 export function normalizeNugetVersion(version: string): string | null {
   let normalized = version.trim();
@@ -98,6 +114,17 @@ export function escapeXml(value: string): string {
 
 function validPrerelease(prerelease: string): boolean {
   return prerelease.split(".").every((part) => /^[0-9A-Za-z-]+$/.test(part));
+}
+
+function boundedSearchInteger(
+  raw: string | undefined,
+  opts: { fallback: number; min: number; max?: number },
+): number {
+  const parsed = raw === undefined ? opts.fallback : Number(raw);
+  if (!Number.isFinite(parsed)) return opts.fallback;
+  const integer = Math.trunc(parsed);
+  if (integer < opts.min) return opts.fallback;
+  return opts.max === undefined ? integer : Math.min(opts.max, integer);
 }
 
 function splitNugetVersion(version: string): { core: number[]; prerelease: string | null } {
