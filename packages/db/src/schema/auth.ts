@@ -134,6 +134,7 @@ export const roleBindings = pgTable(
     index("role_bindings_org_idx").on(t.orgId),
     index("role_bindings_user_idx").on(t.userId),
     index("role_bindings_token_idx").on(t.tokenId),
+    index("role_bindings_repository_idx").on(t.repositoryId),
     check("role_bindings_one_subject_ck", sql`(${t.userId} is null) <> (${t.tokenId} is null)`),
     uniqueIndex("role_bindings_user_repo_uq")
       .on(t.orgId, t.userId, t.repositoryId)
@@ -153,18 +154,22 @@ export const roleBindings = pgTable(
 );
 
 /** OIDC providers (Phase 4). Global when orgId is null. */
-export const oidcProviders = pgTable("oidc_providers", {
-  id: primaryId(),
-  orgId: uuid().references(() => organizations.id, { onDelete: "cascade" }),
-  name: text().notNull(),
-  issuer: text().notNull(),
-  clientId: text().notNull(),
-  clientSecret: text().notNull(),
-  groupClaim: text().notNull().default("groups"),
-  groupRoleMap: jsonb().$type<Record<string, string>>().notNull().default({}),
-  enabled: boolean().notNull().default(true),
-  ...timestamps(),
-});
+export const oidcProviders = pgTable(
+  "oidc_providers",
+  {
+    id: primaryId(),
+    orgId: uuid().references(() => organizations.id, { onDelete: "cascade" }),
+    name: text().notNull(),
+    issuer: text().notNull(),
+    clientId: text().notNull(),
+    clientSecret: text().notNull(),
+    groupClaim: text().notNull().default("groups"),
+    groupRoleMap: jsonb().$type<Record<string, string>>().notNull().default({}),
+    enabled: boolean().notNull().default(true),
+    ...timestamps(),
+  },
+  (t) => [index("oidc_providers_org_idx").on(t.orgId)],
+);
 
 /** External identity links for SSO providers. */
 export const externalIdentities = pgTable(

@@ -78,5 +78,6 @@ export const virtualRepoMembers = pgTable(
   (t) => [
     uniqueIndex("virtual_repo_members_uq").on(t.virtualRepoId, t.memberRepoId),
     index("virtual_repo_members_virtual_idx").on(t.virtualRepoId),
+    index("virtual_repo_members_member_idx").on(t.memberRepoId),
   ],
 );

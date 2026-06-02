@@ -107,7 +107,11 @@ export const ociTags = pgTable(
       .references(() => ociManifests.id, { onDelete: "cascade" }),
     ...timestamps(),
   },
-  (t) => [uniqueIndex("oci_tags_pkg_tag_uq").on(t.packageId, t.tag)],
+  (t) => [
+    uniqueIndex("oci_tags_pkg_tag_uq").on(t.packageId, t.tag),
+    index("oci_tags_repo_idx").on(t.repositoryId),
+    index("oci_tags_manifest_idx").on(t.manifestId),
+  ],
 );
 
 /** Resumable upload sessions. The id IS the Docker-Upload-UUID. */

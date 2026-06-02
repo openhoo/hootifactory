@@ -137,16 +137,20 @@ export const sbomComponents = pgTable(
 );
 
 /** Triage annotations on findings (VEX). */
-export const vexAnnotations = pgTable("vex_annotations", {
-  id: primaryId(),
-  findingId: uuid()
-    .notNull()
-    .references(() => findings.id, { onDelete: "cascade" }),
-  analysisState: text().notNull(),
-  justification: text(),
-  detail: text(),
-  ...timestamps(),
-});
+export const vexAnnotations = pgTable(
+  "vex_annotations",
+  {
+    id: primaryId(),
+    findingId: uuid()
+      .notNull()
+      .references(() => findings.id, { onDelete: "cascade" }),
+    analysisState: text().notNull(),
+    justification: text(),
+    detail: text(),
+    ...timestamps(),
+  },
+  (t) => [index("vex_annotations_finding_idx").on(t.findingId)],
+);
 
 /** Per-org/repo scan gating policy. mode=audit serves now; mode=enforce blocks until clean. */
 export const scanPolicies = pgTable(
