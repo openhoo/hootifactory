@@ -3,7 +3,6 @@ import { env } from "@hootifactory/config";
 import {
   addUpstream,
   addVirtualMember,
-  assertPublicHttpUrl,
   createRepository,
   isUniqueViolation,
 } from "@hootifactory/core";
@@ -41,6 +40,7 @@ import {
   CreateRepositoryBodySchema,
 } from "./ui-schemas";
 import { registerTokenRoutes } from "./ui-tokens";
+import { validateProxyUpstreamParent, validateProxyUpstreamUrl } from "./ui-upstreams";
 import { validateVirtualMemberCandidate, validateVirtualMemberParent } from "./ui-virtual-members";
 
 export const uiRouter = new Hono<AppEnv>();
@@ -203,19 +203,18 @@ uiRouter.post("/repositories/:repoId/members", async (c) => {
 uiRouter.post("/repositories/:repoId/upstreams", async (c) => {
   const guard = await requireRepositoryAccessFromParam(c, "admin");
   if (!guard.ok) return guard.response;
-  if (guard.repo.kind !== "proxy") {
-    return c.json({ error: "upstreams can only be added to proxy repositories" }, 400);
+  const parentValidation = validateProxyUpstreamParent(guard.repo);
+  if (!parentValidation.ok) {
+    return c.json({ error: parentValidation.error }, parentValidation.status);
   }
   const parsedBody = await validateJsonBody(c, AddUpstreamBodySchema, "invalid upstream request");
   if (!parsedBody.ok) return parsedBody.response;
   const body = parsedBody.data;
-  // Reject private/loopback/metadata upstreams at configuration time (SSRF guard).
-  try {
-    assertPublicHttpUrl(body.url);
-  } catch (err) {
-    return c.json({ error: err instanceof Error ? err.message : "invalid upstream url" }, 400);
+  const upstreamUrl = validateProxyUpstreamUrl(body.url);
+  if (!upstreamUrl.ok) {
+    return c.json({ error: upstreamUrl.error }, upstreamUrl.status);
   }
-  await addUpstream(guard.repo.id, body.url, body.priority ?? 0);
+  await addUpstream(guard.repo.id, upstreamUrl.url, body.priority ?? 0);
   audit({
     orgId: guard.repo.orgId,
     action: "repository.upstream.add",
