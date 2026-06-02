@@ -17,6 +17,11 @@ import {
 } from "@hootifactory/core";
 import { and, asc, eq, isNull, packageVersions, users } from "@hootifactory/db";
 import {
+  buildCargoOwnersBody,
+  buildCargoOwnersUpdateBody,
+  parseCargoOwnersRequest,
+} from "./cargo-owners";
+import {
   buildCargoIndexEntry,
   cargoBlobScope,
   digestCargoCrate,
@@ -25,7 +30,6 @@ import {
 import {
   CargoCrateNameSchema,
   CargoIndexPathSchema,
-  CargoOwnersBodySchema,
   type CargoVersionMeta,
   CargoVersionSchema,
   cargoIndexPath,
@@ -34,10 +38,6 @@ import {
 
 function cargoError(detail: string, status: number): Response {
   return Response.json({ errors: [{ detail }] }, { status });
-}
-
-function cargoOwnerId(userId: string): number {
-  return Number.parseInt(userId.replaceAll("-", "").slice(0, 8), 16) >>> 0;
 }
 
 function parseCrateName(crate: string): string {
@@ -189,14 +189,7 @@ export class CargoAdapter implements FormatAdapter {
       .innerJoin(users, eq(packageVersions.publishedByUserId, users.id))
       .where(and(eq(packageVersions.packageId, pkg.id), isNull(packageVersions.deletedAt)))
       .orderBy(asc(packageVersions.createdAt));
-    const seen = new Set<string>();
-    const owners = [];
-    for (const row of rows) {
-      if (seen.has(row.id)) continue;
-      seen.add(row.id);
-      owners.push({ id: cargoOwnerId(row.id), login: row.login, name: row.name });
-    }
-    return Response.json({ users: owners });
+    return Response.json(buildCargoOwnersBody(rows));
   }
 
   private async updateOwners(
@@ -208,18 +201,8 @@ export class CargoAdapter implements FormatAdapter {
     crate = parseCrateName(crate).toLowerCase();
     const pkg = await this.findCrate(ctx, crate);
     if (!pkg) throw Errors.notFound();
-    const rawBody = await req.json().catch(() => {
-      throw Errors.manifestInvalid({ reason: "invalid owners request json" });
-    });
-    const body = parseRegistryInput(CargoOwnersBodySchema, rawBody, {
-      code: "MANIFEST_INVALID",
-      message: "invalid owners request",
-    });
-    const verb = action === "add" ? "added" : "removed";
-    return Response.json({
-      ok: true,
-      msg: `${body.users.length} requested owner(s) ${verb}; crate owners are managed through Hootifactory repository permissions`,
-    });
+    const body = await parseCargoOwnersRequest(req);
+    return Response.json(buildCargoOwnersUpdateBody(body.users.length, action));
   }
 
   private async publish(req: Request, ctx: RepoContext): Promise<Response> {
