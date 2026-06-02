@@ -1,6 +1,6 @@
-import { authorize, issueRegistryToken, type RegistryAccess } from "@hootifactory/auth";
+import { issueRegistryToken, type RegistryAccess } from "@hootifactory/auth";
 import { env } from "@hootifactory/config";
-import { REGISTRY_TOKEN_SERVICE, resolveRepository, z, zodIssueTree } from "@hootifactory/core";
+import { REGISTRY_TOKEN_SERVICE, zodIssueTree } from "@hootifactory/core";
 import {
   addSpanEvent,
   logger,
@@ -10,58 +10,9 @@ import {
 import type { Context } from "hono";
 import { Hono } from "hono";
 import type { AppEnv } from "../types";
+import { grantDockerScope, parseDockerScopes, TokenQuerySchema } from "./token-scopes";
 
 export const tokenRouter = new Hono<AppEnv>();
-
-const TokenQuerySchema = z.strictObject({
-  service: z.string().min(1).max(512).optional(),
-  scopes: z.array(z.string().min(1).max(4096)).max(100),
-});
-
-const DockerScopeSchema = z
-  .string()
-  .min(1)
-  .max(4096)
-  .transform((scope, ctx) => {
-    const firstColon = scope.indexOf(":");
-    const lastColon = scope.lastIndexOf(":");
-    if (firstColon < 0 || lastColon <= firstColon) {
-      ctx.addIssue({ code: "custom", message: "scope must be type:name:actions" });
-      return z.NEVER;
-    }
-    const type = scope.slice(0, firstColon);
-    const name = scope.slice(firstColon + 1, lastColon);
-    const requested = scope
-      .slice(lastColon + 1)
-      .split(",")
-      .filter(Boolean);
-    if (type !== "repository") {
-      ctx.addIssue({ code: "custom", message: "scope type must be repository" });
-      return z.NEVER;
-    }
-    if (!name || name.length > 512 || name.includes("..") || name.startsWith("/")) {
-      ctx.addIssue({ code: "custom", message: "scope repository name is invalid" });
-      return z.NEVER;
-    }
-    if (requested.length === 0 || requested.length > 4) {
-      ctx.addIssue({ code: "custom", message: "scope actions are invalid" });
-      return z.NEVER;
-    }
-    for (const action of requested) {
-      if (!["pull", "push", "delete", "*"].includes(action)) {
-        ctx.addIssue({ code: "custom", message: `unsupported scope action '${action}'` });
-        return z.NEVER;
-      }
-    }
-    return { type, name, requested };
-  });
-
-function dockerToRbac(action: string): "read" | "write" | "delete" | null {
-  if (action === "pull") return "read";
-  if (action === "push") return "write";
-  if (action === "delete") return "delete";
-  return null;
-}
 
 /**
  * OCI token endpoint. Authorizes each requested `repository:<name>:<actions>`
@@ -96,8 +47,7 @@ async function handleToken(c: Context<AppEnv>): Promise<Response> {
       400,
     );
   }
-  const rawScopes = query.data.scopes.flatMap((s) => s.split(" ")).filter(Boolean);
-  const scopeList = z.array(DockerScopeSchema).safeParse(rawScopes);
+  const scopeList = parseDockerScopes(query.data.scopes);
   if (!scopeList.success) {
     return c.json(
       {
@@ -148,29 +98,10 @@ async function handleToken(c: Context<AppEnv>): Promise<Response> {
         "registry.token.requested_actions": requested.join(","),
       });
 
-      const granted: string[] = [];
-      const resolution = await resolveRepository(`/v2/${name}`);
-      span.setAttribute("registry.repository.resolved", Boolean(resolution));
-      if (resolution) {
-        const { repo } = resolution;
-        const wantActions = requested.flatMap((a) =>
-          a === "*" ? ["pull", "push", "delete"] : [a],
-        );
-        for (const da of wantActions) {
-          const rbac = dockerToRbac(da);
-          if (!rbac) continue;
-          const decision = await authorize(principal, rbac, {
-            type: "repository",
-            orgId: repo.orgId,
-            repositoryId: repo.id,
-            repositoryName: name,
-            visibility: repo.visibility,
-          });
-          if (decision.allowed && !granted.includes(da)) granted.push(da);
-        }
-      }
-      span.setAttribute("registry.token.granted_actions", granted.join(","));
-      access.push({ type: "repository", name, actions: granted });
+      const grant = await grantDockerScope(principal, scope);
+      span.setAttribute("registry.repository.resolved", grant.repositoryResolved);
+      span.setAttribute("registry.token.granted_actions", grant.access.actions.join(","));
+      access.push(grant.access);
     });
   }
 
