@@ -228,7 +228,7 @@ authRouter.post("/password-reset/request", async (c) => {
     "invalid password reset request",
   );
   if (!parsedBody.ok) return parsedBody.response;
-  const email = parsedBody.data.email.toLowerCase();
+  const { email } = parsedBody.data;
   const ip = clientIp(c);
   const throttleKey = passwordResetThrottleKey(email, ip);
   const throttle = passwordResetIsThrottled(throttleKey);
@@ -329,7 +329,7 @@ authRouter.post("/register", async (c) => {
   const username = body.username;
   const email = body.email;
   const password = body.password;
-  const displayName = body.displayName ?? username;
+  const displayName = body.displayName;
   try {
     const [user] = await withSpan("auth.register_user", {}, async () =>
       db

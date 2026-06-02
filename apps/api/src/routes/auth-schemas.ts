@@ -1,11 +1,20 @@
 import { z } from "@hootifactory/core";
 
-export const RegisterBodySchema = z.strictObject({
-  username: z.string().trim().min(1).max(128),
-  email: z.email().max(320),
-  password: z.string().min(8).max(1024),
-  displayName: z.string().trim().min(1).max(256).optional(),
-});
+const EmailSchema = z
+  .string()
+  .trim()
+  .max(320)
+  .pipe(z.email())
+  .transform((email) => email.toLowerCase());
+
+export const RegisterBodySchema = z
+  .strictObject({
+    username: z.string().trim().min(1).max(128),
+    email: EmailSchema,
+    password: z.string().min(8).max(1024),
+    displayName: z.string().trim().min(1).max(256).optional(),
+  })
+  .transform((body) => ({ ...body, displayName: body.displayName ?? body.username }));
 
 export const LoginBodySchema = z.strictObject({
   username: z.string().trim().min(1).max(128),
@@ -13,7 +22,7 @@ export const LoginBodySchema = z.strictObject({
 });
 
 export const PasswordResetRequestBodySchema = z.strictObject({
-  email: z.email().max(320),
+  email: EmailSchema,
 });
 
 export const PasswordResetConfirmBodySchema = z.strictObject({
