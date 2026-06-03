@@ -11,18 +11,14 @@ import {
   readWritePermission,
 } from "@hootifactory/registry";
 import {
-  commitVersionOrReleaseBlob,
   findLiveVersion,
-  findOrCreatePackage,
   findPackageByName,
-  findVersion,
   listLivePackageVersions,
   listRepositoryPackages,
   serveBlobIfClean,
-  storeBlobWithRef,
   updatePackageVersionMetadata,
 } from "@hootifactory/registry-application";
-import { parseNugetPublishRequest } from "./nuget-publish";
+import { handleNugetPublish } from "./nuget-publish-lifecycle";
 import { buildNugetRegistrationIndex, buildNugetRegistrationItem } from "./nuget-registration";
 import {
   buildNugetSearchResponse,
@@ -292,48 +288,6 @@ export class NugetAdapter implements RegistryPlugin {
   }
 
   private async publish(req: Request, ctx: RegistryRequestContext): Promise<Response> {
-    const parsed = await parseNugetPublishRequest(req);
-    if (!parsed.ok) {
-      return Response.json({ error: parsed.error.error }, { status: parsed.error.status });
-    }
-    const { bytes, file, lowerId, metadata, version } = parsed.plan;
-
-    const pkg = await findOrCreatePackage({
-      orgId: ctx.repo.orgId,
-      repositoryId: ctx.repo.id,
-      name: lowerId,
-    });
-    // NuGet packages are immutable. A retention tombstone still reserves the
-    // normalized package version, so old bytes cannot be replaced by re-push.
-    const existing = await findVersion(pkg.id, version);
-    if (existing) return new Response(null, { status: 409 });
-
-    const stored = await storeBlobWithRef(ctx, {
-      data: bytes,
-      kind: "generic_file",
-      scope: file,
-      mediaType: "application/octet-stream",
-    });
-    const result = await commitVersionOrReleaseBlob(ctx, {
-      stored,
-      kind: "generic_file",
-      scope: file,
-      packageId: pkg.id,
-      version,
-      metadata: {
-        ...metadata,
-        nupkgDigest: stored.digest,
-      },
-      sizeBytes: bytes.length,
-      scan: {
-        name: lowerId,
-        version,
-        mediaType: "application/octet-stream",
-      },
-    });
-    if ("conflict" in result) {
-      return new Response(null, { status: 409 });
-    }
-    return new Response(null, { status: 201 });
+    return handleNugetPublish(req, ctx);
   }
 }
