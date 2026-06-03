@@ -22,15 +22,41 @@ export function currentThrottleBucket(
   key: string,
   windowSeconds: number,
   now = Date.now(),
+  maxBuckets = env.AUTH_THROTTLE_MAX_BUCKETS,
 ): AuthThrottleBucket {
   const existing = buckets.get(key);
-  if (existing && existing.resetAt > now) return existing;
+  if (existing && existing.resetAt > now) {
+    buckets.delete(key);
+    buckets.set(key, existing);
+    return existing;
+  }
+  pruneThrottleBuckets(buckets, now, maxBuckets);
+  while (buckets.size >= maxBuckets) {
+    const oldest = buckets.keys().next().value;
+    if (oldest === undefined) break;
+    buckets.delete(oldest);
+  }
   const fresh = {
     count: 0,
     resetAt: now + windowSeconds * 1000,
   };
   buckets.set(key, fresh);
   return fresh;
+}
+
+export function pruneThrottleBuckets(
+  buckets: Map<string, AuthThrottleBucket>,
+  now = Date.now(),
+  maxBuckets = env.AUTH_THROTTLE_MAX_BUCKETS,
+): void {
+  for (const [key, bucket] of buckets) {
+    if (bucket.resetAt <= now) buckets.delete(key);
+  }
+  while (buckets.size > maxBuckets) {
+    const oldest = buckets.keys().next().value;
+    if (oldest === undefined) break;
+    buckets.delete(oldest);
+  }
 }
 
 export function retryAfterSeconds(bucket: AuthThrottleBucket, now = Date.now()): number {

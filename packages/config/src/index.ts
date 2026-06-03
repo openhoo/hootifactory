@@ -191,6 +191,7 @@ const EnvSchema = z
     AUTH_ALLOW_ORG_CREATION: boolish.optional(),
     AUTH_LOGIN_MAX_ATTEMPTS: positiveInt(5),
     AUTH_LOGIN_WINDOW_SECONDS: positiveInt(60),
+    AUTH_THROTTLE_MAX_BUCKETS: positiveInt(10_000),
     AUTH_PASSWORD_RESET_TTL_SECONDS: positiveInt(30 * 60),
     AUTH_PASSWORD_RESET_MAX_ATTEMPTS: positiveInt(3),
     AUTH_PASSWORD_RESET_WINDOW_SECONDS: positiveInt(5 * 60),

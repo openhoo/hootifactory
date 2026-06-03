@@ -5,6 +5,7 @@ import {
   currentThrottleBucket,
   loginIsThrottled,
   loginThrottleKey,
+  pruneThrottleBuckets,
   retryAfterSeconds,
 } from "./auth-throttle";
 
@@ -25,6 +26,27 @@ describe("auth throttle helpers", () => {
       count: 0,
       resetAt: 21_000,
     });
+  });
+
+  test("prunes expired throttle buckets", () => {
+    const buckets = new Map<string, { count: number; resetAt: number }>([
+      ["expired", { count: 1, resetAt: 999 }],
+      ["active", { count: 1, resetAt: 2_000 }],
+    ]);
+
+    pruneThrottleBuckets(buckets, 1_000, 10);
+
+    expect([...buckets.keys()]).toEqual(["active"]);
+  });
+
+  test("evicts oldest active throttle buckets when the cache is full", () => {
+    const buckets = new Map<string, { count: number; resetAt: number }>();
+
+    currentThrottleBucket(buckets, "one", 10, 1_000, 2);
+    currentThrottleBucket(buckets, "two", 10, 1_001, 2);
+    currentThrottleBucket(buckets, "three", 10, 1_002, 2);
+
+    expect([...buckets.keys()]).toEqual(["two", "three"]);
   });
 
   test("calculates retry-after seconds with a minimum of one", () => {

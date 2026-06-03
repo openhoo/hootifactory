@@ -22,6 +22,7 @@ describe("environment auth creation defaults", () => {
     expect(devEnv.API_TRUSTED_ORIGINS).toEqual([]);
     expect(devEnv.AUTH_LOGIN_MAX_ATTEMPTS).toBe(5);
     expect(devEnv.AUTH_LOGIN_WINDOW_SECONDS).toBe(60);
+    expect(devEnv.AUTH_THROTTLE_MAX_BUCKETS).toBe(10_000);
     expect(devEnv.AUTH_PASSWORD_RESET_TTL_SECONDS).toBe(30 * 60);
     expect(devEnv.AUTH_OIDC_LINK_TTL_SECONDS).toBe(15 * 60);
     expect(devEnv.EMAIL_ENABLED).toBe(false);
@@ -138,8 +139,10 @@ describe("environment auth creation defaults", () => {
     });
     expect(env.AUTH_LOGIN_MAX_ATTEMPTS).toBe(7);
     expect(env.AUTH_LOGIN_WINDOW_SECONDS).toBe(120);
+    expect(loadEnv({ AUTH_THROTTLE_MAX_BUCKETS: "100" }).AUTH_THROTTLE_MAX_BUCKETS).toBe(100);
     expect(() => loadEnv({ AUTH_LOGIN_MAX_ATTEMPTS: "0" })).toThrow();
     expect(() => loadEnv({ AUTH_LOGIN_WINDOW_SECONDS: "-1" })).toThrow();
+    expect(() => loadEnv({ AUTH_THROTTLE_MAX_BUCKETS: "0" })).toThrow();
   });
 
   test("email configuration is validated when enabled", () => {
