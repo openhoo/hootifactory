@@ -4,7 +4,7 @@ import {
   RegistryError,
   type ResolvedRepo,
   type RouteEntry,
-} from "@hootifactory/core";
+} from "@hootifactory/registry";
 import { resolveRegistryRouteMatch } from "./registry-route-match";
 
 const routes = compileRoutes([

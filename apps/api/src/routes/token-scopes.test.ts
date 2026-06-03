@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { Action, Principal } from "@hootifactory/auth";
-import type { ResolvedRepo } from "@hootifactory/core";
+import type { ResolvedRepo } from "@hootifactory/registry";
 import {
   dockerToRbac,
   grantDockerScope,

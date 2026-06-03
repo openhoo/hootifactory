@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import type { FormatAdapter, RepoContext, ResolvedRepo, RouteMatch } from "@hootifactory/core";
+import type {
+  RegistryPlugin,
+  RegistryRequestContext,
+  ResolvedRepo,
+  RouteMatch,
+} from "@hootifactory/registry";
 import {
   type AuthAttributeSpan,
   authorizeVirtualMember,
@@ -36,7 +41,7 @@ function fakeSpan() {
   };
 }
 
-function fakeAdapter(repositoryName?: string): FormatAdapter {
+function fakeAdapter(repositoryName?: string): RegistryPlugin {
   return {
     format: "npm",
     capabilities: {
@@ -48,13 +53,13 @@ function fakeAdapter(repositoryName?: string): FormatAdapter {
     handle: async () => new Response(null),
     routes: () => [],
     requiredPermission: () => ({ action: "read", repositoryName }),
-  } as FormatAdapter;
+  } as RegistryPlugin;
 }
 
-function parentContext(): RepoContext {
+function parentContext(): RegistryRequestContext {
   return {
     principal: { kind: "anonymous" },
-  } as RepoContext;
+  } as RegistryRequestContext;
 }
 
 describe("virtual member authorization", () => {

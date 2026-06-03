@@ -1,3 +1,4 @@
+import { logger } from "@hootifactory/observability";
 import {
   type CompiledRoute,
   Errors,
@@ -5,8 +6,7 @@ import {
   matchRoute,
   type ResolvedRepo,
   type RouteMatch,
-} from "@hootifactory/core";
-import { logger } from "@hootifactory/observability";
+} from "@hootifactory/registry";
 
 export interface RegistryRouteMatchResolution {
   match: RouteMatch;

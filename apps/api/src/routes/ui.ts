@@ -1,6 +1,7 @@
 import { env } from "@hootifactory/config";
-import { createRepository, isUniqueViolation } from "@hootifactory/core";
+import { isUniqueViolation } from "@hootifactory/core";
 import { db, eq, memberships, organizations, repositories } from "@hootifactory/db";
+import { createRepository } from "@hootifactory/registry";
 import { Hono } from "hono";
 import type { AppEnv } from "../types";
 import { uuidParams, validateJsonBody, validateParams } from "../validation";

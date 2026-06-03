@@ -1,11 +1,11 @@
+import { logger, withSpan } from "@hootifactory/observability";
 import {
   Errors,
-  type FormatAdapter,
   loadUpstream,
-  type RepoContext,
+  type RegistryPlugin,
+  type RegistryRequestContext,
   type RouteMatch,
-} from "@hootifactory/core";
-import { logger, withSpan } from "@hootifactory/observability";
+} from "@hootifactory/registry";
 import { adapterResponse } from "./registry-adapter";
 import { isReadMethod } from "./registry-utils";
 
@@ -18,10 +18,10 @@ async function proxyError(response: Response): Promise<Response> {
 
 /** Proxy repo: serve locally; on a read miss, mirror from the upstream and retry. */
 export async function dispatchProxy(
-  adapter: FormatAdapter,
+  adapter: RegistryPlugin,
   match: RouteMatch,
   req: Request,
-  ctx: RepoContext,
+  ctx: RegistryRequestContext,
 ): Promise<Response> {
   return withSpan(
     "registry.proxy.dispatch",

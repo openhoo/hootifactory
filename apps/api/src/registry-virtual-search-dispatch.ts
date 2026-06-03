@@ -1,12 +1,12 @@
+import { withSpan } from "@hootifactory/observability";
 import {
   Errors,
-  type FormatAdapter,
   type HttpMethod,
   loadVirtualMembers,
-  type RepoContext,
+  type RegistryPlugin,
+  type RegistryRequestContext,
   type RouteMatch,
-} from "@hootifactory/core";
-import { withSpan } from "@hootifactory/observability";
+} from "@hootifactory/registry";
 import { adapterResponseOrRegistryError } from "./registry-adapter";
 import { repoSpanAttributes } from "./registry-utils";
 import { authorizeVirtualMember } from "./registry-virtual-member";
@@ -23,10 +23,10 @@ import {
 } from "./registry-virtual-search";
 
 async function dispatchVirtualNpmSearch(
-  adapter: FormatAdapter,
+  adapter: RegistryPlugin,
   match: RouteMatch,
   req: Request,
-  ctx: RepoContext,
+  ctx: RegistryRequestContext,
 ): Promise<Response> {
   return withSpan(
     "registry.virtual.search",
@@ -79,10 +79,10 @@ async function dispatchVirtualNpmSearch(
 }
 
 async function dispatchVirtualNugetSearch(
-  adapter: FormatAdapter,
+  adapter: RegistryPlugin,
   match: RouteMatch,
   req: Request,
-  ctx: RepoContext,
+  ctx: RegistryRequestContext,
 ): Promise<Response> {
   return withSpan(
     "registry.virtual.search",
@@ -136,10 +136,10 @@ async function dispatchVirtualNugetSearch(
 }
 
 export function dispatchVirtualSearch(
-  adapter: FormatAdapter,
+  adapter: RegistryPlugin,
   match: RouteMatch,
   req: Request,
-  ctx: RepoContext,
+  ctx: RegistryRequestContext,
 ): Promise<Response> {
   if (adapter.format === "nuget") return dispatchVirtualNugetSearch(adapter, match, req, ctx);
   if (adapter.format === "npm") return dispatchVirtualNpmSearch(adapter, match, req, ctx);

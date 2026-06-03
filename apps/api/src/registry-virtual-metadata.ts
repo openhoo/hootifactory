@@ -1,14 +1,14 @@
+import { withSpan } from "@hootifactory/observability";
 import {
   Errors,
-  type FormatAdapter,
   type FormatMetadata,
   type HttpMethod,
   loadVirtualMembers,
   RegistryError,
-  type RepoContext,
+  type RegistryPlugin,
+  type RegistryRequestContext,
   type RouteMatch,
-} from "@hootifactory/core";
-import { withSpan } from "@hootifactory/observability";
+} from "@hootifactory/registry";
 import { registryErrorToFormatResponse } from "./registry-error-format";
 import { repoSpanAttributes } from "./registry-utils";
 import { authorizeVirtualMember } from "./registry-virtual-member";
@@ -21,10 +21,10 @@ export function virtualMetadataPackageName(match: RouteMatch): string | null {
 }
 
 export async function dispatchVirtualMetadata(
-  adapter: FormatAdapter,
+  adapter: RegistryPlugin,
   name: string,
   req: Request,
-  ctx: RepoContext,
+  ctx: RegistryRequestContext,
 ): Promise<Response> {
   return withSpan(
     "registry.virtual.metadata",

@@ -1,12 +1,12 @@
+import { addSpanEvent } from "@hootifactory/observability";
 import type {
-  FormatAdapter,
   HttpMethod,
-  RepoContext,
+  RegistryPlugin,
+  RegistryRequestContext,
   ResolvedRepo,
   RouteMatch,
-} from "@hootifactory/core";
-import { addSpanEvent } from "@hootifactory/observability";
-import { buildRepoContext } from "./context";
+} from "@hootifactory/registry";
+import { buildRegistryRequestContext } from "./context";
 import { authorizeRoute, type RouteAuthorization } from "./registry-auth";
 
 export interface AuthAttributeSpan {
@@ -14,7 +14,7 @@ export interface AuthAttributeSpan {
 }
 
 export interface VirtualMemberAuthorization extends RouteAuthorization {
-  memberCtx: RepoContext;
+  memberCtx: RegistryRequestContext;
 }
 
 export function virtualMemberSkipReason(authorization: VirtualMemberAuthorization): string {
@@ -22,14 +22,14 @@ export function virtualMemberSkipReason(authorization: VirtualMemberAuthorizatio
 }
 
 export async function authorizeVirtualMember(
-  adapter: FormatAdapter,
+  adapter: RegistryPlugin,
   method: HttpMethod,
   match: RouteMatch,
   member: ResolvedRepo,
-  parentCtx: RepoContext,
+  parentCtx: RegistryRequestContext,
   span: AuthAttributeSpan,
 ): Promise<VirtualMemberAuthorization> {
-  const memberCtx = buildRepoContext(member, parentCtx.principal);
+  const memberCtx = buildRegistryRequestContext(member, parentCtx.principal);
   const authorization = await authorizeRoute(adapter, method, match, memberCtx);
   span.setAttributes({
     "auth.action": authorization.permission.action,

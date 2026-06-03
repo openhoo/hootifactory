@@ -5,7 +5,8 @@ import {
   type Principal,
   type RegistryAccess,
 } from "@hootifactory/auth";
-import { type ResolvedRepo, resolveRepository, z } from "@hootifactory/core";
+import { z } from "@hootifactory/core";
+import { type ResolvedRepo, resolveRepository } from "@hootifactory/registry";
 
 export const TokenQuerySchema = z.strictObject({
   service: z.string().min(1).max(512).optional(),

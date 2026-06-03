@@ -1,21 +1,11 @@
-import { formatRegistry } from "@hootifactory/core";
-import { CargoAdapter } from "@hootifactory/format-cargo";
-import { DockerAdapter } from "@hootifactory/format-docker";
-import { GoAdapter } from "@hootifactory/format-go";
-import { NpmAdapter } from "@hootifactory/format-npm";
-import { NugetAdapter } from "@hootifactory/format-nuget";
-import { PypiAdapter } from "@hootifactory/format-pypi";
+import { registryPlugins } from "@hootifactory/registry";
+import { registerBuiltInRegistryPlugins } from "@hootifactory/registry-builtins";
 import { logger } from "./lib/logger";
 
-/** Register all format adapters (Helm + OCI reuse the Docker adapter). */
+/** Register all built-in registry plugins (Helm + OCI reuse the Docker plugin). */
 export function registerAdapters(): void {
-  formatRegistry.register(new NpmAdapter());
-  formatRegistry.register(new DockerAdapter());
-  formatRegistry.register(new PypiAdapter());
-  formatRegistry.register(new GoAdapter());
-  formatRegistry.register(new CargoAdapter());
-  formatRegistry.register(new NugetAdapter());
-  formatRegistry.registerAs("oci", new DockerAdapter());
-  formatRegistry.registerAs("helm", new DockerAdapter());
-  logger.info("adapters registered", { formats: formatRegistry.all().map((a) => a.format) });
+  registerBuiltInRegistryPlugins(registryPlugins);
+  logger.info("registry plugins registered", {
+    formats: registryPlugins.all().map((plugin) => plugin.format),
+  });
 }

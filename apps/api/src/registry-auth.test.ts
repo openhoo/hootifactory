@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { FormatAdapter, RepoContext, ResolvedRepo } from "@hootifactory/core";
+import type { RegistryPlugin, RegistryRequestContext, ResolvedRepo } from "@hootifactory/registry";
 import { appendBearerChallengeError, registryAuthorizationDeniedResponse } from "./registry-auth";
 import type { registryErrorResponseForFormat } from "./registry-error-format";
 
@@ -17,9 +17,9 @@ const ctx = {
   repo,
   principal: { kind: "anonymous" },
   baseUrl: "https://registry.test",
-} as RepoContext;
+} as RegistryRequestContext;
 
-function adapter(challenge?: FormatAdapter["authChallenge"]): FormatAdapter {
+function adapter(challenge?: RegistryPlugin["authChallenge"]): RegistryPlugin {
   return {
     format: "docker",
     capabilities: {
@@ -32,7 +32,7 @@ function adapter(challenge?: FormatAdapter["authChallenge"]): FormatAdapter {
     handle: async () => new Response(null),
     requiredPermission: () => ({ action: "read" }),
     routes: () => [],
-  } as FormatAdapter;
+  } as RegistryPlugin;
 }
 
 function captureDeny() {

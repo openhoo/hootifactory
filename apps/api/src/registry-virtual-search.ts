@@ -1,4 +1,4 @@
-import { parseRegistryInput, z } from "@hootifactory/core";
+import { parseRegistryInput, z } from "@hootifactory/registry";
 
 const NpmSearchWindowSchema = z.strictObject({
   from: z.coerce.number().int().min(0).max(10_000).default(0),

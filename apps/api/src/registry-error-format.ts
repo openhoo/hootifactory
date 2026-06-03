@@ -1,4 +1,4 @@
-import type { OciErrorCode, RegistryError } from "@hootifactory/core";
+import type { OciErrorCode, RegistryError } from "@hootifactory/registry";
 import type { PackageFormat } from "@hootifactory/types";
 
 const NON_OCI_ERROR_OBJECT_FORMATS = new Set<PackageFormat>(["go", "npm", "nuget", "pypi"]);

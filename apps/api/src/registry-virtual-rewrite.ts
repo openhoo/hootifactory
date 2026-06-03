@@ -1,4 +1,4 @@
-import type { FormatMetadata } from "@hootifactory/core";
+import type { FormatMetadata } from "@hootifactory/registry";
 import { headersWithoutContentLength } from "./registry-utils";
 
 export function shouldRewriteVirtualBody(contentType: string): boolean {

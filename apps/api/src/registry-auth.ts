@@ -1,13 +1,13 @@
 import { type Decision, httpStatusForDenial } from "@hootifactory/auth";
+import { logger } from "@hootifactory/observability";
 import type {
-  FormatAdapter,
   HttpMethod,
   Permission,
-  RepoContext,
+  RegistryPlugin,
+  RegistryRequestContext,
   ResolvedRepo,
   RouteMatch,
-} from "@hootifactory/core";
-import { logger } from "@hootifactory/observability";
+} from "@hootifactory/registry";
 import type { registryErrorResponseForFormat } from "./registry-error-format";
 import type { RegistryAuthFailure } from "./types";
 
@@ -18,10 +18,10 @@ export interface RouteAuthorization {
 }
 
 export async function authorizeRoute(
-  adapter: FormatAdapter,
+  adapter: RegistryPlugin,
   method: HttpMethod,
   match: RouteMatch,
-  ctx: RepoContext,
+  ctx: RegistryRequestContext,
 ): Promise<RouteAuthorization> {
   const permission = adapter.requiredPermission(method, match, ctx);
   const repositoryName = permission.repositoryName ?? ctx.repo.name;
@@ -40,9 +40,9 @@ type RegistryErrorResponseInput = Parameters<typeof registryErrorResponseForForm
 
 export interface RegistryAuthorizationDenialInput {
   repo: ResolvedRepo;
-  adapter: FormatAdapter;
-  ctx: RepoContext;
-  principal: RepoContext["principal"];
+  adapter: RegistryPlugin;
+  ctx: RegistryRequestContext;
+  principal: RegistryRequestContext["principal"];
   decision: Decision;
   permission: Permission;
   registryAuthFailure?: RegistryAuthFailure;

@@ -7,11 +7,11 @@ import {
   RouterProvider,
 } from "@tanstack/react-router";
 import { Toaster } from "@/components/ui/sonner";
+import { ForgotPasswordPage, LoginPage, ResetPasswordPage } from "@/features/auth/pages";
+import { DashboardPage } from "@/features/dashboard/pages";
+import { RepoDetailPage, ReposPage } from "@/features/repositories/pages";
+import { TokensPage } from "@/features/tokens/pages";
 import { AppShell } from "@/layout/app-shell";
-import { ForgotPasswordPage, LoginPage, ResetPasswordPage } from "@/pages/auth";
-import { DashboardPage } from "@/pages/dashboard";
-import { RepoDetailPage, ReposPage } from "@/pages/repositories";
-import { TokensPage } from "@/pages/tokens";
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 

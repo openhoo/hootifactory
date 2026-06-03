@@ -9,8 +9,8 @@ import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { Separator } from "@/components/ui/separator";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
+import { CreateFirstOrg } from "@/features/auth/pages";
 import { api, type Org } from "@/lib/api";
-import { CreateFirstOrg } from "@/pages/auth";
 
 interface OrgCtx {
   orgs: Org[];

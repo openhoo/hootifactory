@@ -1,15 +1,22 @@
 import { type Action, authorize, type Principal, type ResourceRef } from "@hootifactory/auth";
 import { env } from "@hootifactory/config";
-import type { EnqueueScanInput, RepoContext, ResolvedRepo } from "@hootifactory/core";
 import { artifacts, db, eq } from "@hootifactory/db";
 import { addSpanEvent, captureTelemetryContext, withSpan } from "@hootifactory/observability";
 import { enqueue, QUEUES } from "@hootifactory/queue";
+import type {
+  EnqueueScanInput,
+  RegistryRequestContext,
+  ResolvedRepo,
+} from "@hootifactory/registry";
 import { blobStore } from "@hootifactory/storage";
 import { logger } from "./lib/logger";
 import { errorMessage } from "./validation";
 
-/** Assemble the per-request RepoContext injected into a format adapter. */
-export function buildRepoContext(repo: ResolvedRepo, principal: Principal): RepoContext {
+/** Assemble the per-request RegistryRequestContext injected into a format adapter. */
+export function buildRegistryRequestContext(
+  repo: ResolvedRepo,
+  principal: Principal,
+): RegistryRequestContext {
   return {
     repo,
     principal,

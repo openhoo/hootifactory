@@ -1,12 +1,12 @@
+import { logger, withSpan } from "@hootifactory/observability";
 import {
   Errors,
-  type FormatAdapter,
   type HttpMethod,
   loadVirtualMembers,
-  type RepoContext,
+  type RegistryPlugin,
+  type RegistryRequestContext,
   type RouteMatch,
-} from "@hootifactory/core";
-import { logger, withSpan } from "@hootifactory/observability";
+} from "@hootifactory/registry";
 import { adapterResponseOrRegistryError } from "./registry-adapter";
 import { isReadMethod, repoSpanAttributes } from "./registry-utils";
 import { authorizeVirtualMember, virtualMemberSkipReason } from "./registry-virtual-member";
@@ -17,10 +17,10 @@ import { dispatchVirtualSearch } from "./registry-virtual-search-dispatch";
 
 /** Virtual repo: try each member in order; return the first non-error response. */
 export async function dispatchVirtual(
-  adapter: FormatAdapter,
+  adapter: RegistryPlugin,
   match: RouteMatch,
   req: Request,
-  ctx: RepoContext,
+  ctx: RegistryRequestContext,
 ): Promise<Response> {
   return withSpan(
     "registry.virtual.dispatch",

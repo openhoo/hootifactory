@@ -1,11 +1,11 @@
+import { logger, withSpan } from "@hootifactory/observability";
 import {
-  type FormatAdapter,
   type OciErrorCode,
   RegistryError,
-  type RepoContext,
+  type RegistryPlugin,
+  type RegistryRequestContext,
   type RouteMatch,
-} from "@hootifactory/core";
-import { logger, withSpan } from "@hootifactory/observability";
+} from "@hootifactory/registry";
 import { registryErrorToFormatResponse } from "./registry-error-format";
 import { repoFormatSpanAttributes } from "./registry-utils";
 
@@ -21,10 +21,10 @@ function isRegistryMiss(err: unknown): err is RegistryError {
 }
 
 export async function adapterResponse(
-  adapter: FormatAdapter,
+  adapter: RegistryPlugin,
   match: RouteMatch,
   req: Request,
-  ctx: RepoContext,
+  ctx: RegistryRequestContext,
 ): Promise<Response> {
   return withSpan(
     "registry.adapter.handle",
@@ -81,10 +81,10 @@ export async function adapterResponse(
 }
 
 export async function adapterResponseOrRegistryError(
-  adapter: FormatAdapter,
+  adapter: RegistryPlugin,
   match: RouteMatch,
   req: Request,
-  ctx: RepoContext,
+  ctx: RegistryRequestContext,
 ): Promise<Response> {
   try {
     return await adapterResponse(adapter, match, req, ctx);

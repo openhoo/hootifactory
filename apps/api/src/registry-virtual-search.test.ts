@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { RegistryError } from "@hootifactory/core";
+import { RegistryError } from "@hootifactory/registry";
 import {
   allNpmSearchResultsRequest,
   allNugetSearchResultsRequest,

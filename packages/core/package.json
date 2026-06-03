@@ -14,11 +14,6 @@
   },
   "dependencies": {
     "@hootifactory/config": "workspace:*",
-    "@hootifactory/types": "workspace:*",
-    "@hootifactory/db": "workspace:*",
-    "@hootifactory/scan-core": "workspace:*",
-    "@hootifactory/storage": "workspace:*",
-    "@hootifactory/auth": "workspace:*",
     "zod": "^4.4.3"
   }
 }

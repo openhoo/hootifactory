@@ -1,6 +1,6 @@
 import { authorize } from "@hootifactory/auth";
-import { addUpstream, addVirtualMember } from "@hootifactory/core";
 import { db, eq, repositories } from "@hootifactory/db";
+import { addUpstream, addVirtualMember } from "@hootifactory/registry";
 import type { Hono } from "hono";
 import type { AppEnv } from "../types";
 import { validateJsonBody } from "../validation";

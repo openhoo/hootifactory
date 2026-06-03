@@ -1,8 +1,8 @@
 import {
-  formatRegistry,
   isValidRepositoryName,
   isValidRepositoryNameForFormat,
-} from "@hootifactory/core";
+  registryPlugins,
+} from "@hootifactory/registry";
 import type { PackageFormat, RepoKind, Visibility } from "@hootifactory/types";
 import { type CreateRepositoryBody, RepoKindSchema, VisibilitySchema } from "./ui-schemas";
 
@@ -30,7 +30,7 @@ type RepositoryCreateResolution =
 
 export function resolveCreateRepositoryRequest(
   body: CreateRepositoryBody,
-  registry: RepositoryCapabilityRegistry = formatRegistry,
+  registry: RepositoryCapabilityRegistry = registryPlugins,
 ): RepositoryCreateResolution {
   if (!isValidRepositoryName(body.name)) {
     return {

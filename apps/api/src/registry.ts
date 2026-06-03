@@ -1,4 +1,3 @@
-import { Errors, formatRegistry, type HttpMethod, resolveRepository } from "@hootifactory/core";
 import {
   logger,
   recordRegistryRequest,
@@ -6,8 +5,14 @@ import {
   withLogAttributes,
   withSpan,
 } from "@hootifactory/observability";
+import {
+  Errors,
+  type HttpMethod,
+  registryPlugins,
+  resolveRepository,
+} from "@hootifactory/registry";
 import type { Context } from "hono";
-import { buildRepoContext } from "./context";
+import { buildRegistryRequestContext } from "./context";
 import { authorizeRoute, registryAuthorizationDeniedResponse } from "./registry-auth";
 import { dispatchByRepoKind } from "./registry-dispatch";
 import { registryErrorResponseForFormat } from "./registry-error-format";
@@ -70,12 +75,12 @@ export async function handleRegistryRequest(c: Context<AppEnv>): Promise<Respons
         recordOutcome(response.status, "denied");
         return response;
       };
-      const adapter = formatRegistry.lookup(repo.format);
+      const adapter = registryPlugins.lookup(repo.format);
       if (!adapter) throw Errors.unsupported({ format: repo.format });
 
       const { match, fellBackToGet, spanAttributes } = resolveRegistryRouteMatch(
         repo,
-        formatRegistry.routesFor(repo.format),
+        registryPlugins.routesFor(repo.format),
         method,
         rest,
       );
@@ -93,7 +98,7 @@ export async function handleRegistryRequest(c: Context<AppEnv>): Promise<Respons
           message: "OCI registry bearer tokens are only valid for OCI repositories",
         });
       }
-      const ctx = buildRepoContext(repo, principal);
+      const ctx = buildRegistryRequestContext(repo, principal);
 
       const authorization = await withSpan(
         "registry.authorize",

@@ -8,9 +8,11 @@
         "@biomejs/biome": "^2.4.16",
         "@hootifactory/auth": "workspace:*",
         "@hootifactory/config": "workspace:*",
+        "@hootifactory/contracts": "workspace:*",
         "@hootifactory/core": "workspace:*",
         "@hootifactory/db": "workspace:*",
         "@hootifactory/queue": "workspace:*",
+        "@hootifactory/registry": "workspace:*",
         "@hootifactory/storage": "workspace:*",
         "@hootifactory/types": "workspace:*",
         "@playwright/test": "^1.60.0",
@@ -29,14 +31,10 @@
         "@hootifactory/core": "workspace:*",
         "@hootifactory/db": "workspace:*",
         "@hootifactory/email": "workspace:*",
-        "@hootifactory/format-cargo": "workspace:*",
-        "@hootifactory/format-docker": "workspace:*",
-        "@hootifactory/format-go": "workspace:*",
-        "@hootifactory/format-npm": "workspace:*",
-        "@hootifactory/format-nuget": "workspace:*",
-        "@hootifactory/format-pypi": "workspace:*",
         "@hootifactory/observability": "workspace:*",
         "@hootifactory/queue": "workspace:*",
+        "@hootifactory/registry": "workspace:*",
+        "@hootifactory/registry-builtins": "workspace:*",
         "@hootifactory/scan-core": "workspace:*",
         "@hootifactory/storage": "workspace:*",
         "@hootifactory/types": "workspace:*",
@@ -75,6 +73,7 @@
         "@fontsource-variable/bricolage-grotesque": "^5.2.10",
         "@fontsource-variable/hanken-grotesk": "^5.2.8",
         "@fontsource-variable/jetbrains-mono": "^5.2.8",
+        "@hootifactory/contracts": "workspace:*",
         "@tanstack/react-query": "^5.100.14",
         "@tanstack/react-router": "^1.170.10",
         "class-variance-authority": "^0.7.1",
@@ -124,16 +123,18 @@
         "zod": "^4.4.3",
       },
     },
+    "packages/contracts": {
+      "name": "@hootifactory/contracts",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/types": "workspace:*",
+      },
+    },
     "packages/core": {
       "name": "@hootifactory/core",
       "version": "0.0.0",
       "dependencies": {
-        "@hootifactory/auth": "workspace:*",
         "@hootifactory/config": "workspace:*",
-        "@hootifactory/db": "workspace:*",
-        "@hootifactory/scan-core": "workspace:*",
-        "@hootifactory/storage": "workspace:*",
-        "@hootifactory/types": "workspace:*",
         "zod": "^4.4.3",
       },
     },
@@ -155,66 +156,6 @@
       },
       "devDependencies": {
         "@types/nodemailer": "^8.0.0",
-      },
-    },
-    "packages/format-cargo": {
-      "name": "@hootifactory/format-cargo",
-      "version": "0.0.0",
-      "dependencies": {
-        "@hootifactory/core": "workspace:*",
-        "@hootifactory/db": "workspace:*",
-        "@hootifactory/storage": "workspace:*",
-        "@hootifactory/types": "workspace:*",
-      },
-    },
-    "packages/format-docker": {
-      "name": "@hootifactory/format-docker",
-      "version": "0.0.0",
-      "dependencies": {
-        "@hootifactory/core": "workspace:*",
-        "@hootifactory/db": "workspace:*",
-        "@hootifactory/storage": "workspace:*",
-        "@hootifactory/types": "workspace:*",
-      },
-    },
-    "packages/format-go": {
-      "name": "@hootifactory/format-go",
-      "version": "0.0.0",
-      "dependencies": {
-        "@hootifactory/core": "workspace:*",
-        "@hootifactory/db": "workspace:*",
-        "@hootifactory/storage": "workspace:*",
-        "@hootifactory/types": "workspace:*",
-      },
-    },
-    "packages/format-npm": {
-      "name": "@hootifactory/format-npm",
-      "version": "0.0.0",
-      "dependencies": {
-        "@hootifactory/core": "workspace:*",
-        "@hootifactory/db": "workspace:*",
-        "@hootifactory/storage": "workspace:*",
-        "@hootifactory/types": "workspace:*",
-      },
-    },
-    "packages/format-nuget": {
-      "name": "@hootifactory/format-nuget",
-      "version": "0.0.0",
-      "dependencies": {
-        "@hootifactory/core": "workspace:*",
-        "@hootifactory/db": "workspace:*",
-        "@hootifactory/storage": "workspace:*",
-        "@hootifactory/types": "workspace:*",
-      },
-    },
-    "packages/format-pypi": {
-      "name": "@hootifactory/format-pypi",
-      "version": "0.0.0",
-      "dependencies": {
-        "@hootifactory/core": "workspace:*",
-        "@hootifactory/db": "workspace:*",
-        "@hootifactory/storage": "workspace:*",
-        "@hootifactory/types": "workspace:*",
       },
     },
     "packages/observability": {
@@ -243,6 +184,91 @@
         "@hootifactory/config": "workspace:*",
         "@hootifactory/observability": "workspace:*",
         "pg-boss": "^12.18.2",
+      },
+    },
+    "packages/registry": {
+      "name": "@hootifactory/registry",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/auth": "workspace:*",
+        "@hootifactory/core": "workspace:*",
+        "@hootifactory/db": "workspace:*",
+        "@hootifactory/scan-core": "workspace:*",
+        "@hootifactory/storage": "workspace:*",
+        "@hootifactory/types": "workspace:*",
+      },
+    },
+    "packages/registry-builtins": {
+      "name": "@hootifactory/registry-builtins",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/registry": "workspace:*",
+        "@hootifactory/registry-cargo": "workspace:*",
+        "@hootifactory/registry-go": "workspace:*",
+        "@hootifactory/registry-npm": "workspace:*",
+        "@hootifactory/registry-nuget": "workspace:*",
+        "@hootifactory/registry-oci": "workspace:*",
+        "@hootifactory/registry-pypi": "workspace:*",
+      },
+    },
+    "packages/registry-cargo": {
+      "name": "@hootifactory/registry-cargo",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/db": "workspace:*",
+        "@hootifactory/registry": "workspace:*",
+        "@hootifactory/storage": "workspace:*",
+        "@hootifactory/types": "workspace:*",
+      },
+    },
+    "packages/registry-go": {
+      "name": "@hootifactory/registry-go",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/db": "workspace:*",
+        "@hootifactory/registry": "workspace:*",
+        "@hootifactory/storage": "workspace:*",
+        "@hootifactory/types": "workspace:*",
+      },
+    },
+    "packages/registry-npm": {
+      "name": "@hootifactory/registry-npm",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/db": "workspace:*",
+        "@hootifactory/registry": "workspace:*",
+        "@hootifactory/storage": "workspace:*",
+        "@hootifactory/types": "workspace:*",
+      },
+    },
+    "packages/registry-nuget": {
+      "name": "@hootifactory/registry-nuget",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/db": "workspace:*",
+        "@hootifactory/registry": "workspace:*",
+        "@hootifactory/storage": "workspace:*",
+        "@hootifactory/types": "workspace:*",
+      },
+    },
+    "packages/registry-oci": {
+      "name": "@hootifactory/registry-oci",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/db": "workspace:*",
+        "@hootifactory/registry": "workspace:*",
+        "@hootifactory/storage": "workspace:*",
+        "@hootifactory/types": "workspace:*",
+      },
+    },
+    "packages/registry-pypi": {
+      "name": "@hootifactory/registry-pypi",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/db": "workspace:*",
+        "@hootifactory/registry": "workspace:*",
+        "@hootifactory/storage": "workspace:*",
+        "@hootifactory/types": "workspace:*",
       },
     },
     "packages/scan-core": {
@@ -452,29 +478,35 @@
 
     "@hootifactory/config": ["@hootifactory/config@workspace:packages/config"],
 
+    "@hootifactory/contracts": ["@hootifactory/contracts@workspace:packages/contracts"],
+
     "@hootifactory/core": ["@hootifactory/core@workspace:packages/core"],
 
     "@hootifactory/db": ["@hootifactory/db@workspace:packages/db"],
 
     "@hootifactory/email": ["@hootifactory/email@workspace:packages/email"],
 
-    "@hootifactory/format-cargo": ["@hootifactory/format-cargo@workspace:packages/format-cargo"],
-
-    "@hootifactory/format-docker": ["@hootifactory/format-docker@workspace:packages/format-docker"],
-
-    "@hootifactory/format-go": ["@hootifactory/format-go@workspace:packages/format-go"],
-
-    "@hootifactory/format-npm": ["@hootifactory/format-npm@workspace:packages/format-npm"],
-
-    "@hootifactory/format-nuget": ["@hootifactory/format-nuget@workspace:packages/format-nuget"],
-
-    "@hootifactory/format-pypi": ["@hootifactory/format-pypi@workspace:packages/format-pypi"],
-
     "@hootifactory/mail-worker": ["@hootifactory/mail-worker@workspace:apps/mail-worker"],
 
     "@hootifactory/observability": ["@hootifactory/observability@workspace:packages/observability"],
 
     "@hootifactory/queue": ["@hootifactory/queue@workspace:packages/queue"],
+
+    "@hootifactory/registry": ["@hootifactory/registry@workspace:packages/registry"],
+
+    "@hootifactory/registry-builtins": ["@hootifactory/registry-builtins@workspace:packages/registry-builtins"],
+
+    "@hootifactory/registry-cargo": ["@hootifactory/registry-cargo@workspace:packages/registry-cargo"],
+
+    "@hootifactory/registry-go": ["@hootifactory/registry-go@workspace:packages/registry-go"],
+
+    "@hootifactory/registry-npm": ["@hootifactory/registry-npm@workspace:packages/registry-npm"],
+
+    "@hootifactory/registry-nuget": ["@hootifactory/registry-nuget@workspace:packages/registry-nuget"],
+
+    "@hootifactory/registry-oci": ["@hootifactory/registry-oci@workspace:packages/registry-oci"],
+
+    "@hootifactory/registry-pypi": ["@hootifactory/registry-pypi@workspace:packages/registry-pypi"],
 
     "@hootifactory/scan-core": ["@hootifactory/scan-core@workspace:packages/scan-core"],
 

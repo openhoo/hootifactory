@@ -7,9 +7,10 @@ import {
   verifyPassword,
   verifyRegistryToken,
 } from "@hootifactory/auth";
-import { Errors, REGISTRY_TOKEN_SERVICE } from "@hootifactory/core";
+import { Errors } from "@hootifactory/core";
 import { db, eq, users } from "@hootifactory/db";
 import { logger, withSpan } from "@hootifactory/observability";
+import { REGISTRY_TOKEN_SERVICE } from "@hootifactory/registry";
 import type { Context } from "hono";
 import { getCookie } from "hono/cookie";
 import type { AppEnv, AuthSource } from "../types";

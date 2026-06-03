@@ -1,12 +1,12 @@
 import { issueRegistryToken, type RegistryAccess } from "@hootifactory/auth";
 import { env } from "@hootifactory/config";
-import { REGISTRY_TOKEN_SERVICE } from "@hootifactory/core";
 import {
   addSpanEvent,
   logger,
   setActiveSpanAttributes,
   withSpan,
 } from "@hootifactory/observability";
+import { REGISTRY_TOKEN_SERVICE } from "@hootifactory/registry";
 import type { Context } from "hono";
 import { Hono } from "hono";
 import type { AppEnv } from "../types";

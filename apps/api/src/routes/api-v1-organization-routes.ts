@@ -1,5 +1,6 @@
-import { createRepository, isUniqueViolation } from "@hootifactory/core";
+import { isUniqueViolation } from "@hootifactory/core";
 import { db, eq, organizations } from "@hootifactory/db";
+import { createRepository } from "@hootifactory/registry";
 import type { Hono } from "hono";
 import type { AppEnv } from "../types";
 import {
