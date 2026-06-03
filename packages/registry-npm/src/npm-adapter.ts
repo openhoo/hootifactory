@@ -3,7 +3,6 @@ import {
   Errors,
   type FormatMetadata,
   type HttpMethod,
-  jsonRecordOrEmpty,
   type Permission,
   parseRegistryInput,
   type RegistryPlugin,
@@ -13,39 +12,29 @@ import {
   safeFetch,
 } from "@hootifactory/registry";
 import {
-  commitVersionOrReleaseBlob,
   deleteDistTag,
   findLiveVersion,
   findOrCreatePackage,
   findPackageByName,
   listLiveDistTags,
   listLivePackageVersions,
-  listPackageVersionNames,
   type PackageVersionReadRow,
   replaceDistTags,
   searchRepositoryPackages,
   serveBlobIfClean,
   setDistTag,
-  storeBlobWithRef,
   updatePackageLatestVersion,
   upsertPackageVersion,
   upsertPackageVersionWithBlobRef,
 } from "@hootifactory/registry-application";
-import {
-  parseNpmDistTag,
-  parseNpmDistTagAssignment,
-  parseNpmDistTagRequestBody,
-} from "./npm-dist-tags";
+import { parseNpmDistTag, parseNpmDistTagRequestBody } from "./npm-dist-tags";
 import { ifNoneMatch, responseBytes, responseJson } from "./npm-http";
 import {
   type NpmDist,
-  sha1hex,
   sha1hexText,
-  sha512b64,
   upstreamDistMatchesBytes,
   upstreamDistMatchesStored,
 } from "./npm-integrity";
-import { buildNpmMetadataOnlyVersionPatch } from "./npm-metadata-only";
 import {
   buildNpmMirroredDist,
   isNpmTarballUrlOnUpstreamHost,
@@ -55,7 +44,7 @@ import {
   parseNpmUpstreamPackument,
   rewriteNpmProxyManifestForExistingDist,
 } from "./npm-proxy";
-import { parseNpmPublishRequest, resolveNpmPublishDistTags } from "./npm-publish";
+import { handleNpmPublish } from "./npm-publish-lifecycle";
 import {
   buildNpmSearchObject,
   buildNpmSearchResponse,
@@ -63,13 +52,11 @@ import {
   parseNpmSearchQuery,
 } from "./npm-search";
 import {
-  basename,
   isValidDistTag,
   isValidLegacyNpmName,
   isValidNpmVersion,
   NpmLegacyPackageNameSchema,
   NpmTarballFilenameSchema,
-  packagePath,
   parseNpmStoredVersionMetadata,
 } from "./npm-validation";
 import { buildPackument, mergePackuments } from "./packument";
@@ -248,178 +235,11 @@ export class NpmAdapter implements RegistryPlugin {
     req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
-    const rawBody = await req.json().catch(() => null);
-    const parsed = parseNpmPublishRequest(name, rawBody);
-    if (!parsed.ok) {
-      return Response.json({ error: parsed.error.error }, { status: parsed.error.status });
-    }
-    if (parsed.plan.kind === "metadataOnly") {
-      return this.updateMetadataOnly(
-        parsed.plan.name,
-        parsed.plan.versions,
-        parsed.plan.distTags,
-        ctx,
-      );
-    }
-
-    name = parsed.plan.name;
-    const publishVersions = parsed.plan.versions;
-    const distTags = parsed.plan.distTags;
-    const existingPkg = await this.findPackage(ctx, name);
-    const distTagTargets = await resolveNpmPublishDistTags(
-      distTags,
-      publishVersions.map((version) => version.version),
-      (version) => (existingPkg ? this.versionId(existingPkg.id, version) : Promise.resolve(null)),
-    );
-    if (!distTagTargets.ok) {
-      return Response.json({ error: distTagTargets.error }, { status: 400 });
-    }
-
-    const scope = name.startsWith("@") ? (name.split("/")[0] ?? null) : null;
-    const base = basename(name);
-    const pkg =
-      existingPkg ??
-      (await findOrCreatePackage({
-        orgId: ctx.repo.orgId,
-        repositoryId: ctx.repo.id,
-        name,
-        namespace: scope,
-      }));
-    const versionIds = new Map<string, string>();
-
-    // Any version row, including a retention tombstone, reserves the npm version.
-    // Retention hides bytes from readers; it must not make immutable versions
-    // publishable again.
-    const used = await listPackageVersionNames(pkg.id);
-    const usedSet = new Set(used.map((v) => v.version));
-
-    for (const { version: ver, manifest, tarball } of publishVersions) {
-      if (usedSet.has(ver)) {
-        return Response.json(
-          { error: `cannot publish over the previously published version ${ver}` },
-          { status: 403 },
-        );
-      }
-      const shasum = sha1hex(tarball);
-      const integrity = `sha512-${sha512b64(tarball)}`;
-      const filename = `${base}-${ver}.tgz`;
-      const stored = await storeBlobWithRef(ctx, {
-        data: tarball,
-        kind: "npm_tarball",
-        scope: `${name}@${ver}`,
-        mediaType: "application/octet-stream",
-      });
-      const tarballUrl = `${ctx.baseUrl}/${ctx.repo.mountPath}/${packagePath(name)}/-/${filename}`;
-      manifest.dist = {
-        ...jsonRecordOrEmpty(manifest.dist),
-        tarball: tarballUrl,
-        shasum,
-        integrity,
-      };
-      const dist: NpmDist = {
-        filename,
-        blobDigest: stored.digest,
-        shasum,
-        integrity,
-        size: tarball.length,
-      };
-      const result = await commitVersionOrReleaseBlob(ctx, {
-        stored,
-        kind: "npm_tarball",
-        scope: `${name}@${ver}`,
-        packageId: pkg.id,
-        version: ver,
-        metadata: { manifest, dist },
-        sizeBytes: tarball.length,
-        scan: { name, version: ver, mediaType: "application/octet-stream" },
-      });
-      if ("conflict" in result) {
-        return Response.json(
-          { error: `cannot publish over the previously published version ${ver}` },
-          { status: 403 },
-        );
-      }
-      versionIds.set(ver, result.versionId);
-    }
-
-    for (const [tag, ver] of Object.entries(distTags)) {
-      const versionId = versionIds.get(ver) ?? distTagTargets.existingVersionIds.get(ver);
-      if (!versionId) throw new Error(`validated npm dist-tag ${tag} lost version ${ver}`);
-      await setDistTag(pkg.id, tag, versionId);
-    }
-    if (distTags.latest) {
-      await updatePackageLatestVersion(pkg.id, distTags.latest);
-    }
-
-    return Response.json({ success: true }, { status: 201 });
+    return handleNpmPublish(name, req, ctx);
   }
 
   private async versionId(packageId: string, version: string) {
     return (await findLiveVersion(packageId, version))?.id ?? null;
-  }
-
-  private async updateMetadataOnly(
-    name: string,
-    incomingVersions: Record<string, Record<string, unknown>>,
-    distTags: Record<string, string>,
-    ctx: RegistryRequestContext,
-  ): Promise<Response> {
-    const entries = Object.entries(incomingVersions);
-    if (!entries.length) {
-      return Response.json({ error: "publish payload must include a version" }, { status: 400 });
-    }
-
-    const pkg = await this.findPackage(ctx, name);
-    if (!pkg) {
-      return Response.json(
-        { error: `missing tarball attachment for ${entries[0]![0]}` },
-        { status: 400 },
-      );
-    }
-
-    const liveRows = await this.liveVersions(pkg.id);
-    const liveByVersion = new Map(liveRows.map((row) => [row.version, row]));
-    const versionIds = new Map<string, string>();
-    for (const [ver, manifestRaw] of entries) {
-      const live = liveByVersion.get(ver);
-      if (!live) return Response.json({ error: `version not found: ${ver}` }, { status: 404 });
-      const patch = buildNpmMetadataOnlyVersionPatch({
-        packageName: name,
-        version: ver,
-        manifest: manifestRaw,
-        liveMetadata: live.metadata,
-      });
-      if (!patch.ok) return Response.json({ error: patch.error }, { status: patch.status });
-      versionIds.set(patch.version, live.id);
-      if (!patch.metadata) continue;
-
-      await upsertPackageVersion(ctx, {
-        packageId: pkg.id,
-        version: patch.version,
-        metadata: patch.metadata,
-        sizeBytes: live.sizeBytes,
-      });
-    }
-
-    for (const [tag, ver] of Object.entries(distTags)) {
-      const distTag = parseNpmDistTagAssignment(tag, ver, {
-        versionMessage: `dist-tag ${tag} points to an invalid version`,
-      });
-      const versionId =
-        versionIds.get(distTag.version) ?? (await this.versionId(pkg.id, distTag.version));
-      if (!versionId) {
-        return Response.json(
-          { error: `dist-tag ${distTag.tag} points to an unknown version` },
-          { status: 400 },
-        );
-      }
-      await setDistTag(pkg.id, distTag.tag, versionId);
-      if (distTag.tag === "latest") {
-        await updatePackageLatestVersion(pkg.id, distTag.version);
-      }
-    }
-
-    return Response.json({ success: true }, { status: 200 });
   }
 
   private async distTagsList(name: string, ctx: RegistryRequestContext): Promise<Response> {
