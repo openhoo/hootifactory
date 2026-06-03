@@ -1,4 +1,9 @@
 import {
+  V1AddUpstreamRequestSchema,
+  V1AddVirtualMemberRequestSchema,
+  V1OkResponseSchema,
+} from "@hootifactory/contracts";
+import {
   addUpstream,
   addVirtualMember,
   getRepositoryById,
@@ -16,14 +21,24 @@ import {
   validateV1,
 } from "./api-v1-helpers";
 import { audit } from "./http";
-import { AddMemberBodySchema, AddUpstreamBodySchema } from "./ui-schemas";
 import { validateProxyUpstreamParent, validateProxyUpstreamUrl } from "./ui-upstreams";
 import { validateVirtualMemberCandidate, validateVirtualMemberParent } from "./ui-virtual-members";
 
 export function registerApiV1RepositoryConfigRoutes(apiV1Router: Hono<AppEnv>) {
   apiV1Router.post(
     "/repositories/:repoId/upstreams",
-    doc("Add a proxy upstream", "Repositories"),
+    doc({
+      operationId: "addRepositoryUpstream",
+      summary: "Add a proxy upstream",
+      tag: "Repositories",
+      description: "Adds an upstream source to a proxy repository.",
+      pathParams: RepoIdParamsSchema,
+      requestBody: {
+        description: "Proxy upstream settings.",
+        schema: V1AddUpstreamRequestSchema,
+      },
+      response: { status: 201, description: "Proxy upstream added.", schema: V1OkResponseSchema },
+    }),
     async (c) => {
       const params = validateV1(c, RepoIdParamsSchema, c.req.param(), "invalid path parameters");
       if (!params.ok) return params.response;
@@ -33,7 +48,11 @@ export function registerApiV1RepositoryConfigRoutes(apiV1Router: Hono<AppEnv>) {
       if (!parentValidation.ok) {
         return errorResponse(c, parentValidation.status, "BAD_REQUEST", parentValidation.error);
       }
-      const parsedBody = await validateJsonV1(c, AddUpstreamBodySchema, "invalid upstream request");
+      const parsedBody = await validateJsonV1(
+        c,
+        V1AddUpstreamRequestSchema,
+        "invalid upstream request",
+      );
       if (!parsedBody.ok) return parsedBody.response;
       const upstreamUrl = validateProxyUpstreamUrl(parsedBody.data.url);
       if (!upstreamUrl.ok) {
@@ -55,7 +74,18 @@ export function registerApiV1RepositoryConfigRoutes(apiV1Router: Hono<AppEnv>) {
 
   apiV1Router.post(
     "/repositories/:repoId/members",
-    doc("Add a virtual repository member", "Repositories"),
+    doc({
+      operationId: "addVirtualRepositoryMember",
+      summary: "Add a virtual repository member",
+      tag: "Repositories",
+      description: "Adds a member repository to a virtual repository.",
+      pathParams: RepoIdParamsSchema,
+      requestBody: {
+        description: "Virtual repository member settings.",
+        schema: V1AddVirtualMemberRequestSchema,
+      },
+      response: { status: 201, description: "Virtual member added.", schema: V1OkResponseSchema },
+    }),
     async (c) => {
       const params = validateV1(c, RepoIdParamsSchema, c.req.param(), "invalid path parameters");
       if (!params.ok) return params.response;
@@ -65,7 +95,11 @@ export function registerApiV1RepositoryConfigRoutes(apiV1Router: Hono<AppEnv>) {
       if (!parentValidation.ok) {
         return errorResponse(c, parentValidation.status, "BAD_REQUEST", parentValidation.error);
       }
-      const parsedBody = await validateJsonV1(c, AddMemberBodySchema, "invalid member request");
+      const parsedBody = await validateJsonV1(
+        c,
+        V1AddVirtualMemberRequestSchema,
+        "invalid member request",
+      );
       if (!parsedBody.ok) return parsedBody.response;
       const memberCandidate = await getRepositoryById(parsedBody.data.memberRepoId);
       const memberValidation = validateVirtualMemberCandidate(access.repo, memberCandidate);

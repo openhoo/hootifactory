@@ -1,5 +1,6 @@
 import type { RoleName } from "@hootifactory/auth";
-import type { CreateTokenBody, CreateTokenV1Body, ParsedTokenGrant } from "./ui-schemas";
+import type { ParsedTokenGrant, V1CreateTokenRequest } from "@hootifactory/contracts";
+import type { CreateTokenBody } from "./ui-schemas";
 
 export const DEFAULT_TOKEN_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 
@@ -12,7 +13,7 @@ export type CreateTokenRequest = {
 };
 
 export function resolveCreateTokenRequest(
-  body: CreateTokenBody | CreateTokenV1Body,
+  body: CreateTokenBody | V1CreateTokenRequest,
   now = new Date(),
 ): CreateTokenRequest {
   const grants =

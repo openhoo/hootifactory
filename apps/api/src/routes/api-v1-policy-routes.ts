@@ -1,4 +1,13 @@
 import {
+  V1OkResponseSchema,
+  V1QuotaRequestSchema,
+  V1QuotaResponseSchema,
+  V1RetentionRequestSchema,
+  V1RetentionResponseSchema,
+  V1ScanPolicyRequestSchema,
+  V1ScanPolicyResponseSchema,
+} from "@hootifactory/contracts";
+import {
   applyRetention,
   getOrgQuota,
   setOrgQuota,
@@ -18,17 +27,27 @@ import {
   validateV1,
 } from "./api-v1-helpers";
 import { audit } from "./http";
-import {
-  isValidScanPolicyPattern,
-  QuotaBodySchema,
-  RetentionBodySchema,
-  ScanPolicyBodySchema,
-} from "./ui-schemas";
+import { isValidScanPolicyPattern } from "./ui-schemas";
 
 export function registerApiV1PolicyRoutes(apiV1Router: Hono<AppEnv>) {
   apiV1Router.post(
     "/orgs/:orgId/scan-policies",
-    doc("Upsert a scan policy", "Policies"),
+    doc({
+      operationId: "upsertScanPolicy",
+      summary: "Upsert a scan policy",
+      tag: "Policies",
+      description: "Creates or replaces the scan policy for a repository pattern.",
+      pathParams: OrgIdParamsSchema,
+      requestBody: {
+        description: "Scan policy settings.",
+        schema: V1ScanPolicyRequestSchema,
+      },
+      response: {
+        status: 201,
+        description: "Scan policy upserted.",
+        schema: V1ScanPolicyResponseSchema,
+      },
+    }),
     async (c) => {
       const params = validateV1(c, OrgIdParamsSchema, c.req.param(), "invalid path parameters");
       if (!params.ok) return params.response;
@@ -40,7 +59,7 @@ export function registerApiV1PolicyRoutes(apiV1Router: Hono<AppEnv>) {
       if (policyResponse) return policyResponse;
       const parsedBody = await validateJsonV1(
         c,
-        ScanPolicyBodySchema,
+        V1ScanPolicyRequestSchema,
         "invalid scan policy request",
       );
       if (!parsedBody.ok) return parsedBody.response;
@@ -72,46 +91,80 @@ export function registerApiV1PolicyRoutes(apiV1Router: Hono<AppEnv>) {
     },
   );
 
-  apiV1Router.get("/orgs/:orgId/quota", doc("Get org quota", "Policies"), async (c) => {
-    const params = validateV1(c, OrgIdParamsSchema, c.req.param(), "invalid path parameters");
-    if (!params.ok) return params.response;
-    const policyResponse = await authorizePolicy(c, {
-      orgId: params.data.orgId,
-      policy: "quota",
-      action: "read",
-    });
-    if (policyResponse) return policyResponse;
-    return dataResponse(c, await getOrgQuota(params.data.orgId));
-  });
+  apiV1Router.get(
+    "/orgs/:orgId/quota",
+    doc({
+      operationId: "getOrganizationQuota",
+      summary: "Get org quota",
+      tag: "Policies",
+      description: "Gets storage and artifact quota limits and current usage for an organization.",
+      pathParams: OrgIdParamsSchema,
+      response: { description: "Organization quota state.", schema: V1QuotaResponseSchema },
+    }),
+    async (c) => {
+      const params = validateV1(c, OrgIdParamsSchema, c.req.param(), "invalid path parameters");
+      if (!params.ok) return params.response;
+      const policyResponse = await authorizePolicy(c, {
+        orgId: params.data.orgId,
+        policy: "quota",
+        action: "read",
+      });
+      if (policyResponse) return policyResponse;
+      return dataResponse(c, await getOrgQuota(params.data.orgId));
+    },
+  );
 
-  apiV1Router.post("/orgs/:orgId/quota", doc("Set org quota", "Policies"), async (c) => {
-    const params = validateV1(c, OrgIdParamsSchema, c.req.param(), "invalid path parameters");
-    if (!params.ok) return params.response;
-    const policyResponse = await authorizePolicy(c, {
-      orgId: params.data.orgId,
-      policy: "quota",
-      action: "write",
-    });
-    if (policyResponse) return policyResponse;
-    const parsedBody = await validateJsonV1(c, QuotaBodySchema, "invalid quota request");
-    if (!parsedBody.ok) return parsedBody.response;
-    await setOrgQuota(params.data.orgId, {
-      maxStorageBytes: parsedBody.data.maxStorageBytes ?? null,
-      maxArtifacts: parsedBody.data.maxArtifacts ?? null,
-    });
-    audit({
-      orgId: params.data.orgId,
-      action: "quota.set",
-      result: "success",
-      resourceType: "quota",
-      principal: c.get("principal"),
-    });
-    return dataResponse(c, { ok: true });
-  });
+  apiV1Router.post(
+    "/orgs/:orgId/quota",
+    doc({
+      operationId: "setOrganizationQuota",
+      summary: "Set org quota",
+      tag: "Policies",
+      description: "Sets organization quota limits. Omitted or null limits are unlimited.",
+      pathParams: OrgIdParamsSchema,
+      requestBody: { description: "Quota limits.", schema: V1QuotaRequestSchema },
+      response: { description: "Quota updated.", schema: V1OkResponseSchema },
+    }),
+    async (c) => {
+      const params = validateV1(c, OrgIdParamsSchema, c.req.param(), "invalid path parameters");
+      if (!params.ok) return params.response;
+      const policyResponse = await authorizePolicy(c, {
+        orgId: params.data.orgId,
+        policy: "quota",
+        action: "write",
+      });
+      if (policyResponse) return policyResponse;
+      const parsedBody = await validateJsonV1(c, V1QuotaRequestSchema, "invalid quota request");
+      if (!parsedBody.ok) return parsedBody.response;
+      await setOrgQuota(params.data.orgId, {
+        maxStorageBytes: parsedBody.data.maxStorageBytes ?? null,
+        maxArtifacts: parsedBody.data.maxArtifacts ?? null,
+      });
+      audit({
+        orgId: params.data.orgId,
+        action: "quota.set",
+        result: "success",
+        resourceType: "quota",
+        principal: c.get("principal"),
+      });
+      return dataResponse(c, { ok: true });
+    },
+  );
 
   apiV1Router.post(
     "/repositories/:repoId/retention/apply",
-    doc("Apply retention", "Policies"),
+    doc({
+      operationId: "applyRepositoryRetention",
+      summary: "Apply retention",
+      tag: "Policies",
+      description: "Applies retention pruning to one repository.",
+      pathParams: RepoIdParamsSchema,
+      requestBody: {
+        description: "Retention application options.",
+        schema: V1RetentionRequestSchema,
+      },
+      response: { description: "Retention result.", schema: V1RetentionResponseSchema },
+    }),
     async (c) => {
       const params = validateV1(c, RepoIdParamsSchema, c.req.param(), "invalid path parameters");
       if (!params.ok) return params.response;
@@ -124,7 +177,11 @@ export function registerApiV1PolicyRoutes(apiV1Router: Hono<AppEnv>) {
         action: "write",
       });
       if (policyResponse) return policyResponse;
-      const parsedBody = await validateJsonV1(c, RetentionBodySchema, "invalid retention request");
+      const parsedBody = await validateJsonV1(
+        c,
+        V1RetentionRequestSchema,
+        "invalid retention request",
+      );
       if (!parsedBody.ok) return parsedBody.response;
       const pruned = await applyRetention(repo.id, parsedBody.data.keepLastN);
       audit({
