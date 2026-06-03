@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { Errors, isUniqueViolation, RegistryError } from "./errors";
+import {
+  asError,
+  Errors,
+  errorMessage,
+  HttpError,
+  isUniqueViolation,
+  RegistryError,
+} from "./errors";
 
 describe("registry errors", () => {
   test("serializes OCI error responses with detail", async () => {
@@ -27,6 +34,31 @@ describe("registry errors", () => {
     expect(error.status).toBe(403);
     expect(error.code).toBe("DENIED");
     expect(error.detail).toBe("details");
+  });
+
+  test("captures HTTP error response metadata without exposing 5xx details by default", () => {
+    const cause = new Error("database unavailable");
+    const badRequest = new HttpError(400, "BAD_REQUEST", "invalid request");
+    const serverError = new HttpError(503, "DATABASE_UNAVAILABLE", "database unavailable", {
+      cause,
+      detail: { retryable: true },
+    });
+
+    expect(badRequest).toBeInstanceOf(Error);
+    expect(badRequest.expose).toBe(true);
+    expect(serverError.status).toBe(503);
+    expect(serverError.code).toBe("DATABASE_UNAVAILABLE");
+    expect(serverError.expose).toBe(false);
+    expect(serverError.detail).toEqual({ retryable: true });
+    expect(serverError.cause).toBe(cause);
+  });
+
+  test("normalizes unknown thrown values for logging", () => {
+    const err = new Error("boom");
+
+    expect(asError(err)).toBe(err);
+    expect(asError("boom").message).toBe("boom");
+    expect(errorMessage(123)).toBe("123");
   });
 
   test("detects nested Postgres unique constraint errors", () => {

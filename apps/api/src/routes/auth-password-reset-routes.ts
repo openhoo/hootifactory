@@ -66,7 +66,7 @@ export function registerPasswordResetRoutes(router: Hono<AppEnv>): void {
       } catch (err) {
         const message = errorMessage(err);
         addSpanEvent("auth.password_reset_email_failed", { "error.message": message });
-        logger.error("password reset email failed", { error: message });
+        logger.error("password reset email failed", { userId: user.id, error: err });
         audit({
           action: "auth.password_reset_email",
           result: "failure",

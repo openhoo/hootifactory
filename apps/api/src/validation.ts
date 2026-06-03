@@ -1,4 +1,4 @@
-import { type ZodType, z, zodIssueTree } from "@hootifactory/core";
+import { errorMessage, type ZodType, z, zodIssueTree } from "@hootifactory/core";
 import type { Context } from "hono";
 import type { AppEnv } from "./types";
 
@@ -41,9 +41,7 @@ export async function validateJsonBody<T extends ZodType>(
   return validateInput(c, schema, body, message);
 }
 
-export function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
+export { errorMessage };
 
 export const uuidParam = z.uuid();
 

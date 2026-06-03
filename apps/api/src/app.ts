@@ -5,6 +5,8 @@ import {
   setActiveSpanAttributes,
 } from "@hootifactory/observability";
 import { Hono } from "hono";
+import type { ContentfulStatusCode } from "hono/utils/http-status";
+import { planApplicationErrorResponse } from "./error-response";
 import { logger } from "./lib/logger";
 import { authenticate } from "./middleware/authenticate";
 import {
@@ -19,7 +21,6 @@ import { tokenRouter } from "./routes/token";
 import { uiRouter } from "./routes/ui";
 import { v2VersionCheck } from "./routes/v2";
 import type { AppEnv } from "./types";
-import { errorMessage } from "./validation";
 
 initializeObservability({ serviceRole: "api" });
 
@@ -57,17 +58,27 @@ app.use("*", async (c, next) => {
 app.use("*", rejectCrossOriginSessionWrites);
 
 app.onError((err, c) => {
+  const path = new URL(c.req.url).pathname;
   if (err instanceof RegistryError) {
-    const meta = { status: err.status, code: err.code, path: new URL(c.req.url).pathname };
+    const meta = { status: err.status, code: err.code, path };
     if (err.status >= 500) {
-      logger.error("registry error response", meta);
+      logger.error("registry error response", { ...meta, error: err });
     } else {
       logger.debug("registry error response", meta);
     }
     return err.toResponse();
   }
-  logger.error("unhandled error", { error: errorMessage(err) });
-  return c.json({ errors: [{ code: "INTERNAL", message: "internal server error" }] }, 500);
+  const plan = planApplicationErrorResponse(err, {
+    path,
+    requestId: c.get("requestId"),
+  });
+  const meta = { status: plan.status, code: plan.code, path, error: plan.error };
+  if (plan.logLevel === "error") {
+    logger.error(plan.logMessage, meta);
+  } else {
+    logger.warn(plan.logMessage, meta);
+  }
+  return c.json(plan.body, plan.status as ContentfulStatusCode);
 });
 
 // Explicit app routes (evaluated before the registry catch-all).

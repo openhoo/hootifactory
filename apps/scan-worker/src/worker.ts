@@ -185,7 +185,13 @@ while (!shuttingDown) {
             attempt: intent.attempts,
             error: err,
           });
-          await recordScanFailure(intent.artifactId, err).catch(() => {});
+          await recordScanFailure(intent.artifactId, err).catch((recordErr) => {
+            logger.error("scan failure recording failed", {
+              artifactId: intent.artifactId,
+              originalError: err instanceof Error ? err.message : String(err),
+              error: recordErr,
+            });
+          });
           await markFailed(intent, err);
         }
       },

@@ -37,6 +37,29 @@ export class RegistryError extends Error {
   }
 }
 
+export interface HttpErrorOptions {
+  cause?: unknown;
+  detail?: unknown;
+  expose?: boolean;
+}
+
+export class HttpError extends Error {
+  public readonly expose: boolean;
+  public readonly detail?: unknown;
+
+  constructor(
+    public readonly status: number,
+    public readonly code: string,
+    message: string,
+    options: HttpErrorOptions = {},
+  ) {
+    super(message, { cause: options.cause });
+    this.name = "HttpError";
+    this.expose = options.expose ?? status < 500;
+    this.detail = options.detail;
+  }
+}
+
 export const Errors = {
   blobUnknown: (detail?: unknown) =>
     new RegistryError(404, "BLOB_UNKNOWN", "blob unknown to registry", detail),
@@ -84,6 +107,14 @@ export const Errors = {
   quotaExceeded: (detail?: unknown) =>
     new RegistryError(403, "DENIED", "storage quota exceeded", detail),
 } as const;
+
+export function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+export function asError(err: unknown): Error {
+  return err instanceof Error ? err : new Error(errorMessage(err));
+}
 
 /**
  * Detect a Postgres unique-constraint violation (SQLSTATE 23505). Drizzle wraps

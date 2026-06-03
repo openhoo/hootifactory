@@ -4,15 +4,24 @@ import {
   httpStatusForDenial,
   writeAudit,
 } from "@hootifactory/auth";
+import { logger } from "@hootifactory/observability";
 import type { Context } from "hono";
 import type { AppEnv } from "../types";
 
 /**
  * Fire-and-forget audit write. Auditing must never fail a request, so the
- * promise is intentionally not awaited and its errors are swallowed.
+ * promise is intentionally not awaited and failures are logged best-effort.
  */
 export function audit(entry: AuditEntry): void {
-  void writeAudit(entry).catch(() => {});
+  void writeAudit(entry).catch((err) => {
+    logger.warn("audit write failed", {
+      action: entry.action,
+      orgId: entry.orgId,
+      resourceType: entry.resourceType,
+      resourceId: entry.resourceId,
+      error: err,
+    });
+  });
 }
 
 /**
