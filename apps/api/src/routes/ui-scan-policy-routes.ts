@@ -1,4 +1,4 @@
-import { db, scanPolicies } from "@hootifactory/db";
+import { upsertScanPolicy } from "@hootifactory/registry-application";
 import type { Hono } from "hono";
 import type { AppEnv } from "../types";
 import { uuidParams, validateJsonBody, validateParams } from "../validation";
@@ -31,23 +31,12 @@ export function registerScanPolicyRoutes(router: Hono<AppEnv>): void {
       );
     }
     const blockOnSeverity = body.blockOnSeverity ?? null;
-    const [row] = await db
-      .insert(scanPolicies)
-      .values({
-        orgId,
-        repositoryPattern,
-        mode: body.mode,
-        blockOnSeverity,
-      })
-      .onConflictDoUpdate({
-        target: [scanPolicies.orgId, scanPolicies.repositoryPattern],
-        set: {
-          mode: body.mode,
-          blockOnSeverity,
-          updatedAt: new Date(),
-        },
-      })
-      .returning();
+    const row = await upsertScanPolicy({
+      orgId,
+      repositoryPattern,
+      mode: body.mode,
+      blockOnSeverity,
+    });
     audit({
       orgId,
       action: "scan_policy.create",

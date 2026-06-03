@@ -1,4 +1,13 @@
-import { apiTokens, db, eq, type TokenGrant, type TokenScope, users } from "@hootifactory/db";
+import {
+  and,
+  apiTokens,
+  db,
+  desc,
+  eq,
+  type TokenGrant,
+  type TokenScope,
+  users,
+} from "@hootifactory/db";
 import type { RoleName } from "./permissions";
 import type { Principal } from "./principal";
 import { repositoryGrantsAsScopes } from "./scope";
@@ -36,6 +45,11 @@ export interface CreateTokenInput {
 
 export type ApiTokenRow = typeof apiTokens.$inferSelect;
 
+export type ApiTokenWithOwner = {
+  token: ApiTokenRow;
+  ownerUsername: string | null;
+};
+
 export async function createApiToken(
   input: CreateTokenInput,
 ): Promise<{ token: ApiTokenRow; secret: string }> {
@@ -66,6 +80,42 @@ export async function createApiToken(
     .returning();
   if (!token) throw new Error("failed to create token");
   return { token, secret };
+}
+
+export async function getApiTokenById(id: string): Promise<ApiTokenRow | null> {
+  const [token] = await db.select().from(apiTokens).where(eq(apiTokens.id, id)).limit(1);
+  return token ?? null;
+}
+
+export async function getApiTokenWithOwner(id: string): Promise<ApiTokenWithOwner | null> {
+  const [row] = await db
+    .select({ token: apiTokens, ownerUsername: users.username })
+    .from(apiTokens)
+    .leftJoin(users, eq(apiTokens.ownerUserId, users.id))
+    .where(eq(apiTokens.id, id))
+    .limit(1);
+  return row ?? null;
+}
+
+export async function listOrgTokens(orgId: string): Promise<ApiTokenWithOwner[]> {
+  return db
+    .select({ token: apiTokens, ownerUsername: users.username })
+    .from(apiTokens)
+    .leftJoin(users, eq(apiTokens.ownerUserId, users.id))
+    .where(eq(apiTokens.orgId, orgId))
+    .orderBy(desc(apiTokens.createdAt));
+}
+
+export async function listOrgTokensOwnedBy(
+  orgId: string,
+  ownerUserId: string,
+): Promise<ApiTokenWithOwner[]> {
+  return db
+    .select({ token: apiTokens, ownerUsername: users.username })
+    .from(apiTokens)
+    .leftJoin(users, eq(apiTokens.ownerUserId, users.id))
+    .where(and(eq(apiTokens.orgId, orgId), eq(apiTokens.ownerUserId, ownerUserId)))
+    .orderBy(desc(apiTokens.createdAt));
 }
 
 /** Resolve a presented secret to a token Principal, or null if invalid/expired/revoked. */

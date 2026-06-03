@@ -1,7 +1,8 @@
+import type { ApiTokenRow } from "@hootifactory/auth";
 import type { ApiTokenDto, RepositoryDto, WireTimestamp } from "@hootifactory/contracts";
-import type { apiTokens, repositories } from "@hootifactory/db";
+import type { ResolvedRepo } from "@hootifactory/registry";
 
-type RepositoryRow = typeof repositories.$inferSelect;
+type RepositoryRow = ResolvedRepo;
 
 function wireTimestamp(value: Date | string): WireTimestamp {
   return value instanceof Date ? value.toISOString() : value;
@@ -25,8 +26,6 @@ export function repositoryDto(repo: RepositoryRow): RepositoryDto {
     updatedAt: wireTimestamp(repo.updatedAt),
   };
 }
-
-type ApiTokenRow = typeof apiTokens.$inferSelect;
 
 export function tokenDto(token: ApiTokenRow, ownerUsername?: string | null): ApiTokenDto {
   return {

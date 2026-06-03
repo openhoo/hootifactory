@@ -1,5 +1,9 @@
-import { and, db, eq, isNull, quotas, scanPolicies } from "@hootifactory/db";
-import { applyRetention } from "@hootifactory/registry-application";
+import {
+  applyRetention,
+  getOrgQuota,
+  setOrgQuota,
+  upsertScanPolicy,
+} from "@hootifactory/registry-application";
 import type { Hono } from "hono";
 import type { AppEnv } from "../types";
 import {
@@ -14,7 +18,6 @@ import {
   validateV1,
 } from "./api-v1-helpers";
 import { audit } from "./http";
-import { calculateOrgQuotaUsage, upsertOrgQuota } from "./ui-quota";
 import {
   isValidScanPolicyPattern,
   QuotaBodySchema,
@@ -50,23 +53,12 @@ export function registerApiV1PolicyRoutes(apiV1Router: Hono<AppEnv>) {
           "repository pattern must use repository-name characters plus '*' wildcards, or '*' for all repositories",
         );
       }
-      const [row] = await db
-        .insert(scanPolicies)
-        .values({
-          orgId: params.data.orgId,
-          repositoryPattern,
-          mode: parsedBody.data.mode,
-          blockOnSeverity: parsedBody.data.blockOnSeverity ?? null,
-        })
-        .onConflictDoUpdate({
-          target: [scanPolicies.orgId, scanPolicies.repositoryPattern],
-          set: {
-            mode: parsedBody.data.mode,
-            blockOnSeverity: parsedBody.data.blockOnSeverity ?? null,
-            updatedAt: new Date(),
-          },
-        })
-        .returning();
+      const row = await upsertScanPolicy({
+        orgId: params.data.orgId,
+        repositoryPattern,
+        mode: parsedBody.data.mode,
+        blockOnSeverity: parsedBody.data.blockOnSeverity ?? null,
+      });
       audit({
         orgId: params.data.orgId,
         action: "scan_policy.create",
@@ -89,17 +81,7 @@ export function registerApiV1PolicyRoutes(apiV1Router: Hono<AppEnv>) {
       action: "read",
     });
     if (policyResponse) return policyResponse;
-    const [q] = await db
-      .select()
-      .from(quotas)
-      .where(and(eq(quotas.orgId, params.data.orgId), isNull(quotas.repositoryId)))
-      .limit(1);
-    return dataResponse(c, {
-      maxStorageBytes: q?.maxStorageBytes ?? null,
-      usedStorageBytes: q?.usedStorageBytes ?? 0,
-      maxArtifacts: q?.maxArtifacts ?? null,
-      usedArtifacts: q?.usedArtifacts ?? 0,
-    });
+    return dataResponse(c, await getOrgQuota(params.data.orgId));
   });
 
   apiV1Router.post("/orgs/:orgId/quota", doc("Set org quota", "Policies"), async (c) => {
@@ -113,15 +95,10 @@ export function registerApiV1PolicyRoutes(apiV1Router: Hono<AppEnv>) {
     if (policyResponse) return policyResponse;
     const parsedBody = await validateJsonV1(c, QuotaBodySchema, "invalid quota request");
     if (!parsedBody.ok) return parsedBody.response;
-    const usage = await calculateOrgQuotaUsage(params.data.orgId);
-    await upsertOrgQuota(
-      params.data.orgId,
-      {
-        maxStorageBytes: parsedBody.data.maxStorageBytes ?? null,
-        maxArtifacts: parsedBody.data.maxArtifacts ?? null,
-      },
-      usage,
-    );
+    await setOrgQuota(params.data.orgId, {
+      maxStorageBytes: parsedBody.data.maxStorageBytes ?? null,
+      maxArtifacts: parsedBody.data.maxArtifacts ?? null,
+    });
     audit({
       orgId: params.data.orgId,
       action: "quota.set",

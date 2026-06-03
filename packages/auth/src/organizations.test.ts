@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mergeAccessibleOrgs } from "./ui-orgs";
+import { mergeAccessibleOrgs } from "./organizations";
 
 describe("accessible org listing", () => {
   test("deduplicates local and external grants by strongest role and sorts by slug", () => {

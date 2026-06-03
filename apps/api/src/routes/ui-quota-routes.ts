@@ -1,9 +1,8 @@
-import { and, db, eq, isNull, quotas } from "@hootifactory/db";
+import { getOrgQuota, setOrgQuota } from "@hootifactory/registry-application";
 import type { Hono } from "hono";
 import type { AppEnv } from "../types";
 import { uuidParams, validateJsonBody, validateParams } from "../validation";
 import { audit } from "./http";
-import { calculateOrgQuotaUsage, upsertOrgQuota } from "./ui-quota";
 import { requireOrgAccess } from "./ui-repository-access";
 import { QuotaBodySchema } from "./ui-schemas";
 
@@ -14,14 +13,10 @@ export function registerQuotaRoutes(router: Hono<AppEnv>): void {
     const { orgId } = parsedParams.data;
     const denied = await requireOrgAccess(c, orgId, "read");
     if (denied) return denied;
-    const [q] = await db
-      .select()
-      .from(quotas)
-      .where(and(eq(quotas.orgId, orgId), isNull(quotas.repositoryId)))
-      .limit(1);
+    const q = await getOrgQuota(orgId);
     return c.json({
-      maxStorageBytes: q?.maxStorageBytes ?? null,
-      usedStorageBytes: q?.usedStorageBytes ?? 0,
+      maxStorageBytes: q.maxStorageBytes,
+      usedStorageBytes: q.usedStorageBytes,
     });
   });
 
@@ -35,8 +30,7 @@ export function registerQuotaRoutes(router: Hono<AppEnv>): void {
     if (!parsedBody.ok) return parsedBody.response;
     const maxStorageBytes = parsedBody.data.maxStorageBytes ?? null;
     const maxArtifacts = parsedBody.data.maxArtifacts ?? null;
-    const usage = await calculateOrgQuotaUsage(orgId);
-    await upsertOrgQuota(orgId, { maxStorageBytes, maxArtifacts }, usage);
+    await setOrgQuota(orgId, { maxStorageBytes, maxArtifacts });
     audit({
       orgId,
       action: "quota.set",

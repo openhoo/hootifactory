@@ -1,13 +1,13 @@
-import { type RoleName, resolveUserRole, roleAllows, roleOutranks } from "@hootifactory/auth";
-import { db, eq, repositories } from "@hootifactory/db";
-import type { ParsedTokenGrant } from "./ui-schemas";
-import { scopeMayTargetRepo } from "./ui-token-scope";
+import { db, eq, repositories, type TokenGrant } from "@hootifactory/db";
+import { resolveUserRole } from "./authorize";
+import { type RoleName, roleAllows, roleOutranks } from "./permissions";
+import { scopeMayTargetRepo } from "./scope";
 
 interface TokenGrantRequest {
   userId: string;
   orgId: string;
   requestedRole?: RoleName;
-  grants: ParsedTokenGrant[];
+  grants: TokenGrant[];
 }
 
 type TokenGrantResult = { ok: true } | { ok: false; error: string };

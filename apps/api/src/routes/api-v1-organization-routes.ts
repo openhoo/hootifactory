@@ -1,5 +1,5 @@
+import { getOrganizationById, listAccessibleOrgs } from "@hootifactory/auth";
 import { isUniqueViolation } from "@hootifactory/core";
-import { db, eq, organizations } from "@hootifactory/db";
 import { createRepository } from "@hootifactory/registry-application";
 import type { Hono } from "hono";
 import type { AppEnv } from "../types";
@@ -17,7 +17,6 @@ import {
 } from "./api-v1-helpers";
 import { audit } from "./http";
 import { repositoryDto } from "./ui-dto";
-import { listAccessibleOrgs } from "./ui-orgs";
 import { resolveCreateRepositoryRequest } from "./ui-repository-create";
 import { CreateRepositoryBodySchema } from "./ui-schemas";
 
@@ -36,11 +35,7 @@ export function registerApiV1OrganizationRoutes(apiV1Router: Hono<AppEnv>) {
       return dataResponse(c, await listAccessibleOrgs(principal.userId));
     }
     if (principal.kind === "token") {
-      const [org] = await db
-        .select()
-        .from(organizations)
-        .where(eq(organizations.id, principal.orgId))
-        .limit(1);
+      const org = await getOrganizationById(principal.orgId);
       if (!org) return dataResponse(c, []);
       const response = await requireOrg(c, org.id, "read");
       return response ? response : dataResponse(c, [org]);
@@ -53,11 +48,7 @@ export function registerApiV1OrganizationRoutes(apiV1Router: Hono<AppEnv>) {
     if (!params.ok) return params.response;
     const response = await requireOrg(c, params.data.orgId, "read");
     if (response) return response;
-    const [org] = await db
-      .select()
-      .from(organizations)
-      .where(eq(organizations.id, params.data.orgId))
-      .limit(1);
+    const org = await getOrganizationById(params.data.orgId);
     if (!org) return errorResponse(c, 404, "NOT_FOUND", "organization not found");
     return dataResponse(c, org);
   });
@@ -101,11 +92,7 @@ export function registerApiV1OrganizationRoutes(apiV1Router: Hono<AppEnv>) {
       if (!resolvedRequest.ok) {
         return errorResponse(c, 400, "BAD_REQUEST", resolvedRequest.error);
       }
-      const [org] = await db
-        .select({ slug: organizations.slug })
-        .from(organizations)
-        .where(eq(organizations.id, params.data.orgId))
-        .limit(1);
+      const org = await getOrganizationById(params.data.orgId);
       if (!org) return errorResponse(c, 404, "NOT_FOUND", "organization not found");
       try {
         const repo = await createRepository({

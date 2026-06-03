@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import type { TokenScope } from "@hootifactory/db";
-import { grantGrants, patternMatches, scopeGrants, scopeSpecificity } from "./scope";
+import {
+  grantGrants,
+  patternMatches,
+  scopeGrants,
+  scopeMayTargetRepo,
+  scopeSpecificity,
+} from "./scope";
 
 describe("token scope helpers", () => {
   test("matches exact, prefix, slash-prefix, and org-wide patterns", () => {
@@ -86,5 +92,18 @@ describe("token scope helpers", () => {
         "read",
       ),
     ).toBe(false);
+  });
+
+  test("matches token scope patterns against OCI mount prefixes", () => {
+    const npmRepo = { name: "packages", mountPath: "npm/acme/packages" };
+    expect(scopeMayTargetRepo("packages", npmRepo)).toBe(true);
+    expect(scopeMayTargetRepo("pack*", npmRepo)).toBe(true);
+    expect(scopeMayTargetRepo("other*", npmRepo)).toBe(false);
+
+    const dockerRepo = { name: "containers", mountPath: "v2/acme/containers" };
+    expect(scopeMayTargetRepo("acme/containers", dockerRepo)).toBe(true);
+    expect(scopeMayTargetRepo("acme/containers/app", dockerRepo)).toBe(true);
+    expect(scopeMayTargetRepo("acme/*", dockerRepo)).toBe(true);
+    expect(scopeMayTargetRepo("other/*", dockerRepo)).toBe(false);
   });
 });

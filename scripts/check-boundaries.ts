@@ -128,6 +128,31 @@ const rules: BoundaryRule[] = [
     forbidden: [/@hootifactory\/db\b/, /\bdb\./],
   },
   {
+    name: "governance route slice stays DB-free",
+    roots: [
+      "apps/api/src/routes/ui-scan-policy-routes.ts",
+      "apps/api/src/routes/ui-quota-routes.ts",
+      "apps/api/src/routes/api-v1-policy-routes.ts",
+    ],
+    forbidden: [/@hootifactory\/db\b/, /\bdb\./],
+  },
+  {
+    name: "organization route slice stays DB-free",
+    roots: ["apps/api/src/routes/ui.ts", "apps/api/src/routes/api-v1-organization-routes.ts"],
+    forbidden: [/@hootifactory\/db\b/, /\bdb\./],
+  },
+  {
+    name: "token route slice stays DB-free",
+    roots: [
+      "apps/api/src/routes/ui-tokens.ts",
+      "apps/api/src/routes/api-v1-token-routes.ts",
+      "apps/api/src/routes/api-v1-helpers.ts",
+      "apps/api/src/routes/ui-dto.ts",
+      "apps/api/src/routes/ui-schemas.ts",
+    ],
+    forbidden: [/@hootifactory\/db\b/, /\bdb\./],
+  },
+  {
     name: "registry protocol plugins avoid delivery and platform infrastructure",
     roots: [
       "packages/registry-cargo/src",

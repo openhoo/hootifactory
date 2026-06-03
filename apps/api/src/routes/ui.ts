@@ -1,6 +1,10 @@
+import {
+  createOrganizationWithOwner,
+  getOrganizationById,
+  listAccessibleOrgs,
+} from "@hootifactory/auth";
 import { env } from "@hootifactory/config";
 import { isUniqueViolation } from "@hootifactory/core";
-import { db, eq, memberships, organizations } from "@hootifactory/db";
 import { createRepository, listRepositoriesForOrg } from "@hootifactory/registry-application";
 import { Hono } from "hono";
 import type { AppEnv } from "../types";
@@ -9,7 +13,6 @@ import { audit } from "./http";
 import { registerContentRoutes } from "./ui-content";
 import { repositoryDto } from "./ui-dto";
 import { registerGovernanceRoutes } from "./ui-governance";
-import { listAccessibleOrgs } from "./ui-orgs";
 import { requireOrgAccess, requireUserPrincipal } from "./ui-repository-access";
 import { registerRepositoryConfigRoutes } from "./ui-repository-config";
 import { resolveCreateRepositoryRequest } from "./ui-repository-create";
@@ -41,12 +44,12 @@ uiRouter.post("/orgs", async (c) => {
   if (!parsedBody.ok) return parsedBody.response;
   const body = parsedBody.data;
   try {
-    const [org] = await db
-      .insert(organizations)
-      .values({ slug: body.slug, displayName: body.displayName, description: body.description })
-      .returning();
-    if (!org) return c.json({ error: "failed to create org" }, 500);
-    await db.insert(memberships).values({ orgId: org.id, userId: p.userId, role: "owner" });
+    const org = await createOrganizationWithOwner({
+      slug: body.slug,
+      displayName: body.displayName,
+      description: body.description,
+      ownerUserId: p.userId,
+    });
     audit({
       orgId: org.id,
       action: "org.create",
@@ -95,11 +98,7 @@ uiRouter.post("/orgs/:orgId/repositories", async (c) => {
   const resolvedRequest = resolveCreateRepositoryRequest(parsedBody.data);
   if (!resolvedRequest.ok) return c.json({ error: resolvedRequest.error }, 400);
   const request = resolvedRequest.request;
-  const [org] = await db
-    .select({ slug: organizations.slug })
-    .from(organizations)
-    .where(eq(organizations.id, orgId))
-    .limit(1);
+  const org = await getOrganizationById(orgId);
   if (!org) return c.json({ error: "org not found" }, 404);
 
   try {

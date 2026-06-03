@@ -1,5 +1,13 @@
-import { authorize, createApiToken, revokeToken, rotateToken } from "@hootifactory/auth";
-import { apiTokens, db, desc, eq, users } from "@hootifactory/db";
+import {
+  authorize,
+  createApiToken,
+  getApiTokenById,
+  getApiTokenWithOwner,
+  listOrgTokens,
+  revokeToken,
+  rotateToken,
+  validateTokenGrant,
+} from "@hootifactory/auth";
 import type { Hono } from "hono";
 import { describeRoute, resolver } from "hono-openapi";
 import type { AppEnv } from "../types";
@@ -23,7 +31,6 @@ import { tokenDto } from "./ui-dto";
 import { requireUserPrincipal } from "./ui-repository-access";
 import { CreateTokenV1BodySchema } from "./ui-schemas";
 import { resolveCreateTokenRequest } from "./ui-token-create";
-import { validateTokenGrant } from "./ui-token-grants";
 
 export function registerApiV1TokenRoutes(apiV1Router: Hono<AppEnv>) {
   apiV1Router.get("/orgs/:orgId/tokens", doc("List tokens", "Tokens"), async (c) => {
@@ -37,15 +44,7 @@ export function registerApiV1TokenRoutes(apiV1Router: Hono<AppEnv>) {
       tokenTarget: "org",
     });
     if (!decision.allowed) return authorizationDenied(c, decision);
-    const rows = await db
-      .select({
-        token: apiTokens,
-        ownerUsername: users.username,
-      })
-      .from(apiTokens)
-      .leftJoin(users, eq(apiTokens.ownerUserId, users.id))
-      .where(eq(apiTokens.orgId, params.data.orgId))
-      .orderBy(desc(apiTokens.createdAt));
+    const rows = await listOrgTokens(params.data.orgId);
     const page = rows.slice(pagination.data.offset, pagination.data.offset + pagination.data.limit);
     return listResponse(
       c,
@@ -114,12 +113,7 @@ export function registerApiV1TokenRoutes(apiV1Router: Hono<AppEnv>) {
   apiV1Router.get("/tokens/:tokenId", doc("Get a token", "Tokens"), async (c) => {
     const params = validateV1(c, TokenIdParamsSchema, c.req.param(), "invalid path parameters");
     if (!params.ok) return params.response;
-    const [row] = await db
-      .select({ token: apiTokens, ownerUsername: users.username })
-      .from(apiTokens)
-      .leftJoin(users, eq(apiTokens.ownerUserId, users.id))
-      .where(eq(apiTokens.id, params.data.tokenId))
-      .limit(1);
+    const row = await getApiTokenWithOwner(params.data.tokenId);
     if (!row) return errorResponse(c, 404, "NOT_FOUND", "token not found");
     const response = await tokenResource(c, row.token, "read");
     if (response) return response;
@@ -129,11 +123,7 @@ export function registerApiV1TokenRoutes(apiV1Router: Hono<AppEnv>) {
   apiV1Router.post("/tokens/:tokenId/rotate", doc("Rotate a token", "Tokens"), async (c) => {
     const params = validateV1(c, TokenIdParamsSchema, c.req.param(), "invalid path parameters");
     if (!params.ok) return params.response;
-    const [token] = await db
-      .select()
-      .from(apiTokens)
-      .where(eq(apiTokens.id, params.data.tokenId))
-      .limit(1);
+    const token = await getApiTokenById(params.data.tokenId);
     if (!token) return errorResponse(c, 404, "NOT_FOUND", "token not found");
     const response = await tokenResource(c, token, "write");
     if (response) return response;
@@ -153,11 +143,7 @@ export function registerApiV1TokenRoutes(apiV1Router: Hono<AppEnv>) {
   apiV1Router.delete("/orgs/:orgId/tokens/:tokenId", doc("Revoke a token", "Tokens"), async (c) => {
     const params = validateV1(c, OrgTokenParamsSchema, c.req.param(), "invalid path parameters");
     if (!params.ok) return params.response;
-    const [token] = await db
-      .select()
-      .from(apiTokens)
-      .where(eq(apiTokens.id, params.data.tokenId))
-      .limit(1);
+    const token = await getApiTokenById(params.data.tokenId);
     if (!token || token.orgId !== params.data.orgId) {
       return errorResponse(c, 404, "NOT_FOUND", "token not found");
     }

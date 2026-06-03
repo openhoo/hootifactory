@@ -1,5 +1,12 @@
-import { authorize, createApiToken, revokeToken } from "@hootifactory/auth";
-import { and, apiTokens, db, desc, eq, users } from "@hootifactory/db";
+import {
+  authorize,
+  createApiToken,
+  getApiTokenById,
+  listOrgTokens,
+  listOrgTokensOwnedBy,
+  revokeToken,
+  validateTokenGrant,
+} from "@hootifactory/auth";
 import type { Hono } from "hono";
 import type { AppEnv } from "../types";
 import { uuidParams, validateJsonBody, validateParams } from "../validation";
@@ -8,7 +15,6 @@ import { tokenDto } from "./ui-dto";
 import { requireUserPrincipal } from "./ui-repository-access";
 import { CreateTokenBodySchema } from "./ui-schemas";
 import { resolveCreateTokenRequest } from "./ui-token-create";
-import { validateTokenGrant } from "./ui-token-grants";
 
 export function registerTokenRoutes(router: Hono<AppEnv>): void {
   router.get("/orgs/:orgId/tokens", async (c) => {
@@ -23,41 +29,11 @@ export function registerTokenRoutes(router: Hono<AppEnv>): void {
       ? adminDecision
       : await authorize(p, "read", { type: "org", orgId });
     if (!readDecision.allowed) return c.json({ error: readDecision.reason }, 403);
-    const where = adminDecision.allowed
-      ? eq(apiTokens.orgId, orgId)
-      : and(eq(apiTokens.orgId, orgId), eq(apiTokens.ownerUserId, p.userId));
-    const rows = await db
-      .select({
-        id: apiTokens.id,
-        ownerUserId: apiTokens.ownerUserId,
-        ownerUsername: users.username,
-        name: apiTokens.name,
-        prefix: apiTokens.tokenPrefix,
-        type: apiTokens.type,
-        grants: apiTokens.grants,
-        role: apiTokens.role,
-        expiresAt: apiTokens.expiresAt,
-        revokedAt: apiTokens.revokedAt,
-        revokedByUserId: apiTokens.revokedByUserId,
-        revokedByTokenId: apiTokens.revokedByTokenId,
-        revocationReason: apiTokens.revocationReason,
-        rotatedAt: apiTokens.rotatedAt,
-        rotatedByUserId: apiTokens.rotatedByUserId,
-        rotatedByTokenId: apiTokens.rotatedByTokenId,
-        lastUsedAt: apiTokens.lastUsedAt,
-        createdAt: apiTokens.createdAt,
-      })
-      .from(apiTokens)
-      .leftJoin(users, eq(apiTokens.ownerUserId, users.id))
-      .where(where)
-      .orderBy(desc(apiTokens.createdAt));
+    const rows = adminDecision.allowed
+      ? await listOrgTokens(orgId)
+      : await listOrgTokensOwnedBy(orgId, p.userId);
     return c.json({
-      tokens: rows.map((token) => ({
-        ...token,
-        scopes: token.grants
-          .filter((grant) => grant.resource === "repository")
-          .map((grant) => ({ repository: grant.repository, actions: grant.actions })),
-      })),
+      tokens: rows.map((row) => tokenDto(row.token, row.ownerUsername)),
     });
   });
 
@@ -68,7 +44,7 @@ export function registerTokenRoutes(router: Hono<AppEnv>): void {
     const user = requireUserPrincipal(c);
     if (!user.ok) return user.response;
     const p = user.principal;
-    const [tok] = await db.select().from(apiTokens).where(eq(apiTokens.id, tokenId)).limit(1);
+    const tok = await getApiTokenById(tokenId);
     if (!tok || tok.orgId !== orgId) return c.json({ error: "token not found" }, 404);
     const isOwner = tok.ownerUserId === p.userId;
     if (!isOwner) {

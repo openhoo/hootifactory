@@ -10,6 +10,16 @@ export {
   storeBlobWithRef,
 } from "./service-blobs";
 export {
+  getOrgQuota,
+  type OrgQuotaLimits,
+  type OrgQuotaState,
+  type OrgQuotaUsage,
+  type ScanPolicyRow,
+  setOrgQuota,
+  type UpsertScanPolicyInput,
+  upsertScanPolicy,
+} from "./service-governance";
+export {
   type ArtifactFindingRow,
   type ArtifactListRow,
   type ArtifactWithRepositoryRow,

@@ -1,6 +1,5 @@
-import type { Action } from "@hootifactory/auth";
+import type { Action, TokenGrant, TokenScope } from "@hootifactory/auth";
 import { z } from "@hootifactory/core";
-import type { TokenGrant, TokenScope } from "@hootifactory/db";
 import { isValidRepositoryPattern, SEVERITY_ORDER, type Severity } from "@hootifactory/scan-core";
 
 export type ParsedTokenScope = TokenScope;

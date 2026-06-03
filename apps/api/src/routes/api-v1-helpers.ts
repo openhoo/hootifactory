@@ -1,6 +1,11 @@
-import { authorize, type Decision, httpStatusForDenial, type Principal } from "@hootifactory/auth";
+import {
+  type ApiTokenRow,
+  authorize,
+  type Decision,
+  httpStatusForDenial,
+  type Principal,
+} from "@hootifactory/auth";
 import { z, zodIssueTree } from "@hootifactory/core";
-import type { apiTokens } from "@hootifactory/db";
 import type { ResolvedRepo } from "@hootifactory/registry";
 import {
   type ArtifactWithRepositoryRow,
@@ -208,11 +213,7 @@ export async function authorizePolicy(
   return authorizationDenied(c, decision);
 }
 
-export async function tokenResource(
-  c: Context<AppEnv>,
-  token: typeof apiTokens.$inferSelect,
-  action: ApiV1Action,
-) {
+export async function tokenResource(c: Context<AppEnv>, token: ApiTokenRow, action: ApiV1Action) {
   const principal = c.get("principal");
   const target = principal.kind === "token" && principal.tokenId === token.id ? "self" : "org";
   const decision = await authorize(principal, action, {
