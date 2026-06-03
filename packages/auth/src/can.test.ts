@@ -68,6 +68,33 @@ describe("can() — anonymous", () => {
     });
     expect(d.allowed).toBe(true);
   });
+  test("public package and artifact reads allowed", () => {
+    const pkg = can({
+      principal: anon,
+      action: "read",
+      resource: {
+        type: "package",
+        visibility: "public",
+        orgId: "orgA",
+        repositoryName: "acme/app",
+        packageName: "demo",
+      },
+    });
+    const artifact = can({
+      principal: anon,
+      action: "read",
+      resource: {
+        type: "artifact",
+        visibility: "public",
+        orgId: "orgA",
+        repositoryName: "acme/app",
+        packageName: "demo",
+        artifactRef: "demo-1.0.0.tgz",
+      },
+    });
+    expect(pkg.allowed).toBe(true);
+    expect(artifact.allowed).toBe(true);
+  });
   test("private repo read => 401 unauthenticated", () => {
     const d = can({
       principal: anon,

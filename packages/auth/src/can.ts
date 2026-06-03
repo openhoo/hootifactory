@@ -34,7 +34,7 @@ function denyRole(reason: string): Decision {
 export function can({ principal, action, resource, effectiveRole }: CanInput): Decision {
   // ── anonymous ────────────────────────────────────────────────────────────
   if (principal.kind === "anonymous") {
-    if (action === "read" && resource.type === "repository" && resource.visibility === "public") {
+    if (action === "read" && resource.visibility === "public") {
       return { allowed: true };
     }
     return { allowed: false, code: "unauthenticated", reason: "authentication required" };
