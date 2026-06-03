@@ -1,4 +1,10 @@
-import { jsonRecordOrEmpty, type RegistryRequestContext } from "@hootifactory/registry";
+import {
+  commitPackageVersionBlob,
+  findOrCreateRegistryPackage,
+  jsonRecordOrEmpty,
+  type RegistryRequestContext,
+  storeRegistryBlobWithRef,
+} from "@hootifactory/registry";
 import { parseNpmDistTagAssignment } from "./npm-dist-tags";
 import { type NpmDist, sha1hex, sha512b64 } from "./npm-integrity";
 import { buildNpmMetadataOnlyVersionPatch } from "./npm-metadata-only";
@@ -74,7 +80,7 @@ async function publishNpmTarballs(
   const scope = name.startsWith("@") ? (name.split("/")[0] ?? null) : null;
   const pkg =
     existingPkg ??
-    (await ctx.data.packages.findOrCreate({
+    (await findOrCreateRegistryPackage(ctx, {
       name,
       namespace: scope,
     }));
@@ -91,10 +97,11 @@ async function publishNpmTarballs(
       );
     }
 
-    const stored = await ctx.data.content.storeBlobWithRef({
+    const blobScope = `${name}@${version}`;
+    const stored = await storeRegistryBlobWithRef(ctx, {
       data: tarball,
       kind: "npm_tarball",
-      scope: `${name}@${version}`,
+      scope: blobScope,
       mediaType: "application/octet-stream",
     });
     const { manifestDist, dist } = buildNpmPublishedDist({
@@ -109,10 +116,10 @@ async function publishNpmTarballs(
       ...jsonRecordOrEmpty(manifest.dist),
       ...manifestDist,
     };
-    const result = await ctx.data.versions.commitOrReleaseBlob({
+    const result = await commitPackageVersionBlob(ctx, {
       stored,
       kind: "npm_tarball",
-      scope: `${name}@${version}`,
+      scope: blobScope,
       packageId: pkg.id,
       version,
       metadata: { manifest, dist },
@@ -120,7 +127,7 @@ async function publishNpmTarballs(
       scan: { name, version, mediaType: "application/octet-stream" },
       asset: {
         role: "npm_tarball",
-        scope: `${name}@${version}`,
+        scope: blobScope,
         path: dist.filename,
         mediaType: "application/octet-stream",
         metadata: { shasum: dist.shasum, integrity: dist.integrity },

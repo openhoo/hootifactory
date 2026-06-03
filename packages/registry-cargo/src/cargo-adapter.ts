@@ -1,4 +1,6 @@
 import {
+  bearerAuthChallenge,
+  defineRegistryPlugin,
   Errors,
   type HttpMethod,
   type Permission,
@@ -8,6 +10,8 @@ import {
   type RouteEntry,
   type RouteMatch,
   readWritePermission,
+  registryRoute,
+  serveRegistryBlob,
 } from "@hootifactory/registry";
 import {
   buildCargoOwnersBody,
@@ -46,55 +50,87 @@ export class CargoAdapter implements RegistryPlugin {
     proxyable: false,
     virtualizable: true,
   };
+  authChallenge = () => bearerAuthChallenge();
+
+  private readonly plugin = defineRegistryPlugin({
+    format: this.format,
+    capabilities: this.capabilities,
+    authChallenge: this.authChallenge,
+    routes: [
+      registryRoute({
+        method: "GET",
+        pattern: "/config.json",
+        handlerId: "config",
+        handler: ({ ctx }) =>
+          Response.json({
+            dl: `${ctx.baseUrl}/${ctx.repo.mountPath}/api/v1/crates`,
+            api: `${ctx.baseUrl}/${ctx.repo.mountPath}`,
+          }),
+      }),
+      registryRoute({
+        method: "PUT",
+        pattern: "/api/v1/crates/new",
+        handlerId: "publish",
+        handler: ({ req, ctx }) => this.publish(req, ctx),
+      }),
+      registryRoute({
+        method: "GET",
+        pattern: "/api/v1/crates/:crate/:version/download",
+        handlerId: "download",
+        handler: ({ params, ctx }) => this.download(params.crate ?? "", params.version ?? "", ctx),
+      }),
+      registryRoute({
+        method: "DELETE",
+        pattern: "/api/v1/crates/:crate/:version/yank",
+        handlerId: "yank",
+        handler: ({ params, ctx }) =>
+          this.setYank(params.crate ?? "", params.version ?? "", true, ctx),
+      }),
+      registryRoute({
+        method: "PUT",
+        pattern: "/api/v1/crates/:crate/:version/unyank",
+        handlerId: "unyank",
+        handler: ({ params, ctx }) =>
+          this.setYank(params.crate ?? "", params.version ?? "", false, ctx),
+      }),
+      registryRoute({
+        method: "GET",
+        pattern: "/api/v1/crates/:crate/owners",
+        handlerId: "ownersList",
+        handler: ({ params, ctx }) => this.listOwners(params.crate ?? "", ctx),
+      }),
+      registryRoute({
+        method: "PUT",
+        pattern: "/api/v1/crates/:crate/owners",
+        handlerId: "ownersAdd",
+        handler: ({ params, req, ctx }) => this.updateOwners(params.crate ?? "", req, "add", ctx),
+      }),
+      registryRoute({
+        method: "DELETE",
+        pattern: "/api/v1/crates/:crate/owners",
+        handlerId: "ownersRemove",
+        handler: ({ params, req, ctx }) =>
+          this.updateOwners(params.crate ?? "", req, "remove", ctx),
+      }),
+      registryRoute({
+        method: "GET",
+        pattern: "/:path+",
+        handlerId: "index",
+        handler: ({ params, ctx }) => this.index(params.path ?? "", ctx),
+      }),
+    ],
+  });
 
   routes(): RouteEntry[] {
-    return [
-      { method: "GET", pattern: "/config.json", handlerId: "config" },
-      { method: "PUT", pattern: "/api/v1/crates/new", handlerId: "publish" },
-      { method: "GET", pattern: "/api/v1/crates/:crate/:version/download", handlerId: "download" },
-      { method: "DELETE", pattern: "/api/v1/crates/:crate/:version/yank", handlerId: "yank" },
-      { method: "PUT", pattern: "/api/v1/crates/:crate/:version/unyank", handlerId: "unyank" },
-      { method: "GET", pattern: "/api/v1/crates/:crate/owners", handlerId: "ownersList" },
-      { method: "PUT", pattern: "/api/v1/crates/:crate/owners", handlerId: "ownersAdd" },
-      { method: "DELETE", pattern: "/api/v1/crates/:crate/owners", handlerId: "ownersRemove" },
-      { method: "GET", pattern: "/:path+", handlerId: "index" },
-    ];
+    return this.plugin.routes();
   }
 
   requiredPermission(method: HttpMethod): Permission {
     return readWritePermission(method);
   }
 
-  authChallenge() {
-    return { header: 'Bearer realm="hootifactory"', status: 401 as const };
-  }
-
   async handle(match: RouteMatch, req: Request, ctx: RegistryRequestContext): Promise<Response> {
-    switch (match.entry.handlerId) {
-      case "config":
-        return Response.json({
-          dl: `${ctx.baseUrl}/${ctx.repo.mountPath}/api/v1/crates`,
-          api: `${ctx.baseUrl}/${ctx.repo.mountPath}`,
-        });
-      case "publish":
-        return this.publish(req, ctx);
-      case "download":
-        return this.download(match.params.crate ?? "", match.params.version ?? "", ctx);
-      case "yank":
-        return this.setYank(match.params.crate ?? "", match.params.version ?? "", true, ctx);
-      case "unyank":
-        return this.setYank(match.params.crate ?? "", match.params.version ?? "", false, ctx);
-      case "ownersList":
-        return this.listOwners(match.params.crate ?? "", ctx);
-      case "ownersAdd":
-        return this.updateOwners(match.params.crate ?? "", req, "add", ctx);
-      case "ownersRemove":
-        return this.updateOwners(match.params.crate ?? "", req, "remove", ctx);
-      case "index":
-        return this.index(match.params.path ?? "", ctx);
-      default:
-        throw Errors.notFound();
-    }
+    return this.plugin.handle(match, req, ctx);
   }
 
   private findCrate(ctx: RegistryRequestContext, name: string) {
@@ -133,7 +169,7 @@ export class CargoAdapter implements RegistryPlugin {
     const v = await ctx.data.versions.findLive(pkg.id, version);
     const digest = parseCargoVersionMeta(v?.metadata)?.crateDigest;
     if (!digest || !(await ctx.blobs.exists(digest))) throw Errors.notFound();
-    return ctx.data.content.serveBlobIfClean({
+    return serveRegistryBlob(ctx, {
       digest,
       contentType: "application/octet-stream",
       blocked: () => new Response("blocked by scan policy", { status: 403 }),
@@ -187,3 +223,5 @@ export class CargoAdapter implements RegistryPlugin {
     return handleCargoPublish(req, ctx);
   }
 }
+
+export const cargoRegistryPlugin: RegistryPlugin = new CargoAdapter();

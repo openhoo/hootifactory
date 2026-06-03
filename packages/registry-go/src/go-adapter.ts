@@ -1,5 +1,6 @@
 import {
   basicAuthChallenge,
+  defineRegistryPlugin,
   Errors,
   type HttpMethod,
   type Permission,
@@ -9,6 +10,8 @@ import {
   type RouteEntry,
   type RouteMatch,
   readWritePermission,
+  registryRoute,
+  serveRegistryBlob,
 } from "@hootifactory/registry";
 import { handleGoUpload } from "./go-upload-lifecycle";
 import {
@@ -30,39 +33,59 @@ export class GoAdapter implements RegistryPlugin {
     proxyable: false,
     virtualizable: true,
   };
+  authChallenge = basicAuthChallenge;
+
+  private readonly plugin = defineRegistryPlugin({
+    format: this.format,
+    capabilities: this.capabilities,
+    authChallenge: this.authChallenge,
+    routes: [
+      registryRoute({
+        method: "GET",
+        pattern: "/:module+/@v/list",
+        handlerId: "list",
+        handler: ({ params, ctx }) => this.list(this.parseModule(params.module ?? ""), ctx),
+      }),
+      registryRoute({
+        method: "GET",
+        pattern: "/:module+/@latest",
+        handlerId: "latest",
+        handler: ({ params, ctx }) => this.latest(this.parseModule(params.module ?? ""), ctx),
+      }),
+      registryRoute({
+        method: "GET",
+        pattern: "/:module+/@v/:file",
+        handlerId: "file",
+        handler: ({ params, ctx }) =>
+          this.file(this.parseModule(params.module ?? ""), params.file ?? "", ctx),
+      }),
+      registryRoute({
+        method: "PUT",
+        pattern: "/:module+/@v/:version",
+        handlerId: "upload",
+        handler: ({ params, req, ctx }) =>
+          this.upload(this.parseModule(params.module ?? ""), params.version ?? "", req, ctx),
+      }),
+    ],
+  });
 
   routes(): RouteEntry[] {
-    return [
-      { method: "GET", pattern: "/:module+/@v/list", handlerId: "list" },
-      { method: "GET", pattern: "/:module+/@latest", handlerId: "latest" },
-      { method: "GET", pattern: "/:module+/@v/:file", handlerId: "file" },
-      { method: "PUT", pattern: "/:module+/@v/:version", handlerId: "upload" },
-    ];
+    return this.plugin.routes();
   }
 
   requiredPermission(method: HttpMethod): Permission {
     return readWritePermission(method);
   }
 
-  authChallenge = basicAuthChallenge;
-
   async handle(match: RouteMatch, req: Request, ctx: RegistryRequestContext): Promise<Response> {
-    const moduleName = parseRegistryInput(GoModuleSchema, decodeBang(match.params.module ?? ""), {
+    return this.plugin.handle(match, req, ctx);
+  }
+
+  private parseModule(input: string): string {
+    return parseRegistryInput(GoModuleSchema, decodeBang(input), {
       code: "NAME_INVALID",
       message: "invalid Go module path",
     });
-    switch (match.entry.handlerId) {
-      case "list":
-        return this.list(moduleName, ctx);
-      case "latest":
-        return this.latest(moduleName, ctx);
-      case "file":
-        return this.file(moduleName, match.params.file ?? "", ctx);
-      case "upload":
-        return this.upload(moduleName, match.params.version ?? "", req, ctx);
-      default:
-        throw Errors.notFound();
-    }
   }
 
   private async storedVersions(ctx: RegistryRequestContext, packageId: string) {
@@ -135,12 +158,10 @@ export class GoAdapter implements RegistryPlugin {
       });
     }
     if (ext === "zip") {
-      if (await ctx.data.content.isArtifactBlocked(meta.zipDigest)) {
-        return new Response("blocked by scan policy", { status: 403 });
-      }
-      if (!(await ctx.blobs.exists(meta.zipDigest))) throw Errors.notFound();
-      return new Response(ctx.blobs.get(meta.zipDigest), {
-        headers: { "content-type": "application/zip" },
+      return serveRegistryBlob(ctx, {
+        digest: meta.zipDigest,
+        contentType: "application/zip",
+        blocked: () => new Response("blocked by scan policy", { status: 403 }),
       });
     }
     throw Errors.notFound();
@@ -155,3 +176,5 @@ export class GoAdapter implements RegistryPlugin {
     return handleGoUpload(moduleName, versionRaw, req, ctx);
   }
 }
+
+export const goRegistryPlugin: RegistryPlugin = new GoAdapter();

@@ -1,4 +1,8 @@
-import { Errors, type RegistryRequestContext } from "@hootifactory/registry";
+import {
+  Errors,
+  type RegistryRequestContext,
+  releaseRegistryBlobRef,
+} from "@hootifactory/registry";
 import { type OciManifestPutRequest, parseOciManifestPutRequest } from "./oci-manifest-put";
 import { manifestBlobDigests, parseReference } from "./oci-validation";
 
@@ -202,7 +206,7 @@ async function releaseOciManifestBlobs(
   }
   for (const digest of digests) {
     if (stillUsed.has(digest)) continue;
-    await ctx.data.content.releaseBlobRef({ digest, kind: "oci_layer", scope: image });
+    await releaseRegistryBlobRef(ctx, { digest, kind: "oci_layer", scope: image });
   }
 }
 
@@ -222,7 +226,7 @@ export async function deleteOciBlobReference(
   if (!(await ctx.data.oci.blobRefExists({ scope: opts.image, digest: opts.digest }))) {
     throw Errors.blobUnknown({ digest: opts.digest });
   }
-  await ctx.data.content.releaseBlobRef({
+  await releaseRegistryBlobRef(ctx, {
     digest: opts.digest,
     kind: "oci_layer",
     scope: opts.image,

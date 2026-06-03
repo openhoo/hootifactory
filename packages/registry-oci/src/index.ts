@@ -1,1 +1,1 @@
-export { DockerAdapter } from "./docker-adapter";
+export { DockerAdapter, dockerRegistryPlugin } from "./docker-adapter";

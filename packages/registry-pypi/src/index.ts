@@ -1,2 +1,2 @@
-export { PypiAdapter } from "./pypi-adapter";
+export { PypiAdapter, pypiRegistryPlugin } from "./pypi-adapter";
 export { normalizeName, renderProjectHtml, renderRootHtml } from "./simple";

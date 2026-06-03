@@ -1,5 +1,6 @@
 import {
   basicAuthChallenge,
+  defineRegistryPlugin,
   Errors,
   type HttpMethod,
   type Permission,
@@ -10,6 +11,8 @@ import {
   type RouteEntry,
   type RouteMatch,
   readWritePermission,
+  registryRoute,
+  serveRegistryBlob,
 } from "@hootifactory/registry";
 import { handleNugetPublish } from "./nuget-publish-lifecycle";
 import { buildNugetRegistrationIndex, buildNugetRegistrationItem } from "./nuget-registration";
@@ -62,64 +65,101 @@ export class NugetAdapter implements RegistryPlugin {
     proxyable: false,
     virtualizable: true,
   };
+  authChallenge = basicAuthChallenge;
+
+  private readonly plugin = defineRegistryPlugin({
+    format: this.format,
+    capabilities: this.capabilities,
+    authChallenge: this.authChallenge,
+    routes: [
+      registryRoute({
+        method: "GET",
+        pattern: "/v3/index.json",
+        handlerId: "serviceIndex",
+        handler: ({ ctx }) => this.serviceIndex(ctx),
+      }),
+      registryRoute({
+        method: "GET",
+        pattern: "/v3/query",
+        handlerId: "search",
+        handler: ({ req, ctx }) => this.nugetSearch(req, this.base(ctx), ctx),
+      }),
+      registryRoute({
+        method: "PUT",
+        pattern: "/v3/package",
+        handlerId: "publish",
+        handler: ({ req, ctx }) => this.publish(req, ctx),
+      }),
+      registryRoute({
+        method: "DELETE",
+        pattern: "/v3/package/:id/:version",
+        handlerId: "delete",
+        handler: ({ params, ctx }) =>
+          this.setListed(params.id ?? "", params.version ?? "", false, ctx),
+      }),
+      registryRoute({
+        method: "POST",
+        pattern: "/v3/package/:id/:version",
+        handlerId: "relist",
+        handler: ({ params, ctx }) =>
+          this.setListed(params.id ?? "", params.version ?? "", true, ctx),
+      }),
+      registryRoute({
+        method: "GET",
+        pattern: "/v3-flatcontainer/:id/index.json",
+        handlerId: "versions",
+        handler: ({ params, ctx }) => this.versions(params.id ?? "", ctx),
+      }),
+      registryRoute({
+        method: "GET",
+        pattern: "/v3-flatcontainer/:id/:version/:file",
+        handlerId: "download",
+        handler: ({ params, ctx }) =>
+          this.download(params.id ?? "", params.version ?? "", params.file ?? "", ctx),
+      }),
+      registryRoute({
+        method: "GET",
+        pattern: "/v3/registrations/:id/index.json",
+        handlerId: "registration",
+        handler: ({ params, ctx }) => this.registration(params.id ?? "", this.base(ctx), ctx),
+      }),
+      registryRoute({
+        method: "GET",
+        pattern: "/v3/registrations/:id/:file",
+        handlerId: "registrationLeaf",
+        handler: ({ params, ctx }) =>
+          this.registrationLeaf(params.id ?? "", params.file ?? "", this.base(ctx), ctx),
+      }),
+    ],
+  });
 
   routes(): RouteEntry[] {
-    return [
-      { method: "GET", pattern: "/v3/index.json", handlerId: "serviceIndex" },
-      { method: "GET", pattern: "/v3/query", handlerId: "search" },
-      { method: "PUT", pattern: "/v3/package", handlerId: "publish" },
-      { method: "DELETE", pattern: "/v3/package/:id/:version", handlerId: "delete" },
-      { method: "POST", pattern: "/v3/package/:id/:version", handlerId: "relist" },
-      { method: "GET", pattern: "/v3-flatcontainer/:id/index.json", handlerId: "versions" },
-      { method: "GET", pattern: "/v3-flatcontainer/:id/:version/:file", handlerId: "download" },
-      { method: "GET", pattern: "/v3/registrations/:id/index.json", handlerId: "registration" },
-      { method: "GET", pattern: "/v3/registrations/:id/:file", handlerId: "registrationLeaf" },
-    ];
+    return this.plugin.routes();
   }
 
   requiredPermission(method: HttpMethod): Permission {
     return readWritePermission(method);
   }
 
-  authChallenge = basicAuthChallenge;
-
   async handle(match: RouteMatch, req: Request, ctx: RegistryRequestContext): Promise<Response> {
-    const base = `${ctx.baseUrl}/${ctx.repo.mountPath}`;
-    switch (match.entry.handlerId) {
-      case "serviceIndex":
-        return Response.json({
-          version: "3.0.0",
-          resources: [
-            { "@id": `${base}/v3-flatcontainer/`, "@type": "PackageBaseAddress/3.0.0" },
-            { "@id": `${base}/v3/package`, "@type": "PackagePublish/2.0.0" },
-            { "@id": `${base}/v3/registrations/`, "@type": "RegistrationsBaseUrl/3.6.0" },
-            { "@id": `${base}/v3/query`, "@type": "SearchQueryService/3.5.0" },
-          ],
-        });
-      case "search":
-        return this.nugetSearch(req, base, ctx);
-      case "publish":
-        return this.publish(req, ctx);
-      case "delete":
-        return this.setListed(match.params.id ?? "", match.params.version ?? "", false, ctx);
-      case "relist":
-        return this.setListed(match.params.id ?? "", match.params.version ?? "", true, ctx);
-      case "versions":
-        return this.versions(match.params.id ?? "", ctx);
-      case "download":
-        return this.download(
-          match.params.id ?? "",
-          match.params.version ?? "",
-          match.params.file ?? "",
-          ctx,
-        );
-      case "registration":
-        return this.registration(match.params.id ?? "", base, ctx);
-      case "registrationLeaf":
-        return this.registrationLeaf(match.params.id ?? "", match.params.file ?? "", base, ctx);
-      default:
-        throw Errors.notFound();
-    }
+    return this.plugin.handle(match, req, ctx);
+  }
+
+  private base(ctx: RegistryRequestContext): string {
+    return `${ctx.baseUrl}/${ctx.repo.mountPath}`;
+  }
+
+  private serviceIndex(ctx: RegistryRequestContext): Response {
+    const base = this.base(ctx);
+    return Response.json({
+      version: "3.0.0",
+      resources: [
+        { "@id": `${base}/v3-flatcontainer/`, "@type": "PackageBaseAddress/3.0.0" },
+        { "@id": `${base}/v3/package`, "@type": "PackagePublish/2.0.0" },
+        { "@id": `${base}/v3/registrations/`, "@type": "RegistrationsBaseUrl/3.6.0" },
+        { "@id": `${base}/v3/query`, "@type": "SearchQueryService/3.5.0" },
+      ],
+    });
   }
 
   private async findPkg(ctx: RegistryRequestContext, id: string) {
@@ -253,7 +293,7 @@ export class NugetAdapter implements RegistryPlugin {
         { headers: { "content-type": "application/xml; charset=utf-8" } },
       );
     }
-    return ctx.data.content.serveBlobIfClean({
+    return serveRegistryBlob(ctx, {
       digest,
       contentType: "application/octet-stream",
       blocked: () => new Response("blocked by scan policy", { status: 403 }),
@@ -284,3 +324,5 @@ export class NugetAdapter implements RegistryPlugin {
     return handleNugetPublish(req, ctx);
   }
 }
+
+export const nugetRegistryPlugin: RegistryPlugin = new NugetAdapter();

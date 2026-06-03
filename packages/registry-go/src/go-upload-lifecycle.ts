@@ -1,4 +1,8 @@
-import type { RegistryRequestContext } from "@hootifactory/registry";
+import {
+  findRegistryPackage,
+  publishImmutableVersionBlob,
+  type RegistryRequestContext,
+} from "@hootifactory/registry";
 import { type GoUploadPlan, parseGoUploadRequest, validateGoUploadPlan } from "./go-upload";
 import type { GoVersionMeta } from "./go-validation";
 
@@ -28,45 +32,36 @@ export async function handleGoUpload(
 ): Promise<Response> {
   const upload = await parseGoUploadRequest(moduleName, versionRaw, req);
   const { scope, version, zipBytes } = upload;
-  const existingPkg = await ctx.data.packages.findByName(moduleName);
-  if (existingPkg) {
-    if (await ctx.data.versions.exists(existingPkg.id, version)) {
-      return goVersionConflictResponse();
-    }
+  const existingPkg = await findRegistryPackage(ctx, moduleName);
+  if (existingPkg && (await ctx.data.versions.exists(existingPkg.id, version))) {
+    return goVersionConflictResponse();
   }
   const uploadError = validateGoUploadPlan(moduleName, upload);
   if (uploadError) return Response.json(uploadError.body, { status: uploadError.status });
-  const pkg =
-    existingPkg ??
-    (await ctx.data.packages.findOrCreate({
-      name: moduleName,
-    }));
 
-  const stored = await ctx.data.content.storeBlobWithRef({
-    data: zipBytes,
-    kind: "generic_file",
-    scope,
-    mediaType: "application/zip",
-  });
-  const result = await ctx.data.versions.commitOrReleaseBlob({
-    stored,
-    kind: "generic_file",
-    scope,
-    packageId: pkg.id,
+  const result = await publishImmutableVersionBlob(ctx, {
+    package: { name: moduleName },
     version,
-    metadata: buildGoPublishedMetadata(upload, stored.digest),
+    kind: "generic_file",
+    scope,
+    blob: {
+      data: zipBytes,
+      kind: "generic_file",
+      scope,
+      mediaType: "application/zip",
+    },
+    metadata: (stored) => buildGoPublishedMetadata(upload, stored.digest),
     sizeBytes: zipBytes.length,
     scan: { name: moduleName, version, mediaType: "application/zip" },
-    asset: {
+    asset: () => ({
       role: "go_zip",
       scope,
       path: `${version}.zip`,
       mediaType: "application/zip",
       metadata: { module: moduleName },
-    },
+    }),
+    versionConflict: (packageId) => ctx.data.versions.exists(packageId, version),
   });
-  if ("conflict" in result) {
-    return goVersionConflictResponse();
-  }
+  if (!result.ok) return goVersionConflictResponse();
   return goUploadSuccessResponse(moduleName, version);
 }

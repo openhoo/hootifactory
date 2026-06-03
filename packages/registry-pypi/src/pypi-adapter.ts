@@ -1,6 +1,6 @@
 import {
   basicAuthChallenge,
-  Errors,
+  defineRegistryPlugin,
   type HttpMethod,
   type Permission,
   parseRegistryInput,
@@ -9,6 +9,8 @@ import {
   type RouteEntry,
   type RouteMatch,
   readWritePermission,
+  registryRoute,
+  serveRegistryBlob,
 } from "@hootifactory/registry";
 import { handlePypiUpload } from "./pypi-upload-lifecycle";
 import {
@@ -37,36 +39,56 @@ export class PypiAdapter implements RegistryPlugin {
     proxyable: false,
     virtualizable: true,
   };
+  authChallenge = basicAuthChallenge;
+
+  private readonly plugin = defineRegistryPlugin({
+    format: this.format,
+    capabilities: this.capabilities,
+    authChallenge: this.authChallenge,
+    routes: [
+      registryRoute({
+        method: "GET",
+        pattern: "/simple/",
+        handlerId: "simpleRoot",
+        handler: ({ req, ctx }) => this.simpleRoot(req, ctx),
+      }),
+      registryRoute({
+        method: "GET",
+        pattern: "/simple/:project/",
+        handlerId: "simpleProject",
+        handler: ({ params, req, ctx }) => this.simpleProject(params.project ?? "", req, ctx),
+      }),
+      registryRoute({
+        method: "GET",
+        pattern: "/files/:filename",
+        handlerId: "download",
+        handler: ({ params, ctx }) => this.download(params.filename ?? "", ctx),
+      }),
+      registryRoute({
+        method: "POST",
+        pattern: "/",
+        handlerId: "upload",
+        handler: ({ req, ctx }) => this.upload(req, ctx),
+      }),
+      registryRoute({
+        method: "POST",
+        pattern: "/legacy/",
+        handlerId: "upload",
+        handler: ({ req, ctx }) => this.upload(req, ctx),
+      }),
+    ],
+  });
 
   routes(): RouteEntry[] {
-    return [
-      { method: "GET", pattern: "/simple/", handlerId: "simpleRoot" },
-      { method: "GET", pattern: "/simple/:project/", handlerId: "simpleProject" },
-      { method: "GET", pattern: "/files/:filename", handlerId: "download" },
-      { method: "POST", pattern: "/", handlerId: "upload" },
-      { method: "POST", pattern: "/legacy/", handlerId: "upload" },
-    ];
+    return this.plugin.routes();
   }
 
   requiredPermission(method: HttpMethod): Permission {
     return readWritePermission(method);
   }
 
-  authChallenge = basicAuthChallenge;
-
   async handle(match: RouteMatch, req: Request, ctx: RegistryRequestContext): Promise<Response> {
-    switch (match.entry.handlerId) {
-      case "simpleRoot":
-        return this.simpleRoot(req, ctx);
-      case "simpleProject":
-        return this.simpleProject(match.params.project ?? "", req, ctx);
-      case "download":
-        return this.download(match.params.filename ?? "", ctx);
-      case "upload":
-        return this.upload(req, ctx);
-      default:
-        throw Errors.notFound();
-    }
+    return this.plugin.handle(match, req, ctx);
   }
 
   private redirectToSlash(req: Request): Response | null {
@@ -144,7 +166,7 @@ export class PypiAdapter implements RegistryPlugin {
     if (!file || !(await ctx.blobs.exists(file.blobDigest))) {
       return new Response("Not Found", { status: 404 });
     }
-    return ctx.data.content.serveBlobIfClean({
+    return serveRegistryBlob(ctx, {
       digest: file.blobDigest,
       contentType: "application/octet-stream",
       blocked: () => new Response("artifact blocked by scan policy", { status: 403 }),
@@ -155,3 +177,5 @@ export class PypiAdapter implements RegistryPlugin {
     return handlePypiUpload(req, ctx);
   }
 }
+
+export const pypiRegistryPlugin: RegistryPlugin = new PypiAdapter();

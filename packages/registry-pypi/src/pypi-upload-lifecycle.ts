@@ -1,4 +1,9 @@
-import { digestHex, type RegistryRequestContext } from "@hootifactory/registry";
+import {
+  digestHex,
+  type RegistryRequestContext,
+  releaseRegistryBlobRef,
+  storeRegistryBlobWithRef,
+} from "@hootifactory/registry";
 import { type PypiUploadPlan, parsePypiUploadRequest } from "./pypi-upload";
 import {
   type AddPypiFileResult,
@@ -46,7 +51,7 @@ export async function handlePypiUpload(
     return Response.json({ message: "Release version already exists." }, { status: 409 });
   }
 
-  const stored = await ctx.data.content.storeBlobWithRef({
+  const stored = await storeRegistryBlobWithRef(ctx, {
     data: bytes,
     kind: "pypi_file",
     scope: filename,
@@ -64,7 +69,7 @@ export async function handlePypiUpload(
   });
   if (!added.ok) {
     if (stored.refCreated) {
-      await ctx.data.content.releaseBlobRef({
+      await releaseRegistryBlobRef(ctx, {
         digest: stored.digest,
         kind: "pypi_file",
         scope: filename,

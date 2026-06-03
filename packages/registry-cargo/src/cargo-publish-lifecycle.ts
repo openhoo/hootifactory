@@ -1,4 +1,4 @@
-import type { RegistryRequestContext } from "@hootifactory/registry";
+import { publishImmutableVersionBlob, type RegistryRequestContext } from "@hootifactory/registry";
 import {
   buildCargoIndexEntry,
   cargoBlobScope,
@@ -47,44 +47,35 @@ export async function handleCargoPublish(
   const name = meta.name.toLowerCase();
   const cksum = digestCargoCrate(crateBytes);
   const scope = cargoBlobScope(name, meta.vers);
-  const pkg = await ctx.data.packages.findOrCreate({
-    name,
-  });
-  const existingVersions = await ctx.data.versions.listNames(pkg.id);
-  if (cargoVersionAlreadyPublished(existingVersions, meta.vers)) {
-    return cargoError("version already exists", 409);
-  }
-
-  const stored = await ctx.data.content.storeBlobWithRef({
-    data: crateBytes,
-    kind: "generic_file",
-    scope,
-    mediaType: "application/octet-stream",
-  });
-  const indexEntry = buildCargoIndexEntry(meta, cksum);
-  const result = await ctx.data.versions.commitOrReleaseBlob({
-    stored,
-    kind: "generic_file",
-    scope,
-    packageId: pkg.id,
+  const result = await publishImmutableVersionBlob(ctx, {
+    package: { name },
     version: meta.vers,
-    metadata: buildCargoPublishedMetadata(indexEntry, stored.digest),
+    kind: "generic_file",
+    scope,
+    blob: {
+      data: crateBytes,
+      kind: "generic_file",
+      scope,
+      mediaType: "application/octet-stream",
+    },
+    metadata: (stored) =>
+      buildCargoPublishedMetadata(buildCargoIndexEntry(meta, cksum), stored.digest),
     sizeBytes: crateBytes.length,
     scan: {
       name,
       version: meta.vers,
       mediaType: "application/octet-stream",
     },
-    asset: {
+    asset: () => ({
       role: "cargo_crate",
       scope,
       path: `${name}-${meta.vers}.crate`,
       mediaType: "application/octet-stream",
       metadata: { checksum: cksum },
-    },
+    }),
+    versionConflict: async (packageId) =>
+      cargoVersionAlreadyPublished(await ctx.data.versions.listNames(packageId), meta.vers),
   });
-  if ("conflict" in result) {
-    return cargoError("version already exists", 409);
-  }
+  if (!result.ok) return cargoError("version already exists", 409);
   return cargoPublishSuccessResponse();
 }

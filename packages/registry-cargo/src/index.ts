@@ -1,2 +1,2 @@
-export { CargoAdapter } from "./cargo-adapter";
+export { CargoAdapter, cargoRegistryPlugin } from "./cargo-adapter";
 export { cargoIndexPath } from "./cargo-validation";

@@ -1,4 +1,5 @@
 import {
+  defineRegistryPlugin,
   Errors,
   type HttpMethod,
   type Permission,
@@ -7,6 +8,8 @@ import {
   type RegistryRequestContext,
   type RouteEntry,
   type RouteMatch,
+  registryBearerAuthChallenge,
+  registryRoute,
 } from "@hootifactory/registry";
 import { buildOciBlobResponse } from "./oci-blobs";
 import {
@@ -42,24 +45,113 @@ export class DockerAdapter implements RegistryPlugin {
     proxyable: false,
     virtualizable: true,
   };
+  authChallenge = (perm: Permission, ctx: RegistryRequestContext) =>
+    registryBearerAuthChallenge({ ctx, permission: perm, service: REGISTRY_TOKEN_SERVICE });
+
+  private readonly plugin = defineRegistryPlugin({
+    format: this.format,
+    capabilities: this.capabilities,
+    authChallenge: this.authChallenge,
+    defaultPermission: ({ method, match, ctx }) => this.routePermission(method, match, ctx),
+    routes: [
+      registryRoute({
+        method: "GET",
+        pattern: "/:name+/tags/list",
+        handlerId: "tagsList",
+        handler: ({ params, req, ctx }) => this.tagsList(params.name ?? "", req, ctx),
+      }),
+      registryRoute({
+        method: "GET",
+        pattern: "/:name+/referrers/:digest",
+        handlerId: "referrers",
+        handler: ({ params, req, ctx }) =>
+          this.referrers(params.name ?? "", params.digest ?? "", req, ctx),
+      }),
+      registryRoute({
+        method: "HEAD",
+        pattern: "/:name+/manifests/:reference",
+        handlerId: "headManifest",
+        handler: ({ params, req, ctx }) =>
+          this.getManifest(params.name ?? "", params.reference ?? "", req, ctx, true),
+      }),
+      registryRoute({
+        method: "GET",
+        pattern: "/:name+/manifests/:reference",
+        handlerId: "getManifest",
+        handler: ({ params, req, ctx }) =>
+          this.getManifest(params.name ?? "", params.reference ?? "", req, ctx, false),
+      }),
+      registryRoute({
+        method: "PUT",
+        pattern: "/:name+/manifests/:reference",
+        handlerId: "putManifest",
+        handler: ({ params, req, ctx }) =>
+          this.putManifest(params.name ?? "", params.reference ?? "", req, ctx),
+      }),
+      registryRoute({
+        method: "DELETE",
+        pattern: "/:name+/manifests/:reference",
+        handlerId: "deleteManifest",
+        handler: ({ params, ctx }) =>
+          this.deleteManifest(params.name ?? "", params.reference ?? "", ctx),
+      }),
+      registryRoute({
+        method: "POST",
+        pattern: "/:name+/blobs/uploads",
+        handlerId: "startUpload",
+        handler: ({ params, req, ctx }) => startUpload(params.name ?? "", req, ctx),
+      }),
+      registryRoute({
+        method: "GET",
+        pattern: "/:name+/blobs/uploads/:uuid",
+        handlerId: "uploadStatus",
+        handler: ({ params, ctx }) => uploadStatus(params.name ?? "", params.uuid ?? "", ctx),
+      }),
+      registryRoute({
+        method: "PATCH",
+        pattern: "/:name+/blobs/uploads/:uuid",
+        handlerId: "patchUpload",
+        handler: ({ params, req, ctx }) =>
+          patchUpload(params.name ?? "", params.uuid ?? "", req, ctx),
+      }),
+      registryRoute({
+        method: "PUT",
+        pattern: "/:name+/blobs/uploads/:uuid",
+        handlerId: "putUpload",
+        handler: ({ params, req, ctx }) =>
+          putUpload(params.name ?? "", params.uuid ?? "", req, ctx),
+      }),
+      registryRoute({
+        method: "DELETE",
+        pattern: "/:name+/blobs/uploads/:uuid",
+        handlerId: "cancelUpload",
+        handler: ({ params, ctx }) => cancelUpload(params.name ?? "", params.uuid ?? "", ctx),
+      }),
+      registryRoute({
+        method: "HEAD",
+        pattern: "/:name+/blobs/:digest",
+        handlerId: "headBlob",
+        handler: ({ params, req, ctx }) =>
+          this.getBlob(params.name ?? "", params.digest ?? "", req, ctx, true),
+      }),
+      registryRoute({
+        method: "GET",
+        pattern: "/:name+/blobs/:digest",
+        handlerId: "getBlob",
+        handler: ({ params, req, ctx }) =>
+          this.getBlob(params.name ?? "", params.digest ?? "", req, ctx, false),
+      }),
+      registryRoute({
+        method: "DELETE",
+        pattern: "/:name+/blobs/:digest",
+        handlerId: "deleteBlob",
+        handler: ({ params, ctx }) => this.deleteBlob(params.name ?? "", params.digest ?? "", ctx),
+      }),
+    ],
+  });
 
   routes(): RouteEntry[] {
-    return [
-      { method: "GET", pattern: "/:name+/tags/list", handlerId: "tagsList" },
-      { method: "GET", pattern: "/:name+/referrers/:digest", handlerId: "referrers" },
-      { method: "HEAD", pattern: "/:name+/manifests/:reference", handlerId: "headManifest" },
-      { method: "GET", pattern: "/:name+/manifests/:reference", handlerId: "getManifest" },
-      { method: "PUT", pattern: "/:name+/manifests/:reference", handlerId: "putManifest" },
-      { method: "DELETE", pattern: "/:name+/manifests/:reference", handlerId: "deleteManifest" },
-      { method: "POST", pattern: "/:name+/blobs/uploads", handlerId: "startUpload" },
-      { method: "GET", pattern: "/:name+/blobs/uploads/:uuid", handlerId: "uploadStatus" },
-      { method: "PATCH", pattern: "/:name+/blobs/uploads/:uuid", handlerId: "patchUpload" },
-      { method: "PUT", pattern: "/:name+/blobs/uploads/:uuid", handlerId: "putUpload" },
-      { method: "DELETE", pattern: "/:name+/blobs/uploads/:uuid", handlerId: "cancelUpload" },
-      { method: "HEAD", pattern: "/:name+/blobs/:digest", handlerId: "headBlob" },
-      { method: "GET", pattern: "/:name+/blobs/:digest", handlerId: "getBlob" },
-      { method: "DELETE", pattern: "/:name+/blobs/:digest", handlerId: "deleteBlob" },
-    ];
+    return this.plugin.routes();
   }
 
   /** Full docker name "org/repo/image" for scope matching against the JWT. */
@@ -68,6 +160,14 @@ export class DockerAdapter implements RegistryPlugin {
   }
 
   requiredPermission(
+    method: HttpMethod,
+    match: RouteMatch,
+    ctx: RegistryRequestContext,
+  ): Permission {
+    return this.routePermission(method, match, ctx);
+  }
+
+  private routePermission(
     method: HttpMethod,
     match: RouteMatch,
     ctx: RegistryRequestContext,
@@ -82,51 +182,10 @@ export class DockerAdapter implements RegistryPlugin {
     return { action, repositoryName: this.fullName(ctx, match.params.name ?? "") };
   }
 
-  authChallenge(
-    perm: Permission,
-    ctx: RegistryRequestContext,
-  ): { header: string; status: 401 | 403 } {
-    const scopeActions =
-      perm.action === "read" ? "pull" : perm.action === "delete" ? "delete,pull" : "push,pull";
-    const header = `Bearer realm="${ctx.baseUrl}/token",service="${REGISTRY_TOKEN_SERVICE}",scope="repository:${perm.repositoryName}:${scopeActions}"`;
-    return { header, status: 401 };
-  }
-
   async handle(match: RouteMatch, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const image = match.params.name ?? "";
     assertImageName(this.fullName(ctx, image));
-    switch (match.entry.handlerId) {
-      case "tagsList":
-        return this.tagsList(image, req, ctx);
-      case "referrers":
-        return this.referrers(image, match.params.digest ?? "", req, ctx);
-      case "headManifest":
-        return this.getManifest(image, match.params.reference ?? "", req, ctx, true);
-      case "getManifest":
-        return this.getManifest(image, match.params.reference ?? "", req, ctx, false);
-      case "putManifest":
-        return this.putManifest(image, match.params.reference ?? "", req, ctx);
-      case "deleteManifest":
-        return this.deleteManifest(image, match.params.reference ?? "", ctx);
-      case "startUpload":
-        return startUpload(image, req, ctx);
-      case "uploadStatus":
-        return uploadStatus(image, match.params.uuid ?? "", ctx);
-      case "patchUpload":
-        return patchUpload(image, match.params.uuid ?? "", req, ctx);
-      case "putUpload":
-        return putUpload(image, match.params.uuid ?? "", req, ctx);
-      case "cancelUpload":
-        return cancelUpload(image, match.params.uuid ?? "", ctx);
-      case "headBlob":
-        return this.getBlob(image, match.params.digest ?? "", req, ctx, true);
-      case "getBlob":
-        return this.getBlob(image, match.params.digest ?? "", req, ctx, false);
-      case "deleteBlob":
-        return this.deleteBlob(image, match.params.digest ?? "", ctx);
-      default:
-        throw Errors.notFound();
-    }
+    return this.plugin.handle(match, req, ctx);
   }
 
   // ── manifests ──────────────────────────────────────────────────────────
@@ -258,3 +317,5 @@ export class DockerAdapter implements RegistryPlugin {
     });
   }
 }
+
+export const dockerRegistryPlugin: RegistryPlugin = new DockerAdapter();

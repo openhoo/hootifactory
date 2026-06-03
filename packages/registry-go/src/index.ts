@@ -1,1 +1,1 @@
-export { GoAdapter } from "./go-adapter";
+export { GoAdapter, goRegistryPlugin } from "./go-adapter";

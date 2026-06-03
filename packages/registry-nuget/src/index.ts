@@ -1,1 +1,1 @@
-export { NugetAdapter } from "./nuget-adapter";
+export { NugetAdapter, nugetRegistryPlugin } from "./nuget-adapter";

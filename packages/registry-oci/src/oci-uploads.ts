@@ -8,6 +8,8 @@ import {
   parseRegistryInput,
   type RegistryRequestContext,
   stagingKey,
+  storeRegistryBlobStreamWithRef,
+  storeRegistryBlobWithRef,
 } from "@hootifactory/registry";
 import {
   buildOciBlobCreatedResponse,
@@ -54,7 +56,7 @@ export async function startUpload(
   if (digest) {
     const bytes = await bodyBytes(req);
     if (computeDigest(bytes) !== digest) throw Errors.digestInvalid();
-    await ctx.data.content.storeBlobWithRef({
+    await storeRegistryBlobWithRef(ctx, {
       data: bytes,
       kind: "oci_layer",
       scope: image,
@@ -148,25 +150,23 @@ export async function putUpload(
       const state = uploadMultipartState(openSession.multipart);
       const existing = state.chunks.reduce((sum, part) => sum + part.size, 0);
       assertUploadOffset(existing, openSession.offsetBytes);
-      const stored = await ctx.data.content
-        .storeBlobStreamWithRef({
-          data: uploadChunkStream(ctx, state.chunks, chunk),
-          expectedDigest: digest,
-          kind: "oci_layer",
+      const stored = await storeRegistryBlobStreamWithRef(ctx, {
+        data: uploadChunkStream(ctx, state.chunks, chunk),
+        expectedDigest: digest,
+        kind: "oci_layer",
+        scope: image,
+        asset: {
+          role: "oci_layer",
           scope: image,
-          asset: {
-            role: "oci_layer",
-            scope: image,
-            path: `${image}/blobs/${digest}`,
-            mediaType: "application/octet-stream",
-          },
-        })
-        .catch((err) => {
-          if (err instanceof Error && err.name === "InvalidDigestError") {
-            throw Errors.digestInvalid({ expected: digest, error: err.message });
-          }
-          throw err;
-        });
+          path: `${image}/blobs/${digest}`,
+          mediaType: "application/octet-stream",
+        },
+      }).catch((err) => {
+        if (err instanceof Error && err.name === "InvalidDigestError") {
+          throw Errors.digestInvalid({ expected: digest, error: err.message });
+        }
+        throw err;
+      });
       await mutations.commit(stored.size);
       return { size: stored.size, storageKey: openSession.storageKey, chunks: state.chunks };
     },
