@@ -111,6 +111,47 @@ describe("NuGet nuspec extraction", () => {
     });
   });
 
+  test("handles malformed dependency tags without quadratic scans", () => {
+    const nupkg = makeStoredZip(
+      "Example.nuspec",
+      `<package>
+        <metadata>
+          <id>Example.Lib</id>
+          <version>1.2.3</version>
+          <dependencies>${"<dependency ".repeat(25_000)}</dependencies>
+        </metadata>
+      </package>`,
+    );
+
+    expect(extractNuspecMeta(nupkg)).toEqual({
+      id: "Example.Lib",
+      version: "1.2.3",
+      dependencyGroups: [],
+    });
+  });
+
+  test("rejects nuspec metadata with too many dependencies", () => {
+    const dependencies = Array.from(
+      { length: 513 },
+      (_, index) => `<dependency id="Dependency.${index}" version="1.0.0" />`,
+    ).join("");
+
+    expect(
+      extractNuspecMeta(
+        makeStoredZip(
+          "Example.nuspec",
+          `<package>
+            <metadata>
+              <id>Example.Lib</id>
+              <version>1.2.3</version>
+              <dependencies>${dependencies}</dependencies>
+            </metadata>
+          </package>`,
+        ),
+      ),
+    ).toBeNull();
+  });
+
   test("ignores nested nuspec files and malformed archives", () => {
     expect(
       extractNuspecMeta(

@@ -14,6 +14,9 @@ const u32 = (b: Uint8Array, o: number): number =>
     ((b[o + 3] ?? 0) * 0x1000000)) >>>
   0;
 
+const MAX_NUSPEC_TAG_CHARS = 16 * 1024;
+const MAX_NUSPEC_DEPENDENCIES = 512;
+
 function readNuspecXml(zip: Uint8Array): string | null {
   // Locate the End Of Central Directory record (scan back; comment ≤ 0xffff).
   const min = Math.max(0, zip.length - 22 - 0xffff);
@@ -99,35 +102,91 @@ function dependencyFromTag(tag: string): NuspecDependency | null {
   };
 }
 
-function parseDependencies(xml: string): NuspecDependencyGroup[] {
-  const depsXml = xml.match(/<dependencies\b[^>]*>([\s\S]*?)<\/dependencies>/i)?.[1];
-  if (!depsXml) return [];
+interface ScannedTag {
+  name: string;
+  source: string;
+  closing: boolean;
+  selfClosing: boolean;
+}
 
+function* scanXmlTags(xml: string): Generator<ScannedTag> {
+  let cursor = 0;
+  while (cursor < xml.length) {
+    const start = xml.indexOf("<", cursor);
+    if (start < 0) return;
+    const end = xml.indexOf(">", start + 1);
+    if (end < 0) return;
+    cursor = end + 1;
+
+    if (end - start + 1 > MAX_NUSPEC_TAG_CHARS) continue;
+    const body = xml.slice(start + 1, end).trim();
+    if (!body || body.startsWith("!") || body.startsWith("?")) continue;
+
+    const closing = body.startsWith("/");
+    const tagBody = (closing ? body.slice(1) : body).trimStart();
+    const nameEnd = tagBody.search(/[\s/>]/);
+    const name = tagBody.slice(0, nameEnd < 0 ? undefined : nameEnd).toLowerCase();
+    if (!name) continue;
+
+    yield {
+      name,
+      source: `<${body}>`,
+      closing,
+      selfClosing: !closing && tagBody.endsWith("/"),
+    };
+  }
+}
+
+function parseDependencies(xml: string): NuspecDependencyGroup[] | null {
+  let inDependencies = false;
+  let dependencyCount = 0;
+  const directDependencies: NuspecDependency[] = [];
   const groups: NuspecDependencyGroup[] = [];
-  const groupRanges: [number, number][] = [];
-  for (const match of depsXml.matchAll(/<group\b([^>]*)>([\s\S]*?)<\/group>/gi)) {
-    groupRanges.push([match.index ?? 0, (match.index ?? 0) + match[0].length]);
-    const attrs = attrMap(match[1] ?? "");
-    const dependencies = [...(match[2] ?? "").matchAll(/<dependency\b[^>]*\/?>/gi)]
-      .map((dep) => dependencyFromTag(dep[0]))
-      .filter((dep): dep is NuspecDependency => dep != null);
-    groups.push({
-      ...(attrs.targetframework ? { targetFramework: attrs.targetframework } : {}),
-      dependencies,
-    });
+  let currentGroup: NuspecDependencyGroup | null = null;
+
+  const addDependency = (dep: NuspecDependency | null): boolean => {
+    if (!dep) return true;
+    dependencyCount += 1;
+    if (dependencyCount > MAX_NUSPEC_DEPENDENCIES) return false;
+    (currentGroup?.dependencies ?? directDependencies).push(dep);
+    return true;
+  };
+
+  for (const tag of scanXmlTags(xml)) {
+    if (!inDependencies) {
+      if (!tag.closing && tag.name === "dependencies") inDependencies = true;
+      continue;
+    }
+
+    if (tag.closing && tag.name === "dependencies") break;
+
+    if (!tag.closing && tag.name === "group") {
+      const attrs = attrMap(tag.source);
+      currentGroup = {
+        ...(attrs.targetframework ? { targetFramework: attrs.targetframework } : {}),
+        dependencies: [],
+      };
+      if (tag.selfClosing) currentGroup = null;
+      continue;
+    }
+
+    if (tag.closing && tag.name === "group") {
+      if (currentGroup?.dependencies.length) groups.push(currentGroup);
+      currentGroup = null;
+      continue;
+    }
+
+    if (
+      !tag.closing &&
+      tag.name === "dependency" &&
+      !addDependency(dependencyFromTag(tag.source))
+    ) {
+      return null;
+    }
   }
 
-  const directXml = groupRanges.reduce(
-    (source, [start, end]) =>
-      `${source.slice(0, start)}${" ".repeat(end - start)}${source.slice(end)}`,
-    depsXml,
-  );
-  const directDependencies = [...directXml.matchAll(/<dependency\b[^>]*\/?>/gi)]
-    .map((dep) => dependencyFromTag(dep[0]))
-    .filter((dep): dep is NuspecDependency => dep != null);
   if (directDependencies.length > 0) groups.unshift({ dependencies: directDependencies });
-
-  return groups.filter((group) => group.dependencies.length > 0);
+  return groups;
 }
 
 /** Extract NuGet package metadata from a .nupkg's nuspec, or null if it can't be parsed. */
@@ -137,5 +196,7 @@ export function extractNuspecMeta(nupkg: Uint8Array): NuspecMeta | null {
   const id = xml.match(/<id>\s*([^<]+?)\s*<\/id>/i)?.[1];
   const version = xml.match(/<version>\s*([^<]+?)\s*<\/version>/i)?.[1];
   if (!id || !version) return null;
-  return { id: id.trim(), version: version.trim(), dependencyGroups: parseDependencies(xml) };
+  const dependencyGroups = parseDependencies(xml);
+  if (!dependencyGroups) return null;
+  return { id: id.trim(), version: version.trim(), dependencyGroups };
 }
