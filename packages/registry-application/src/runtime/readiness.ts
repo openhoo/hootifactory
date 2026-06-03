@@ -3,9 +3,10 @@ import { logger, withSpan } from "@hootifactory/observability";
 import { getBoss, QUEUES } from "@hootifactory/queue";
 import { blobStore } from "@hootifactory/storage";
 
-export type ReadinessDependencyCheck =
-  | { name: string; ok: true }
-  | { name: string; ok: false; error: string };
+export interface ReadinessDependencyCheck {
+  name: string;
+  ok: boolean;
+}
 
 export interface ReadinessState {
   ready: boolean;
@@ -30,7 +31,7 @@ async function checkDependency(
       const error = errorText(err);
       span.setAttributes({ "health.dependency.ok": false, "error.message": error });
       logger.warn("readiness dependency failed", { dependency: name, error });
-      return { name, ok: false, error };
+      return { name, ok: false };
     }
   });
 }
