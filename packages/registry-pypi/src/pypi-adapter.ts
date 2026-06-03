@@ -5,8 +5,10 @@ import {
   type HttpMethod,
   type Permission,
   parseRegistryInput,
+  type RegistryPackageHandle,
   type RegistryPlugin,
   type RegistryRequestContext,
+  type RouteMatch,
   readWritePermission,
   registryRoutes,
   serveRegistryBlob,
@@ -60,8 +62,17 @@ export class PypiAdapter implements RegistryPlugin {
 
   routes = this.delegate.routes;
 
-  requiredPermission(method: HttpMethod): Permission {
-    return readWritePermission(method);
+  requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
+    const permission = readWritePermission(method);
+    const project = match?.params.project;
+    const filename = match?.params.filename;
+    if (filename) {
+      return { ...permission, resource: { type: "artifact", artifactRef: filename } };
+    }
+    if (project) {
+      return { ...permission, resource: { type: "package", packageName: normalizeName(project) } };
+    }
+    return permission;
   }
 
   handle = this.delegate.handle;
@@ -92,9 +103,9 @@ export class PypiAdapter implements RegistryPlugin {
   /** All files across this repo's live (non-pruned) versions. */
   private async liveFiles(
     ctx: RegistryRequestContext,
-    packageId?: string,
+    pkg?: RegistryPackageHandle,
   ): Promise<PypiFileMeta[]> {
-    const rows = await ctx.data.versions.listRepositoryMetadata({ packageId, liveOnly: true });
+    const rows = await ctx.data.versions.listRepositoryMetadata({ package: pkg, liveOnly: true });
     return rows.flatMap((r) => normalizePypiVersionMetadata(r.metadata).files ?? []);
   }
 
@@ -114,7 +125,7 @@ export class PypiAdapter implements RegistryPlugin {
     const pkg = await ctx.data.packages.findByName(name);
     if (!pkg) return new Response("Not Found", { status: 404 });
     // Live versions only — pruned releases must drop out of the PEP 503 index.
-    const versions = await ctx.data.versions.listLive(pkg.id);
+    const versions = await ctx.data.versions.listLive(pkg);
     const files = buildSimpleProjectFiles(versions, {
       baseUrl: ctx.baseUrl,
       mountPath: ctx.repo.mountPath,
@@ -138,11 +149,13 @@ export class PypiAdapter implements RegistryPlugin {
     // versions only), so the bytes served match the published #sha256 and identical
     // filenames from different packages don't collide via a blob_refs scan.
     const file = (await this.liveFiles(ctx)).find((f) => f.filename === filename);
-    if (!file || !(await ctx.blobs.exists(file.blobDigest))) {
+    if (!file) {
       return new Response("Not Found", { status: 404 });
     }
     return serveRegistryBlob(ctx, {
       digest: file.blobDigest,
+      kind: "pypi_file",
+      scope: file.filename,
       contentType: "application/octet-stream",
       blocked: () => new Response("artifact blocked by scan policy", { status: 403 }),
     });

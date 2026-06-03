@@ -1,11 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import type { RegistryRequestContext } from "@hootifactory/registry";
 import { serveBlobWithScanGate } from "./artifacts";
 
-function ctxForBlobResponse(): Pick<RegistryRequestContext, "blobs"> {
+function ctxForBlobResponse() {
   return {
-    blobs: { get: () => "BYTES" },
-  } as unknown as RegistryRequestContext;
+    getBlob: () => "BYTES",
+  };
 }
 
 describe("serveBlobIfClean", () => {

@@ -3,6 +3,7 @@ import type { RegistryRequestContext } from "./adapter";
 import type {
   RegistryAssetWriteInput,
   RegistryBlobRefKind,
+  RegistryPackageHandle,
   RegistryPackageRow,
   RegistryStoredBlob,
   StoreBlobStreamWithRefInput,
@@ -11,6 +12,8 @@ import type {
 
 export interface ServeRegistryBlobOptions {
   digest: string;
+  kind: RegistryBlobRefKind;
+  scope: string;
   contentType: string;
   extraHeaders?: Record<string, string>;
   blocked: () => Response;
@@ -22,7 +25,7 @@ export async function serveRegistryBlob(
   ctx: RegistryRequestContext,
   opts: ServeRegistryBlobOptions,
 ): Promise<Response> {
-  if (!(await ctx.blobs.exists(opts.digest))) {
+  if (!(await ctx.data.content.blobRefExists(opts))) {
     const missing = opts.missing?.();
     if (missing) return missing;
     throw Errors.notFound();
@@ -84,7 +87,7 @@ export interface CommitPackageVersionBlobInput {
   stored: RegistryStoredBlob;
   kind: RegistryBlobRefKind;
   scope: string;
-  packageId: string;
+  package: RegistryPackageHandle;
   version: string;
   metadata: Record<string, unknown>;
   sizeBytes: number;
@@ -134,7 +137,7 @@ export interface PublishImmutableVersionBlobInput {
   sizeBytes: number;
   scan: CommitPackageVersionBlobInput["scan"];
   asset?: (stored: RegistryStoredBlob) => RegistryAssetWriteInput;
-  versionConflict?: (packageId: string) => Promise<boolean>;
+  versionConflict?: (pkg: RegistryPackageHandle) => Promise<boolean>;
 }
 
 export async function publishImmutableVersionBlob(
@@ -145,7 +148,7 @@ export async function publishImmutableVersionBlob(
   | { ok: false; pkg: RegistryPackageRow; conflict: true }
 > {
   const pkg = await findOrCreateRegistryPackage(ctx, input.package);
-  if (await input.versionConflict?.(pkg.id)) {
+  if (await input.versionConflict?.(pkg)) {
     return { ok: false, pkg, conflict: true };
   }
   const stored = await storeRegistryBlobWithRef(ctx, input.blob);
@@ -153,7 +156,7 @@ export async function publishImmutableVersionBlob(
     stored,
     kind: input.kind,
     scope: input.scope,
-    packageId: pkg.id,
+    package: pkg,
     version: input.version,
     metadata: input.metadata(stored),
     sizeBytes: input.sizeBytes,

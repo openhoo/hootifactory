@@ -1,4 +1,4 @@
-import { and, count, db, desc, eq, registryAssets, sql } from "@hootifactory/db";
+import { and, count, db, desc, eq, isNull, registryAssets, sql } from "@hootifactory/db";
 import type {
   RegistryAssetRow,
   RegistryAssetWriteInput,
@@ -15,9 +15,9 @@ export async function upsertRegistryAsset(
     .values({
       orgId: ctx.repo.orgId,
       repositoryId: ctx.repo.id,
-      packageId: input.packageId ?? null,
-      packageVersionId: input.packageVersionId ?? null,
-      ociManifestId: input.ociManifestId ?? null,
+      packageId: input.package?.id ?? null,
+      packageVersionId: input.packageVersion?.id ?? null,
+      ociManifestId: input.ociManifest?.id ?? null,
       blobRefId: input.blobRefId ?? null,
       digest: input.digest,
       role: input.role,
@@ -26,6 +26,7 @@ export async function upsertRegistryAsset(
       mediaType: input.mediaType ?? null,
       sizeBytes: input.sizeBytes ?? 0,
       metadata: input.metadata ?? {},
+      deletedAt: null,
     })
     .onConflictDoUpdate({
       target: [
@@ -35,14 +36,15 @@ export async function upsertRegistryAsset(
         registryAssets.digest,
       ],
       set: {
-        packageId: input.packageId ?? null,
-        packageVersionId: input.packageVersionId ?? null,
-        ociManifestId: input.ociManifestId ?? null,
+        packageId: input.package?.id ?? null,
+        packageVersionId: input.packageVersion?.id ?? null,
+        ociManifestId: input.ociManifest?.id ?? null,
         blobRefId: input.blobRefId ?? null,
         path: input.path ?? null,
         mediaType: input.mediaType ?? null,
         sizeBytes: input.sizeBytes ?? 0,
         metadata: input.metadata ?? {},
+        deletedAt: null,
         updatedAt: new Date(),
       },
     })
@@ -76,6 +78,7 @@ export async function listRegistryAssetsForRepository(
 ): Promise<{ assets: RegistryAssetRow[]; total: number }> {
   const filters = [
     eq(registryAssets.repositoryId, repositoryId),
+    isNull(registryAssets.deletedAt),
     input.packageId ? eq(registryAssets.packageId, input.packageId) : undefined,
     input.packageVersionId
       ? eq(registryAssets.packageVersionId, input.packageVersionId)
@@ -99,12 +102,14 @@ export async function deleteRegistryAssetRef(
   input: { digest: string; scope: string; role?: string },
 ): Promise<void> {
   await db
-    .delete(registryAssets)
+    .update(registryAssets)
+    .set({ deletedAt: new Date(), updatedAt: new Date() })
     .where(
       and(
         eq(registryAssets.repositoryId, ctx.repo.id),
         eq(registryAssets.digest, input.digest),
         eq(registryAssets.scope, input.scope),
+        isNull(registryAssets.deletedAt),
         input.role ? eq(registryAssets.role, input.role) : sql`true`,
       ),
     );

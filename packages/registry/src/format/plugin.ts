@@ -186,18 +186,46 @@ export function delegateRegistryPlugin(
   };
 }
 
-export function readOnlyPermission(): Permission {
-  return { action: "read" };
+export function readOnlyPermission(resource?: Partial<Permission["resource"]>): Permission {
+  return { action: "read", ...(resource ? { resource } : {}) };
 }
 
-export function writePermission(): Permission {
-  return { action: "write" };
+export function writePermission(resource?: Partial<Permission["resource"]>): Permission {
+  return { action: "write", ...(resource ? { resource } : {}) };
 }
 
-export function deletePermission(repositoryName?: string): Permission {
-  return { action: "delete", repositoryName };
+export function deletePermission(
+  repositoryName?: string,
+  resource?: Partial<Permission["resource"]>,
+): Permission {
+  return { action: "delete", repositoryName, ...(resource ? { resource } : {}) };
 }
 
-export function routePermission(action: Permission["action"], repositoryName?: string): Permission {
-  return { action, repositoryName };
+export function routePermission(
+  action: Permission["action"],
+  repositoryName?: string,
+  resource?: Partial<Permission["resource"]>,
+): Permission {
+  return { action, repositoryName, ...(resource ? { resource } : {}) };
+}
+
+export function packagePermission(
+  action: Permission["action"],
+  packageName: string,
+  repositoryName?: string,
+): Permission {
+  return { action, repositoryName, resource: { type: "package", packageName } };
+}
+
+export function artifactPermission(
+  action: Permission["action"],
+  artifactRef: string,
+  repositoryName?: string,
+  packageName?: string,
+): Permission {
+  return {
+    action,
+    repositoryName,
+    resource: { type: "artifact", artifactRef, packageName },
+  };
 }

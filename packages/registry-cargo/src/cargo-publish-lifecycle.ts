@@ -73,8 +73,8 @@ export async function handleCargoPublish(
       mediaType: "application/octet-stream",
       metadata: { checksum: cksum },
     }),
-    versionConflict: async (packageId) =>
-      cargoVersionAlreadyPublished(await ctx.data.versions.listNames(packageId), meta.vers),
+    versionConflict: async (pkg) =>
+      cargoVersionAlreadyPublished(await ctx.data.versions.listNames(pkg), meta.vers),
   });
   if (!result.ok) return cargoError("version already exists", 409);
   return cargoPublishSuccessResponse();

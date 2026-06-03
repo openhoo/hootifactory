@@ -87,7 +87,7 @@ export async function calculateOrgQuotaUsage(orgId: string): Promise<OrgQuotaUsa
   const [artifactAgg] = await db
     .select({ used: count() })
     .from(packageVersions)
-    .where(eq(packageVersions.orgId, orgId));
+    .where(and(eq(packageVersions.orgId, orgId), isNull(packageVersions.deletedAt)));
 
   return {
     usedStorageBytes: Number(storageAgg?.used ?? 0),

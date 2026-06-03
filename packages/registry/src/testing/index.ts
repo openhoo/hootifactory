@@ -1,5 +1,4 @@
 import type {
-  BlobStore,
   Logger,
   RegistryRequestContext,
   ResolvedRepo,
@@ -18,29 +17,6 @@ function createTestLogger(): Logger {
     info: () => {},
     warn: () => {},
     error: () => {},
-  };
-}
-
-function createTestBlobStore(): BlobStore {
-  return {
-    blobKey: (digest) => `blobs/${digest}`,
-    exists: () => Promise.resolve(false),
-    stat: () => Promise.resolve(null),
-    get: () => unimplemented("blobs.get"),
-    getRange: () => unimplemented("blobs.getRange"),
-    getBytes: () => Promise.resolve(new Uint8Array()),
-    put: () => unimplemented("blobs.put"),
-    putStream: () => unimplemented("blobs.putStream"),
-    delete: () => Promise.resolve(),
-    presignGet: (digest) => `https://example.test/blobs/${digest}`,
-    putAtKey: () => Promise.resolve(),
-    readKey: () => unimplemented("blobs.readKey"),
-    bytesAtKey: () => Promise.resolve(new Uint8Array()),
-    existsKey: () => Promise.resolve(false),
-    statKey: () => Promise.resolve(null),
-    deleteKey: () => Promise.resolve(),
-    promoteToBlob: () => Promise.resolve(),
-    presignPutKey: (key) => `https://example.test/${key}`,
   };
 }
 
@@ -81,10 +57,20 @@ function createTestDataService(): RegistryDataService {
         Promise.resolve(
           new Response(`blob:${digest}`, { headers: { "content-type": contentType } }),
         ),
+      blobRefExists: () => Promise.resolve(false),
+      getBlobRef: () => Promise.resolve(null),
       storeBlobWithRef: () => unimplemented("data.content.storeBlobWithRef"),
       storeBlobStreamWithRef: () => unimplemented("data.content.storeBlobStreamWithRef"),
       ensureBlobRef: () => Promise.resolve(),
       releaseBlobRef: () => Promise.resolve(),
+      staging: {
+        putKey: () => Promise.resolve(),
+        readKey: () => unimplemented("data.content.staging.readKey"),
+        bytesAtKey: () => Promise.resolve(new Uint8Array()),
+        statKey: () => Promise.resolve(null),
+        deleteKey: () => Promise.resolve(),
+        presignPutKey: (key) => `https://example.test/${key}`,
+      },
     },
     assets: {
       upsert: () => unimplemented("data.assets.upsert"),
@@ -137,7 +123,6 @@ export function createTestRegistryContext(
     repo: createTestResolvedRepo(overrides.repo),
     principal: { kind: "anonymous" },
     data: createTestDataService(),
-    blobs: createTestBlobStore(),
     limits: { maxUploadBytes: 10 * 1024 * 1024, enforcePublicNetwork: false },
     baseUrl: "https://registry.example.test",
     authorize: () => Promise.resolve({ allowed: true }),

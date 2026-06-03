@@ -49,7 +49,7 @@ export async function handleNugetPublish(
     }),
     // NuGet packages are immutable. A retention tombstone still reserves the
     // normalized package version, so old bytes cannot be replaced by re-push.
-    versionConflict: async (packageId) => Boolean(await ctx.data.versions.find(packageId, version)),
+    versionConflict: async (pkg) => Boolean(await ctx.data.versions.find(pkg, version)),
   });
   if (!result.ok) return new Response(null, { status: 409 });
   return new Response(null, { status: 201 });

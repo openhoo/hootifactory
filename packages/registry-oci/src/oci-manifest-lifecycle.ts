@@ -52,13 +52,13 @@ export async function putOciManifest(
     sizeBytes: manifestPut.bytes.length,
     configDigest: manifestPut.configDigest,
   });
-  const versionId = await recordOciManifestVersion(ctx, pkg.id, manifest.id, manifestPut);
+  const versionId = await recordOciManifestVersion(ctx, pkg, manifest, manifestPut);
   await ctx.data.assets.upsert({
     digest: manifestPut.digest,
     role: "oci_manifest",
-    packageId: pkg.id,
-    packageVersionId: versionId,
-    ociManifestId: manifest.id,
+    package: pkg,
+    packageVersion: { id: versionId, packageId: pkg.id, version: manifestPut.ref.value },
+    ociManifest: manifest,
     scope: image,
     path: `${image}@${manifestPut.digest}`,
     mediaType: manifestPut.mediaType,
@@ -118,8 +118,8 @@ async function assertReferencedOciManifestsExist(
 
 async function recordOciManifestVersion(
   ctx: RegistryRequestContext,
-  packageId: string,
-  manifestId: string,
+  pkg: { id: string; orgId: string; repositoryId: string; name: string },
+  manifest: { id: string; repositoryId: string; digest: string },
   manifestPut: OciManifestPutRequest,
 ): Promise<string> {
   const metadata = {
@@ -131,9 +131,9 @@ async function recordOciManifestVersion(
   let versionId: string | null = null;
   if (manifestPut.acceptedTags.length > 0) {
     for (const tag of manifestPut.acceptedTags) {
-      await ctx.data.oci.upsertTag({ packageId, tag, manifestId });
+      await ctx.data.oci.upsertTag({ package: pkg, tag, manifest });
       versionId = await ctx.data.versions.upsert({
-        packageId,
+        package: pkg,
         version: tag,
         metadata,
         sizeBytes: manifestPut.bytes.length,
@@ -144,7 +144,7 @@ async function recordOciManifestVersion(
   }
 
   return ctx.data.versions.upsert({
-    packageId,
+    package: pkg,
     version: manifestPut.ref.value,
     metadata,
     sizeBytes: manifestPut.bytes.length,
@@ -158,7 +158,7 @@ export async function resolveOciManifestForImage(
 ) {
   const pkg = await ctx.data.packages.findByName(image);
   if (!pkg) return null;
-  return ctx.data.oci.resolveManifest({ packageId: pkg.id, reference });
+  return ctx.data.oci.resolveManifest({ package: pkg, reference });
 }
 
 export async function deleteOciManifestReference(
@@ -171,25 +171,25 @@ export async function deleteOciManifestReference(
 
   if (ref.kind === "digest") {
     const scoped = await ctx.data.oci.resolveManifest({
-      packageId: pkg.id,
+      package: pkg,
       reference: opts.reference,
     });
     if (!scoped) throw Errors.manifestUnknown({ reference: opts.reference });
 
-    await ctx.data.oci.deleteTagsForManifest({ packageId: pkg.id, manifestId: scoped.id });
+    await ctx.data.oci.deleteTagsForManifest({ package: pkg, manifest: scoped });
     await ctx.data.oci.markPackageVersionsDeletedByDigest({
-      packageId: pkg.id,
+      package: pkg,
       digest: opts.reference,
     });
     await ctx.data.oci.deleteManifestIfUnassociated({
-      manifestId: scoped.id,
+      manifest: scoped,
       digest: opts.reference,
     });
     await releaseOciManifestBlobs(ctx, opts.image, manifestBlobDigests(scoped.raw));
     return;
   }
 
-  const deleted = await ctx.data.oci.deleteTag({ packageId: pkg.id, tag: opts.reference });
+  const deleted = await ctx.data.oci.deleteTag({ package: pkg, tag: opts.reference });
   if (!deleted) throw Errors.manifestUnknown({ reference: opts.reference });
 }
 
@@ -216,7 +216,7 @@ async function liveOciManifestRowsForImage(
 ): Promise<{ digest: string; raw: string }[]> {
   const pkg = await ctx.data.packages.findByName(image);
   if (!pkg) return [];
-  return ctx.data.oci.listLiveManifestsForPackage(pkg.id);
+  return ctx.data.oci.listLiveManifestsForPackage(pkg);
 }
 
 export async function deleteOciBlobReference(

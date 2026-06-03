@@ -8,6 +8,7 @@ import {
   parseRegistryInput,
   type RegistryPlugin,
   type RegistryRequestContext,
+  type RouteMatch,
   readWritePermission,
   registryRoutes,
   serveRegistryBlob,
@@ -57,8 +58,24 @@ export class GoAdapter implements RegistryPlugin {
 
   routes = this.delegate.routes;
 
-  requiredPermission(method: HttpMethod): Permission {
-    return readWritePermission(method);
+  requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
+    const permission = readWritePermission(method);
+    const moduleName = match?.params.module ? decodeBang(match.params.module) : null;
+    const file = match?.params.file;
+    if (moduleName && file?.endsWith(".zip")) {
+      return {
+        ...permission,
+        resource: {
+          type: "artifact",
+          packageName: moduleName,
+          artifactRef: `${moduleName}@${file}`,
+        },
+      };
+    }
+    if (moduleName) {
+      return { ...permission, resource: { type: "package", packageName: moduleName } };
+    }
+    return permission;
   }
 
   handle = this.delegate.handle;
@@ -70,8 +87,11 @@ export class GoAdapter implements RegistryPlugin {
     });
   }
 
-  private async storedVersions(ctx: RegistryRequestContext, packageId: string) {
-    const rows = await ctx.data.versions.listLive(packageId, { orderByCreated: "asc" });
+  private async storedVersions(
+    ctx: RegistryRequestContext,
+    pkg: { id: string; orgId: string; repositoryId: string; name: string },
+  ) {
+    const rows = await ctx.data.versions.listLive(pkg, { orderByCreated: "asc" });
     return rows.flatMap((row) => {
       const metadata = parseGoVersionMeta(row.metadata);
       return metadata ? [{ ...row, metadata }] : [];
@@ -83,7 +103,7 @@ export class GoAdapter implements RegistryPlugin {
     // 200 would falsely assert "known module, no versions".
     const pkg = await ctx.data.packages.findByName(moduleName);
     if (!pkg) throw Errors.notFound();
-    const rows = await this.storedVersions(ctx, pkg.id);
+    const rows = await this.storedVersions(ctx, pkg);
     return new Response(
       `${rows
         .map((r) => r.version)
@@ -98,7 +118,7 @@ export class GoAdapter implements RegistryPlugin {
   private async latest(moduleName: string, ctx: RegistryRequestContext): Promise<Response> {
     const pkg = await ctx.data.packages.findByName(moduleName);
     if (!pkg) throw Errors.notFound();
-    const rows = await this.storedVersions(ctx, pkg.id);
+    const rows = await this.storedVersions(ctx, pkg);
     const latestVer = pickLatest(rows.map((r) => r.version));
     const row = rows.find((r) => r.version === latestVer);
     if (!row) throw Errors.notFound();
@@ -126,7 +146,7 @@ export class GoAdapter implements RegistryPlugin {
       message: "invalid Go version",
     });
     const ext = file.slice(dot + 1);
-    const row = await ctx.data.versions.findLive(pkg.id, version);
+    const row = await ctx.data.versions.findLive(pkg, version);
     if (!row) throw Errors.notFound();
     const meta = parseGoVersionMeta(row.metadata);
     if (!meta) throw Errors.notFound();
@@ -142,6 +162,8 @@ export class GoAdapter implements RegistryPlugin {
     if (ext === "zip") {
       return serveRegistryBlob(ctx, {
         digest: meta.zipDigest,
+        kind: "generic_file",
+        scope: `${moduleName}@${version}.zip`,
         contentType: "application/zip",
         blocked: () => new Response("blocked by scan policy", { status: 403 }),
       });

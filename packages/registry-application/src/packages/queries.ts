@@ -23,6 +23,8 @@ export interface PackageNameRow {
 
 export interface PackageSummaryRow {
   id: string;
+  orgId: string;
+  repositoryId: string;
   name: string;
 }
 
@@ -79,7 +81,12 @@ export async function listRepositoryPackages(
   ctx: RegistryRequestContext,
 ): Promise<PackageSummaryRow[]> {
   return db
-    .select({ id: packages.id, name: packages.name })
+    .select({
+      id: packages.id,
+      orgId: packages.orgId,
+      repositoryId: packages.repositoryId,
+      name: packages.name,
+    })
     .from(packages)
     .where(eq(packages.repositoryId, ctx.repo.id));
 }
@@ -96,7 +103,12 @@ export async function searchRepositoryPackages(
     value: number;
   }>;
   const rows = (await db
-    .select({ id: packages.id, name: packages.name })
+    .select({
+      id: packages.id,
+      orgId: packages.orgId,
+      repositoryId: packages.repositoryId,
+      name: packages.name,
+    })
     .from(packages)
     .where(where)
     .limit(opts.size)

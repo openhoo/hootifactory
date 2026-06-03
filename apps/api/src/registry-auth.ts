@@ -25,7 +25,10 @@ export async function authorizeRoute(
 ): Promise<RouteAuthorization> {
   const permission = adapter.requiredPermission(method, match, ctx);
   const repositoryName = permission.repositoryName ?? ctx.repo.name;
-  const decision = await ctx.authorize(permission.action, { repositoryName });
+  const decision = await ctx.authorize(permission.action, {
+    repositoryName,
+    ...permission.resource,
+  });
   return { permission, decision, repositoryName };
 }
 

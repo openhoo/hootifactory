@@ -5,8 +5,10 @@ export {
 } from "./artifacts";
 export {
   type BlobRefKind,
+  blobRefExists,
   deleteUnreferencedCasBlob,
   ensureBlobRef,
+  getBlobRef,
   releaseBlobRef,
   releaseRepoDigestTx,
   type StoredBlob,

@@ -1,5 +1,6 @@
 import { and, blobRefs, blobs, db, eq, packageVersions, versionTags } from "@hootifactory/db";
 import { computeDigest, type RegistryRequestContext } from "@hootifactory/registry";
+import { blobStore } from "@hootifactory/storage";
 import {
   type BlobRefKind,
   deleteUnreferencedCasBlob,
@@ -128,7 +129,7 @@ export async function upsertPackageVersionWithBlobRef(
         tx,
         [digest, previousDigestInput].filter((d): d is string => !!d),
       );
-      const rawPut = await ctx.blobs.put(opts.blob.data);
+      const rawPut = await blobStore.put(opts.blob.data);
       const put = { ...rawPut, refCreated: false };
       putForCleanup = put;
       const quota = await lockOrgQuotaTx(tx, ctx.repo.orgId);

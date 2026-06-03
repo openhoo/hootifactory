@@ -44,12 +44,27 @@ export interface RegistryPackageVersionRow {
   updatedAt: Date;
 }
 
+export type RegistryPackageHandle = Pick<
+  RegistryPackageRow,
+  "id" | "orgId" | "repositoryId" | "name"
+>;
+export type RegistryPackageVersionHandle = Pick<
+  RegistryPackageVersionRow,
+  "id" | "packageId" | "version"
+>;
+export type RegistryOciManifestHandle = Pick<
+  RegistryOciManifestRow,
+  "id" | "repositoryId" | "digest"
+>;
+
 export interface RegistryPackageNameRow {
   name: string;
 }
 
 export interface RegistryPackageSummaryRow {
   id: string;
+  orgId: string;
+  repositoryId: string;
   name: string;
 }
 
@@ -96,6 +111,7 @@ export interface RegistryAssetRow {
   mediaType: string | null;
   sizeBytes: number;
   metadata: Record<string, unknown>;
+  deletedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -155,6 +171,20 @@ export interface RegistryBlobResponseOptions {
   notModified?: () => Response | null;
 }
 
+export interface RegistryBlobRefInput {
+  digest: string;
+  kind: RegistryBlobRefKind;
+  scope: string;
+}
+
+export interface RegistryReferencedBlob {
+  digest: string;
+  size: number;
+  etag?: string;
+  get(): ReadableStream<Uint8Array>;
+  getRange(start: number, end?: number): ReadableStream<Uint8Array>;
+}
+
 export interface PatchPackageVersionRow {
   id: string;
   metadata: unknown;
@@ -170,7 +200,7 @@ export interface PatchPackageVersionUpdate<T> {
 }
 
 export interface UpsertPackageVersionInput {
-  packageId: string;
+  package: RegistryPackageHandle;
   version: string;
   metadata: Record<string, unknown>;
   sizeBytes: number;
@@ -195,9 +225,9 @@ export interface StoreBlobStreamWithRefInput {
 
 export interface RegistryAssetWriteInput {
   role: RegistryAssetRole | string;
-  packageId?: string | null;
-  packageVersionId?: string | null;
-  ociManifestId?: string | null;
+  package?: RegistryPackageHandle | null;
+  packageVersion?: RegistryPackageVersionHandle | null;
+  ociManifest?: RegistryOciManifestHandle | null;
   blobRefId?: string | null;
   digest?: string;
   scope?: string;
@@ -220,16 +250,19 @@ export interface RegistryDataService {
     }): Promise<RegistryPackageSearchResult>;
   };
   versions: {
-    find(packageId: string, version: string): Promise<RegistryPackageVersionRow | null>;
-    findLive(packageId: string, version: string): Promise<RegistryPackageVersionRow | null>;
-    exists(packageId: string, version: string): Promise<boolean>;
-    listNames(packageId: string): Promise<RegistryPackageVersionNameRow[]>;
+    find(pkg: RegistryPackageHandle, version: string): Promise<RegistryPackageVersionRow | null>;
+    findLive(
+      pkg: RegistryPackageHandle,
+      version: string,
+    ): Promise<RegistryPackageVersionRow | null>;
+    exists(pkg: RegistryPackageHandle, version: string): Promise<boolean>;
+    listNames(pkg: RegistryPackageHandle): Promise<RegistryPackageVersionNameRow[]>;
     listLive(
-      packageId: string,
+      pkg: RegistryPackageHandle,
       opts?: { orderByCreated?: "asc" | "desc" },
     ): Promise<RegistryPackageVersionRow[]>;
     listRepositoryMetadata(opts?: {
-      packageId?: string;
+      package?: RegistryPackageHandle;
       liveOnly?: boolean;
     }): Promise<RegistryVersionMetadataRow[]>;
     create(input: UpsertPackageVersionInput): Promise<string | null>;
@@ -250,7 +283,7 @@ export interface RegistryDataService {
       stored: RegistryStoredBlob;
       kind: RegistryBlobRefKind;
       scope: string;
-      packageId: string;
+      package: RegistryPackageHandle;
       version: string;
       metadata: Record<string, unknown>;
       sizeBytes: number;
@@ -258,49 +291,54 @@ export interface RegistryDataService {
       asset?: RegistryAssetWriteInput;
     }): Promise<{ versionId: string } | { conflict: true }>;
     patch<T>(input: {
-      packageId: string;
+      package: RegistryPackageHandle;
       version: string;
       patch: (row: PatchPackageVersionRow | null) => PatchPackageVersionUpdate<T>;
     }): Promise<T>;
     updateMetadata(
-      versionId: string,
+      version: RegistryPackageVersionHandle,
       metadata: Record<string, unknown>,
       opts?: { sizeBytes?: number },
     ): Promise<void>;
-    listPublishers(packageId: string): Promise<RegistryVersionPublisherRow[]>;
+    listPublishers(pkg: RegistryPackageHandle): Promise<RegistryVersionPublisherRow[]>;
   };
   tags: {
-    listLive(packageId: string): Promise<Record<string, string>>;
-    set(packageId: string, tag: string, versionId: string): Promise<void>;
-    delete(packageId: string, tag: string): Promise<void>;
-    replace(
-      packageId: string,
-      desiredTags: Map<string, { version: string; versionId: string }>,
+    listLive(pkg: RegistryPackageHandle): Promise<Record<string, string>>;
+    set(
+      pkg: RegistryPackageHandle,
+      tag: string,
+      version: RegistryPackageVersionHandle,
     ): Promise<void>;
-    updateLatestVersion(packageId: string, latestVersion: string | null): Promise<void>;
+    delete(pkg: RegistryPackageHandle, tag: string): Promise<void>;
+    replace(
+      pkg: RegistryPackageHandle,
+      desiredTags: Map<string, RegistryPackageVersionHandle>,
+    ): Promise<void>;
+    updateLatestVersion(pkg: RegistryPackageHandle, latestVersion: string | null): Promise<void>;
   };
   content: {
     isArtifactBlocked(digest: string): Promise<boolean>;
     serveBlobIfClean(opts: RegistryBlobResponseOptions): Promise<Response>;
+    blobRefExists(input: RegistryBlobRefInput): Promise<boolean>;
+    getBlobRef(input: RegistryBlobRefInput): Promise<RegistryReferencedBlob | null>;
     storeBlobWithRef(input: StoreBlobWithRefInput): Promise<RegistryStoredBlob>;
     storeBlobStreamWithRef(input: StoreBlobStreamWithRefInput): Promise<RegistryStoredBlob>;
-    ensureBlobRef(input: {
-      digest: string;
-      kind: RegistryBlobRefKind;
-      scope: string;
-      asset?: RegistryAssetWriteInput;
-    }): Promise<void>;
-    releaseBlobRef(input: {
-      digest: string;
-      kind: RegistryBlobRefKind;
-      scope: string;
-    }): Promise<void>;
+    ensureBlobRef(input: RegistryBlobRefInput & { asset?: RegistryAssetWriteInput }): Promise<void>;
+    releaseBlobRef(input: RegistryBlobRefInput): Promise<void>;
+    staging: {
+      putKey(key: string, data: Uint8Array): Promise<void>;
+      readKey(key: string): ReadableStream<Uint8Array>;
+      bytesAtKey(key: string): Promise<Uint8Array>;
+      statKey(key: string): Promise<{ size: number; etag?: string } | null>;
+      deleteKey(key: string): Promise<void>;
+      presignPutKey(key: string, expiresIn?: number): string;
+    };
   };
   assets: {
     upsert(input: RegistryAssetWriteInput & { digest: string }): Promise<RegistryAssetRow>;
     list(input?: {
-      packageId?: string;
-      packageVersionId?: string;
+      package?: RegistryPackageHandle;
+      packageVersion?: RegistryPackageVersionHandle;
       digest?: string;
       limit?: number;
       offset?: number;
@@ -338,18 +376,31 @@ export interface RegistryDataService {
       raw: string;
       sizeBytes: number;
       configDigest: string | null;
-    }): Promise<{ id: string }>;
-    upsertTag(input: { packageId: string; tag: string; manifestId: string }): Promise<void>;
+    }): Promise<RegistryOciManifestHandle>;
+    upsertTag(input: {
+      package: RegistryPackageHandle;
+      tag: string;
+      manifest: RegistryOciManifestHandle;
+    }): Promise<void>;
     resolveManifest(input: {
-      packageId: string;
+      package: RegistryPackageHandle;
       reference: string;
     }): Promise<RegistryOciManifestRow | null>;
-    deleteTagsForManifest(input: { packageId: string; manifestId: string }): Promise<void>;
-    markPackageVersionsDeletedByDigest(input: { packageId: string; digest: string }): Promise<void>;
-    deleteManifestIfUnassociated(input: { manifestId: string; digest: string }): Promise<boolean>;
-    deleteTag(input: { packageId: string; tag: string }): Promise<boolean>;
-    listLiveManifestsForPackage(packageId: string): Promise<RegistryOciManifestRawRow[]>;
-    listTags(packageId: string): Promise<string[]>;
+    deleteTagsForManifest(input: {
+      package: RegistryPackageHandle;
+      manifest: RegistryOciManifestHandle;
+    }): Promise<void>;
+    markPackageVersionsDeletedByDigest(input: {
+      package: RegistryPackageHandle;
+      digest: string;
+    }): Promise<void>;
+    deleteManifestIfUnassociated(input: {
+      manifest: RegistryOciManifestHandle;
+      digest: string;
+    }): Promise<boolean>;
+    deleteTag(input: { package: RegistryPackageHandle; tag: string }): Promise<boolean>;
+    listLiveManifestsForPackage(pkg: RegistryPackageHandle): Promise<RegistryOciManifestRawRow[]>;
+    listTags(pkg: RegistryPackageHandle): Promise<string[]>;
     listSubjectManifests(subjectDigest: string): Promise<RegistryOciManifestRow[]>;
   };
 }

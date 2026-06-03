@@ -10,11 +10,12 @@ describe("npm proxy lifecycle helpers", () => {
         "1.0.0": "1.0.0",
         broken: "9.9.9",
       },
-      async (version) => (version === "1.0.0" ? `version-${version}` : null),
+      async (version) =>
+        version === "1.0.0" ? { id: `version-${version}`, packageId: "pkg-1", version } : null,
     );
 
     expect([...tags.entries()]).toEqual([
-      ["latest", { version: "1.0.0", versionId: "version-1.0.0" }],
+      ["latest", { id: "version-1.0.0", packageId: "pkg-1", version: "1.0.0" }],
     ]);
   });
 });

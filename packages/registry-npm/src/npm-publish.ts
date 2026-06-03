@@ -109,21 +109,29 @@ export function parseNpmPublishRequest(nameInput: string, rawBody: unknown): Npm
 export async function resolveNpmPublishDistTags(
   distTags: Record<string, string>,
   publishedVersions: string[],
-  resolveExistingVersionId: (version: string) => Promise<string | null>,
-): Promise<{ ok: true; existingVersionIds: Map<string, string> } | { ok: false; error: string }> {
+  resolveExistingVersion: (
+    version: string,
+  ) => Promise<{ id: string; packageId: string; version: string } | null>,
+): Promise<
+  | {
+      ok: true;
+      existingVersionRows: Map<string, { id: string; packageId: string; version: string }>;
+    }
+  | { ok: false; error: string }
+> {
   const publishedVersionSet = new Set(publishedVersions);
-  const existingVersionIds = new Map<string, string>();
+  const existingVersionRows = new Map<string, { id: string; packageId: string; version: string }>();
   for (const [tag, version] of Object.entries(distTags)) {
     const distTag = parseNpmDistTagAssignment(tag, version, {
       versionMessage: `dist-tag ${tag} points to an invalid version`,
     });
     if (publishedVersionSet.has(distTag.version)) continue;
 
-    const existingVersionId = await resolveExistingVersionId(distTag.version);
-    if (!existingVersionId) {
+    const existingVersion = await resolveExistingVersion(distTag.version);
+    if (!existingVersion) {
       return { ok: false, error: `dist-tag ${distTag.tag} points to an unknown version` };
     }
-    existingVersionIds.set(distTag.version, existingVersionId);
+    existingVersionRows.set(distTag.version, existingVersion);
   }
-  return { ok: true, existingVersionIds };
+  return { ok: true, existingVersionRows };
 }

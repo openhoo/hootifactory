@@ -7,12 +7,14 @@ import {
   isNull,
   packages,
   packageVersions,
+  registryAssets,
   repositories,
   versionTags,
 } from "@hootifactory/db";
 import { z } from "@hootifactory/registry";
 import { blobStore } from "@hootifactory/storage";
 import { deleteUnreferencedCasBlob, releaseRepoDigestTx } from "../content";
+import { adjustArtifactsUsedTx } from "../governance/quota";
 
 const DigestRefSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 const DigestObjectSchema = z.looseObject({ blobDigest: DigestRefSchema });
@@ -104,7 +106,20 @@ export async function applyRetention(repositoryId: string, keepLastN: number): P
         .set({ deletedAt: new Date() })
         .where(inArray(packageVersions.id, prunedIds));
       count += toPrune.length;
+      await adjustArtifactsUsedTx(tx, repo.orgId, -toPrune.length);
       for (const d of collectVersionDigests(toPrune)) prunedDigests.add(d);
+      const prunedAssets = await tx
+        .update(registryAssets)
+        .set({ deletedAt: new Date(), updatedAt: new Date() })
+        .where(
+          and(
+            eq(registryAssets.repositoryId, repositoryId),
+            inArray(registryAssets.packageVersionId, prunedIds),
+            isNull(registryAssets.deletedAt),
+          ),
+        )
+        .returning({ digest: registryAssets.digest });
+      for (const asset of prunedAssets) prunedDigests.add(asset.digest);
 
       const deletedTags = await tx
         .delete(versionTags)
@@ -127,13 +142,20 @@ export async function applyRetention(repositoryId: string, keepLastN: number): P
     }
 
     if (prunedDigests.size > 0) {
-      // Digests still referenced by a surviving live version must be kept.
-      const live = await tx
+      // Digests still referenced by a surviving live asset/version must be kept.
+      const liveAssets = await tx
+        .select({ digest: registryAssets.digest })
+        .from(registryAssets)
+        .where(
+          and(eq(registryAssets.repositoryId, repositoryId), isNull(registryAssets.deletedAt)),
+        );
+      const liveDigests = new Set(liveAssets.map((asset) => asset.digest));
+      const liveVersions = await tx
         .select({ metadata: packageVersions.metadata })
         .from(packageVersions)
         .innerJoin(packages, eq(packageVersions.packageId, packages.id))
         .where(and(eq(packages.repositoryId, repositoryId), isNull(packageVersions.deletedAt)));
-      const liveDigests = collectVersionDigests(live);
+      for (const digest of collectVersionDigests(liveVersions)) liveDigests.add(digest);
 
       for (const digest of prunedDigests) {
         if (liveDigests.has(digest)) continue;

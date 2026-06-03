@@ -85,7 +85,7 @@ export async function ociBlobRefExists(
 export async function upsertOciManifest(
   ctx: RegistryRequestContext,
   input: UpsertOciManifestInput,
-): Promise<{ id: string }> {
+): Promise<{ id: string; repositoryId: string; digest: string }> {
   const [manifest] = await db
     .insert(ociManifests)
     .values({
@@ -109,7 +109,11 @@ export async function upsertOciManifest(
         configDigest: input.configDigest,
       },
     })
-    .returning({ id: ociManifests.id });
+    .returning({
+      id: ociManifests.id,
+      repositoryId: ociManifests.repositoryId,
+      digest: ociManifests.digest,
+    });
   if (!manifest) throw new Error("failed to upsert OCI manifest");
   return manifest;
 }

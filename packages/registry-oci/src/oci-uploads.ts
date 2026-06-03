@@ -171,7 +171,7 @@ export async function putUpload(
       return { size: stored.size, storageKey: openSession.storageKey, chunks: state.chunks };
     },
   });
-  await ctx.blobs.deleteKey(committed.storageKey).catch(() => {});
+  await ctx.data.content.staging.deleteKey(committed.storageKey).catch(() => {});
   await deleteUploadChunks(ctx, committed.chunks);
 
   return buildOciUploadCommittedResponse({ ctx, image, digest, size: committed.size });
@@ -194,7 +194,7 @@ export async function cancelUpload(
         session,
         mutations,
       });
-      await ctx.blobs.deleteKey(openSession.storageKey).catch(() => {});
+      await ctx.data.content.staging.deleteKey(openSession.storageKey).catch(() => {});
       await deleteUploadChunks(ctx, uploadMultipartState(openSession.multipart).chunks);
       await mutations.deleteSession();
     },
@@ -220,7 +220,7 @@ async function tryCrossRepositoryMount(input: {
       repositoryName: source.full,
       visibility: source.visibility,
     });
-    if (decision.allowed && (await input.ctx.blobs.exists(input.mount))) {
+    if (decision.allowed) {
       await input.ctx.data.content.ensureBlobRef({
         digest: input.mount,
         kind: "oci_layer",
@@ -296,7 +296,7 @@ async function assertOpenSession(input: {
   }
   if (input.session.expiresAt.getTime() > Date.now()) return;
 
-  await input.ctx.blobs.deleteKey(input.session.storageKey).catch(() => {});
+  await input.ctx.data.content.staging.deleteKey(input.session.storageKey).catch(() => {});
   await deleteUploadChunks(input.ctx, uploadMultipartState(input.session.multipart).chunks);
   await input.markAborted();
   throw Errors.blobUploadUnknown({ uuid: input.uuid, reason: "expired" });
@@ -312,7 +312,7 @@ async function appendUploadChunk(
   assertUploadOffset(existing, session.offsetBytes);
   if (chunk.length > 0) {
     const key = `${session.storageKey}/chunks/${state.chunks.length}`;
-    await ctx.blobs.putAtKey(key, chunk);
+    await ctx.data.content.staging.putKey(key, chunk);
     state.chunks.push({ key, size: chunk.length });
   }
   return {

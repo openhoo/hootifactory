@@ -1,24 +1,13 @@
 import { type Action, authorize, type Principal, type ResourceRef } from "@hootifactory/auth";
 import { env } from "@hootifactory/config";
-import { artifacts, db, eq } from "@hootifactory/db";
-import {
-  addSpanEvent,
-  captureTelemetryContext,
-  logger,
-  withSpan,
-} from "@hootifactory/observability";
-import { enqueue, QUEUES } from "@hootifactory/queue";
+import { artifacts, db, scanOutbox } from "@hootifactory/db";
+import { addSpanEvent, logger, withSpan } from "@hootifactory/observability";
 import type {
   EnqueueScanInput,
   RegistryRequestContext,
   ResolvedRepo,
 } from "@hootifactory/registry";
-import { blobStore } from "@hootifactory/storage";
 import { createRegistryDataService } from "./data-service";
-
-function errorText(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
 
 async function enqueueArtifactScan(repo: ResolvedRepo, input: EnqueueScanInput): Promise<void> {
   if (!env.SCANNER_ENABLED) return;
@@ -32,50 +21,53 @@ async function enqueueArtifactScan(repo: ResolvedRepo, input: EnqueueScanInput):
       "registry.repository.name": repo.name,
     },
     async (span) => {
-      const [artifact] = await db
-        .insert(artifacts)
-        .values({
-          orgId: repo.orgId,
-          repositoryId: repo.id,
-          digest: input.digest,
-          mediaType: input.mediaType,
-          name: input.name,
-          version: input.version,
-          state: "pending",
-        })
-        .onConflictDoUpdate({
-          target: [artifacts.orgId, artifacts.repositoryId, artifacts.digest],
-          set: { name: input.name, version: input.version, state: "pending" },
-        })
-        .returning({ id: artifacts.id });
+      const artifact = await db.transaction(async (tx) => {
+        const [row] = await tx
+          .insert(artifacts)
+          .values({
+            orgId: repo.orgId,
+            repositoryId: repo.id,
+            digest: input.digest,
+            mediaType: input.mediaType,
+            name: input.name,
+            version: input.version,
+            state: "pending",
+          })
+          .onConflictDoUpdate({
+            target: [artifacts.orgId, artifacts.repositoryId, artifacts.digest],
+            set: { name: input.name, version: input.version, state: "pending" },
+          })
+          .returning({ id: artifacts.id });
+        if (!row) return null;
+        await tx
+          .insert(scanOutbox)
+          .values({
+            artifactId: row.id,
+            status: "pending",
+            attempts: 0,
+            nextAttemptAt: new Date(),
+            lockedAt: null,
+            lastError: null,
+          })
+          .onConflictDoUpdate({
+            target: [scanOutbox.artifactId],
+            set: {
+              status: "pending",
+              nextAttemptAt: new Date(),
+              lockedAt: null,
+              lastError: null,
+              updatedAt: new Date(),
+            },
+          });
+        return row;
+      });
       if (!artifact) {
         addSpanEvent("scan.enqueue.no_artifact_row");
         return;
       }
 
       span.setAttribute("artifact.id", artifact.id);
-      try {
-        await enqueue(
-          QUEUES.scanArtifact,
-          { artifactId: artifact.id, telemetry: captureTelemetryContext() },
-          { retryLimit: 5, retryDelay: 30, retryBackoff: true },
-        );
-      } catch (err) {
-        const error = errorText(err);
-        await db
-          .update(artifacts)
-          .set({
-            state: "quarantined",
-            policyDecision: {
-              scanStatus: "enqueue_failed",
-              error: error.slice(0, 2000),
-              failedAt: new Date().toISOString(),
-            },
-          })
-          .where(eq(artifacts.id, artifact.id));
-        throw err;
-      }
-      logger.debug("scan artifact enqueued", {
+      logger.debug("scan artifact outbox recorded", {
         artifactId: artifact.id,
         digest: input.digest,
         repo: repo.name,
@@ -93,7 +85,6 @@ export function buildRegistryRequestContext(
     repo,
     principal,
     data: undefined as never,
-    blobs: blobStore,
     baseUrl: env.REGISTRY_PUBLIC_URL,
     limits: {
       maxUploadBytes: env.REGISTRY_MAX_UPLOAD_BYTES,

@@ -132,7 +132,21 @@ export class DockerAdapter implements RegistryPlugin {
         : method === "DELETE"
           ? "delete"
           : "write";
-    return { action, repositoryName: this.fullName(ctx, match.params.name ?? "") };
+    const image = match.params.name ?? "";
+    const digest = match.params.digest;
+    const reference = match.params.reference;
+    return {
+      action,
+      repositoryName: this.fullName(ctx, image),
+      resource:
+        digest || reference
+          ? {
+              type: "artifact",
+              packageName: image,
+              artifactRef: digest ?? reference,
+            }
+          : { type: "package", packageName: image },
+    };
   }
 
   handle = this.delegate.handle;
@@ -186,7 +200,7 @@ export class DockerAdapter implements RegistryPlugin {
   ): Promise<Response> {
     const pkg = await ctx.data.packages.findByName(image);
     if (!pkg) throw Errors.nameUnknown({ image });
-    const tags = await ctx.data.oci.listTags(pkg.id);
+    const tags = await ctx.data.oci.listTags(pkg);
     return buildOciTagsListResponse({
       baseUrl: ctx.baseUrl,
       mountPath: ctx.repo.mountPath,
@@ -232,21 +246,19 @@ export class DockerAdapter implements RegistryPlugin {
       code: "DIGEST_INVALID",
       message: "invalid blob digest",
     });
-    if (!(await ctx.data.oci.blobRefExists({ scope: image, digest })))
-      throw Errors.blobUnknown({ digest });
+    const blob = await ctx.data.content.getBlobRef({ digest, kind: "oci_layer", scope: image });
+    if (!blob) throw Errors.blobUnknown({ digest });
     // Defense-in-depth: a layer reachable only through blocked manifests is blocked too.
     if (await isOciBlobBlocked(ctx, { image, digest })) {
       throw Errors.denied({ reason: "blocked by scan policy" });
     }
-    const stat = await ctx.blobs.stat(digest);
-    if (!stat) throw Errors.blobUnknown({ digest });
     return buildOciBlobResponse({
       digest,
-      size: stat.size,
+      size: blob.size,
       rangeHeader: req.headers.get("range"),
       headOnly,
-      get: () => ctx.blobs.get(digest),
-      getRange: (start, end) => ctx.blobs.getRange(digest, start, end),
+      get: () => blob.get(),
+      getRange: (start, end) => blob.getRange(start, end),
     });
   }
 

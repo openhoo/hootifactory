@@ -42,7 +42,7 @@ export function uploadChunkStream(
     async start(controller) {
       try {
         for (const chunk of chunks) {
-          const bytes = await ctx.blobs.bytesAtKey(chunk.key);
+          const bytes = await ctx.data.content.staging.bytesAtKey(chunk.key);
           if (bytes.byteLength !== chunk.size) {
             throw Errors.blobUploadInvalid({
               reason: "staging chunk size mismatch",
@@ -65,7 +65,9 @@ export async function deleteUploadChunks(
   ctx: RegistryRequestContext,
   chunks: UploadChunk[],
 ): Promise<void> {
-  await Promise.all(chunks.map((chunk) => ctx.blobs.deleteKey(chunk.key).catch(() => {})));
+  await Promise.all(
+    chunks.map((chunk) => ctx.data.content.staging.deleteKey(chunk.key).catch(() => {})),
+  );
 }
 
 export async function bodyBytes(req: Request): Promise<Uint8Array> {

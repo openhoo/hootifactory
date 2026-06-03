@@ -33,7 +33,7 @@ export async function handleGoUpload(
   const upload = await parseGoUploadRequest(moduleName, versionRaw, req);
   const { scope, version, zipBytes } = upload;
   const existingPkg = await findRegistryPackage(ctx, moduleName);
-  if (existingPkg && (await ctx.data.versions.exists(existingPkg.id, version))) {
+  if (existingPkg && (await ctx.data.versions.exists(existingPkg, version))) {
     return goVersionConflictResponse();
   }
   const uploadError = validateGoUploadPlan(moduleName, upload);
@@ -60,7 +60,7 @@ export async function handleGoUpload(
       mediaType: "application/zip",
       metadata: { module: moduleName },
     }),
-    versionConflict: (packageId) => ctx.data.versions.exists(packageId, version),
+    versionConflict: (pkg) => ctx.data.versions.exists(pkg, version),
   });
   if (!result.ok) return goVersionConflictResponse();
   return goUploadSuccessResponse(moduleName, version);

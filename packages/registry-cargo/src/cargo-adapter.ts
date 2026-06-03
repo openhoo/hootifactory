@@ -8,6 +8,7 @@ import {
   parseRegistryInput,
   type RegistryPlugin,
   type RegistryRequestContext,
+  type RouteMatch,
   readWritePermission,
   registryRoutes,
   serveRegistryBlob,
@@ -17,6 +18,7 @@ import {
   buildCargoOwnersUpdateBody,
   parseCargoOwnersRequest,
 } from "./cargo-owners";
+import { cargoBlobScope } from "./cargo-publish";
 import { handleCargoPublish } from "./cargo-publish-lifecycle";
 import {
   CargoCrateNameSchema,
@@ -92,8 +94,24 @@ export class CargoAdapter implements RegistryPlugin {
 
   routes = this.delegate.routes;
 
-  requiredPermission(method: HttpMethod): Permission {
-    return readWritePermission(method);
+  requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
+    const permission = readWritePermission(method);
+    const crate = match?.params.crate;
+    const version = match?.params.version;
+    if (crate && version && match?.entry?.handlerId === "download") {
+      return {
+        ...permission,
+        resource: {
+          type: "artifact",
+          packageName: crate.toLowerCase(),
+          artifactRef: cargoBlobScope(crate.toLowerCase(), version),
+        },
+      };
+    }
+    if (crate) {
+      return { ...permission, resource: { type: "package", packageName: crate.toLowerCase() } };
+    }
+    return permission;
   }
 
   handle = this.delegate.handle;
@@ -112,7 +130,7 @@ export class CargoAdapter implements RegistryPlugin {
     if (path !== cargoIndexPath(name)) return new Response("", { status: 404 });
     const pkg = await this.findCrate(ctx, name);
     if (!pkg) return new Response("", { status: 404 });
-    const vers = await ctx.data.versions.listLive(pkg.id, { orderByCreated: "asc" });
+    const vers = await ctx.data.versions.listLive(pkg, { orderByCreated: "asc" });
     const lines = vers
       .flatMap((v) => {
         const metadata = parseCargoVersionMeta(v.metadata);
@@ -131,11 +149,13 @@ export class CargoAdapter implements RegistryPlugin {
     version = parseCrateVersion(version);
     const pkg = await this.findCrate(ctx, crate);
     if (!pkg) throw Errors.notFound();
-    const v = await ctx.data.versions.findLive(pkg.id, version);
+    const v = await ctx.data.versions.findLive(pkg, version);
     const digest = parseCargoVersionMeta(v?.metadata)?.crateDigest;
-    if (!digest || !(await ctx.blobs.exists(digest))) throw Errors.notFound();
+    if (!digest) throw Errors.notFound();
     return serveRegistryBlob(ctx, {
       digest,
+      kind: "generic_file",
+      scope: cargoBlobScope(crate, version),
       contentType: "application/octet-stream",
       blocked: () => new Response("blocked by scan policy", { status: 403 }),
     });
@@ -152,11 +172,11 @@ export class CargoAdapter implements RegistryPlugin {
     version = parseCrateVersion(version);
     const pkg = await this.findCrate(ctx, crate);
     if (!pkg) throw Errors.notFound();
-    const v = await ctx.data.versions.findLive(pkg.id, version);
+    const v = await ctx.data.versions.findLive(pkg, version);
     if (!v) throw Errors.notFound();
     const meta = parseCargoVersionMeta(v.metadata);
     if (!meta) throw Errors.notFound();
-    await ctx.data.versions.updateMetadata(v.id, {
+    await ctx.data.versions.updateMetadata(v, {
       ...meta,
       index: { ...meta.index, yanked },
     });
@@ -167,7 +187,7 @@ export class CargoAdapter implements RegistryPlugin {
     crate = parseCrateName(crate).toLowerCase();
     const pkg = await this.findCrate(ctx, crate);
     if (!pkg) throw Errors.notFound();
-    const rows = await ctx.data.versions.listPublishers(pkg.id);
+    const rows = await ctx.data.versions.listPublishers(pkg);
     return Response.json(buildCargoOwnersBody(rows));
   }
 

@@ -120,6 +120,7 @@ export const registryAssets = pgTable(
     mediaType: text(),
     sizeBytes: bigint({ mode: "number" }).notNull().default(0),
     metadata: jsonb().$type<Record<string, unknown>>().notNull().default({}),
+    deletedAt: timestamp({ withTimezone: true }),
     ...timestamps(),
   },
   (t) => [

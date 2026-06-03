@@ -1,6 +1,7 @@
 import {
   doublePrecision,
   index,
+  integer,
   jsonb,
   pgTable,
   text,
@@ -45,6 +46,31 @@ export const artifacts = pgTable(
     index("artifacts_digest_idx").on(t.digest),
     index("artifacts_repo_idx").on(t.repositoryId),
     index("artifacts_state_idx").on(t.state),
+  ],
+);
+
+/**
+ * Durable scan intent written in the same database path as artifact publication.
+ * Workers claim these rows directly, so a queue outage cannot make a successful
+ * publish look like a failed client request or leave an artifact unscanned.
+ */
+export const scanOutbox = pgTable(
+  "scan_outbox",
+  {
+    id: primaryId(),
+    artifactId: uuid()
+      .notNull()
+      .references(() => artifacts.id, { onDelete: "cascade" }),
+    status: text().notNull().default("pending"),
+    attempts: integer().notNull().default(0),
+    nextAttemptAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    lockedAt: timestamp({ withTimezone: true }),
+    lastError: text(),
+    ...timestamps(),
+  },
+  (t) => [
+    uniqueIndex("scan_outbox_artifact_uq").on(t.artifactId),
+    index("scan_outbox_ready_idx").on(t.status, t.nextAttemptAt),
   ],
 );
 

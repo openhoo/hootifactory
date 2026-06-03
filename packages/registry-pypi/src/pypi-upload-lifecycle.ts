@@ -46,7 +46,7 @@ export async function handlePypiUpload(
   const pkg = await ctx.data.packages.findOrCreate({
     name,
   });
-  const existing = await ctx.data.versions.find(pkg.id, version);
+  const existing = await ctx.data.versions.find(pkg, version);
   if (existing?.deletedAt) {
     return Response.json({ message: "Release version already exists." }, { status: 409 });
   }
@@ -60,7 +60,7 @@ export async function handlePypiUpload(
   const fileMeta = buildPypiFileMetadata(parsed.plan, stored.digest);
 
   const added = await addFileToVersion(ctx, {
-    packageId: pkg.id,
+    package: pkg,
     version,
     rawName,
     requiresPython,
@@ -104,7 +104,7 @@ async function allFiles(ctx: RegistryRequestContext): Promise<PypiFileMeta[]> {
 async function addFileToVersion(
   ctx: RegistryRequestContext,
   opts: {
-    packageId: string;
+    package: { id: string; orgId: string; repositoryId: string; name: string };
     version: string;
     rawName: string;
     requiresPython?: string;
@@ -113,7 +113,7 @@ async function addFileToVersion(
   },
 ): Promise<AddPypiFileResult> {
   const created = await ctx.data.versions.create({
-    packageId: opts.packageId,
+    package: opts.package,
     version: opts.version,
     metadata: {
       name: opts.rawName,
@@ -126,8 +126,8 @@ async function addFileToVersion(
     await ctx.data.assets.upsert({
       digest: opts.storedDigest,
       role: "pypi_file",
-      packageId: opts.packageId,
-      packageVersionId: created,
+      package: opts.package,
+      packageVersion: { id: created, packageId: opts.package.id, version: opts.version },
       scope: opts.fileMeta.filename,
       path: opts.fileMeta.filename,
       mediaType: "application/octet-stream",
@@ -138,7 +138,7 @@ async function addFileToVersion(
   }
 
   const result = await ctx.data.versions.patch<AddPypiFileResult>({
-    packageId: opts.packageId,
+    package: opts.package,
     version: opts.version,
     patch: (row) => {
       if (!row?.id || row.deletedAt) {
@@ -169,8 +169,8 @@ async function addFileToVersion(
     await ctx.data.assets.upsert({
       digest: opts.storedDigest,
       role: "pypi_file",
-      packageId: opts.packageId,
-      packageVersionId: result.versionId,
+      package: opts.package,
+      packageVersion: { id: result.versionId, packageId: opts.package.id, version: opts.version },
       scope: opts.fileMeta.filename,
       path: opts.fileMeta.filename,
       mediaType: "application/octet-stream",

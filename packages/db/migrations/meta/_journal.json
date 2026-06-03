@@ -85,6 +85,13 @@
       "when": 1780493979725,
       "tag": "0011_long_killmonger",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1780502653132,
+      "tag": "0012_aberrant_maginty",
+      "breakpoints": true
     }
   ]
 }

@@ -37,7 +37,7 @@ export async function handleNpmProxyIngest(
 
     let { manifest } = proxyManifest;
     const { tarballUrl, upstreamDist } = proxyManifest;
-    const existingVersion = pkg ? await ctx.data.versions.findLive(pkg.id, version) : null;
+    const existingVersion = pkg ? await ctx.data.versions.findLive(pkg, version) : null;
     const existingDist = existingVersion
       ? parseNpmStoredVersionMetadata(existingVersion.metadata).dist
       : undefined;
@@ -52,7 +52,7 @@ export async function handleNpmProxyIngest(
         packageName: pkgName,
       });
       await ctx.data.versions.upsert({
-        packageId: pkg.id,
+        package: pkg,
         version,
         metadata: { manifest, dist: existingDist },
         sizeBytes: existingDist.size,
@@ -83,7 +83,7 @@ export async function handleNpmProxyIngest(
     });
     manifest.dist = manifestDist;
     const { stored } = await ctx.data.versions.upsertWithBlobRef({
-      packageId: pkg.id,
+      package: pkg,
       version,
       metadata: { manifest, dist },
       sizeBytes: tarball.length,
@@ -117,9 +117,9 @@ export async function handleNpmProxyIngest(
 
   if (!pkg) return false;
   await ctx.data.tags.replace(
-    pkg.id,
+    pkg,
     await resolveNpmProxyDistTags(packument["dist-tags"] ?? {}, (version) =>
-      findVersionId(ctx, pkg.id, version),
+      findVersion(ctx, pkg, version),
     ),
   );
   return true;
@@ -167,21 +167,23 @@ async function fetchVerifiedNpmTarball(input: {
 
 export async function resolveNpmProxyDistTags(
   distTags: Record<string, string>,
-  resolveVersionId: (version: string) => Promise<string | null>,
-): Promise<Map<string, { version: string; versionId: string }>> {
-  const desiredTags = new Map<string, { version: string; versionId: string }>();
+  resolveVersion: (
+    version: string,
+  ) => Promise<{ id: string; packageId: string; version: string } | null>,
+): Promise<Map<string, { id: string; packageId: string; version: string }>> {
+  const desiredTags = new Map<string, { id: string; packageId: string; version: string }>();
   for (const [tag, version] of Object.entries(distTags)) {
     if (!isValidDistTag(tag) || typeof version !== "string") continue;
-    const versionId = await resolveVersionId(version);
-    if (versionId) desiredTags.set(tag, { version, versionId });
+    const row = await resolveVersion(version);
+    if (row) desiredTags.set(tag, row);
   }
   return desiredTags;
 }
 
-async function findVersionId(
+async function findVersion(
   ctx: RegistryRequestContext,
-  packageId: string,
+  pkg: { id: string; orgId: string; repositoryId: string; name: string },
   version: string,
-): Promise<string | null> {
-  return (await ctx.data.versions.findLive(packageId, version))?.id ?? null;
+): Promise<{ id: string; packageId: string; version: string } | null> {
+  return ctx.data.versions.findLive(pkg, version);
 }

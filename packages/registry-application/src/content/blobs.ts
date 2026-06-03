@@ -1,6 +1,11 @@
 import { Errors } from "@hootifactory/core";
 import { and, blobRefs, blobs, db, eq, repositories, sql } from "@hootifactory/db";
-import { type BlobStore, computeDigest, type RegistryRequestContext } from "@hootifactory/registry";
+import {
+  computeDigest,
+  type RegistryReferencedBlob,
+  type RegistryRequestContext,
+} from "@hootifactory/registry";
+import { blobStore } from "@hootifactory/storage";
 import {
   adjustStorageUsedTx,
   assertStorageQuota,
@@ -34,7 +39,7 @@ interface BlobPutResult extends BlobPut {
   deduped: boolean;
 }
 
-type BlobLifecycleContext = { blobs: BlobStore };
+type BlobLifecycleContext = unknown;
 
 export async function lockDigestTx(tx: Tx, digest: string): Promise<void> {
   await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${digest}, 0))`);
@@ -49,7 +54,7 @@ export async function lockDigestsTx(tx: Tx, digests: string[]): Promise<void> {
 }
 
 async function deleteUnrecordedCasBlob(
-  ctx: BlobLifecycleContext,
+  _ctx: BlobLifecycleContext,
   put: { digest: string; deduped: boolean } | null,
 ): Promise<void> {
   if (!put || put.deduped) return;
@@ -62,7 +67,7 @@ async function deleteUnrecordedCasBlob(
         .where(eq(blobs.digest, put.digest))
         .limit(1);
       if (row) return;
-      await ctx.blobs.delete(put.digest).catch(() => {});
+      await blobStore.delete(put.digest).catch(() => {});
     });
   } catch {
     // Best-effort rollback cleanup; DB correctness must not depend on S3 cleanup.
@@ -70,7 +75,7 @@ async function deleteUnrecordedCasBlob(
 }
 
 export async function deleteUnreferencedCasBlob(
-  ctx: BlobLifecycleContext,
+  _ctx: BlobLifecycleContext,
   digest: string,
 ): Promise<void> {
   try {
@@ -83,7 +88,7 @@ export async function deleteUnreferencedCasBlob(
         )
         .returning({ digest: blobs.digest });
       if (deleted.length === 0) return;
-      await ctx.blobs.delete(digest).catch(() => {});
+      await blobStore.delete(digest).catch(() => {});
     });
   } catch {
     // Reclaim is best-effort; a later retention/delete pass can retry.
@@ -99,7 +104,7 @@ export async function discardUncommittedBlobPut(
 
 export async function ensureActiveBlobTx(
   tx: Tx,
-  ctx: RegistryRequestContext,
+  _ctx: RegistryRequestContext,
   put: BlobPut,
   mediaType?: string,
 ): Promise<void> {
@@ -108,7 +113,7 @@ export async function ensureActiveBlobTx(
     .values({
       digest: put.digest,
       sizeBytes: put.size,
-      storageKey: ctx.blobs.blobKey(put.digest),
+      storageKey: blobStore.blobKey(put.digest),
       mediaType: mediaType ?? null,
       refCount: 0,
       state: "active",
@@ -221,7 +226,7 @@ export async function storeBlobWithRef(
   if (!existingOrgRef) await assertStorageQuota(ctx, opts.data.byteLength);
   return runStoreBlobWithRef(ctx, opts, async (tx, registerCleanup) => {
     await lockDigestTx(tx, digest);
-    const put = await ctx.blobs.put(opts.data);
+    const put = await blobStore.put(opts.data);
     registerCleanup(put);
     return put;
   });
@@ -239,7 +244,7 @@ export async function storeBlobStreamWithRef(
 ): Promise<StoredBlob> {
   return runStoreBlobWithRef(ctx, opts, async (tx, registerCleanup) => {
     if (opts.expectedDigest) await lockDigestTx(tx, opts.expectedDigest);
-    const put = await ctx.blobs.putStream(opts.data, opts.expectedDigest);
+    const put = await blobStore.putStream(opts.data, opts.expectedDigest);
     registerCleanup(put);
     if (!opts.expectedDigest) await lockDigestTx(tx, put.digest);
     return put;
@@ -275,6 +280,53 @@ export async function ensureBlobRef(
       .where(eq(blobs.digest, ref.digest));
     if (chargeOrg) await adjustStorageUsedTx(tx, ctx.repo.orgId, b.size);
   });
+}
+
+export async function blobRefExists(
+  ctx: RegistryRequestContext,
+  ref: { digest: string; kind: BlobRefKind; scope: string },
+): Promise<boolean> {
+  const [row] = await db
+    .select({ id: blobRefs.id })
+    .from(blobRefs)
+    .where(
+      and(
+        eq(blobRefs.repositoryId, ctx.repo.id),
+        eq(blobRefs.digest, ref.digest),
+        eq(blobRefs.kind, ref.kind),
+        eq(blobRefs.scope, ref.scope),
+      ),
+    )
+    .limit(1);
+  return Boolean(row);
+}
+
+export async function getBlobRef(
+  ctx: RegistryRequestContext,
+  ref: { digest: string; kind: BlobRefKind; scope: string },
+): Promise<RegistryReferencedBlob | null> {
+  const [row] = await db
+    .select({ size: blobs.sizeBytes })
+    .from(blobRefs)
+    .innerJoin(blobs, eq(blobRefs.digest, blobs.digest))
+    .where(
+      and(
+        eq(blobRefs.repositoryId, ctx.repo.id),
+        eq(blobRefs.digest, ref.digest),
+        eq(blobRefs.kind, ref.kind),
+        eq(blobRefs.scope, ref.scope),
+      ),
+    )
+    .limit(1);
+  if (!row) return null;
+  const stat = await blobStore.stat(ref.digest);
+  return {
+    digest: ref.digest,
+    size: stat?.size ?? row.size,
+    ...(stat?.etag ? { etag: stat.etag } : {}),
+    get: () => blobStore.get(ref.digest),
+    getRange: (start, end) => blobStore.getRange(ref.digest, start, end),
+  };
 }
 
 export async function releaseBlobRef(

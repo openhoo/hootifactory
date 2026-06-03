@@ -1,6 +1,7 @@
 import { and, artifacts, db, eq, scanPolicies } from "@hootifactory/db";
 import type { RegistryRequestContext } from "@hootifactory/registry";
 import { resolveScanPolicy, type ScanPolicyPattern } from "@hootifactory/scan-core";
+import { blobStore } from "@hootifactory/storage";
 
 export const REGISTRY_TOKEN_SERVICE = "hootifactory";
 
@@ -58,14 +59,18 @@ export async function serveBlobIfClean(
 }
 
 export async function serveBlobWithScanGate(
-  ctx: Pick<RegistryRequestContext, "blobs">,
+  ctx: unknown,
   opts: BlobResponseOptions,
   isBlocked: (digest: string) => Promise<boolean>,
 ): Promise<Response> {
   if (await isBlocked(opts.digest)) return opts.blocked();
   const notModified = opts.notModified?.();
   if (notModified) return notModified;
-  return new Response(ctx.blobs.get(opts.digest), {
+  const read =
+    ctx && typeof ctx === "object" && "getBlob" in ctx
+      ? (ctx as { getBlob?: (digest: string) => ConstructorParameters<typeof Response>[0] }).getBlob
+      : undefined;
+  return new Response(read?.(opts.digest) ?? blobStore.get(opts.digest), {
     headers: { "content-type": opts.contentType, ...opts.extraHeaders },
   });
 }

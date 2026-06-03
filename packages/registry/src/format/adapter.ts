@@ -136,10 +136,11 @@ export interface RouteMatch {
   path: string;
 }
 
-/** Permission a request requires; repositoryName drives token-scope matching. */
+/** Permission a request requires. Repository defaults to the current repo. */
 export interface Permission {
   action: Action;
   repositoryName?: string;
+  resource?: Partial<ResourceRef>;
 }
 
 /** Default permission: GET/HEAD are reads, everything else is a write. */
@@ -174,7 +175,6 @@ export interface RegistryRequestContext {
   principal: RegistryPrincipal;
   /** Request-scoped registry data-management service. */
   data: RegistryDataService;
-  blobs: BlobStore;
   /** Runtime knobs injected by the application layer. */
   limits: {
     maxUploadBytes: number;

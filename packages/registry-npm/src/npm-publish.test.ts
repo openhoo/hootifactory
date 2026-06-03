@@ -87,12 +87,15 @@ describe("npm publish helpers", () => {
     const resolved = await resolveNpmPublishDistTags(
       { latest: "1.0.0", beta: "1.1.0" },
       ["1.1.0"],
-      async (version) => (version === "1.0.0" ? "version-1" : null),
+      async (version) =>
+        version === "1.0.0" ? { id: "version-1", packageId: "pkg-1", version } : null,
     );
 
     expect(resolved.ok).toBe(true);
     if (!resolved.ok) throw new Error("expected resolved dist tags");
-    expect([...resolved.existingVersionIds]).toEqual([["1.0.0", "version-1"]]);
+    expect([...resolved.existingVersionRows]).toEqual([
+      ["1.0.0", { id: "version-1", packageId: "pkg-1", version: "1.0.0" }],
+    ]);
   });
 
   test("rejects dist-tags that point outside the current package", async () => {

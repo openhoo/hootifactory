@@ -8,6 +8,8 @@ describe("registry SDK helpers", () => {
 
     const res = await serveRegistryBlob(ctx, {
       digest: "sha256:missing",
+      kind: "generic_file",
+      scope: "missing",
       contentType: "application/octet-stream",
       blocked: () => new Response("blocked", { status: 403 }),
       missing: () => new Response("missing", { status: 404 }),
@@ -19,14 +21,19 @@ describe("registry SDK helpers", () => {
 
   test("serveRegistryBlob delegates clean blob responses to the data service", async () => {
     const ctx = createTestRegistryContext({
-      blobs: {
-        ...createTestRegistryContext().blobs,
-        exists: () => Promise.resolve(true),
+      data: {
+        ...createTestRegistryContext().data,
+        content: {
+          ...createTestRegistryContext().data.content,
+          blobRefExists: () => Promise.resolve(true),
+        },
       },
     });
 
     const res = await serveRegistryBlob(ctx, {
       digest: "sha256:present",
+      kind: "generic_file",
+      scope: "present",
       contentType: "application/octet-stream",
       blocked: () => new Response("blocked", { status: 403 }),
     });

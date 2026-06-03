@@ -9,7 +9,7 @@ const ctx = {
 
 const match = {
   entry: { method: "GET", pattern: "/:name+/manifests/:reference", handlerId: "getManifest" },
-  params: { name: "team/api" },
+  params: { name: "team/api", reference: "latest" },
   path: "/team/api/manifests/latest",
 } satisfies RouteMatch;
 
@@ -31,6 +31,7 @@ describe("Docker adapter contract", () => {
     expect(adapter.requiredPermission("GET", match, ctx)).toEqual({
       action: "read",
       repositoryName: "acme/containers/team/api",
+      resource: { type: "artifact", packageName: "team/api", artifactRef: "latest" },
     });
     expect(adapter.requiredPermission("PUT", match, ctx).action).toBe("write");
     expect(adapter.requiredPermission("DELETE", match, ctx).action).toBe("delete");
