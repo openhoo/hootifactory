@@ -23,6 +23,8 @@ function denyRole(reason: string): Decision {
   return { allowed: false, code: "insufficient_role", reason };
 }
 
+const ANONYMOUS_PUBLIC_READ_TYPES = new Set(["repository", "package", "artifact"]);
+
 /**
  * The single authoritative authorization decision. Pure and synchronous so it
  * is exhaustively unit-testable. Role resolution + DB lookups happen in
@@ -34,7 +36,11 @@ function denyRole(reason: string): Decision {
 export function can({ principal, action, resource, effectiveRole }: CanInput): Decision {
   // ── anonymous ────────────────────────────────────────────────────────────
   if (principal.kind === "anonymous") {
-    if (action === "read" && resource.visibility === "public") {
+    if (
+      action === "read" &&
+      resource.visibility === "public" &&
+      ANONYMOUS_PUBLIC_READ_TYPES.has(resource.type)
+    ) {
       return { allowed: true };
     }
     return { allowed: false, code: "unauthenticated", reason: "authentication required" };

@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { OCI_MEDIA_TYPES } from "@hootifactory/types";
 import { type APIRequestContext, expect, test } from "@playwright/test";
 import { dockerNpm, dockerReachableUrl, ensureDockerAvailable } from "./docker-clients";
-import { createRepo, createToken, setupOwner } from "./helpers";
+import { anonContext, createRepo, createToken, setupOwner } from "./helpers";
 
 const EICAR = "X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*";
 const ARTIFACT_MANIFEST_MEDIA_TYPE = "application/vnd.oci.artifact.manifest.v1+json";
@@ -397,6 +397,56 @@ test.describe("scanning + policy gates", () => {
       blocked = true;
     }
     expect(blocked).toBe(true);
+  });
+
+  test("public repository scan findings require authenticated scan metadata access", async ({
+    baseURL,
+  }) => {
+    const owner = await setupOwner(baseURL!);
+    const repo = (
+      await (
+        await createRepo(owner.ctx, owner.orgId, {
+          name: "public-scanrepo",
+          format: "npm",
+          visibility: "public",
+        })
+      ).json()
+    ).repository as { id: string; mountPath: string; name: string };
+
+    const pkg = `publicvuln${Date.now().toString(36)}`;
+    await publishRawNpm(owner.ctx, repo.mountPath, pkg, { "evil-dep": "1.0.0" });
+    const art = await pollArtifact(owner.ctx, repo.id, pkg);
+
+    const anon = await anonContext(baseURL!);
+    const artifacts = await anon.get(`/api/v1/repositories/${repo.id}/artifacts`);
+    expect(artifacts.status()).toBe(200);
+    const artifactsBody = await artifacts.json();
+    expect(artifactsBody.data).toContainEqual(expect.objectContaining({ id: art.id }));
+
+    const anonV1Findings = await anon.get(`/api/v1/artifacts/${art.id}/findings`);
+    expect(anonV1Findings.status()).toBe(401);
+    const anonUiFindings = await anon.get(`/api/artifacts/${art.id}/findings`);
+    expect(anonUiFindings.status()).toBe(401);
+
+    const ownerFindings = await owner.ctx.get(`/api/v1/artifacts/${art.id}/findings`);
+    expect(ownerFindings.status()).toBe(200);
+    const ownerBody = await ownerFindings.json();
+    expect(ownerBody.data).toContainEqual(
+      expect.objectContaining({ vulnId: "HOOT-2024-0001", severity: "critical" }),
+    );
+
+    const scopedSecret = (
+      await (
+        await createToken(owner.ctx, owner.orgId, {
+          name: "public-scan-reader",
+          scopes: [{ repository: repo.name, actions: ["read"] }],
+        })
+      ).json()
+    ).secret as string;
+    const scopedFindings = await anon.get(`/api/artifacts/${art.id}/findings`, {
+      headers: { authorization: `Bearer ${scopedSecret}` },
+    });
+    expect(scopedFindings.status()).toBe(200);
   });
 
   test("enforce policy refuses pending artifacts until a scanner marks them clean", async ({

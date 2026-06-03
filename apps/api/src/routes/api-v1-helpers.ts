@@ -201,6 +201,21 @@ export async function authorizeArtifact(
   return authorizationDenied(c, decision);
 }
 
+export async function authorizeArtifactFindings(
+  c: Context<AppEnv>,
+  row: ArtifactWithRepositoryRow,
+) {
+  const decision = await authorize(c.get("principal"), "read", {
+    type: "policy",
+    orgId: row.repo.orgId,
+    repositoryId: row.repo.id,
+    repositoryName: row.repo.name,
+    policy: "scan",
+  });
+  if (decision.allowed) return undefined;
+  return authorizationDenied(c, decision);
+}
+
 export async function authorizePolicy(
   c: Context<AppEnv>,
   input: {

@@ -23,7 +23,7 @@ import {
   ArtifactIdParamsSchema,
   AssetListQuerySchema,
   artifactWithRepository,
-  authorizeArtifact,
+  authorizeArtifactFindings,
   authorizePackage,
   dataResponse,
   doc,
@@ -286,7 +286,7 @@ export function registerApiV1ContentRoutes(apiV1Router: Hono<AppEnv>) {
       if (!params.ok) return params.response;
       const row = await artifactWithRepository(params.data.artifactId);
       if (!row) return errorResponse(c, 404, "NOT_FOUND", "artifact not found");
-      const response = await authorizeArtifact(c, row, "read");
+      const response = await authorizeArtifactFindings(c, row);
       if (response) return response;
       const rows = await listArtifactFindings(row.art.id);
       return dataResponse(c, rows);

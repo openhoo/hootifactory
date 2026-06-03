@@ -95,6 +95,21 @@ describe("can() — anonymous", () => {
     expect(pkg.allowed).toBe(true);
     expect(artifact.allowed).toBe(true);
   });
+  test("public visibility does not make scan policy metadata anonymous-readable", () => {
+    const d = can({
+      principal: anon,
+      action: "read",
+      resource: {
+        type: "policy",
+        policy: "scan",
+        visibility: "public",
+        orgId: "orgA",
+        repositoryName: "acme/app",
+      },
+    });
+    expect(d.allowed).toBe(false);
+    expect(d.code).toBe("unauthenticated");
+  });
   test("private repo read => 401 unauthenticated", () => {
     const d = can({
       principal: anon,

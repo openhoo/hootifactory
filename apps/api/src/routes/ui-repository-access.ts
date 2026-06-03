@@ -74,6 +74,23 @@ export async function requireReadableParentRepo(
   return authorizeRepository(c, "read", repo);
 }
 
+export async function requireScanFindingsAccess(
+  c: Context<AppEnv>,
+  repo: RepositoryRow | undefined,
+  notFoundLabel: string,
+): Promise<Response | undefined> {
+  if (!repo) return c.json({ error: notFoundLabel }, 404);
+  const decision = await authorize(c.get("principal"), "read", {
+    type: "policy",
+    orgId: repo.orgId,
+    repositoryId: repo.id,
+    repositoryName: repo.name,
+    policy: "scan",
+  });
+  if (decision.allowed) return undefined;
+  return denied(c, decision);
+}
+
 export function requireUserPrincipal(c: Context<AppEnv>): UserPrincipalResult {
   const p = c.get("principal");
   if (p.kind !== "user") return { ok: false, response: c.json({ error: "login required" }, 401) };

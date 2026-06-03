@@ -7,8 +7,8 @@ import type { Hono } from "hono";
 import type { AppEnv } from "../types";
 import { uuidParams, validateParams } from "../validation";
 import {
-  requireReadableParentRepo,
   requireRepositoryAccessFromParam,
+  requireScanFindingsAccess,
 } from "./ui-repository-access";
 
 export function registerArtifactRoutes(router: Hono<AppEnv>): void {
@@ -29,7 +29,7 @@ export function registerArtifactRoutes(router: Hono<AppEnv>): void {
     const row = await getArtifactWithRepository(artifactId);
     const art = row?.art;
     const repo = row?.repo;
-    const denied = await requireReadableParentRepo(c, repo, "artifact not found");
+    const denied = await requireScanFindingsAccess(c, repo, "artifact not found");
     if (denied) return denied;
     // unreachable at runtime (innerJoin); retained for type narrowing
     if (!art) return c.json({ error: "artifact not found" }, 404);
