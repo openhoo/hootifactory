@@ -1,4 +1,4 @@
-import { authenticateUserPassword, createLocalUser, revokeSession } from "@hootifactory/auth";
+import { createLocalUser, revokeSession } from "@hootifactory/auth";
 import { env } from "@hootifactory/config";
 import { isUniqueViolation } from "@hootifactory/core";
 import {
@@ -17,12 +17,7 @@ import {
   readSessionCookie,
 } from "./auth-helpers";
 import { LoginBodySchema, RegisterBodySchema } from "./auth-schemas";
-import {
-  clearLoginFailures,
-  loginIsThrottled,
-  loginThrottleKey,
-  recordLoginFailure,
-} from "./auth-throttle";
+import { authenticateUserPasswordWithThrottle } from "./auth-throttle";
 import { audit } from "./http";
 
 export function registerLocalAuthRoutes(router: Hono<AppEnv>): void {
@@ -72,11 +67,14 @@ export function registerLocalAuthRoutes(router: Hono<AppEnv>): void {
     const username = body.username;
     const password = body.password;
     const ip = clientIp(c);
-    const throttleKey = loginThrottleKey(username, ip);
-    const throttle = loginIsThrottled(throttleKey);
-    if (throttle.throttled) {
-      addSpanEvent("auth.login_rate_limited", { "auth.retry_after_seconds": throttle.retryAfter });
-      logger.warn("login rejected by throttle", { ip, retryAfter: throttle.retryAfter });
+    const passwordAuth = await withSpan("auth.verify_password", {}, () =>
+      authenticateUserPasswordWithThrottle(username, password, ip),
+    );
+    if (passwordAuth.kind === "throttled") {
+      addSpanEvent("auth.login_rate_limited", {
+        "auth.retry_after_seconds": passwordAuth.retryAfter,
+      });
+      logger.warn("login rejected by throttle", { ip, retryAfter: passwordAuth.retryAfter });
       audit({
         action: "auth.login",
         result: "failure",
@@ -84,29 +82,25 @@ export function registerLocalAuthRoutes(router: Hono<AppEnv>): void {
         detail: { username, reason: "rate_limited" },
       });
       return c.json({ error: "too many login attempts, try again later" }, 429, {
-        "retry-after": String(throttle.retryAfter),
+        "retry-after": String(passwordAuth.retryAfter),
       });
     }
-    const principal = await withSpan("auth.verify_password", {}, () =>
-      authenticateUserPassword(username, password),
-    );
-    if (principal?.kind !== "user") {
-      const failure = recordLoginFailure(throttleKey);
-      addSpanEvent("auth.login_failed", { "auth.failed_attempts": failure.count });
-      logger.warn("login failed", { ip, attempts: failure.count });
+    if (passwordAuth.kind === "invalid") {
+      addSpanEvent("auth.login_failed", { "auth.failed_attempts": passwordAuth.failure.count });
+      logger.warn("login failed", { ip, attempts: passwordAuth.failure.count });
       audit({
         action: "auth.login",
         result: "failure",
         ip,
         detail: {
           username,
-          attempts: failure.count,
-          resetAt: new Date(failure.resetAt).toISOString(),
+          attempts: passwordAuth.failure.count,
+          resetAt: new Date(passwordAuth.failure.resetAt).toISOString(),
         },
       });
       return c.json({ error: "invalid credentials" }, 401);
     }
-    clearLoginFailures(throttleKey);
+    const { principal } = passwordAuth;
     setActiveSpanAttributes({ "enduser.id": principal.userId, "auth.event": "login" });
     logger.info("login succeeded", { userId: principal.userId, ip });
     audit({

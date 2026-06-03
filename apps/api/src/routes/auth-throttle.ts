@@ -1,3 +1,4 @@
+import { authenticateUserPassword, type Principal } from "@hootifactory/auth";
 import { env } from "@hootifactory/config";
 
 export interface AuthThrottleBucket {
@@ -66,6 +67,35 @@ export function recordPasswordResetRequest(key: string): AuthThrottleBucket {
 
 export function clearLoginFailures(key: string): void {
   loginFailures.delete(key);
+}
+
+type UserPrincipal = Extract<Principal, { kind: "user" }>;
+
+export type ThrottledPasswordAuthResult =
+  | { kind: "authenticated"; principal: UserPrincipal }
+  | { kind: "invalid"; failure: AuthThrottleBucket }
+  | { kind: "throttled"; retryAfter: number };
+
+export async function authenticateUserPasswordWithThrottle(
+  username: string,
+  password: string,
+  ip: string,
+  verify: (
+    username: string,
+    password: string,
+  ) => Promise<Principal | null> = authenticateUserPassword,
+): Promise<ThrottledPasswordAuthResult> {
+  const key = loginThrottleKey(username, ip);
+  const throttle = loginIsThrottled(key);
+  if (throttle.throttled) return { kind: "throttled", retryAfter: throttle.retryAfter };
+
+  const principal = await verify(username, password);
+  if (principal?.kind === "user") {
+    clearLoginFailures(key);
+    return { kind: "authenticated", principal };
+  }
+
+  return { kind: "invalid", failure: recordLoginFailure(key) };
 }
 
 function throttleKey(identity: string, ip: string): string {

@@ -77,6 +77,35 @@ test.describe("authentication", () => {
     expect(otherIp.status()).toBe(200);
   });
 
+  test("repeated failed basic auth attempts are throttled by username and client IP", async ({
+    baseURL,
+  }) => {
+    const owner = await setupOwner(baseURL!);
+    const anon = await anonContext(baseURL!);
+    const headers = { "x-forwarded-for": "203.0.113.84" };
+
+    for (let i = 0; i < 5; i++) {
+      const basic = Buffer.from(`${owner.username}:wrong-password-${i}`).toString("base64");
+      const res = await anon.get("/api/me", {
+        headers: { ...headers, authorization: `Basic ${basic}` },
+      });
+      expect(res.status()).toBe(401);
+    }
+
+    const throttledBasic = Buffer.from(`${owner.username}:${owner.password}`).toString("base64");
+    const throttled = await anon.get("/api/me", {
+      headers: { ...headers, authorization: `Basic ${throttledBasic}` },
+    });
+    expect(throttled.status()).toBe(429);
+    expect(throttled.headers()["retry-after"]).toMatch(/^\d+$/);
+
+    const login = await anon.post("/api/auth/login", {
+      headers,
+      data: { username: owner.username, password: owner.password },
+    });
+    expect(login.status()).toBe(429);
+  });
+
   test("login missing fields -> 400", async ({ request }) => {
     expect((await request.post("/api/auth/login", { data: {} })).status()).toBe(400);
   });

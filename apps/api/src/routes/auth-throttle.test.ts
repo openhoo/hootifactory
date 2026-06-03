@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { currentThrottleBucket, loginThrottleKey, retryAfterSeconds } from "./auth-throttle";
+import { randomUUID } from "node:crypto";
+import {
+  authenticateUserPasswordWithThrottle,
+  currentThrottleBucket,
+  loginIsThrottled,
+  loginThrottleKey,
+  retryAfterSeconds,
+} from "./auth-throttle";
 
 describe("auth throttle helpers", () => {
   test("normalizes identity keys per client address", () => {
@@ -23,5 +30,41 @@ describe("auth throttle helpers", () => {
   test("calculates retry-after seconds with a minimum of one", () => {
     expect(retryAfterSeconds({ count: 5, resetAt: 10_100 }, 10_000)).toBe(1);
     expect(retryAfterSeconds({ count: 5, resetAt: 15_100 }, 10_000)).toBe(6);
+  });
+
+  test("throttles shared password verification buckets", async () => {
+    const username = `basic-${randomUUID()}@example.test`;
+    let calls = 0;
+    const verify = async () => {
+      calls += 1;
+      return null;
+    };
+
+    for (let attempts = 1; attempts <= 5; attempts++) {
+      await expect(
+        authenticateUserPasswordWithThrottle(username, "wrong", "203.0.113.10", verify),
+      ).resolves.toMatchObject({ kind: "invalid", failure: { count: attempts } });
+    }
+
+    await expect(
+      authenticateUserPasswordWithThrottle(username, "wrong", "203.0.113.10", verify),
+    ).resolves.toMatchObject({ kind: "throttled" });
+    expect(calls).toBe(5);
+    expect(loginIsThrottled(loginThrottleKey(username, "203.0.113.10")).throttled).toBe(true);
+  });
+
+  test("successful shared password verification clears prior failures", async () => {
+    const username = `success-${randomUUID()}@example.test`;
+    await authenticateUserPasswordWithThrottle(username, "wrong", "203.0.113.11", async () => null);
+
+    await expect(
+      authenticateUserPasswordWithThrottle(username, "right", "203.0.113.11", async () => ({
+        kind: "user",
+        userId: "user_1",
+        username,
+      })),
+    ).resolves.toMatchObject({ kind: "authenticated", principal: { username } });
+
+    expect(loginIsThrottled(loginThrottleKey(username, "203.0.113.11")).throttled).toBe(false);
   });
 });

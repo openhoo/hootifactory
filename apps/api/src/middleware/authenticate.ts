@@ -1,5 +1,4 @@
 import {
-  authenticateUserPassword,
   type Principal,
   resolveSession,
   resolveToken,
@@ -7,11 +6,12 @@ import {
   userPrincipalById,
   verifyRegistryToken,
 } from "@hootifactory/auth";
-import { Errors } from "@hootifactory/core";
+import { Errors, HttpError } from "@hootifactory/core";
 import { logger, withSpan } from "@hootifactory/observability";
 import { REGISTRY_TOKEN_SERVICE } from "@hootifactory/registry-application";
 import type { Context } from "hono";
 import { getCookie } from "hono/cookie";
+import { authenticateUserPasswordWithThrottle } from "../routes/auth-throttle";
 import type { AppEnv, AuthSource } from "../types";
 import {
   type ParsedAuthorizationHeader,
@@ -33,6 +33,12 @@ function isRegistryPath(url: string): boolean {
 function sourcedPrincipal(c: Context<AppEnv>, source: AuthSource, principal: Principal): Principal {
   c.set("authSource", source);
   return principal;
+}
+
+function clientIp(c: Context<AppEnv>): string {
+  return (
+    c.req.header("x-forwarded-for")?.split(",")[0]?.trim() || c.req.header("x-real-ip") || "unknown"
+  );
 }
 
 async function resolveHootToken(
@@ -78,8 +84,14 @@ async function authenticateBasic(
     const principal = await resolveHootToken(c, password, "authorization");
     if (principal) return principal;
   }
-  const principal = await authenticateUserPassword(username, password);
-  if (principal) return sourcedPrincipal(c, "authorization", principal);
+  const passwordAuth = await authenticateUserPasswordWithThrottle(username, password, clientIp(c));
+  if (passwordAuth.kind === "authenticated") {
+    return sourcedPrincipal(c, "authorization", passwordAuth.principal);
+  }
+  if (passwordAuth.kind === "throttled") {
+    c.header("retry-after", String(passwordAuth.retryAfter));
+    throw new HttpError(429, "TOO_MANY_REQUESTS", "too many login attempts, try again later");
+  }
   invalidCredentials();
 }
 
