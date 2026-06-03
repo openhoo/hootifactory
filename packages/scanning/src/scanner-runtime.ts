@@ -1,4 +1,7 @@
-import { dirname, resolve } from "node:path";
+import { randomUUID } from "node:crypto";
+import { readFile, unlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { env } from "@hootifactory/config";
 
 export interface AvailableScanners {
@@ -16,6 +19,10 @@ export interface ScannerRuntimeOptions {
   cliRuntime?: ScannerCliRuntime;
   timeoutMs?: number;
   dockerCommand?: string;
+  dockerMemory?: string;
+  dockerCpus?: string;
+  dockerPidsLimit?: number;
+  dockerStorageSize?: string;
   syftImage?: string;
   grypeImage?: string;
   trivyImage?: string;
@@ -38,6 +45,10 @@ export function scannerOptionsFromEnv(): ScannerRuntimeOptions {
     cliRuntime: env.SCANNER_CLI_RUNTIME,
     timeoutMs: env.SCANNER_TIMEOUT_MS,
     dockerCommand: env.SCANNER_DOCKER_COMMAND,
+    dockerMemory: env.SCANNER_DOCKER_MEMORY,
+    dockerCpus: env.SCANNER_DOCKER_CPUS,
+    dockerPidsLimit: env.SCANNER_DOCKER_PIDS_LIMIT,
+    dockerStorageSize: env.SCANNER_DOCKER_STORAGE_SIZE,
     grypeImage: env.GRYPE_IMAGE,
     syftImage: env.SYFT_IMAGE,
     trivyImage: env.TRIVY_IMAGE,
@@ -112,22 +123,43 @@ function shouldUseDocker(options: ScannerRuntimeOptions): boolean {
 
 export function dockerScannerRunArgs(input: {
   args: string[];
+  cidFile?: string;
   entrypoint?: string;
   image: string;
+  options?: ScannerRuntimeOptions;
   target: string;
 }): string[] {
   const target = resolve(input.target);
   const targetDir = dirname(target);
+  const memory = input.options?.dockerMemory ?? "1g";
+  const cpus = input.options?.dockerCpus ?? "2";
+  const pidsLimit = input.options?.dockerPidsLimit ?? 512;
   const args = [
     "run",
     "--rm",
     "--pull",
     "missing",
+    "--memory",
+    memory,
+    "--memory-swap",
+    memory,
+    "--cpus",
+    cpus,
+    "--pids-limit",
+    String(pidsLimit),
+    "--ulimit",
+    `nproc=${pidsLimit}:${pidsLimit}`,
+    "--ulimit",
+    "nofile=1024:1024",
     "--mount",
     `type=bind,source=${targetDir},target=${targetDir},readonly`,
     "--workdir",
     targetDir,
   ];
+  if (input.options?.dockerStorageSize) {
+    args.push("--storage-opt", `size=${input.options.dockerStorageSize}`);
+  }
+  if (input.cidFile) args.push("--cidfile", input.cidFile);
   if (process.platform === "linux") {
     args.push("--network", "host");
   } else {
@@ -136,6 +168,22 @@ export function dockerScannerRunArgs(input: {
   if (input.entrypoint) args.push("--entrypoint", input.entrypoint);
   args.push(input.image, ...input.args);
   return args;
+}
+
+async function dockerContainerId(cidFile: string): Promise<string | null> {
+  try {
+    const id = (await readFile(cidFile, "utf8")).trim();
+    return id || null;
+  } catch {
+    return null;
+  }
+}
+
+async function cleanupDockerContainer(command: string, cidFile: string): Promise<void> {
+  const id = await dockerContainerId(cidFile);
+  if (!id) return;
+  Bun.spawnSync([command, "kill", id], { stdout: "ignore", stderr: "ignore" });
+  Bun.spawnSync([command, "rm", "-f", id], { stdout: "ignore", stderr: "ignore" });
 }
 
 export async function runScannerCli(input: {
@@ -153,26 +201,51 @@ export async function runScannerCli(input: {
     ? (input.options.dockerCommand ?? "docker")
     : input.hostBins.find(hostBinAvailable);
   if (!command) return null;
+  const cidFile = useDocker ? join(tmpdir(), `hootifactory-scan-${randomUUID()}.cid`) : null;
   const args = useDocker
     ? dockerScannerRunArgs({
         args: input.args,
+        cidFile: cidFile ?? undefined,
         entrypoint: input.dockerEntryPoint,
         image: input.image,
+        options: input.options,
         target,
       })
     : input.args;
+  const timeoutMs = input.options.timeoutMs ?? 120_000;
+  const signal = AbortSignal.timeout(timeoutMs);
+  let timedOut = false;
+  signal.addEventListener(
+    "abort",
+    () => {
+      timedOut = true;
+      if (cidFile) void cleanupDockerContainer(command, cidFile);
+    },
+    { once: true },
+  );
   const proc = Bun.spawn([command, ...args], {
     stdout: "pipe",
     stderr: "pipe",
-    signal: AbortSignal.timeout(input.options.timeoutMs ?? 120_000),
+    signal,
   });
-  const text = await new Response(proc.stdout).text();
-  const stderr = await new Response(proc.stderr).text();
-  const exitCode = await proc.exited;
-  if (!(input.allowedExitCodes ?? [0]).includes(exitCode)) {
-    throw new Error(`${command} exited ${exitCode}: ${stderr.slice(0, 1000)}`);
+  try {
+    const text = await new Response(proc.stdout).text();
+    const stderr = await new Response(proc.stderr).text();
+    const exitCode = await proc.exited;
+    if (!(input.allowedExitCodes ?? [0]).includes(exitCode)) {
+      if (timedOut) throw new Error(`${command} timed out after ${timeoutMs}ms`);
+      throw new Error(`${command} exited ${exitCode}: ${stderr.slice(0, 1000)}`);
+    }
+    return text;
+  } catch (err) {
+    if (timedOut) throw new Error(`${command} timed out after ${timeoutMs}ms`);
+    throw err;
+  } finally {
+    if (cidFile) {
+      await cleanupDockerContainer(command, cidFile).catch(() => {});
+      await unlink(cidFile).catch(() => {});
+    }
   }
-  return text;
 }
 
 /**

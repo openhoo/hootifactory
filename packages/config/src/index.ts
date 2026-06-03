@@ -32,6 +32,22 @@ const optionalNonEmptyString = z.preprocess(
   z.string().min(1).optional(),
 );
 
+const dockerSize = z
+  .string()
+  .trim()
+  .regex(/^\d+(?:[kmgKMG])?$/, "must be a Docker size value such as 512m or 1g");
+
+const optionalDockerSize = z.preprocess(
+  (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
+  dockerSize.optional(),
+);
+
+const dockerCpus = z
+  .string()
+  .trim()
+  .regex(/^\d+(?:\.\d+)?$/, "must be a positive CPU count such as 1 or 1.5")
+  .refine((value) => Number(value) > 0, "must be greater than zero");
+
 /** A coerced, positive integer env value with a default. */
 const positiveInt = (def: number) => z.coerce.number().int().positive().default(def);
 
@@ -207,6 +223,10 @@ const EnvSchema = z
     SCANNER_TIMEOUT_MS: positiveInt(120_000),
     SCANNER_CLI_RUNTIME: z.enum(["auto", "docker", "host", "disabled"]).default("docker"),
     SCANNER_DOCKER_COMMAND: z.string().default("docker"),
+    SCANNER_DOCKER_MEMORY: dockerSize.default("1g"),
+    SCANNER_DOCKER_CPUS: dockerCpus.default("2"),
+    SCANNER_DOCKER_PIDS_LIMIT: positiveInt(512),
+    SCANNER_DOCKER_STORAGE_SIZE: optionalDockerSize,
     SYFT_IMAGE: z.string().default("anchore/syft:latest"),
     GRYPE_IMAGE: z.string().default("anchore/grype:latest"),
     TRIVY_IMAGE: z.string().default("aquasec/trivy:latest"),

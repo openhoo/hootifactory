@@ -137,6 +137,7 @@ async function processScanInner(artifactId: string): Promise<void> {
   });
 
   const found: NormalizedFinding[] = [];
+  const scannedBlobDigests = new Set<string>();
   await withSpan("scan.heuristic_dependencies", {}, async (span) => {
     const dependencyFindings = scanDependencies(deps);
     found.push(...dependencyFindings);
@@ -145,6 +146,8 @@ async function processScanInner(artifactId: string): Promise<void> {
 
   let scannedBytePayload = false;
   async function scanStoredBytes(digest: string): Promise<boolean> {
+    if (scannedBlobDigests.has(digest)) return true;
+    scannedBlobDigests.add(digest);
     return withSpan("scan.bytes", { "artifact.digest": digest }, async (span) => {
       const stat = await blobStore.stat(digest);
       if (!stat) {

@@ -149,11 +149,31 @@ describe("heuristic scanning", () => {
     const args = dockerScannerRunArgs({
       args: ["fs", "--quiet", "--format", "json", "/tmp/hoot-scan/blob"],
       image: "aquasec/trivy:latest",
+      options: {
+        dockerCpus: "1.5",
+        dockerMemory: "512m",
+        dockerPidsLimit: 128,
+        dockerStorageSize: "2g",
+      },
+      cidFile: "/tmp/hoot-scan/scanner.cid",
       target: "/tmp/hoot-scan/blob",
     });
 
     expect(args).toContain("--pull");
     expect(args).toContain("missing");
+    expect(args).toContain("--memory");
+    expect(args).toContain("512m");
+    expect(args).toContain("--memory-swap");
+    expect(args).toContain("--cpus");
+    expect(args).toContain("1.5");
+    expect(args).toContain("--pids-limit");
+    expect(args).toContain("128");
+    expect(args).toContain("--ulimit");
+    expect(args).toContain("nproc=128:128");
+    expect(args).toContain("--storage-opt");
+    expect(args).toContain("size=2g");
+    expect(args).toContain("--cidfile");
+    expect(args).toContain("/tmp/hoot-scan/scanner.cid");
     expect(args).toContain("type=bind,source=/tmp/hoot-scan,target=/tmp/hoot-scan,readonly");
     expect(args).toContain("aquasec/trivy:latest");
     expect(args.slice(-5)).toEqual(["fs", "--quiet", "--format", "json", "/tmp/hoot-scan/blob"]);
