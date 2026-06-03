@@ -34,7 +34,6 @@ import {
   PaginationQuerySchema,
   packageWithRepository,
   RepoIdParamsSchema,
-  repositoryById,
   requireRepository,
   validatePagination,
   validateV1,
@@ -80,8 +79,9 @@ export function registerApiV1ContentRoutes(apiV1Router: Hono<AppEnv>) {
       if (!params.ok) return params.response;
       const pagination = validatePagination(c);
       if (!pagination.ok) return pagination.response;
-      const repo = await repositoryById(params.data.repoId);
-      if (!repo) return errorResponse(c, 404, "NOT_FOUND", "repository not found");
+      const access = await requireRepository(c, params.data.repoId, "read");
+      if (!access.ok) return access.response;
+      const repo = access.repo;
       const rows = await listRepositoryPackageSummaries(repo.id);
       const accessible = [];
       for (const pkg of rows) {
@@ -207,8 +207,9 @@ export function registerApiV1ContentRoutes(apiV1Router: Hono<AppEnv>) {
       if (!params.ok) return params.response;
       const pagination = validatePagination(c);
       if (!pagination.ok) return pagination.response;
-      const repo = await repositoryById(params.data.repoId);
-      if (!repo) return errorResponse(c, 404, "NOT_FOUND", "repository not found");
+      const access = await requireRepository(c, params.data.repoId, "read");
+      if (!access.ok) return access.response;
+      const repo = access.repo;
       const rows = await listRepositoryArtifactSummaries(repo.id);
       const accessible = [];
       for (const art of rows) {

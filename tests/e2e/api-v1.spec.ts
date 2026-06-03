@@ -113,6 +113,20 @@ test.describe("external api v1", () => {
 
     const anon = await anonContext(baseURL!);
     const auth = { authorization: `Bearer ${created.data.secret}` };
+    const anonymousPackages = await anon.get(`/api/v1/repositories/${repo.id}/packages`);
+    expect(anonymousPackages.status()).toBe(401);
+    const anonymousArtifacts = await anon.get(`/api/v1/repositories/${repo.id}/artifacts`);
+    expect(anonymousArtifacts.status()).toBe(401);
+    const wrongAuth = { authorization: `Bearer ${wrong.data.secret}` };
+    const wrongPackages = await anon.get(`/api/v1/repositories/${repo.id}/packages`, {
+      headers: wrongAuth,
+    });
+    expect(wrongPackages.status()).toBe(403);
+    const wrongArtifacts = await anon.get(`/api/v1/repositories/${repo.id}/artifacts`, {
+      headers: wrongAuth,
+    });
+    expect(wrongArtifacts.status()).toBe(403);
+
     const packages = await anon.get(`/api/v1/repositories/${repo.id}/packages`, { headers: auth });
     expect(packages.status()).toBe(200);
     const packagesBody = await packages.json();
