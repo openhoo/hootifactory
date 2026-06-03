@@ -9,41 +9,23 @@ import {
   type RegistryRequestContext,
   type RouteEntry,
   type RouteMatch,
-  safeFetch,
 } from "@hootifactory/registry";
 import {
   deleteDistTag,
   findLiveVersion,
-  findOrCreatePackage,
   findPackageByName,
   listLiveDistTags,
   listLivePackageVersions,
   type PackageVersionReadRow,
-  replaceDistTags,
   searchRepositoryPackages,
   serveBlobIfClean,
   setDistTag,
   updatePackageLatestVersion,
-  upsertPackageVersion,
-  upsertPackageVersionWithBlobRef,
 } from "@hootifactory/registry-application";
 import { parseNpmDistTag, parseNpmDistTagRequestBody } from "./npm-dist-tags";
-import { ifNoneMatch, responseBytes, responseJson } from "./npm-http";
-import {
-  type NpmDist,
-  sha1hexText,
-  upstreamDistMatchesBytes,
-  upstreamDistMatchesStored,
-} from "./npm-integrity";
-import {
-  buildNpmMirroredDist,
-  isNpmTarballUrlOnUpstreamHost,
-  normalizeNpmProxyManifest,
-  npmUpstreamHost,
-  npmUpstreamPackumentUrl,
-  parseNpmUpstreamPackument,
-  rewriteNpmProxyManifestForExistingDist,
-} from "./npm-proxy";
+import { ifNoneMatch } from "./npm-http";
+import { type NpmDist, sha1hexText } from "./npm-integrity";
+import { handleNpmProxyIngest } from "./npm-proxy-lifecycle";
 import { handleNpmPublish } from "./npm-publish-lifecycle";
 import {
   buildNpmSearchObject,
@@ -52,9 +34,6 @@ import {
   parseNpmSearchQuery,
 } from "./npm-search";
 import {
-  isValidDistTag,
-  isValidLegacyNpmName,
-  isValidNpmVersion,
   NpmLegacyPackageNameSchema,
   NpmTarballFilenameSchema,
   parseNpmStoredVersionMetadata,
@@ -291,115 +270,7 @@ export class NpmAdapter implements RegistryPlugin {
     upstreamBase: string,
     ctx: RegistryRequestContext,
   ): Promise<boolean> {
-    if (!isValidLegacyNpmName(pkgName)) return false;
-    const upstreamHost = npmUpstreamHost(upstreamBase);
-    if (!upstreamHost) return false;
-    const url = npmUpstreamPackumentUrl(upstreamBase, pkgName);
-    // safeFetch rejects private/loopback/metadata hosts and re-validates redirects.
-    const res = await safeFetch(url, {
-      enforcePublicNetwork: ctx.limits.enforcePublicNetwork,
-      headers: { accept: "application/json" },
-    }).catch(() => null);
-    if (!res?.ok) return false;
-    const packument = parseNpmUpstreamPackument(
-      await responseJson(res, Math.min(ctx.limits.maxUploadBytes, 10 * 1024 * 1024)),
-    );
-    if (!packument) return false;
-    const scope = pkgName.startsWith("@") ? (pkgName.split("/")[0] ?? null) : null;
-    let pkg = await this.findPackage(ctx, pkgName);
-    for (const [ver, manifestRaw] of Object.entries(packument.versions ?? {})) {
-      if (!isValidNpmVersion(ver)) continue;
-      const proxyManifest = normalizeNpmProxyManifest(pkgName, ver, manifestRaw);
-      if (!proxyManifest) continue;
-      let { manifest } = proxyManifest;
-      const { tarballUrl, upstreamDist } = proxyManifest;
-      const existingVersion = pkg ? await findLiveVersion(pkg.id, ver) : null;
-      const existingDist = existingVersion
-        ? parseNpmStoredVersionMetadata(existingVersion.metadata).dist
-        : undefined;
-      if (pkg && existingDist && upstreamDistMatchesStored(upstreamDist, existingDist)) {
-        manifest = rewriteNpmProxyManifestForExistingDist({
-          manifest,
-          upstreamDist,
-          existingDist,
-          baseUrl: ctx.baseUrl,
-          mountPath: ctx.repo.mountPath,
-          packageName: pkgName,
-        });
-        // Refresh metadata without re-downloading or re-scanning unchanged bytes.
-        await upsertPackageVersion(ctx, {
-          packageId: pkg.id,
-          version: ver,
-          metadata: { manifest, dist: existingDist },
-          sizeBytes: existingDist.size,
-        });
-        continue;
-      }
-      // Only mirror tarballs served by the configured upstream host — the URL
-      // comes from untrusted upstream JSON and must not point elsewhere (SSRF).
-      let tRes: Response | null = null;
-      try {
-        if (!isNpmTarballUrlOnUpstreamHost(tarballUrl, upstreamHost)) continue;
-        tRes = await safeFetch(tarballUrl, {
-          allowedHosts: [upstreamHost],
-          enforcePublicNetwork: ctx.limits.enforcePublicNetwork,
-        });
-      } catch {
-        continue;
-      }
-      if (!tRes?.ok) continue;
-      const tarball = await responseBytes(tRes, ctx.limits.maxUploadBytes);
-      if (!tarball) continue;
-      if (!upstreamDistMatchesBytes(upstreamDist, tarball)) continue;
-      pkg ??= await findOrCreatePackage({
-        orgId: ctx.repo.orgId,
-        repositoryId: ctx.repo.id,
-        name: pkgName,
-        namespace: scope,
-      });
-      const previousDigest = existingDist?.blobDigest;
-      const { manifestDist, dist } = buildNpmMirroredDist({
-        packageName: pkgName,
-        version: ver,
-        upstreamDist,
-        tarball,
-        baseUrl: ctx.baseUrl,
-        mountPath: ctx.repo.mountPath,
-      });
-      manifest.dist = manifestDist;
-      const { stored } = await upsertPackageVersionWithBlobRef(ctx, {
-        packageId: pkg.id,
-        version: ver,
-        metadata: {
-          manifest,
-          dist,
-        },
-        sizeBytes: tarball.length,
-        blob: {
-          data: tarball,
-          kind: "npm_tarball",
-          scope: `${pkgName}@${ver}`,
-          mediaType: "application/octet-stream",
-          previousDigest,
-        },
-      });
-      if (stored.digest !== dist.blobDigest) throw new Error("stored npm tarball digest mismatch");
-      await ctx.enqueueScan({
-        digest: stored.digest,
-        name: pkgName,
-        version: ver,
-        mediaType: "application/octet-stream",
-      });
-    }
-    if (!pkg) return false;
-    const desiredTags = new Map<string, { version: string; versionId: string }>();
-    for (const [tag, ver] of Object.entries(packument["dist-tags"] ?? {})) {
-      if (!isValidDistTag(tag) || typeof ver !== "string") continue;
-      const vid = await this.versionId(pkg.id, ver);
-      if (vid) desiredTags.set(tag, { version: ver, versionId: vid });
-    }
-    await replaceDistTags(pkg.id, desiredTags);
-    return true;
+    return handleNpmProxyIngest(pkgName, upstreamBase, ctx);
   }
 
   private async searchHandler(req: Request, ctx: RegistryRequestContext): Promise<Response> {
