@@ -87,6 +87,11 @@ bun run dev:web             # web on :5173 (proxies /v2 + /api -> api)
 bun run dev:mail            # queued email worker; Mailpit UI is on :8025
 ```
 
+The compose file is a localhost-only development/demo stack. Its published ports
+bind to `127.0.0.1` by default and it uses dev credentials; do not deploy
+`docker compose --profile app up --build` to production or an internet-facing
+host. Use a production manifest with `NODE_ENV=production` and real secrets.
+
 For production bootstrap, set `SEED_USER` and `SEED_PASS` explicitly before `bun run db:seed`.
 Production seed runs do not mint or print an owner token unless `SEED_PRINT_TOKEN=true` is set.
 

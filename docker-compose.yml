@@ -9,12 +9,12 @@ x-app-env: &app-env
   # uses the image's NODE_ENV=production default with real secrets, where the
   # guard is enforced.
   NODE_ENV: development
-  DATABASE_URL: postgres://hootifactory:hootifactory@postgres:5432/hootifactory
+  DATABASE_URL: postgres://${COMPOSE_POSTGRES_USER:-hootifactory}:${COMPOSE_POSTGRES_PASSWORD:-hootifactory}@postgres:5432/${COMPOSE_POSTGRES_DB:-hootifactory}
   S3_ENDPOINT: http://minio:9000
   S3_FORCE_PATH_STYLE: "true"
-  S3_ACCESS_KEY_ID: hootifactory
-  S3_SECRET_ACCESS_KEY: hootifactory
-  S3_BUCKET: hootifactory
+  S3_ACCESS_KEY_ID: ${COMPOSE_MINIO_ROOT_USER:-hootifactory}
+  S3_SECRET_ACCESS_KEY: ${COMPOSE_MINIO_ROOT_PASSWORD:-hootifactory}
+  S3_BUCKET: ${COMPOSE_S3_BUCKET:-hootifactory}
   APP_PUBLIC_URL: http://localhost:3000
   REGISTRY_ALLOW_PRIVATE_UPSTREAMS: "false"
   EMAIL_ENABLED: "true"
@@ -40,16 +40,16 @@ services:
     image: postgres:18
     restart: unless-stopped
     environment:
-      POSTGRES_USER: hootifactory
-      POSTGRES_PASSWORD: hootifactory
-      POSTGRES_DB: hootifactory
+      POSTGRES_USER: ${COMPOSE_POSTGRES_USER:-hootifactory}
+      POSTGRES_PASSWORD: ${COMPOSE_POSTGRES_PASSWORD:-hootifactory}
+      POSTGRES_DB: ${COMPOSE_POSTGRES_DB:-hootifactory}
       POSTGRES_INITDB_ARGS: --auth-local=scram-sha-256 --auth-host=scram-sha-256
     ports:
-      - "5432:5432"
+      - "${COMPOSE_BIND_ADDRESS:-127.0.0.1}:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U hootifactory -d hootifactory"]
+      test: ["CMD-SHELL", 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
       interval: 5s
       timeout: 5s
       retries: 12
@@ -59,11 +59,11 @@ services:
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: hootifactory
-      MINIO_ROOT_PASSWORD: hootifactory
+      MINIO_ROOT_USER: ${COMPOSE_MINIO_ROOT_USER:-hootifactory}
+      MINIO_ROOT_PASSWORD: ${COMPOSE_MINIO_ROOT_PASSWORD:-hootifactory}
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "${COMPOSE_BIND_ADDRESS:-127.0.0.1}:9000:9000"
+      - "${COMPOSE_BIND_ADDRESS:-127.0.0.1}:9001:9001"
     volumes:
       - miniodata:/data
     healthcheck:
@@ -78,22 +78,26 @@ services:
     depends_on:
       minio:
         condition: service_started
+    environment:
+      MINIO_ROOT_USER: ${COMPOSE_MINIO_ROOT_USER:-hootifactory}
+      MINIO_ROOT_PASSWORD: ${COMPOSE_MINIO_ROOT_PASSWORD:-hootifactory}
+      S3_BUCKET: ${COMPOSE_S3_BUCKET:-hootifactory}
     entrypoint: >
       /bin/sh -c "
-      until mc alias set local http://minio:9000 hootifactory hootifactory; do
+      until mc alias set local http://minio:9000 \"$$MINIO_ROOT_USER\" \"$$MINIO_ROOT_PASSWORD\"; do
         echo 'waiting for minio...'; sleep 1;
       done &&
-      mc mb --ignore-existing local/hootifactory &&
-      mc anonymous set none local/hootifactory &&
-      echo 'hootifactory bucket ready'
+      mc mb --ignore-existing \"local/$$S3_BUCKET\" &&
+      mc anonymous set none \"local/$$S3_BUCKET\" &&
+      echo 'bucket ready'
       "
 
   mailpit:
     image: axllent/mailpit:latest
     restart: unless-stopped
     ports:
-      - "1025:1025"
-      - "8025:8025"
+      - "${COMPOSE_BIND_ADDRESS:-127.0.0.1}:1025:1025"
+      - "${COMPOSE_BIND_ADDRESS:-127.0.0.1}:8025:8025"
 
   # ── optional scanner services (Phase 3) ──────────────────────────────────
   clamav:
@@ -101,7 +105,7 @@ services:
     profiles: ["scan"]
     restart: unless-stopped
     ports:
-      - "3310:3310"
+      - "${COMPOSE_BIND_ADDRESS:-127.0.0.1}:3310:3310"
 
   trivy:
     image: aquasec/trivy:latest
@@ -109,7 +113,7 @@ services:
     command: server --listen 0.0.0.0:4954
     restart: unless-stopped
     ports:
-      - "4954:4954"
+      - "${COMPOSE_BIND_ADDRESS:-127.0.0.1}:4954:4954"
     volumes:
       - trivycache:/root/.cache/trivy
 
@@ -131,7 +135,7 @@ services:
       <<: *app-env
       REGISTRY_PUBLIC_URL: http://localhost:3000
     ports:
-      - "3000:3000"
+      - "${COMPOSE_BIND_ADDRESS:-127.0.0.1}:3000:3000"
     depends_on:
       postgres:
         condition: service_healthy
