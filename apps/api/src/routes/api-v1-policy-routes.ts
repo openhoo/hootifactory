@@ -174,7 +174,7 @@ export function registerApiV1PolicyRoutes(apiV1Router: Hono<AppEnv>) {
         orgId: repo.orgId,
         repo,
         policy: "retention",
-        action: "write",
+        action: "admin",
       });
       if (policyResponse) return policyResponse;
       const parsedBody = await validateJsonV1(

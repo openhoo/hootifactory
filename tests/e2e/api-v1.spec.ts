@@ -238,6 +238,49 @@ test.describe("external api v1", () => {
     expect(updated.status()).toBe(200);
   });
 
+  test("retention apply requires admin access", async ({ baseURL }) => {
+    const owner = await setupOwner(baseURL!);
+    const repo = (
+      await (
+        await createRepo(owner.ctx, owner.orgId, {
+          name: uniq("retention-repo"),
+          format: "npm",
+        })
+      ).json()
+    ).repository as { id: string };
+    const developer = await setupOwner(baseURL!);
+    const developerMe = (await (await developer.ctx.get("/api/v1/me")).json()) as {
+      data: { principal: { userId: string } };
+    };
+    insertOrgRoleBinding({
+      orgId: owner.orgId,
+      userId: developerMe.data.principal.userId,
+      role: "developer",
+    });
+
+    const request = { keepLastN: 1 };
+    const denied = await developer.ctx.post(`/api/v1/repositories/${repo.id}/retention/apply`, {
+      data: request,
+    });
+    expect(denied.status()).toBe(403);
+
+    const scoped = await createV1Token(developer.ctx, owner.orgId, {
+      name: "retention-writer",
+      grants: [{ resource: "policy", policy: "retention", actions: ["write"] }],
+    });
+    const anon = await anonContext(baseURL!);
+    const tokenDenied = await anon.post(`/api/v1/repositories/${repo.id}/retention/apply`, {
+      headers: { authorization: `Bearer ${scoped.data.secret}` },
+      data: request,
+    });
+    expect(tokenDenied.status()).toBe(403);
+
+    const applied = await owner.ctx.post(`/api/v1/repositories/${repo.id}/retention/apply`, {
+      data: request,
+    });
+    expect(applied.status()).toBe(200);
+  });
+
   test("token self grant can rotate itself", async ({ baseURL }) => {
     const owner = await setupOwner(baseURL!);
     const created = await createV1Token(owner.ctx, owner.orgId, {
