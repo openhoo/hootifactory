@@ -21,7 +21,8 @@ function e2eWorkers(): number {
     return parsed;
   }
 
-  return Math.min(4, Math.max(1, availableParallelism()));
+  const defaultCap = process.argv.some((arg) => arg.includes("-cli.spec.ts")) ? 8 : 4;
+  return Math.min(defaultCap, Math.max(1, availableParallelism()));
 }
 
 export default defineConfig({

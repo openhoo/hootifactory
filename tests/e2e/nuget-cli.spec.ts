@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
@@ -18,6 +18,76 @@ function runDotnet(args: string[], cwd: string): string {
       NUGET_PACKAGES: join(cwd, ".nuget-packages"),
     },
   });
+}
+
+const CRC_TABLE = new Uint32Array(256).map((_, n) => {
+  let c = n;
+  for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+  return c >>> 0;
+});
+
+function crc32(bytes: Buffer): number {
+  let c = 0xffffffff;
+  for (const b of bytes) c = CRC_TABLE[(c ^ b) & 0xff]! ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+
+function createStoredZip(entries: { name: string; data: string | Buffer }[]): Buffer {
+  const localParts: Buffer[] = [];
+  const centralParts: Buffer[] = [];
+  let offset = 0;
+  for (const entry of entries) {
+    const name = Buffer.from(entry.name);
+    const data = Buffer.isBuffer(entry.data) ? entry.data : Buffer.from(entry.data);
+    const crc = crc32(data);
+
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt16LE(0, 6);
+    local.writeUInt16LE(0, 8);
+    local.writeUInt16LE(0, 10);
+    local.writeUInt16LE(0, 12);
+    local.writeUInt32LE(crc, 14);
+    local.writeUInt32LE(data.length, 18);
+    local.writeUInt32LE(data.length, 22);
+    local.writeUInt16LE(name.length, 26);
+    local.writeUInt16LE(0, 28);
+    localParts.push(local, name, data);
+
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0);
+    central.writeUInt16LE(20, 4);
+    central.writeUInt16LE(20, 6);
+    central.writeUInt16LE(0, 8);
+    central.writeUInt16LE(0, 10);
+    central.writeUInt16LE(0, 12);
+    central.writeUInt16LE(0, 14);
+    central.writeUInt32LE(crc, 16);
+    central.writeUInt32LE(data.length, 20);
+    central.writeUInt32LE(data.length, 24);
+    central.writeUInt16LE(name.length, 28);
+    central.writeUInt16LE(0, 30);
+    central.writeUInt16LE(0, 32);
+    central.writeUInt16LE(0, 34);
+    central.writeUInt16LE(0, 36);
+    central.writeUInt32LE(0, 38);
+    central.writeUInt32LE(offset, 42);
+    centralParts.push(central, name);
+    offset += local.length + name.length + data.length;
+  }
+
+  const centralSize = centralParts.reduce((sum, part) => sum + part.length, 0);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(0, 4);
+  end.writeUInt16LE(0, 6);
+  end.writeUInt16LE(entries.length, 8);
+  end.writeUInt16LE(entries.length, 10);
+  end.writeUInt32LE(centralSize, 12);
+  end.writeUInt32LE(offset, 16);
+  end.writeUInt16LE(0, 20);
+  return Buffer.concat([...localParts, ...centralParts, end]);
 }
 
 test.describe("nuget registry (Dockerized real dotnet)", () => {
@@ -43,17 +113,7 @@ test.describe("nuget registry (Dockerized real dotnet)", () => {
     const version = "1.2.3";
     const work = mkdtempSync(join(tmpdir(), "hoot-nuget-"));
     const source = `${dockerReachableUrl(baseURL!)}/${repo.mountPath}/v3/index.json`;
-    writeFileSync(
-      join(work, "NuGet.Config"),
-      `<?xml version="1.0" encoding="utf-8"?>
-<configuration>
-  <packageSources>
-    <clear />
-    <add key="hootifactory" value="${source}" allowInsecureConnections="true" />
-  </packageSources>
-</configuration>
-`,
-    );
+    writeNugetConfig(work, source);
 
     runDotnet(["new", "classlib", "-n", packageId, "--no-restore"], work);
     const project = join(work, packageId, `${packageId}.csproj`);
@@ -133,59 +193,10 @@ test.describe("nuget registry (Dockerized real dotnet)", () => {
     const work = mkdtempSync(join(tmpdir(), "hoot-nuget-deps-"));
     const source = `${dockerReachableUrl(baseURL!)}/${repo.mountPath}/v3/index.json`;
 
-    writeFileSync(
-      join(work, "NuGet.Config"),
-      `<?xml version="1.0" encoding="utf-8"?>
-<configuration>
-  <packageSources>
-    <add key="hootifactory" value="${source}" allowInsecureConnections="true" />
-    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
-  </packageSources>
-</configuration>
-`,
-    );
+    writeNugetConfig(work, source);
 
-    runDotnet(["new", "classlib", "-n", depId, "--no-restore"], work);
-    const depProject = join(work, depId, `${depId}.csproj`);
-    runDotnet(["restore", depProject, "--configfile", join(work, "NuGet.Config")], work);
-    runDotnet(
-      [
-        "pack",
-        depProject,
-        "--configuration",
-        "Release",
-        "--output",
-        join(work, "packages"),
-        "--no-restore",
-        `-p:PackageId=${depId}`,
-        `-p:Version=${version}`,
-      ],
-      work,
-    );
-    const depNupkg = join(work, "packages", `${depId}.${version}.nupkg`);
-    expect(existsSync(depNupkg)).toBe(true);
-    runDotnet(["nuget", "push", depNupkg, "--api-key", secret, "--source", source], work);
-
-    runDotnet(["new", "classlib", "-n", mainId, "--no-restore"], work);
-    const mainProject = join(work, mainId, `${mainId}.csproj`);
-    runDotnet(["add", mainProject, "package", depId, "--version", version], work);
-    runDotnet(
-      [
-        "pack",
-        mainProject,
-        "--configuration",
-        "Release",
-        "--output",
-        join(work, "packages"),
-        "--no-restore",
-        `-p:PackageId=${mainId}`,
-        `-p:Version=${version}`,
-      ],
-      work,
-    );
-    const mainNupkg = join(work, "packages", `${mainId}.${version}.nupkg`);
-    expect(existsSync(mainNupkg)).toBe(true);
-    runDotnet(["nuget", "push", mainNupkg, "--api-key", secret, "--source", source], work);
+    packAndPush(work, source, secret, depId, version);
+    packAndPush(work, source, secret, mainId, version, [{ id: depId, version }]);
 
     const registration = await (
       await owner.ctx.get(`/${repo.mountPath}/v3/registrations/${mainId.toLowerCase()}/index.json`)
@@ -232,37 +243,101 @@ function writeNugetConfig(dir: string, source: string): void {
   );
 }
 
-/**
- * dotnet pack a fresh classlib and push it to the given source via the real CLI.
- * Returns the produced .nupkg path. Each call uses its own project directory so
- * different PackageIds/versions never clobber one another.
- */
+function xmlEscape(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+function nuspecXml(
+  packageId: string,
+  version: string,
+  dependencies: { id: string; version: string }[],
+): string {
+  const dependencyXml =
+    dependencies.length > 0
+      ? [
+          "    <dependencies>",
+          '      <group targetFramework=".NETStandard2.0">',
+          ...dependencies.map(
+            (dep) =>
+              `        <dependency id="${xmlEscape(dep.id)}" version="${xmlEscape(dep.version)}" />`,
+          ),
+          "      </group>",
+          "    </dependencies>",
+        ].join("\n")
+      : "";
+  return [
+    '<?xml version="1.0" encoding="utf-8"?>',
+    '<package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">',
+    "  <metadata>",
+    `    <id>${xmlEscape(packageId)}</id>`,
+    `    <version>${xmlEscape(version)}</version>`,
+    "    <authors>Hootifactory</authors>",
+    `    <description>${xmlEscape(packageId)} fixture package</description>`,
+    dependencyXml,
+    "  </metadata>",
+    "</package>",
+    "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function writeFixtureNupkg(
+  work: string,
+  packageId: string,
+  version: string,
+  dependencies: { id: string; version: string }[] = [],
+): string {
+  const packagesDir = join(work, "packages");
+  mkdirSync(packagesDir, { recursive: true });
+  const nupkg = join(packagesDir, `${packageId}.${version}.nupkg`);
+  writeFileSync(
+    nupkg,
+    createStoredZip([
+      {
+        name: "[Content_Types].xml",
+        data: [
+          '<?xml version="1.0" encoding="utf-8"?>',
+          '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">',
+          '  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml" />',
+          '  <Default Extension="nuspec" ContentType="application/octet" />',
+          '  <Default Extension="_" ContentType="application/octet" />',
+          "</Types>",
+          "",
+        ].join("\n"),
+      },
+      {
+        name: "_rels/.rels",
+        data: [
+          '<?xml version="1.0" encoding="utf-8"?>',
+          '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">',
+          `  <Relationship Type="http://schemas.microsoft.com/packaging/2010/07/manifest" Target="/${xmlEscape(packageId)}.nuspec" Id="R0" />`,
+          "</Relationships>",
+          "",
+        ].join("\n"),
+      },
+      { name: `${packageId}.nuspec`, data: nuspecXml(packageId, version, dependencies) },
+      { name: "lib/netstandard2.0/_._", data: "" },
+    ]),
+  );
+  return nupkg;
+}
+
+/** Write a minimal package fixture and push it to the given source via the real CLI. */
 function packAndPush(
   work: string,
   source: string,
   secret: string,
   packageId: string,
   version: string,
+  dependencies: { id: string; version: string }[] = [],
 ): string {
-  const projectName = `Proj${packageId.replace(/[^A-Za-z0-9]/g, "")}${version.replace(/[^A-Za-z0-9]/g, "")}`;
-  runDotnet(["new", "classlib", "-n", projectName, "--no-restore"], work);
-  const project = join(work, projectName, `${projectName}.csproj`);
-  runDotnet(["restore", project, "--ignore-failed-sources"], work);
-  runDotnet(
-    [
-      "pack",
-      project,
-      "--configuration",
-      "Release",
-      "--output",
-      join(work, "packages"),
-      "--no-restore",
-      `-p:PackageId=${packageId}`,
-      `-p:Version=${version}`,
-    ],
-    work,
-  );
-  const nupkg = join(work, "packages", `${packageId}.${version}.nupkg`);
+  const nupkg = writeFixtureNupkg(work, packageId, version, dependencies);
   expect(existsSync(nupkg)).toBe(true);
   runDotnet(["nuget", "push", nupkg, "--api-key", secret, "--source", source], work);
   return nupkg;

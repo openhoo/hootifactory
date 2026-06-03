@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import { dockerNpm, dockerReachableUrl, ensureDockerAvailable } from "./docker-clients";
-import { createRepo, createToken, setupOwner } from "./helpers";
+import { addUpstream, createRepo, createRepoReturning, createToken, setupOwner } from "./helpers";
 
 function npm(args: string[], cwd: string): string {
   return dockerNpm(args, cwd);
@@ -329,10 +329,18 @@ interface NpmEnv {
   registry: string;
 }
 
-function npmEnv(baseURL: string, orgSlug: string, repoName: string, secret: string): NpmEnv {
-  const registry = `${dockerReachableUrl(baseURL)}/npm/${orgSlug}/${repoName}/`;
+function npmEnvForRegistry(registry: string, secret: string): NpmEnv {
   const npmrc = `registry=${registry}\n${registry.replace(/^https?:/, "")}:_authToken=${secret}\n`;
   return { npmrc, registry };
+}
+
+function npmEnv(baseURL: string, orgSlug: string, repoName: string, secret: string): NpmEnv {
+  const registry = `${dockerReachableUrl(baseURL)}/npm/${orgSlug}/${repoName}/`;
+  return npmEnvForRegistry(registry, secret);
+}
+
+function npmEnvForMountPath(baseURL: string, mountPath: string, secret: string): NpmEnv {
+  return npmEnvForRegistry(`${dockerReachableUrl(baseURL)}/${mountPath}/`, secret);
 }
 
 function publishVersion(
@@ -499,6 +507,53 @@ test.describe("npm registry extended scenarios (Dockerized real CLI)", () => {
     expect(hit?.version).toBe("1.0.0");
     expect(hit?.description).toContain(token);
     expect(hit?.keywords).toContain(token);
+  });
+
+  test("proxy repo mirrors a hosted upstream package through real npm install", async ({
+    baseURL,
+  }) => {
+    test.setTimeout(120_000);
+    const owner = await setupOwner(baseURL!);
+    const suffix = `${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
+    const upstream = await createRepoReturning(owner.ctx, owner.orgId, {
+      name: `npm-proxy-up-${suffix}`,
+      format: "npm",
+      visibility: "public",
+    });
+    const proxy = await createRepoReturning(owner.ctx, owner.orgId, {
+      name: `npm-proxy-cli-${suffix}`,
+      format: "npm",
+      kind: "proxy",
+    });
+    expect(
+      (await addUpstream(owner.ctx, proxy.id, `${baseURL!}/${upstream.mountPath}/`)).status(),
+    ).toBe(201);
+    const secret = (
+      await (await createToken(owner.ctx, owner.orgId, { name: `npm-proxy-${suffix}` })).json()
+    ).secret as string;
+
+    const pkg = `e2e-proxy-${suffix}`;
+    const upstreamEnv = npmEnvForMountPath(baseURL!, upstream.mountPath, secret);
+    publishVersion(upstreamEnv, pkg, "1.0.0", { description: "proxy mirror fixture" });
+
+    const directProxyTarball = await owner.ctx.get(`/${proxy.mountPath}/${pkg}/-/${pkg}-1.0.0.tgz`);
+    expect(directProxyTarball.status()).toBe(404);
+
+    const proxyEnv = npmEnvForMountPath(baseURL!, proxy.mountPath, secret);
+    const dir = consumerDir(proxyEnv);
+    npm(
+      ["install", `${pkg}@1.0.0`, "--registry", proxyEnv.registry, "--no-audit", "--no-fund"],
+      dir,
+    );
+    expect(installedVersion(dir, pkg)).toBe("1.0.0");
+
+    const packument = await owner.ctx.get(`/${proxy.mountPath}/${pkg}`);
+    expect(packument.status()).toBe(200);
+    const metadata = await packument.json();
+    expect(metadata.versions["1.0.0"].dist.tarball).toContain(`/${proxy.mountPath}/`);
+
+    const mirroredTarball = await owner.ctx.get(`/${proxy.mountPath}/${pkg}/-/${pkg}-1.0.0.tgz`);
+    expect(mirroredTarball.status()).toBe(200);
   });
 
   test("prerelease versions resolve explicitly while latest stays on the stable release", async ({
