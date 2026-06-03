@@ -47,6 +47,7 @@ import {
   upstreamDistMatchesBytes,
   upstreamDistMatchesStored,
 } from "./npm-integrity";
+import { buildNpmMetadataOnlyVersionPatch } from "./npm-metadata-only";
 import {
   buildNpmMirroredDist,
   isNpmTarballUrlOnUpstreamHost,
@@ -70,7 +71,6 @@ import {
   isValidNpmVersion,
   NpmLegacyPackageNameSchema,
   NpmTarballFilenameSchema,
-  NpmVersionSchema,
   packagePath,
 } from "./npm-validation";
 import { buildPackument, mergePackuments } from "./packument";
@@ -79,13 +79,6 @@ function parseNpmName(name: string): string {
   return parseRegistryInput(NpmLegacyPackageNameSchema, name, {
     code: "NAME_INVALID",
     message: "invalid package name",
-  });
-}
-
-function parseNpmVersion(version: string): string {
-  return parseRegistryInput(NpmVersionSchema, version, {
-    code: "MANIFEST_INVALID",
-    message: "invalid package version",
   });
 }
 
@@ -391,41 +384,22 @@ export class NpmAdapter implements FormatAdapter {
     const liveByVersion = new Map(liveRows.map((row) => [row.version, row]));
     const versionIds = new Map<string, string>();
     for (const [ver, manifestRaw] of entries) {
-      parseNpmVersion(ver);
       const live = liveByVersion.get(ver);
       if (!live) return Response.json({ error: `version not found: ${ver}` }, { status: 404 });
-      if (manifestRaw.name !== undefined && manifestRaw.name !== name) {
-        return Response.json(
-          { error: "version manifest name does not match URL" },
-          { status: 400 },
-        );
-      }
-      if (manifestRaw.version !== undefined && manifestRaw.version !== ver) {
-        return Response.json(
-          { error: "version manifest version does not match version key" },
-          { status: 400 },
-        );
-      }
-      versionIds.set(ver, live.id);
-      if (!Object.hasOwn(manifestRaw, "deprecated")) continue;
-
-      const metadata = (live.metadata as Record<string, unknown> | null) ?? {};
-      const manifest = (metadata.manifest as Record<string, unknown> | undefined) ?? {
-        name,
+      const patch = buildNpmMetadataOnlyVersionPatch({
+        packageName: name,
         version: ver,
-      };
+        manifest: manifestRaw,
+        liveMetadata: live.metadata,
+      });
+      if (!patch.ok) return Response.json({ error: patch.error }, { status: patch.status });
+      versionIds.set(patch.version, live.id);
+      if (!patch.metadata) continue;
+
       await upsertPackageVersion(ctx, {
         packageId: pkg.id,
-        version: ver,
-        metadata: {
-          ...metadata,
-          manifest: {
-            ...manifest,
-            name,
-            version: ver,
-            deprecated: manifestRaw.deprecated,
-          },
-        },
+        version: patch.version,
+        metadata: patch.metadata,
         sizeBytes: live.sizeBytes,
       });
     }
