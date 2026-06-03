@@ -1,6 +1,5 @@
 import {
   bearerAuthChallenge,
-  defineRegistryPlugin,
   delegateRegistryPlugin,
   Errors,
   type HttpMethod,
@@ -10,7 +9,7 @@ import {
   type RegistryRequestContext,
   type RouteMatch,
   readWritePermission,
-  registryRoutes,
+  registryPlugin,
   serveRegistryBlob,
 } from "@hootifactory/registry";
 import {
@@ -53,43 +52,38 @@ export class CargoAdapter implements RegistryPlugin {
   };
   authChallenge = () => bearerAuthChallenge();
 
-  private readonly plugin = defineRegistryPlugin({
-    format: this.format,
-    capabilities: this.capabilities,
-    authChallenge: this.authChallenge,
-    routes: [
-      registryRoutes.get("/config.json", "config", ({ ctx }) =>
+  private readonly plugin = registryPlugin(this.format)
+    .capabilities(this.capabilities)
+    .authChallenge(this.authChallenge)
+    .routes((route) => [
+      route.get("/config.json", "config", ({ ctx }) =>
         Response.json({
           dl: `${ctx.baseUrl}/${ctx.repo.mountPath}/api/v1/crates`,
           api: `${ctx.baseUrl}/${ctx.repo.mountPath}`,
         }),
       ),
-      registryRoutes.put("/api/v1/crates/new", "publish", ({ req, ctx }) => this.publish(req, ctx)),
-      registryRoutes.get("/api/v1/crates/:crate/:version/download", "download", ({ params, ctx }) =>
+      route.put("/api/v1/crates/new", "publish", ({ req, ctx }) => this.publish(req, ctx)),
+      route.get("/api/v1/crates/:crate/:version/download", "download", ({ params, ctx }) =>
         this.download(params.crate ?? "", params.version ?? "", ctx),
       ),
-      registryRoutes.delete("/api/v1/crates/:crate/:version/yank", "yank", ({ params, ctx }) =>
+      route.delete("/api/v1/crates/:crate/:version/yank", "yank", ({ params, ctx }) =>
         this.setYank(params.crate ?? "", params.version ?? "", true, ctx),
       ),
-      registryRoutes.put("/api/v1/crates/:crate/:version/unyank", "unyank", ({ params, ctx }) =>
+      route.put("/api/v1/crates/:crate/:version/unyank", "unyank", ({ params, ctx }) =>
         this.setYank(params.crate ?? "", params.version ?? "", false, ctx),
       ),
-      registryRoutes.get("/api/v1/crates/:crate/owners", "ownersList", ({ params, ctx }) =>
+      route.get("/api/v1/crates/:crate/owners", "ownersList", ({ params, ctx }) =>
         this.listOwners(params.crate ?? "", ctx),
       ),
-      registryRoutes.put("/api/v1/crates/:crate/owners", "ownersAdd", ({ params, req, ctx }) =>
+      route.put("/api/v1/crates/:crate/owners", "ownersAdd", ({ params, req, ctx }) =>
         this.updateOwners(params.crate ?? "", req, "add", ctx),
       ),
-      registryRoutes.delete(
-        "/api/v1/crates/:crate/owners",
-        "ownersRemove",
-        ({ params, req, ctx }) => this.updateOwners(params.crate ?? "", req, "remove", ctx),
+      route.delete("/api/v1/crates/:crate/owners", "ownersRemove", ({ params, req, ctx }) =>
+        this.updateOwners(params.crate ?? "", req, "remove", ctx),
       ),
-      registryRoutes.get("/:path+", "index", ({ params, ctx }) =>
-        this.index(params.path ?? "", ctx),
-      ),
-    ],
-  });
+      route.get("/:path+", "index", ({ params, ctx }) => this.index(params.path ?? "", ctx)),
+    ])
+    .build();
   private readonly delegate = delegateRegistryPlugin(this.plugin);
 
   routes = this.delegate.routes;

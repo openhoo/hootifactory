@@ -4,6 +4,7 @@ import {
   defineRegistryPlugin,
   delegateRegistryPlugin,
   readOnlyPermission,
+  registryPlugin,
   registryRoute,
   registryRoutes,
 } from "./plugin";
@@ -77,8 +78,8 @@ describe("defineRegistryPlugin", () => {
         proxyable: false,
         virtualizable: true,
       },
-      routes: [
-        registryRoutes.get("/config.json", "config", () => Response.json({ ok: true }), {
+      routes: (route) => [
+        route.get("/config.json", "config", () => Response.json({ ok: true }), {
           permission: readOnlyPermission(),
         }),
       ],
@@ -96,6 +97,66 @@ describe("defineRegistryPlugin", () => {
       createTestRegistryContext(),
     );
     expect(await res.json()).toEqual({ ok: true });
+  });
+
+  test("builds plugins with a fluent builder", async () => {
+    const plugin = registryPlugin("npm")
+      .capabilities({
+        contentAddressable: false,
+        resumableUploads: false,
+        proxyable: true,
+        virtualizable: true,
+      })
+      .defaultPermission(({ params }) =>
+        readOnlyPermission({ type: "package", packageName: params.pkg }),
+      )
+      .authChallenge(() => ({ header: 'Basic realm="test"', status: 401 }))
+      .get<{ pkg: string }>("/:pkg+", "packument", ({ params }) =>
+        Response.json({ package: params.pkg }),
+      )
+      .build();
+    const [entry] = plugin.routes();
+
+    expect(entry).toEqual({ method: "GET", pattern: "/:pkg+", handlerId: "packument" });
+    const match = createTestRouteMatch(entry!, { pkg: "left-pad" }, "/left-pad");
+    expect(plugin.requiredPermission("GET", match, createTestRegistryContext())).toEqual({
+      action: "read",
+      resource: { type: "package", packageName: "left-pad" },
+    });
+    expect(plugin.authChallenge?.(readOnlyPermission(), createTestRegistryContext())).toEqual({
+      header: 'Basic realm="test"',
+      status: 401,
+    });
+    const res = await plugin.handle(
+      match,
+      new Request("https://registry.example.test/left-pad"),
+      createTestRegistryContext(),
+    );
+    expect(await res.json()).toEqual({ package: "left-pad" });
+  });
+
+  test("builds plugins with fluent route-list factories", () => {
+    const plugin = registryPlugin("go")
+      .capabilities({
+        contentAddressable: false,
+        resumableUploads: false,
+        proxyable: false,
+        virtualizable: true,
+      })
+      .routes((route) => [
+        route.get<{ module: string }>("/:module+/@latest", "latest", () => new Response("latest")),
+        route.put<{ module: string; version: string }>(
+          "/:module+/@v/:version",
+          "upload",
+          () => new Response(null, { status: 201 }),
+        ),
+      ])
+      .build();
+
+    expect(plugin.routes()).toEqual([
+      { method: "GET", pattern: "/:module+/@latest", handlerId: "latest" },
+      { method: "PUT", pattern: "/:module+/@v/:version", handlerId: "upload" },
+    ]);
   });
 
   test("delegates plugin forwarding and optional pre-handle hooks", async () => {

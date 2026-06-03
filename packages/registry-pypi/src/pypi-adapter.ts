@@ -1,6 +1,5 @@
 import {
   basicAuthChallenge,
-  defineRegistryPlugin,
   delegateRegistryPlugin,
   type HttpMethod,
   type Permission,
@@ -10,7 +9,7 @@ import {
   type RegistryRequestContext,
   type RouteMatch,
   readWritePermission,
-  registryRoutes,
+  registryPlugin,
   serveRegistryBlob,
 } from "@hootifactory/registry";
 import { handlePypiUpload } from "./pypi-upload-lifecycle";
@@ -42,22 +41,21 @@ export class PypiAdapter implements RegistryPlugin {
   };
   authChallenge = basicAuthChallenge;
 
-  private readonly plugin = defineRegistryPlugin({
-    format: this.format,
-    capabilities: this.capabilities,
-    authChallenge: this.authChallenge,
-    routes: [
-      registryRoutes.get("/simple/", "simpleRoot", ({ req, ctx }) => this.simpleRoot(req, ctx)),
-      registryRoutes.get("/simple/:project/", "simpleProject", ({ params, req, ctx }) =>
+  private readonly plugin = registryPlugin(this.format)
+    .capabilities(this.capabilities)
+    .authChallenge(this.authChallenge)
+    .routes((route) => [
+      route.get("/simple/", "simpleRoot", ({ req, ctx }) => this.simpleRoot(req, ctx)),
+      route.get("/simple/:project/", "simpleProject", ({ params, req, ctx }) =>
         this.simpleProject(params.project ?? "", req, ctx),
       ),
-      registryRoutes.get("/files/:filename", "download", ({ params, ctx }) =>
+      route.get("/files/:filename", "download", ({ params, ctx }) =>
         this.download(params.filename ?? "", ctx),
       ),
-      registryRoutes.post("/", "upload", ({ req, ctx }) => this.upload(req, ctx)),
-      registryRoutes.post("/legacy/", "upload", ({ req, ctx }) => this.upload(req, ctx)),
-    ],
-  });
+      route.post("/", "upload", ({ req, ctx }) => this.upload(req, ctx)),
+      route.post("/legacy/", "upload", ({ req, ctx }) => this.upload(req, ctx)),
+    ])
+    .build();
   private readonly delegate = delegateRegistryPlugin(this.plugin);
 
   routes = this.delegate.routes;

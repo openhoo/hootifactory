@@ -1,6 +1,5 @@
 import {
   basicAuthChallenge,
-  defineRegistryPlugin,
   delegateRegistryPlugin,
   Errors,
   type HttpMethod,
@@ -10,7 +9,7 @@ import {
   type RegistryRequestContext,
   type RouteMatch,
   readWritePermission,
-  registryRoutes,
+  registryPlugin,
   serveRegistryBlob,
 } from "@hootifactory/registry";
 import { handleGoUpload } from "./go-upload-lifecycle";
@@ -35,25 +34,24 @@ export class GoAdapter implements RegistryPlugin {
   };
   authChallenge = basicAuthChallenge;
 
-  private readonly plugin = defineRegistryPlugin({
-    format: this.format,
-    capabilities: this.capabilities,
-    authChallenge: this.authChallenge,
-    routes: [
-      registryRoutes.get("/:module+/@v/list", "list", ({ params, ctx }) =>
+  private readonly plugin = registryPlugin(this.format)
+    .capabilities(this.capabilities)
+    .authChallenge(this.authChallenge)
+    .routes((route) => [
+      route.get("/:module+/@v/list", "list", ({ params, ctx }) =>
         this.list(this.parseModule(params.module ?? ""), ctx),
       ),
-      registryRoutes.get("/:module+/@latest", "latest", ({ params, ctx }) =>
+      route.get("/:module+/@latest", "latest", ({ params, ctx }) =>
         this.latest(this.parseModule(params.module ?? ""), ctx),
       ),
-      registryRoutes.get("/:module+/@v/:file", "file", ({ params, ctx }) =>
+      route.get("/:module+/@v/:file", "file", ({ params, ctx }) =>
         this.file(this.parseModule(params.module ?? ""), params.file ?? "", ctx),
       ),
-      registryRoutes.put("/:module+/@v/:version", "upload", ({ params, req, ctx }) =>
+      route.put("/:module+/@v/:version", "upload", ({ params, req, ctx }) =>
         this.upload(this.parseModule(params.module ?? ""), params.version ?? "", req, ctx),
       ),
-    ],
-  });
+    ])
+    .build();
   private readonly delegate = delegateRegistryPlugin(this.plugin);
 
   routes = this.delegate.routes;

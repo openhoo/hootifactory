@@ -1,5 +1,4 @@
 import {
-  defineRegistryPlugin,
   delegateRegistryPlugin,
   Errors,
   type HttpMethod,
@@ -9,7 +8,7 @@ import {
   type RegistryRequestContext,
   type RouteMatch,
   registryBearerAuthChallenge,
-  registryRoutes,
+  registryPlugin,
 } from "@hootifactory/registry";
 import { buildOciBlobResponse } from "./oci-blobs";
 import {
@@ -48,56 +47,55 @@ export class DockerAdapter implements RegistryPlugin {
   authChallenge = (perm: Permission, ctx: RegistryRequestContext) =>
     registryBearerAuthChallenge({ ctx, permission: perm, service: REGISTRY_TOKEN_SERVICE });
 
-  private readonly plugin = defineRegistryPlugin({
-    format: this.format,
-    capabilities: this.capabilities,
-    authChallenge: this.authChallenge,
-    defaultPermission: ({ method, match, ctx }) => this.routePermission(method, match, ctx),
-    routes: [
-      registryRoutes.get("/:name+/tags/list", "tagsList", ({ params, req, ctx }) =>
+  private readonly plugin = registryPlugin(this.format)
+    .capabilities(this.capabilities)
+    .authChallenge(this.authChallenge)
+    .defaultPermission(({ method, match, ctx }) => this.routePermission(method, match, ctx))
+    .routes((route) => [
+      route.get("/:name+/tags/list", "tagsList", ({ params, req, ctx }) =>
         this.tagsList(params.name ?? "", req, ctx),
       ),
-      registryRoutes.get("/:name+/referrers/:digest", "referrers", ({ params, req, ctx }) =>
+      route.get("/:name+/referrers/:digest", "referrers", ({ params, req, ctx }) =>
         this.referrers(params.name ?? "", params.digest ?? "", req, ctx),
       ),
-      registryRoutes.head("/:name+/manifests/:reference", "headManifest", ({ params, req, ctx }) =>
+      route.head("/:name+/manifests/:reference", "headManifest", ({ params, req, ctx }) =>
         this.getManifest(params.name ?? "", params.reference ?? "", req, ctx, true),
       ),
-      registryRoutes.get("/:name+/manifests/:reference", "getManifest", ({ params, req, ctx }) =>
+      route.get("/:name+/manifests/:reference", "getManifest", ({ params, req, ctx }) =>
         this.getManifest(params.name ?? "", params.reference ?? "", req, ctx, false),
       ),
-      registryRoutes.put("/:name+/manifests/:reference", "putManifest", ({ params, req, ctx }) =>
+      route.put("/:name+/manifests/:reference", "putManifest", ({ params, req, ctx }) =>
         this.putManifest(params.name ?? "", params.reference ?? "", req, ctx),
       ),
-      registryRoutes.delete("/:name+/manifests/:reference", "deleteManifest", ({ params, ctx }) =>
+      route.delete("/:name+/manifests/:reference", "deleteManifest", ({ params, ctx }) =>
         this.deleteManifest(params.name ?? "", params.reference ?? "", ctx),
       ),
-      registryRoutes.post("/:name+/blobs/uploads", "startUpload", ({ params, req, ctx }) =>
+      route.post("/:name+/blobs/uploads", "startUpload", ({ params, req, ctx }) =>
         startUpload(params.name ?? "", req, ctx),
       ),
-      registryRoutes.get("/:name+/blobs/uploads/:uuid", "uploadStatus", ({ params, ctx }) =>
+      route.get("/:name+/blobs/uploads/:uuid", "uploadStatus", ({ params, ctx }) =>
         uploadStatus(params.name ?? "", params.uuid ?? "", ctx),
       ),
-      registryRoutes.patch("/:name+/blobs/uploads/:uuid", "patchUpload", ({ params, req, ctx }) =>
+      route.patch("/:name+/blobs/uploads/:uuid", "patchUpload", ({ params, req, ctx }) =>
         patchUpload(params.name ?? "", params.uuid ?? "", req, ctx),
       ),
-      registryRoutes.put("/:name+/blobs/uploads/:uuid", "putUpload", ({ params, req, ctx }) =>
+      route.put("/:name+/blobs/uploads/:uuid", "putUpload", ({ params, req, ctx }) =>
         putUpload(params.name ?? "", params.uuid ?? "", req, ctx),
       ),
-      registryRoutes.delete("/:name+/blobs/uploads/:uuid", "cancelUpload", ({ params, ctx }) =>
+      route.delete("/:name+/blobs/uploads/:uuid", "cancelUpload", ({ params, ctx }) =>
         cancelUpload(params.name ?? "", params.uuid ?? "", ctx),
       ),
-      registryRoutes.head("/:name+/blobs/:digest", "headBlob", ({ params, req, ctx }) =>
+      route.head("/:name+/blobs/:digest", "headBlob", ({ params, req, ctx }) =>
         this.getBlob(params.name ?? "", params.digest ?? "", req, ctx, true),
       ),
-      registryRoutes.get("/:name+/blobs/:digest", "getBlob", ({ params, req, ctx }) =>
+      route.get("/:name+/blobs/:digest", "getBlob", ({ params, req, ctx }) =>
         this.getBlob(params.name ?? "", params.digest ?? "", req, ctx, false),
       ),
-      registryRoutes.delete("/:name+/blobs/:digest", "deleteBlob", ({ params, ctx }) =>
+      route.delete("/:name+/blobs/:digest", "deleteBlob", ({ params, ctx }) =>
         this.deleteBlob(params.name ?? "", params.digest ?? "", ctx),
       ),
-    ],
-  });
+    ])
+    .build();
   private readonly delegate = delegateRegistryPlugin(this.plugin, {
     beforeHandle: ({ match, ctx }) => {
       const image = match.params.name ?? "";

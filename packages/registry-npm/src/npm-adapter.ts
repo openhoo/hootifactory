@@ -1,6 +1,5 @@
 import {
   basicAuthChallenge,
-  defineRegistryPlugin,
   delegateRegistryPlugin,
   type FormatMetadata,
   type HttpMethod,
@@ -11,7 +10,7 @@ import {
   type RegistryPlugin,
   type RegistryRequestContext,
   type RouteMatch,
-  registryRoutes,
+  registryPlugin,
   type SearchQuery,
   type SearchResult,
   serveRegistryBlob,
@@ -51,47 +50,44 @@ export class NpmAdapter implements RegistryPlugin {
   };
   authChallenge = basicAuthChallenge;
 
-  private readonly plugin = defineRegistryPlugin({
-    format: this.format,
-    capabilities: this.capabilities,
-    authChallenge: this.authChallenge,
-    defaultPermission: ({ method, match }) => this.requiredRoutePermission(method, match),
-    generateMetadata: (name, ctx) => this.generateMetadata(name, ctx),
-    mergeMetadata: (parts) => this.mergeMetadata(parts),
-    search: (query, ctx) => this.search(query, ctx),
-    proxyIngest: (name, upstreamBase, ctx) => this.proxyIngest(name, upstreamBase, ctx),
-    routes: [
-      registryRoutes.get("/-/ping", "ping", () => Response.json({})),
-      registryRoutes.get("/-/whoami", "whoami", ({ ctx }) =>
+  private readonly plugin = registryPlugin(this.format)
+    .capabilities(this.capabilities)
+    .authChallenge(this.authChallenge)
+    .defaultPermission(({ method, match }) => this.requiredRoutePermission(method, match))
+    .generateMetadata((name, ctx) => this.generateMetadata(name, ctx))
+    .mergeMetadata((parts) => this.mergeMetadata(parts))
+    .search((query, ctx) => this.search(query, ctx))
+    .proxyIngest((name, upstreamBase, ctx) => this.proxyIngest(name, upstreamBase, ctx))
+    .routes((route) => [
+      route.get("/-/ping", "ping", () => Response.json({})),
+      route.get("/-/whoami", "whoami", ({ ctx }) =>
         Response.json({ username: this.whoamiUsername(ctx) }),
       ),
-      registryRoutes.get("/-/v1/search", "search", ({ req, ctx }) => this.searchHandler(req, ctx)),
-      registryRoutes.post("/-/npm/v1/security/advisories/bulk", "auditBulk", () =>
-        Response.json({}),
-      ),
-      registryRoutes.post("/-/npm/v1/security/audits/quick", "auditQuick", () =>
+      route.get("/-/v1/search", "search", ({ req, ctx }) => this.searchHandler(req, ctx)),
+      route.post("/-/npm/v1/security/advisories/bulk", "auditBulk", () => Response.json({})),
+      route.post("/-/npm/v1/security/audits/quick", "auditQuick", () =>
         Response.json({ advisories: {}, vulnerabilities: {}, metadata: {} }),
       ),
-      registryRoutes.get("/-/package/:pkg+/dist-tags", "distTagsList", ({ params, ctx }) =>
+      route.get("/-/package/:pkg+/dist-tags", "distTagsList", ({ params, ctx }) =>
         this.distTagsList(params.pkg ?? "", ctx),
       ),
-      registryRoutes.put("/-/package/:pkg+/dist-tags/:tag", "distTagSet", ({ params, req, ctx }) =>
+      route.put("/-/package/:pkg+/dist-tags/:tag", "distTagSet", ({ params, req, ctx }) =>
         this.distTagSet(params.pkg ?? "", params.tag ?? "", req, ctx),
       ),
-      registryRoutes.delete("/-/package/:pkg+/dist-tags/:tag", "distTagDelete", ({ params, ctx }) =>
+      route.delete("/-/package/:pkg+/dist-tags/:tag", "distTagDelete", ({ params, ctx }) =>
         this.distTagDelete(params.pkg ?? "", params.tag ?? "", ctx),
       ),
-      registryRoutes.get("/:pkg+/-/:filename", "tarball", ({ params, req, ctx }) =>
+      route.get("/:pkg+/-/:filename", "tarball", ({ params, req, ctx }) =>
         this.tarball(params.pkg ?? "", params.filename ?? "", req, ctx),
       ),
-      registryRoutes.put("/:pkg+", "publish", ({ params, req, ctx }) =>
+      route.put("/:pkg+", "publish", ({ params, req, ctx }) =>
         this.publish(params.pkg ?? "", req, ctx),
       ),
-      registryRoutes.get("/:pkg+", "packument", ({ params, req, ctx }) =>
+      route.get("/:pkg+", "packument", ({ params, req, ctx }) =>
         this.packument(params.pkg ?? "", req, ctx),
       ),
-    ],
-  });
+    ])
+    .build();
   private readonly delegate = delegateRegistryPlugin(this.plugin);
 
   routes = this.delegate.routes;

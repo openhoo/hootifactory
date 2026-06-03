@@ -1,6 +1,5 @@
 import {
   basicAuthChallenge,
-  defineRegistryPlugin,
   delegateRegistryPlugin,
   Errors,
   type HttpMethod,
@@ -12,7 +11,7 @@ import {
   type RegistryRequestContext,
   type RouteMatch,
   readWritePermission,
-  registryRoutes,
+  registryPlugin,
   serveRegistryBlob,
 } from "@hootifactory/registry";
 import { handleNugetPublish } from "./nuget-publish-lifecycle";
@@ -68,36 +67,35 @@ export class NugetAdapter implements RegistryPlugin {
   };
   authChallenge = basicAuthChallenge;
 
-  private readonly plugin = defineRegistryPlugin({
-    format: this.format,
-    capabilities: this.capabilities,
-    authChallenge: this.authChallenge,
-    routes: [
-      registryRoutes.get("/v3/index.json", "serviceIndex", ({ ctx }) => this.serviceIndex(ctx)),
-      registryRoutes.get("/v3/query", "search", ({ req, ctx }) =>
+  private readonly plugin = registryPlugin(this.format)
+    .capabilities(this.capabilities)
+    .authChallenge(this.authChallenge)
+    .routes((route) => [
+      route.get("/v3/index.json", "serviceIndex", ({ ctx }) => this.serviceIndex(ctx)),
+      route.get("/v3/query", "search", ({ req, ctx }) =>
         this.nugetSearch(req, this.base(ctx), ctx),
       ),
-      registryRoutes.put("/v3/package", "publish", ({ req, ctx }) => this.publish(req, ctx)),
-      registryRoutes.delete("/v3/package/:id/:version", "delete", ({ params, ctx }) =>
+      route.put("/v3/package", "publish", ({ req, ctx }) => this.publish(req, ctx)),
+      route.delete("/v3/package/:id/:version", "delete", ({ params, ctx }) =>
         this.setListed(params.id ?? "", params.version ?? "", false, ctx),
       ),
-      registryRoutes.post("/v3/package/:id/:version", "relist", ({ params, ctx }) =>
+      route.post("/v3/package/:id/:version", "relist", ({ params, ctx }) =>
         this.setListed(params.id ?? "", params.version ?? "", true, ctx),
       ),
-      registryRoutes.get("/v3-flatcontainer/:id/index.json", "versions", ({ params, ctx }) =>
+      route.get("/v3-flatcontainer/:id/index.json", "versions", ({ params, ctx }) =>
         this.versions(params.id ?? "", ctx),
       ),
-      registryRoutes.get("/v3-flatcontainer/:id/:version/:file", "download", ({ params, ctx }) =>
+      route.get("/v3-flatcontainer/:id/:version/:file", "download", ({ params, ctx }) =>
         this.download(params.id ?? "", params.version ?? "", params.file ?? "", ctx),
       ),
-      registryRoutes.get("/v3/registrations/:id/index.json", "registration", ({ params, ctx }) =>
+      route.get("/v3/registrations/:id/index.json", "registration", ({ params, ctx }) =>
         this.registration(params.id ?? "", this.base(ctx), ctx),
       ),
-      registryRoutes.get("/v3/registrations/:id/:file", "registrationLeaf", ({ params, ctx }) =>
+      route.get("/v3/registrations/:id/:file", "registrationLeaf", ({ params, ctx }) =>
         this.registrationLeaf(params.id ?? "", params.file ?? "", this.base(ctx), ctx),
       ),
-    ],
-  });
+    ])
+    .build();
   private readonly delegate = delegateRegistryPlugin(this.plugin);
 
   routes = this.delegate.routes;
