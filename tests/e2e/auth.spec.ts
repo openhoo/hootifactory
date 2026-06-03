@@ -85,13 +85,19 @@ test.describe("authentication", () => {
 
     const throttled = await anon.post("/api/auth/login", {
       headers: { "x-forwarded-for": "203.0.113.250" },
-      data: { username: owner.username, password: owner.password },
+      data: { username: owner.username, password: "still-wrong" },
     });
     expect(throttled.status()).toBe(429);
     expect(throttled.headers()["retry-after"]).toMatch(/^\d+$/);
     expect(await throttled.json()).toEqual({
       error: "too many login attempts, try again later",
     });
+
+    const recovered = await anon.post("/api/auth/login", {
+      headers: { "x-forwarded-for": "203.0.113.251" },
+      data: { username: owner.username, password: owner.password },
+    });
+    expect(recovered.status()).toBe(200);
   });
 
   test("repeated failed basic auth attempts share the username throttle with login", async ({
@@ -109,18 +115,24 @@ test.describe("authentication", () => {
       expect(res.status()).toBe(401);
     }
 
-    const throttledBasic = Buffer.from(`${owner.username}:${owner.password}`).toString("base64");
+    const throttledBasic = Buffer.from(`${owner.username}:still-wrong`).toString("base64");
     const throttled = await anon.get("/api/me", {
       headers: { ...headers, authorization: `Basic ${throttledBasic}` },
     });
     expect(throttled.status()).toBe(429);
     expect(throttled.headers()["retry-after"]).toMatch(/^\d+$/);
 
+    const recoveredBasic = Buffer.from(`${owner.username}:${owner.password}`).toString("base64");
+    const recovered = await anon.get("/api/me", {
+      headers: { ...headers, authorization: `Basic ${recoveredBasic}` },
+    });
+    expect(recovered.status()).toBe(200);
+
     const login = await anon.post("/api/auth/login", {
       headers,
       data: { username: owner.username, password: owner.password },
     });
-    expect(login.status()).toBe(429);
+    expect(login.status()).toBe(200);
   });
 
   test("login missing fields -> 400", async ({ request }) => {

@@ -80,7 +80,7 @@ describe("auth throttle helpers", () => {
     await expect(
       authenticateUserPasswordWithThrottle(username, "wrong", "203.0.113.10", verify),
     ).resolves.toMatchObject({ kind: "throttled" });
-    expect(calls).toBe(5);
+    expect(calls).toBe(6);
   });
 
   test("throttles password verification across changing client addresses", async () => {
@@ -100,7 +100,39 @@ describe("auth throttle helpers", () => {
     await expect(
       authenticateUserPasswordWithThrottle(username, "wrong", "203.0.113.250", verify),
     ).resolves.toMatchObject({ kind: "throttled" });
-    expect(calls).toBe(5);
+    expect(calls).toBe(6);
+  });
+
+  test("successful password verification is not locked out by shared failures", async () => {
+    const username = `lockout-${randomUUID()}@example.test`;
+
+    for (let attempts = 1; attempts <= 5; attempts++) {
+      await expect(
+        authenticateUserPasswordWithThrottle(
+          username,
+          "wrong",
+          `203.0.113.${attempts}`,
+          async () => null,
+        ),
+      ).resolves.toMatchObject({ kind: "invalid", failure: { count: attempts } });
+    }
+
+    await expect(
+      authenticateUserPasswordWithThrottle(username, "right", "203.0.113.250", async () => ({
+        kind: "user",
+        userId: "user_1",
+        username,
+      })),
+    ).resolves.toMatchObject({ kind: "authenticated", principal: { username } });
+
+    await expect(
+      authenticateUserPasswordWithThrottle(
+        username,
+        "wrong-again",
+        "203.0.113.251",
+        async () => null,
+      ),
+    ).resolves.toMatchObject({ kind: "invalid", failure: { count: 1 } });
   });
 
   test("throttles password reset requests across changing client addresses", async () => {
