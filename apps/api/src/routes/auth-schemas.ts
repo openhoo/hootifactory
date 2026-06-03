@@ -53,3 +53,8 @@ export const OidcLinkMetadataSchema = z.strictObject({
 export const ConfirmLinkQuerySchema = z.strictObject({
   token: z.string().min(16).max(512),
 });
+
+export const ConfirmLinkBodySchema = z.strictObject({
+  token: z.string().min(16).max(512),
+  csrf: z.string().min(16).max(512),
+});

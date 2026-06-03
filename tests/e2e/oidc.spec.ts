@@ -1,7 +1,8 @@
+import { execFileSync } from "node:child_process";
 import { createSign, generateKeyPairSync } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { expect, test } from "@playwright/test";
-import { setupOwner } from "./helpers";
+import { anonContext, setupOwner } from "./helpers";
 
 const WEB = `http://127.0.0.1:${process.env.E2E_WEB_PORT ?? 5174}`;
 const OIDC_PORT = Number(process.env.E2E_OIDC_PORT ?? 4578);
@@ -9,6 +10,9 @@ const ISSUER = `http://127.0.0.1:${OIDC_PORT}`;
 const CLIENT_ID = "hootifactory-e2e";
 const CLIENT_SECRET = "e2e-secret";
 const ORG_SLUG = "oidc-e2e";
+const TEST_DATABASE_URL =
+  process.env.E2E_DATABASE_URL ??
+  "postgres://hootifactory:hootifactory@localhost:5432/hootifactory_test";
 
 function b64url(value: string | Buffer): string {
   return Buffer.from(value).toString("base64url");
@@ -18,6 +22,63 @@ async function body(req: IncomingMessage): Promise<string> {
   const chunks: Buffer[] = [];
   for await (const chunk of req) chunks.push(Buffer.from(chunk));
   return Buffer.concat(chunks).toString("utf8");
+}
+
+function createOidcLinkToken(input: {
+  userId: string;
+  email: string;
+  orgSlug: string;
+  returnTo: string;
+}): string {
+  const output = execFileSync(
+    "bun",
+    [
+      "-e",
+      [
+        'import { createAuthEmailToken } from "@hootifactory/auth";',
+        "const { secret } = await createAuthEmailToken({",
+        '  purpose: "oidc_link",',
+        "  userId: process.env.USER_ID,",
+        "  email: process.env.EMAIL,",
+        "  ttlSeconds: 300,",
+        "  metadata: {",
+        "    returnTo: process.env.RETURN_TO,",
+        "    claims: {",
+        '      issuer: "https://idp.example.test",',
+        "      subject: process.env.SUBJECT,",
+        "      email: process.env.EMAIL,",
+        "      emailVerified: true,",
+        '      username: "linked-e2e",',
+        '      displayName: "Linked E2E",',
+        '      groups: ["oidc-admins"],',
+        '      grants: [{ org: process.env.ORG_SLUG, role: "owner", groups: ["oidc-admins"] }],',
+        "    },",
+        "  },",
+        "});",
+        "console.log(JSON.stringify({ secret }));",
+      ].join("\n"),
+    ],
+    {
+      env: {
+        ...process.env,
+        DATABASE_URL: TEST_DATABASE_URL,
+        USER_ID: input.userId,
+        EMAIL: input.email,
+        ORG_SLUG: input.orgSlug,
+        RETURN_TO: input.returnTo,
+        SUBJECT: crypto.randomUUID(),
+      },
+      stdio: "pipe",
+      encoding: "utf8",
+    },
+  );
+  return (JSON.parse(output) as { secret: string }).secret;
+}
+
+function csrfFromConfirmationPage(html: string): string {
+  const csrf = html.match(/name="csrf" value="([^"]+)"/)?.[1];
+  if (!csrf) throw new Error("OIDC link confirmation page did not render a CSRF token");
+  return csrf;
 }
 
 class FakeOidcProvider {
@@ -139,6 +200,46 @@ class FakeOidcProvider {
 }
 
 test.describe("OIDC SSO", () => {
+  test("OIDC link confirmation only mutates state on signed POST", async ({ baseURL }) => {
+    const owner = await setupOwner(baseURL!);
+    const me = (await (await owner.ctx.get("/api/v1/me")).json()) as {
+      data: { principal: { userId: string } };
+    };
+    const token = createOidcLinkToken({
+      userId: me.data.principal.userId,
+      email: `${owner.username}@e2e.test`,
+      orgSlug: owner.orgSlug,
+      returnTo: "/api/v1/me",
+    });
+
+    const anon = await anonContext(baseURL!);
+    const page = await anon.get(`/api/auth/oidc/link/confirm?token=${encodeURIComponent(token)}`);
+    expect(page.status()).toBe(200);
+    const html = await page.text();
+    expect(html).toContain('method="post"');
+
+    const unauthenticated = await anon.get("/api/v1/me");
+    expect(unauthenticated.status()).toBe(401);
+
+    const csrf = csrfFromConfirmationPage(html);
+    const posted = await anon.post("/api/auth/oidc/link/confirm", {
+      form: { token, csrf },
+      maxRedirects: 0,
+    });
+    expect(posted.status()).toBe(302);
+    expect(posted.headers().location).toBe("/api/v1/me");
+
+    const linked = await anon.get("/api/v1/me");
+    expect(linked.status()).toBe(200);
+    const linkedBody = (await linked.json()) as {
+      data: { principal: { kind: string; userId: string } };
+    };
+    expect(linkedBody.data.principal).toMatchObject({
+      kind: "user",
+      userId: me.data.principal.userId,
+    });
+  });
+
   test("signs in through OIDC and grants mapped org access", async ({ baseURL, page }) => {
     const provider = new FakeOidcProvider();
     await provider.start();
