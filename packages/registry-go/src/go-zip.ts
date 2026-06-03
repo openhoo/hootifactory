@@ -109,11 +109,15 @@ function readEntryData(
   return bytes.subarray(dataStart, dataEnd);
 }
 
-function inflateEntryData(data: Uint8Array, method: number): Uint8Array | string {
-  if (method === 0) return data;
+function inflateEntryData(
+  data: Uint8Array,
+  method: number,
+  maxOutputLength: number,
+): Uint8Array | string {
+  if (method === 0) return data.byteLength <= maxOutputLength ? data : "zip entry is too large";
   if (method !== 8) return "zip entry uses an unsupported compression method";
   try {
-    return inflateRawSync(data);
+    return inflateRawSync(data, { maxOutputLength });
   } catch {
     return "zip entry cannot be inflated";
   }
@@ -152,8 +156,9 @@ export function validateGoModuleZip(
     if (foldedNames.has(folded)) return "zip contains case-insensitive path collision";
     foldedNames.add(folded);
 
-    totalUncompressed += entry.uncompressedSize;
-    if (totalUncompressed > MAX_ZIP_CONTENT_BYTES) return "zip contents are too large";
+    if (entry.uncompressedSize > MAX_ZIP_CONTENT_BYTES - totalUncompressed) {
+      return "zip contents are too large";
+    }
 
     const relative = entry.name.slice(prefix.length);
     const basename = relative.split("/").at(-1) ?? "";
@@ -170,11 +175,16 @@ export function validateGoModuleZip(
 
     const data = readEntryData(bytes, view, entry, decoder);
     if (typeof data === "string") return data;
-    const inflated = inflateEntryData(data, entry.method);
+    const inflated = inflateEntryData(
+      data,
+      entry.method,
+      Math.min(entry.uncompressedSize + 1, MAX_ZIP_CONTENT_BYTES - totalUncompressed + 1),
+    );
     if (typeof inflated === "string") return inflated;
     if (inflated.byteLength !== entry.uncompressedSize) {
       return "zip entry size does not match header";
     }
+    totalUncompressed += inflated.byteLength;
     pos = entry.nextPos;
   }
   if (pos > centralOffset + centralSize) return "zip central directory exceeds declared size";
@@ -200,9 +210,14 @@ export function readZipEntryText(bytes: Uint8Array, entryName: string): string |
     if (entry.name === entryName) {
       const data = readEntryData(bytes, view, entry, decoder);
       if (typeof data === "string") return null;
-      const inflated = inflateEntryData(data, entry.method);
+      const inflated = inflateEntryData(
+        data,
+        entry.method,
+        Math.min(entry.uncompressedSize + 1, MAX_GO_MOD_BYTES + 1),
+      );
       if (typeof inflated === "string") return null;
       if (inflated.byteLength !== entry.uncompressedSize) return null;
+      if (inflated.byteLength > MAX_GO_MOD_BYTES) return null;
       return decoder.decode(inflated);
     }
     pos = entry.nextPos;

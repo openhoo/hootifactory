@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { deflateRawSync } from "node:zlib";
 import { decodeModuleDirective, readZipEntryText, validateGoModuleZip } from "./go-zip";
 
 function u16(value: number): number[] {
@@ -11,7 +12,7 @@ function u32(value: number): number[] {
 
 interface ZipEntryInput {
   name: string;
-  data: string;
+  data: string | Uint8Array;
   method?: number;
   declaredCompressedSize?: number;
   declaredUncompressedSize?: number;
@@ -27,7 +28,7 @@ function makeStoredZip(entries: Record<string, string> | ZipEntryInput[]): Uint8
   for (const entry of normalized) {
     const localName = new TextEncoder().encode(entry.localName ?? entry.name);
     const centralName = new TextEncoder().encode(entry.name);
-    const data = new TextEncoder().encode(entry.data);
+    const data = typeof entry.data === "string" ? new TextEncoder().encode(entry.data) : entry.data;
     const method = entry.method ?? 0;
     const compressedSize = entry.declaredCompressedSize ?? data.byteLength;
     const uncompressedSize = entry.declaredUncompressedSize ?? data.byteLength;
@@ -170,6 +171,39 @@ describe("Go module zip helpers", () => {
         "v1.2.3",
       ),
     ).toBe("zip entry size does not match header");
+  });
+
+  test("bounds deflated zip entries by declared and cumulative sizes", () => {
+    const bomb = deflateRawSync(Buffer.alloc(1024 * 1024));
+    expect(
+      validateGoModuleZip(
+        makeStoredZip([
+          { name: "example.com/hoot@v1.2.3/go.mod", data: "module example.com/hoot\n" },
+          {
+            name: "example.com/hoot@v1.2.3/bomb.bin",
+            data: bomb,
+            method: 8,
+            declaredUncompressedSize: 1,
+          },
+        ]),
+        "example.com/hoot",
+        "v1.2.3",
+      ),
+    ).toBe("zip entry cannot be inflated");
+
+    expect(
+      readZipEntryText(
+        makeStoredZip([
+          {
+            name: "example.com/hoot@v1.2.3/go.mod",
+            data: bomb,
+            method: 8,
+            declaredUncompressedSize: 1,
+          },
+        ]),
+        "example.com/hoot@v1.2.3/go.mod",
+      ),
+    ).toBeNull();
   });
 
   test("rejects case-fold collisions and nested go.mod files", () => {
