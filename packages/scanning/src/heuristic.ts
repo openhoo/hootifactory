@@ -34,6 +34,8 @@ export const ADVISORIES: Record<string, Advisory> = {
 
 // Standard antivirus test signature (ClamAV/heuristic detect it).
 const EICAR = "X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*";
+const EICAR_BYTES = new TextEncoder().encode(EICAR);
+const EICAR_PREFIX_TABLE = bytePrefixTable(EICAR_BYTES);
 
 /** Heuristic dependency scan against the built-in advisory DB. */
 export function scanDependencies(deps: Record<string, string> | undefined): NormalizedFinding[] {
@@ -56,10 +58,9 @@ export function scanDependencies(deps: Record<string, string> | undefined): Norm
   return out;
 }
 
-/** Heuristic malware scan (EICAR signature) over the first chunk of bytes. */
+/** Heuristic malware scan (EICAR signature) over the full artifact bytes. */
 export function scanForMalware(bytes: Uint8Array): NormalizedFinding[] {
-  const head = new TextDecoder().decode(bytes.subarray(0, 8192));
-  if (head.includes(EICAR)) {
+  if (includesBytes(bytes, EICAR_BYTES, EICAR_PREFIX_TABLE)) {
     return [
       {
         type: "malware",
@@ -70,4 +71,36 @@ export function scanForMalware(bytes: Uint8Array): NormalizedFinding[] {
     ];
   }
   return [];
+}
+
+function bytePrefixTable(needle: Uint8Array): Uint16Array {
+  const table = new Uint16Array(needle.length);
+  let matched = 0;
+  for (let i = 1; i < needle.length; i++) {
+    while (matched > 0 && needle[i] !== needle[matched]) {
+      matched = table[matched - 1] ?? 0;
+    }
+    if (needle[i] === needle[matched]) matched += 1;
+    table[i] = matched;
+  }
+  return table;
+}
+
+function includesBytes(
+  haystack: Uint8Array,
+  needle: Uint8Array,
+  prefixTable: Uint16Array,
+): boolean {
+  if (needle.length === 0) return true;
+  let matched = 0;
+  for (const byte of haystack) {
+    while (matched > 0 && byte !== needle[matched]) {
+      matched = prefixTable[matched - 1] ?? 0;
+    }
+    if (byte === needle[matched]) {
+      matched += 1;
+      if (matched === needle.length) return true;
+    }
+  }
+  return false;
 }

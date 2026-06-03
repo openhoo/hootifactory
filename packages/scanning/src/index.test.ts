@@ -43,6 +43,21 @@ describe("heuristic scanning", () => {
     expect(scanForMalware(new TextEncoder().encode("plain package bytes"))).toEqual([]);
   });
 
+  test("detects the EICAR malware signature after the old 8 KiB scan window", () => {
+    const signature = new TextEncoder().encode(EICAR);
+    const bytes = new Uint8Array(8192 + signature.length);
+    bytes.set(signature, 8192);
+
+    expect(scanForMalware(bytes)).toEqual([
+      {
+        type: "malware",
+        severity: "critical",
+        vulnId: "EICAR-TEST",
+        title: "EICAR antivirus test signature detected",
+      },
+    ]);
+  });
+
   test("maps OSV batch matches and strips common semver range prefixes", async () => {
     const originalFetch = globalThis.fetch;
     const calls: Parameters<typeof fetch>[] = [];
