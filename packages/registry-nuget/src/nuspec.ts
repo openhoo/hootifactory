@@ -16,6 +16,28 @@ const u32 = (b: Uint8Array, o: number): number =>
 
 const MAX_NUSPEC_TAG_CHARS = 16 * 1024;
 const MAX_NUSPEC_DEPENDENCIES = 512;
+const MAX_NUSPEC_BYTES = 1024 * 1024;
+
+function inflateNuspecData(
+  data: Uint8Array,
+  method: number,
+  expectedBytes: number,
+): Uint8Array | null {
+  if (expectedBytes > MAX_NUSPEC_BYTES) return null;
+  if (method === 0) {
+    if (data.byteLength > MAX_NUSPEC_BYTES || data.byteLength !== expectedBytes) return null;
+    return data;
+  }
+  if (method !== 8) return null;
+  try {
+    const raw = inflateRawSync(data, {
+      maxOutputLength: Math.min(expectedBytes + 1, MAX_NUSPEC_BYTES + 1),
+    });
+    return raw.byteLength === expectedBytes && raw.byteLength <= MAX_NUSPEC_BYTES ? raw : null;
+  } catch {
+    return null;
+  }
+}
 
 function readNuspecXml(zip: Uint8Array): string | null {
   // Locate the End Of Central Directory record (scan back; comment ≤ 0xffff).
@@ -34,22 +56,22 @@ function readNuspecXml(zip: Uint8Array): string | null {
     if (u32(zip, p) !== 0x02014b50) break;
     const method = u16(zip, p + 10);
     const compSize = u32(zip, p + 20);
+    const uncompSize = u32(zip, p + 24);
     const nameLen = u16(zip, p + 28);
     const extraLen = u16(zip, p + 30);
     const commentLen = u16(zip, p + 32);
     const localOff = u32(zip, p + 42);
+    if (compSize > MAX_NUSPEC_BYTES || uncompSize > MAX_NUSPEC_BYTES) return null;
+    if (p + 46 + nameLen + extraLen + commentLen > zip.byteLength) return null;
     const name = new TextDecoder().decode(zip.subarray(p + 46, p + 46 + nameLen));
     p += 46 + nameLen + extraLen + commentLen;
     if (!/^[^/]+\.nuspec$/i.test(name)) continue; // root-level *.nuspec only
     if (u32(zip, localOff) !== 0x04034b50) return null;
     const dataStart = localOff + 30 + u16(zip, localOff + 26) + u16(zip, localOff + 28);
+    if (dataStart > zip.byteLength || dataStart + compSize > zip.byteLength) return null;
     const data = zip.subarray(dataStart, dataStart + compSize);
-    try {
-      const raw = method === 0 ? data : inflateRawSync(data);
-      return new TextDecoder().decode(raw);
-    } catch {
-      return null;
-    }
+    const raw = inflateNuspecData(data, method, uncompSize);
+    return raw ? new TextDecoder().decode(raw) : null;
   }
   return null;
 }

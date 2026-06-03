@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { deflateRawSync } from "node:zlib";
 import { extractNuspecMeta } from "./nuspec";
 
 function u16(value: number): number[] {
@@ -9,19 +10,30 @@ function u32(value: number): number[] {
   return [value & 0xff, (value >> 8) & 0xff, (value >> 16) & 0xff, (value >> 24) & 0xff];
 }
 
-function makeStoredZip(filename: string, content: string): Uint8Array {
+function makeStoredZip(
+  filename: string,
+  content: string | Uint8Array,
+  options: {
+    method?: number;
+    declaredCompressedSize?: number;
+    declaredUncompressedSize?: number;
+  } = {},
+): Uint8Array {
   const name = new TextEncoder().encode(filename);
-  const data = new TextEncoder().encode(content);
+  const data = typeof content === "string" ? new TextEncoder().encode(content) : content;
+  const method = options.method ?? 0;
+  const compressedSize = options.declaredCompressedSize ?? data.byteLength;
+  const uncompressedSize = options.declaredUncompressedSize ?? data.byteLength;
   const local = [
     ...u32(0x04034b50),
     ...u16(20),
     ...u16(0),
-    ...u16(0),
+    ...u16(method),
     ...u16(0),
     ...u16(0),
     ...u32(0),
-    ...u32(data.byteLength),
-    ...u32(data.byteLength),
+    ...u32(compressedSize),
+    ...u32(uncompressedSize),
     ...u16(name.byteLength),
     ...u16(0),
     ...name,
@@ -33,12 +45,12 @@ function makeStoredZip(filename: string, content: string): Uint8Array {
     ...u16(20),
     ...u16(20),
     ...u16(0),
-    ...u16(0),
+    ...u16(method),
     ...u16(0),
     ...u16(0),
     ...u32(0),
-    ...u32(data.byteLength),
-    ...u32(data.byteLength),
+    ...u32(compressedSize),
+    ...u32(uncompressedSize),
     ...u16(name.byteLength),
     ...u16(0),
     ...u16(0),
@@ -109,6 +121,35 @@ describe("NuGet nuspec extraction", () => {
         },
       ],
     });
+  });
+
+  test("extracts compressed nuspec metadata with bounded inflation", () => {
+    const xml =
+      "<package><metadata><id>Example.Lib</id><version>1.2.3</version></metadata></package>";
+    const encoded = new TextEncoder().encode(xml);
+    const nupkg = makeStoredZip("Example.nuspec", deflateRawSync(encoded), {
+      method: 8,
+      declaredUncompressedSize: encoded.byteLength,
+    });
+
+    expect(extractNuspecMeta(nupkg)).toEqual({
+      id: "Example.Lib",
+      version: "1.2.3",
+      dependencyGroups: [],
+    });
+  });
+
+  test("rejects compressed nuspec entries that exceed declared output size", () => {
+    const bomb = deflateRawSync(Buffer.alloc(2 * 1024 * 1024));
+
+    expect(
+      extractNuspecMeta(
+        makeStoredZip("Example.nuspec", bomb, {
+          method: 8,
+          declaredUncompressedSize: 1,
+        }),
+      ),
+    ).toBeNull();
   });
 
   test("handles malformed dependency tags without quadratic scans", () => {
