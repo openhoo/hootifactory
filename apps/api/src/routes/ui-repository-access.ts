@@ -1,11 +1,12 @@
 import { type Action, authorize, type Principal } from "@hootifactory/auth";
-import { db, eq, repositories } from "@hootifactory/db";
+import type { ResolvedRepo } from "@hootifactory/registry";
+import { getRepositoryById } from "@hootifactory/registry-application";
 import type { Context } from "hono";
 import type { AppEnv } from "../types";
 import { uuidParams, validateParams } from "../validation";
 import { denied } from "./http";
 
-export type RepositoryRow = typeof repositories.$inferSelect;
+export type RepositoryRow = ResolvedRepo;
 
 type GuardResult = { ok: true; repo: RepositoryRow } | { ok: false; response: Response };
 
@@ -38,7 +39,7 @@ async function requireRepositoryAccess(
   repoId: string,
   action: Action,
 ): Promise<GuardResult> {
-  const [repo] = await db.select().from(repositories).where(eq(repositories.id, repoId)).limit(1);
+  const repo = await getRepositoryById(repoId);
   if (!repo) return { ok: false, response: c.json({ error: "repository not found" }, 404) };
   const response = await authorizeRepository(c, action, repo);
   if (response) return { ok: false, response };

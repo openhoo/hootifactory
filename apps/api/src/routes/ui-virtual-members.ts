@@ -21,7 +21,7 @@ export function validateVirtualMemberParent(parent: VirtualMemberRepo): Validati
 
 export function validateVirtualMemberCandidate<T extends VirtualMemberRepo>(
   parent: VirtualMemberRepo,
-  member: T | undefined,
+  member: T | null | undefined,
 ): CandidateValidationResult<T> {
   if (!member) return { ok: false, status: 404, error: "member repository not found" };
   if (member.id === parent.id) {

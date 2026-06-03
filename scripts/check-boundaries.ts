@@ -102,10 +102,30 @@ const rules: BoundaryRule[] = [
       "packages/registry-npm/package.json",
       "packages/registry-nuget/src",
       "packages/registry-nuget/package.json",
+      "packages/registry-oci/src",
+      "packages/registry-oci/package.json",
       "packages/registry-pypi/src",
       "packages/registry-pypi/package.json",
     ],
     forbidden: [/@hootifactory\/db\b/, /\bctx\.db\b/],
+  },
+  {
+    name: "repository configuration route slice stays DB-free",
+    roots: [
+      "apps/api/src/routes/ui-repository-access.ts",
+      "apps/api/src/routes/ui-repository-config.ts",
+      "apps/api/src/routes/api-v1-repository-config-routes.ts",
+    ],
+    forbidden: [/@hootifactory\/db\b/, /\bdb\./],
+  },
+  {
+    name: "content inventory route slice stays DB-free",
+    roots: [
+      "apps/api/src/routes/ui-content.ts",
+      "apps/api/src/routes/ui-artifact-routes.ts",
+      "apps/api/src/routes/api-v1-content-routes.ts",
+    ],
+    forbidden: [/@hootifactory\/db\b/, /\bdb\./],
   },
   {
     name: "registry protocol plugins avoid delivery and platform infrastructure",

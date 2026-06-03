@@ -1,6 +1,15 @@
 import { authorize, type Decision, httpStatusForDenial, type Principal } from "@hootifactory/auth";
 import { z, zodIssueTree } from "@hootifactory/core";
-import { type apiTokens, artifacts, db, eq, packages, repositories } from "@hootifactory/db";
+import type { apiTokens } from "@hootifactory/db";
+import type { ResolvedRepo } from "@hootifactory/registry";
+import {
+  type ArtifactWithRepositoryRow,
+  getArtifactWithRepository,
+  getPackageWithRepository,
+  getRepositoryById,
+  listRepositoriesForOrg,
+  type PackageWithRepositoryRow,
+} from "@hootifactory/registry-application";
 import type { Context } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { describeRoute } from "hono-openapi";
@@ -104,13 +113,12 @@ export async function requireOrg(c: Context<AppEnv>, orgId: string, action: ApiV
 }
 
 export async function repositoryById(repoId: string) {
-  const [repo] = await db.select().from(repositories).where(eq(repositories.id, repoId)).limit(1);
-  return repo;
+  return getRepositoryById(repoId);
 }
 
 export async function authorizeRepository(
   c: Context<AppEnv>,
-  repo: typeof repositories.$inferSelect,
+  repo: ResolvedRepo,
   action: ApiV1Action,
 ) {
   const decision = await authorize(c.get("principal"), action, {
@@ -128,9 +136,7 @@ export async function requireRepository(
   c: Context<AppEnv>,
   repoId: string,
   action: ApiV1Action,
-): Promise<
-  { ok: true; repo: typeof repositories.$inferSelect } | { ok: false; response: Response }
-> {
+): Promise<{ ok: true; repo: ResolvedRepo } | { ok: false; response: Response }> {
   const repo = await repositoryById(repoId);
   if (!repo)
     return { ok: false, response: errorResponse(c, 404, "NOT_FOUND", "repository not found") };
@@ -140,18 +146,12 @@ export async function requireRepository(
 }
 
 export async function packageWithRepository(packageId: string) {
-  const [row] = await db
-    .select({ pkg: packages, repo: repositories })
-    .from(packages)
-    .innerJoin(repositories, eq(packages.repositoryId, repositories.id))
-    .where(eq(packages.id, packageId))
-    .limit(1);
-  return row;
+  return getPackageWithRepository(packageId);
 }
 
 export async function authorizePackage(
   c: Context<AppEnv>,
-  row: { pkg: typeof packages.$inferSelect; repo: typeof repositories.$inferSelect },
+  row: PackageWithRepositoryRow,
   action: ApiV1Action,
 ) {
   const decision = await authorize(c.get("principal"), action, {
@@ -167,18 +167,12 @@ export async function authorizePackage(
 }
 
 export async function artifactWithRepository(artifactId: string) {
-  const [row] = await db
-    .select({ art: artifacts, repo: repositories })
-    .from(artifacts)
-    .innerJoin(repositories, eq(artifacts.repositoryId, repositories.id))
-    .where(eq(artifacts.id, artifactId))
-    .limit(1);
-  return row;
+  return getArtifactWithRepository(artifactId);
 }
 
 export async function authorizeArtifact(
   c: Context<AppEnv>,
-  row: { art: typeof artifacts.$inferSelect; repo: typeof repositories.$inferSelect },
+  row: ArtifactWithRepositoryRow,
   action: ApiV1Action,
 ) {
   const decision = await authorize(c.get("principal"), action, {
@@ -199,7 +193,7 @@ export async function authorizePolicy(
     orgId: string;
     policy: "scan" | "quota" | "retention";
     action: ApiV1Action;
-    repo?: typeof repositories.$inferSelect;
+    repo?: ResolvedRepo;
   },
 ) {
   const decision = await authorize(c.get("principal"), input.action, {
@@ -232,7 +226,7 @@ export async function tokenResource(
 }
 
 export async function listAccessibleRepositories(orgId: string, c: Context<AppEnv>) {
-  const rows = await db.select().from(repositories).where(eq(repositories.orgId, orgId));
+  const rows = await listRepositoriesForOrg(orgId);
   const accessible = [];
   for (const repo of rows) {
     const response = await authorizeRepository(c, repo, "read");

@@ -1,6 +1,9 @@
 import { authorize } from "@hootifactory/auth";
-import { db, eq, repositories } from "@hootifactory/db";
-import { addUpstream, addVirtualMember } from "@hootifactory/registry-application";
+import {
+  addUpstream,
+  addVirtualMember,
+  getRepositoryById,
+} from "@hootifactory/registry-application";
 import type { Hono } from "hono";
 import type { AppEnv } from "../types";
 import { validateJsonBody } from "../validation";
@@ -22,11 +25,7 @@ export function registerRepositoryConfigRoutes(router: Hono<AppEnv>): void {
     if (!parsedBody.ok) return parsedBody.response;
     const body = parsedBody.data;
 
-    const [memberCandidate] = await db
-      .select()
-      .from(repositories)
-      .where(eq(repositories.id, body.memberRepoId))
-      .limit(1);
+    const memberCandidate = await getRepositoryById(body.memberRepoId);
     const memberValidation = validateVirtualMemberCandidate(guard.repo, memberCandidate);
     if (!memberValidation.ok) {
       return c.json({ error: memberValidation.error }, memberValidation.status);

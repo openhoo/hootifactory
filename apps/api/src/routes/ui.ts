@@ -1,7 +1,7 @@
 import { env } from "@hootifactory/config";
 import { isUniqueViolation } from "@hootifactory/core";
-import { db, eq, memberships, organizations, repositories } from "@hootifactory/db";
-import { createRepository } from "@hootifactory/registry-application";
+import { db, eq, memberships, organizations } from "@hootifactory/db";
+import { createRepository, listRepositoriesForOrg } from "@hootifactory/registry-application";
 import { Hono } from "hono";
 import type { AppEnv } from "../types";
 import { uuidParams, validateJsonBody, validateParams } from "../validation";
@@ -71,7 +71,7 @@ uiRouter.get("/orgs/:orgId/repositories", async (c) => {
   const { orgId } = parsedParams.data;
   const denied = await requireOrgAccess(c, orgId, "read");
   if (denied) return denied;
-  const rows = await db.select().from(repositories).where(eq(repositories.orgId, orgId));
+  const rows = await listRepositoriesForOrg(orgId);
   return c.json({ repositories: rows.map(repositoryDto) });
 });
 

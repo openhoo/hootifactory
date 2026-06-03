@@ -1,16 +1,4 @@
 import {
-  and,
-  blobRefs,
-  eq,
-  inArray,
-  isNull,
-  ociManifests,
-  ociTags,
-  packages,
-  packageVersions,
-  sql,
-} from "@hootifactory/db";
-import {
   Errors,
   type HttpMethod,
   type Permission,
@@ -21,11 +9,23 @@ import {
   type RouteMatch,
 } from "@hootifactory/registry";
 import {
+  deleteOciManifestIfUnassociated,
+  deleteOciTag,
+  deleteOciTagsForManifest,
   findOrCreatePackage,
   findPackageByName,
   isArtifactBlocked,
+  listExistingOciBlobRefDigests,
+  listLiveOciManifestsForPackage,
+  listOciSubjectManifests,
+  listOciTags,
+  markOciPackageVersionsDeletedByDigest,
+  ociBlobRefExists,
   REGISTRY_TOKEN_SERVICE,
   releaseBlobRef,
+  resolveOciManifest,
+  upsertOciManifest,
+  upsertOciTag,
   upsertPackageVersion,
 } from "@hootifactory/registry-application";
 import { buildOciBlobResponse } from "./oci-blobs";
@@ -51,15 +51,6 @@ const UPLOAD_CONTROL_HANDLERS = new Set([
   "putUpload",
   "cancelUpload",
 ]);
-
-function packageVersionDigestEquals(digest: string) {
-  return sql`jsonb_extract_path_text((${packageVersions.metadata} #>> '{}')::jsonb, ${"digest"}) = ${digest}`;
-}
-
-type OciDigestRow = { digest: string };
-type OciManifestMetadataRow = { metadata: unknown };
-type OciManifestRow = { digest: string; raw: string };
-type OciTagRow = { tag: string };
 
 export class DockerAdapter implements RegistryPlugin {
   readonly format = "docker" as const;
@@ -179,17 +170,11 @@ export class DockerAdapter implements RegistryPlugin {
 
     // Reject an image manifest that references blobs not yet uploaded to this repo.
     if (referencedBlobs.length > 0) {
-      const present = (await ctx.db
-        .select({ digest: blobRefs.digest })
-        .from(blobRefs)
-        .where(
-          and(
-            eq(blobRefs.repositoryId, ctx.repo.id),
-            eq(blobRefs.scope, image),
-            inArray(blobRefs.digest, referencedBlobs),
-          ),
-        )) as OciDigestRow[];
-      const have = new Set(present.map((r) => r.digest));
+      const present = await listExistingOciBlobRefDigests(ctx, {
+        scope: image,
+        digests: referencedBlobs,
+      });
+      const have = new Set(present);
       const missing = referencedBlobs.filter((d) => !have.has(d));
       if (missing.length > 0) throw Errors.manifestBlobUnknown({ missing });
     }
@@ -209,48 +194,22 @@ export class DockerAdapter implements RegistryPlugin {
       if (missing.length > 0) throw Errors.manifestBlobUnknown({ missing });
     }
 
-    const [manifest] = await ctx.db
-      .insert(ociManifests)
-      .values({
-        repositoryId: ctx.repo.id,
-        digest,
-        mediaType,
-        artifactType: typeof parsed.artifactType === "string" ? parsed.artifactType : null,
-        subjectDigest,
-        raw,
-        sizeBytes: bytes.length,
-        configDigest: config?.digest ?? null,
-      })
-      .onConflictDoUpdate({
-        target: [ociManifests.repositoryId, ociManifests.digest],
-        set: {
-          raw,
-          mediaType,
-          artifactType: typeof parsed.artifactType === "string" ? parsed.artifactType : null,
-          sizeBytes: bytes.length,
-          subjectDigest,
-          configDigest: config?.digest ?? null,
-        },
-      })
-      .returning({ id: ociManifests.id });
+    const manifest = await upsertOciManifest(ctx, {
+      digest,
+      mediaType,
+      artifactType: typeof parsed.artifactType === "string" ? parsed.artifactType : null,
+      subjectDigest,
+      raw,
+      sizeBytes: bytes.length,
+      configDigest: config?.digest ?? null,
+    });
 
     // Tag (mutable pointer) + a UI-visible version when reference is not a digest.
     // Digest-addressed pushes still record the image->digest ownership so a
     // scoped token for another image cannot later fetch the manifest by digest.
     if (acceptedTags.length > 0) {
       for (const tag of acceptedTags) {
-        await ctx.db
-          .insert(ociTags)
-          .values({
-            repositoryId: ctx.repo.id,
-            packageId: pkg.id,
-            tag,
-            manifestId: manifest!.id,
-          })
-          .onConflictDoUpdate({
-            target: [ociTags.packageId, ociTags.tag],
-            set: { manifestId: manifest!.id },
-          });
+        await upsertOciTag(ctx, { packageId: pkg.id, tag, manifestId: manifest.id });
         await upsertPackageVersion(ctx, {
           packageId: pkg.id,
           version: tag,
@@ -291,48 +250,7 @@ export class DockerAdapter implements RegistryPlugin {
   private async resolveManifest(image: string, reference: string, ctx: RegistryRequestContext) {
     const pkg = await findPackageByName(ctx, image);
     if (!pkg) return null;
-
-    if (reference.startsWith("sha256:")) {
-      const [tagged] = await ctx.db
-        .select({ manifest: ociManifests })
-        .from(ociTags)
-        .innerJoin(ociManifests, eq(ociTags.manifestId, ociManifests.id))
-        .where(and(eq(ociTags.packageId, pkg.id), eq(ociManifests.digest, reference)))
-        .limit(1);
-      if (tagged) return tagged.manifest;
-
-      const [digestVersion] = await ctx.db
-        .select({ id: packageVersions.id })
-        .from(packageVersions)
-        .where(
-          and(
-            eq(packageVersions.packageId, pkg.id),
-            eq(packageVersions.version, reference),
-            isNull(packageVersions.deletedAt),
-          ),
-        )
-        .limit(1);
-      if (!digestVersion) return null;
-
-      const [m] = await ctx.db
-        .select()
-        .from(ociManifests)
-        .where(and(eq(ociManifests.repositoryId, ctx.repo.id), eq(ociManifests.digest, reference)))
-        .limit(1);
-      return m ?? null;
-    }
-    const [tag] = await ctx.db
-      .select({ manifestId: ociTags.manifestId })
-      .from(ociTags)
-      .where(and(eq(ociTags.packageId, pkg.id), eq(ociTags.tag, reference)))
-      .limit(1);
-    if (!tag) return null;
-    const [m] = await ctx.db
-      .select()
-      .from(ociManifests)
-      .where(eq(ociManifests.id, tag.manifestId))
-      .limit(1);
-    return m ?? null;
+    return resolveOciManifest(ctx, { packageId: pkg.id, reference });
   }
 
   private async getManifest(
@@ -369,37 +287,16 @@ export class DockerAdapter implements RegistryPlugin {
       const pkg = await findPackageByName(ctx, image);
       if (!pkg) throw Errors.manifestUnknown({ reference });
 
-      await ctx.db
-        .delete(ociTags)
-        .where(and(eq(ociTags.packageId, pkg.id), eq(ociTags.manifestId, scoped.id)));
-      await ctx.db
-        .update(packageVersions)
-        .set({ deletedAt: new Date() })
-        .where(
-          and(
-            eq(packageVersions.packageId, pkg.id),
-            isNull(packageVersions.deletedAt),
-            packageVersionDigestEquals(reference),
-          ),
-        );
-
-      if (!(await this.manifestHasLiveAssociations(ctx, scoped.id, reference))) {
-        await ctx.db
-          .delete(ociManifests)
-          .where(
-            and(eq(ociManifests.repositoryId, ctx.repo.id), eq(ociManifests.digest, reference)),
-          );
-      }
+      await deleteOciTagsForManifest(ctx, { packageId: pkg.id, manifestId: scoped.id });
+      await markOciPackageVersionsDeletedByDigest(ctx, { packageId: pkg.id, digest: reference });
+      await deleteOciManifestIfUnassociated(ctx, { manifestId: scoped.id, digest: reference });
       await this.releaseManifestBlobs(ctx, image, manifestBlobDigests(scoped.raw));
     } else {
       // Tag delete only removes the mutable pointer; the manifest + its blobs remain.
       const pkg = await findPackageByName(ctx, image);
       if (!pkg) throw Errors.manifestUnknown({ reference });
-      const deleted = await ctx.db
-        .delete(ociTags)
-        .where(and(eq(ociTags.packageId, pkg.id), eq(ociTags.tag, reference)))
-        .returning({ id: ociTags.id });
-      if (deleted.length === 0) throw Errors.manifestUnknown({ reference });
+      const deleted = await deleteOciTag(ctx, { packageId: pkg.id, tag: reference });
+      if (!deleted) throw Errors.manifestUnknown({ reference });
     }
     return new Response(null, { status: 202 });
   }
@@ -426,56 +323,7 @@ export class DockerAdapter implements RegistryPlugin {
   ): Promise<{ digest: string; raw: string }[]> {
     const pkg = await findPackageByName(ctx, image);
     if (!pkg) return [];
-
-    const tagRows = (await ctx.db
-      .select({ digest: ociManifests.digest })
-      .from(ociTags)
-      .innerJoin(ociManifests, eq(ociTags.manifestId, ociManifests.id))
-      .where(eq(ociTags.packageId, pkg.id))) as OciDigestRow[];
-    const versionRows = (await ctx.db
-      .select({ metadata: packageVersions.metadata })
-      .from(packageVersions)
-      .where(
-        and(eq(packageVersions.packageId, pkg.id), isNull(packageVersions.deletedAt)),
-      )) as OciManifestMetadataRow[];
-    const digests = new Set(tagRows.map((r) => r.digest));
-    for (const row of versionRows) {
-      const digest = (row.metadata as { digest?: unknown }).digest;
-      if (typeof digest === "string") digests.add(digest);
-    }
-    if (digests.size === 0) return [];
-    return ctx.db
-      .select({ digest: ociManifests.digest, raw: ociManifests.raw })
-      .from(ociManifests)
-      .where(
-        and(eq(ociManifests.repositoryId, ctx.repo.id), inArray(ociManifests.digest, [...digests])),
-      ) as Promise<OciManifestRow[]>;
-  }
-
-  private async manifestHasLiveAssociations(
-    ctx: RegistryRequestContext,
-    manifestId: string,
-    digest: string,
-  ): Promise<boolean> {
-    const [tag] = await ctx.db
-      .select({ id: ociTags.id })
-      .from(ociTags)
-      .where(eq(ociTags.manifestId, manifestId))
-      .limit(1);
-    if (tag) return true;
-    const [version] = await ctx.db
-      .select({ id: packageVersions.id })
-      .from(packageVersions)
-      .innerJoin(packages, eq(packageVersions.packageId, packages.id))
-      .where(
-        and(
-          eq(packages.repositoryId, ctx.repo.id),
-          isNull(packageVersions.deletedAt),
-          packageVersionDigestEquals(digest),
-        ),
-      )
-      .limit(1);
-    return Boolean(version);
+    return listLiveOciManifestsForPackage(ctx, pkg.id);
   }
 
   // ── tags ───────────────────────────────────────────────────────────────
@@ -486,16 +334,13 @@ export class DockerAdapter implements RegistryPlugin {
   ): Promise<Response> {
     const pkg = await findPackageByName(ctx, image);
     if (!pkg) throw Errors.nameUnknown({ image });
-    const rows = (await ctx.db
-      .select({ tag: ociTags.tag })
-      .from(ociTags)
-      .where(eq(ociTags.packageId, pkg.id))) as OciTagRow[];
+    const tags = await listOciTags(ctx, pkg.id);
     return buildOciTagsListResponse({
       baseUrl: ctx.baseUrl,
       mountPath: ctx.repo.mountPath,
       image,
       name: this.fullName(ctx, image),
-      tags: rows.map((r) => r.tag),
+      tags,
       url: req.url,
     });
   }
@@ -512,12 +357,7 @@ export class DockerAdapter implements RegistryPlugin {
       message: "invalid subject digest",
     });
     const { artifactType: artifactTypeFilter } = parseOciReferrersQuery(req.url);
-    const rows = await ctx.db
-      .select()
-      .from(ociManifests)
-      .where(
-        and(eq(ociManifests.repositoryId, ctx.repo.id), eq(ociManifests.subjectDigest, digest)),
-      );
+    const rows = await listOciSubjectManifests(ctx, digest);
     const manifests = [];
     for (const m of rows) {
       if (!(await this.resolveManifest(image, m.digest, ctx))) continue;
@@ -540,18 +380,8 @@ export class DockerAdapter implements RegistryPlugin {
       code: "DIGEST_INVALID",
       message: "invalid blob digest",
     });
-    const [ref] = await ctx.db
-      .select({ id: blobRefs.id })
-      .from(blobRefs)
-      .where(
-        and(
-          eq(blobRefs.repositoryId, ctx.repo.id),
-          eq(blobRefs.scope, image),
-          eq(blobRefs.digest, digest),
-        ),
-      )
-      .limit(1);
-    if (!ref) throw Errors.blobUnknown({ digest });
+    if (!(await ociBlobRefExists(ctx, { scope: image, digest })))
+      throw Errors.blobUnknown({ digest });
     // Defense-in-depth: a layer reachable only through blocked manifests is blocked too.
     if (await this.isBlobBlocked(ctx, image, digest)) {
       throw Errors.denied({ reason: "blocked by scan policy" });
@@ -577,18 +407,8 @@ export class DockerAdapter implements RegistryPlugin {
       code: "DIGEST_INVALID",
       message: "invalid blob digest",
     });
-    const [ref] = await ctx.db
-      .select({ id: blobRefs.id })
-      .from(blobRefs)
-      .where(
-        and(
-          eq(blobRefs.repositoryId, ctx.repo.id),
-          eq(blobRefs.scope, image),
-          eq(blobRefs.digest, digest),
-        ),
-      )
-      .limit(1);
-    if (!ref) throw Errors.blobUnknown({ digest });
+    if (!(await ociBlobRefExists(ctx, { scope: image, digest })))
+      throw Errors.blobUnknown({ digest });
     await releaseBlobRef(ctx, { digest, kind: "oci_layer", scope: image });
     return new Response(null, {
       status: 202,

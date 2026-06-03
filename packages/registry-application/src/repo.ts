@@ -78,6 +78,10 @@ export async function getRepositoryById(id: string): Promise<ResolvedRepo | null
   return row ?? null;
 }
 
+export async function listRepositoriesForOrg(orgId: string): Promise<ResolvedRepo[]> {
+  return db.select().from(repositories).where(eq(repositories.orgId, orgId));
+}
+
 export type PackageRow = typeof packages.$inferSelect;
 
 /** Idempotently get-or-create a package within a repo. */

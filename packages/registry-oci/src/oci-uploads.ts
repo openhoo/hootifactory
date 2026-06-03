@@ -1,4 +1,3 @@
-import { and, blobRefs, eq, repositories, uploadSessions } from "@hootifactory/db";
 import {
   computeDigest,
   Errors,
@@ -7,9 +6,16 @@ import {
   stagingKey,
 } from "@hootifactory/registry";
 import {
+  createOciUploadSession,
   ensureBlobRef,
+  listOciMountSources,
+  loadOciUploadSession,
+  markOciUploadSessionAborted,
+  type OciUploadSessionMutations,
+  type OciUploadSessionRow,
   storeBlobStreamWithRef,
   storeBlobWithRef,
+  withLockedOciUploadSession,
 } from "@hootifactory/registry-application";
 import {
   buildOciBlobCreatedResponse,
@@ -31,16 +37,6 @@ import {
 } from "./upload-state";
 
 const UPLOAD_TTL_MS = 24 * 60 * 60 * 1000;
-
-type Tx = Parameters<Parameters<RegistryRequestContext["db"]["transaction"]>[0]>[0];
-
-type MountSourceRow = {
-  orgId: string;
-  id: string;
-  mountPath: string;
-  visibility: "private" | "public";
-  scope: string;
-};
 
 export async function startUpload(
   image: string,
@@ -72,13 +68,11 @@ export async function startUpload(
 
   const uuid = crypto.randomUUID();
   const key = stagingKey(uuid);
-  await ctx.db.insert(uploadSessions).values({
+  await createOciUploadSession(ctx, {
     id: uuid,
-    repositoryId: ctx.repo.id,
     scope: image,
     storageKey: key,
     offsetBytes: 0,
-    state: "open",
     expiresAt: new Date(Date.now() + UPLOAD_TTL_MS),
   });
   return buildOciUploadAcceptedResponse({ ctx, image, uuid, offset: 0 });
@@ -89,7 +83,8 @@ export async function uploadStatus(
   uuid: string,
   ctx: RegistryRequestContext,
 ): Promise<Response> {
-  const session = await loadOpenSession(image, uuid, ctx);
+  const parsedUuid = parseUploadUuid(uuid);
+  const session = await loadOpenSession(image, parsedUuid, ctx);
   return buildOciUploadStatusResponse({ ctx, image, uuid, offset: session.offsetBytes });
 }
 
@@ -99,16 +94,24 @@ export async function patchUpload(
   req: Request,
   ctx: RegistryRequestContext,
 ): Promise<Response> {
+  const parsedUuid = parseUploadUuid(uuid);
   const chunk = await bodyBytes(req);
-  const offset = await ctx.db.transaction(async (tx) => {
-    const session = await loadOpenSessionForUpdateTx(image, uuid, ctx, tx);
-    validateContentRange(req, session.offsetBytes, chunk.length);
-    const next = await appendUploadChunk(session, chunk, ctx);
-    await tx
-      .update(uploadSessions)
-      .set({ offsetBytes: next.offset, multipart: next.multipart })
-      .where(openSessionWhere(ctx, image, uuid));
-    return next.offset;
+  const offset = await withLockedOciUploadSession(ctx, {
+    scope: image,
+    uuid: parsedUuid,
+    run: async (session, mutations) => {
+      const openSession = await assertLoadedOpenSession({
+        image,
+        uuid: parsedUuid,
+        ctx,
+        session,
+        mutations,
+      });
+      validateContentRange(req, openSession.offsetBytes, chunk.length);
+      const next = await appendUploadChunk(openSession, chunk, ctx);
+      await mutations.updateOpen({ offsetBytes: next.offset, multipart: next.multipart });
+      return next.offset;
+    },
   });
   return buildOciUploadAcceptedResponse({ ctx, image, uuid, offset });
 }
@@ -127,28 +130,36 @@ export async function putUpload(
   );
 
   const chunk = await bodyBytes(req);
-  const committed = await ctx.db.transaction(async (tx) => {
-    const session = await loadOpenSessionForUpdateTx(image, uuid, ctx, tx);
-    validateContentRange(req, session.offsetBytes, chunk.length);
-    const state = uploadMultipartState(session.multipart);
-    const existing = state.chunks.reduce((sum, part) => sum + part.size, 0);
-    assertUploadOffset(existing, session.offsetBytes);
-    const stored = await storeBlobStreamWithRef(ctx, {
-      data: uploadChunkStream(ctx, state.chunks, chunk),
-      expectedDigest: digest,
-      kind: "oci_layer",
-      scope: image,
-    }).catch((err) => {
-      if (err instanceof Error && err.name === "InvalidDigestError") {
-        throw Errors.digestInvalid({ expected: digest, error: err.message });
-      }
-      throw err;
-    });
-    await tx
-      .update(uploadSessions)
-      .set({ state: "committed", offsetBytes: stored.size })
-      .where(openSessionWhere(ctx, image, uuid));
-    return { size: stored.size, storageKey: session.storageKey, chunks: state.chunks };
+  const parsedUuid = parseUploadUuid(uuid);
+  const committed = await withLockedOciUploadSession(ctx, {
+    scope: image,
+    uuid: parsedUuid,
+    run: async (session, mutations) => {
+      const openSession = await assertLoadedOpenSession({
+        image,
+        uuid: parsedUuid,
+        ctx,
+        session,
+        mutations,
+      });
+      validateContentRange(req, openSession.offsetBytes, chunk.length);
+      const state = uploadMultipartState(openSession.multipart);
+      const existing = state.chunks.reduce((sum, part) => sum + part.size, 0);
+      assertUploadOffset(existing, openSession.offsetBytes);
+      const stored = await storeBlobStreamWithRef(ctx, {
+        data: uploadChunkStream(ctx, state.chunks, chunk),
+        expectedDigest: digest,
+        kind: "oci_layer",
+        scope: image,
+      }).catch((err) => {
+        if (err instanceof Error && err.name === "InvalidDigestError") {
+          throw Errors.digestInvalid({ expected: digest, error: err.message });
+        }
+        throw err;
+      });
+      await mutations.commit(stored.size);
+      return { size: stored.size, storageKey: openSession.storageKey, chunks: state.chunks };
+    },
   });
   await ctx.blobs.deleteKey(committed.storageKey).catch(() => {});
   await deleteUploadChunks(ctx, committed.chunks);
@@ -161,19 +172,22 @@ export async function cancelUpload(
   uuid: string,
   ctx: RegistryRequestContext,
 ): Promise<Response> {
-  await ctx.db.transaction(async (tx) => {
-    const session = await loadOpenSessionForUpdateTx(image, uuid, ctx, tx);
-    await ctx.blobs.deleteKey(session.storageKey).catch(() => {});
-    await deleteUploadChunks(ctx, uploadMultipartState(session.multipart).chunks);
-    await tx
-      .delete(uploadSessions)
-      .where(
-        and(
-          eq(uploadSessions.id, uuid),
-          eq(uploadSessions.repositoryId, ctx.repo.id),
-          eq(uploadSessions.scope, image),
-        ),
-      );
+  const parsedUuid = parseUploadUuid(uuid);
+  await withLockedOciUploadSession(ctx, {
+    scope: image,
+    uuid: parsedUuid,
+    run: async (session, mutations) => {
+      const openSession = await assertLoadedOpenSession({
+        image,
+        uuid: parsedUuid,
+        ctx,
+        session,
+        mutations,
+      });
+      await ctx.blobs.deleteKey(openSession.storageKey).catch(() => {});
+      await deleteUploadChunks(ctx, uploadMultipartState(openSession.multipart).chunks);
+      await mutations.deleteSession();
+    },
   });
   return new Response(null, { status: 204 });
 }
@@ -184,19 +198,7 @@ async function tryCrossRepositoryMount(input: {
   from?: string;
   ctx: RegistryRequestContext;
 }): Promise<Response | null> {
-  const sources = (
-    (await input.ctx.db
-      .select({
-        orgId: repositories.orgId,
-        id: repositories.id,
-        mountPath: repositories.mountPath,
-        visibility: repositories.visibility,
-        scope: blobRefs.scope,
-      })
-      .from(blobRefs)
-      .innerJoin(repositories, eq(blobRefs.repositoryId, repositories.id))
-      .where(eq(blobRefs.digest, input.mount))) as MountSourceRow[]
-  ).map((source) => ({
+  const sources = (await listOciMountSources(input.ctx, input.mount)).map((source) => ({
     ...source,
     full: `${source.mountPath.replace(/^v2\//, "")}/${source.scope}`,
   }));
@@ -225,59 +227,38 @@ async function tryCrossRepositoryMount(input: {
 }
 
 async function loadSession(image: string, uuid: string, ctx: RegistryRequestContext) {
-  const parsedUuid = parseUploadUuid(uuid);
-  const [session] = await ctx.db
-    .select()
-    .from(uploadSessions)
-    .where(
-      and(
-        eq(uploadSessions.id, parsedUuid),
-        eq(uploadSessions.repositoryId, ctx.repo.id),
-        eq(uploadSessions.scope, image),
-      ),
-    )
-    .limit(1);
-  return session ?? null;
-}
-
-async function loadSessionForUpdateTx(
-  image: string,
-  uuid: string,
-  ctx: RegistryRequestContext,
-  tx: Tx,
-) {
-  const parsedUuid = parseUploadUuid(uuid);
-  const [session] = await tx
-    .select()
-    .from(uploadSessions)
-    .where(
-      and(
-        eq(uploadSessions.id, parsedUuid),
-        eq(uploadSessions.repositoryId, ctx.repo.id),
-        eq(uploadSessions.scope, image),
-      ),
-    )
-    .for("update")
-    .limit(1);
-  return session ?? null;
+  return loadOciUploadSession(ctx, { scope: image, uuid });
 }
 
 async function loadOpenSession(image: string, uuid: string, ctx: RegistryRequestContext) {
   const session = await loadSession(image, uuid, ctx);
   if (!session) throw Errors.blobUploadUnknown({ uuid });
-  await assertOpenSession({ image, uuid, ctx, session });
+  await assertOpenSession({
+    image,
+    uuid,
+    ctx,
+    session,
+    markAborted: () => markOciUploadSessionAborted(ctx, { scope: image, uuid }),
+  });
   return session;
 }
 
-async function loadOpenSessionForUpdateTx(
-  image: string,
-  uuid: string,
-  ctx: RegistryRequestContext,
-  tx: Tx,
-) {
-  const session = await loadSessionForUpdateTx(image, uuid, ctx, tx);
+async function assertLoadedOpenSession(input: {
+  image: string;
+  uuid: string;
+  ctx: RegistryRequestContext;
+  session: OciUploadSessionRow | null;
+  mutations: OciUploadSessionMutations;
+}): Promise<OciUploadSessionRow> {
+  const { image, uuid, ctx, session, mutations } = input;
   if (!session) throw Errors.blobUploadUnknown({ uuid });
-  await assertOpenSession({ image, uuid, ctx, tx, session });
+  await assertOpenSession({
+    image,
+    uuid,
+    ctx,
+    session,
+    markAborted: mutations.markAborted,
+  });
   return session;
 }
 
@@ -285,13 +266,13 @@ async function assertOpenSession(input: {
   image: string;
   uuid: string;
   ctx: RegistryRequestContext;
-  tx?: Tx;
   session: {
     state: string;
     expiresAt: Date;
     storageKey: string;
     multipart: string | null;
   };
+  markAborted: () => Promise<void>;
 }): Promise<void> {
   if (input.session.state !== "open") {
     throw Errors.blobUploadUnknown({ uuid: input.uuid, state: input.session.state });
@@ -300,10 +281,7 @@ async function assertOpenSession(input: {
 
   await input.ctx.blobs.deleteKey(input.session.storageKey).catch(() => {});
   await deleteUploadChunks(input.ctx, uploadMultipartState(input.session.multipart).chunks);
-  await (input.tx ?? input.ctx.db)
-    .update(uploadSessions)
-    .set({ state: "aborted" })
-    .where(openSessionWhere(input.ctx, input.image, input.uuid));
+  await input.markAborted();
   throw Errors.blobUploadUnknown({ uuid: input.uuid, reason: "expired" });
 }
 
@@ -341,13 +319,4 @@ function parseUploadUuid(uuid: string): string {
     code: "BLOB_UPLOAD_INVALID",
     message: "invalid upload uuid",
   });
-}
-
-function openSessionWhere(ctx: RegistryRequestContext, image: string, uuid: string) {
-  return and(
-    eq(uploadSessions.id, uuid),
-    eq(uploadSessions.repositoryId, ctx.repo.id),
-    eq(uploadSessions.scope, image),
-    eq(uploadSessions.state, "open"),
-  );
 }

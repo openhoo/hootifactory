@@ -257,7 +257,6 @@
       "name": "@hootifactory/registry-oci",
       "version": "0.0.0",
       "dependencies": {
-        "@hootifactory/db": "workspace:*",
         "@hootifactory/registry": "workspace:*",
         "@hootifactory/registry-application": "workspace:*",
         "@hootifactory/types": "workspace:*",

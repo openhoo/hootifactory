@@ -1,5 +1,8 @@
-import { db, eq, repositories } from "@hootifactory/db";
-import { addUpstream, addVirtualMember } from "@hootifactory/registry-application";
+import {
+  addUpstream,
+  addVirtualMember,
+  getRepositoryById,
+} from "@hootifactory/registry-application";
 import type { Hono } from "hono";
 import type { AppEnv } from "../types";
 import {
@@ -64,11 +67,7 @@ export function registerApiV1RepositoryConfigRoutes(apiV1Router: Hono<AppEnv>) {
       }
       const parsedBody = await validateJsonV1(c, AddMemberBodySchema, "invalid member request");
       if (!parsedBody.ok) return parsedBody.response;
-      const [memberCandidate] = await db
-        .select()
-        .from(repositories)
-        .where(eq(repositories.id, parsedBody.data.memberRepoId))
-        .limit(1);
+      const memberCandidate = await getRepositoryById(parsedBody.data.memberRepoId);
       const memberValidation = validateVirtualMemberCandidate(access.repo, memberCandidate);
       if (!memberValidation.ok) {
         return errorResponse(c, memberValidation.status, "BAD_REQUEST", memberValidation.error);

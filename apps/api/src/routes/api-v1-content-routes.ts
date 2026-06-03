@@ -1,16 +1,11 @@
 import { authorize } from "@hootifactory/auth";
 import {
-  and,
-  artifacts,
-  count,
-  db,
-  desc,
-  eq,
-  findings,
-  isNull,
-  packages,
-  packageVersions,
-} from "@hootifactory/db";
+  countRepositoryPackages,
+  listArtifactFindings,
+  listLivePackageVersionSummaries,
+  listRepositoryArtifactSummaries,
+  listRepositoryPackageSummaries,
+} from "@hootifactory/registry-application";
 import type { Hono } from "hono";
 import type { AppEnv } from "../types";
 import {
@@ -38,13 +33,9 @@ export function registerApiV1ContentRoutes(apiV1Router: Hono<AppEnv>) {
     if (!params.ok) return params.response;
     const access = await requireRepository(c, params.data.repoId, "read");
     if (!access.ok) return access.response;
-    const countRows = await db
-      .select({ value: count() })
-      .from(packages)
-      .where(eq(packages.repositoryId, access.repo.id));
     return dataResponse(c, {
       repository: repositoryDto(access.repo),
-      packageCount: countRows[0]?.value ?? 0,
+      packageCount: await countRepositoryPackages(access.repo.id),
     });
   });
 
@@ -55,11 +46,7 @@ export function registerApiV1ContentRoutes(apiV1Router: Hono<AppEnv>) {
     if (!pagination.ok) return pagination.response;
     const repo = await repositoryById(params.data.repoId);
     if (!repo) return errorResponse(c, 404, "NOT_FOUND", "repository not found");
-    const rows = await db
-      .select({ id: packages.id, name: packages.name, latestVersion: packages.latestVersion })
-      .from(packages)
-      .where(eq(packages.repositoryId, repo.id))
-      .orderBy(packages.name);
+    const rows = await listRepositoryPackageSummaries(repo.id);
     const accessible = [];
     for (const pkg of rows) {
       const decision = await authorize(c.get("principal"), "read", {
@@ -95,15 +82,7 @@ export function registerApiV1ContentRoutes(apiV1Router: Hono<AppEnv>) {
       if (!row) return errorResponse(c, 404, "NOT_FOUND", "package not found");
       const response = await authorizePackage(c, row, "read");
       if (response) return response;
-      const rows = await db
-        .select({
-          version: packageVersions.version,
-          sizeBytes: packageVersions.sizeBytes,
-          createdAt: packageVersions.createdAt,
-        })
-        .from(packageVersions)
-        .where(and(eq(packageVersions.packageId, row.pkg.id), isNull(packageVersions.deletedAt)))
-        .orderBy(desc(packageVersions.createdAt));
+      const rows = await listLivePackageVersionSummaries(row.pkg.id);
       const page = rows.slice(
         pagination.data.offset,
         pagination.data.offset + pagination.data.limit,
@@ -129,19 +108,7 @@ export function registerApiV1ContentRoutes(apiV1Router: Hono<AppEnv>) {
       if (!pagination.ok) return pagination.response;
       const repo = await repositoryById(params.data.repoId);
       if (!repo) return errorResponse(c, 404, "NOT_FOUND", "repository not found");
-      const rows = await db
-        .select({
-          id: artifacts.id,
-          digest: artifacts.digest,
-          name: artifacts.name,
-          version: artifacts.version,
-          state: artifacts.state,
-          policyDecision: artifacts.policyDecision,
-          createdAt: artifacts.createdAt,
-        })
-        .from(artifacts)
-        .where(eq(artifacts.repositoryId, repo.id))
-        .orderBy(desc(artifacts.createdAt));
+      const rows = await listRepositoryArtifactSummaries(repo.id);
       const accessible = [];
       for (const art of rows) {
         const decision = await authorize(c.get("principal"), "read", {
@@ -181,18 +148,7 @@ export function registerApiV1ContentRoutes(apiV1Router: Hono<AppEnv>) {
       if (!row) return errorResponse(c, 404, "NOT_FOUND", "artifact not found");
       const response = await authorizeArtifact(c, row, "read");
       if (response) return response;
-      const rows = await db
-        .select({
-          vulnId: findings.vulnId,
-          type: findings.type,
-          severity: findings.severity,
-          packageName: findings.packageName,
-          packageVersion: findings.packageVersion,
-          fixedVersion: findings.fixedVersion,
-          title: findings.title,
-        })
-        .from(findings)
-        .where(eq(findings.artifactId, row.art.id));
+      const rows = await listArtifactFindings(row.art.id);
       return dataResponse(c, rows);
     },
   );
