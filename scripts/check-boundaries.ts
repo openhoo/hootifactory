@@ -195,6 +195,7 @@ const failures: string[] = [];
 
 await checkBoundaryRules();
 await checkWorkspaceShape();
+await checkRegistryApplicationShape();
 await checkWorkspaceManifestDrift();
 
 if (failures.length > 0) {
@@ -235,6 +236,41 @@ async function checkWorkspaceShape(): Promise<void> {
       if (await hasFilesUnder(pathJoin(dir, "src"))) {
         failures.push(`${base}/${entry} has source files but no package.json`);
       }
+    }
+  }
+}
+
+async function checkRegistryApplicationShape(): Promise<void> {
+  const src = pathJoin(repoRoot, "packages/registry-application/src");
+  const allowedRootFiles = new Set(["index.ts"]);
+  const expectedSlices = [
+    "content",
+    "governance",
+    "inventory",
+    "oci",
+    "packages",
+    "repositories",
+    "routing",
+    "runtime",
+  ];
+
+  for await (const file of new Bun.Glob("*.ts").scan({
+    cwd: src,
+    absolute: false,
+    onlyFiles: true,
+  })) {
+    if (!allowedRootFiles.has(file)) {
+      failures.push(`registry-application root file ${file} should live in a feature slice`);
+    }
+  }
+
+  for (const slice of expectedSlices) {
+    if (!(await hasFilesUnder(pathJoin(src, slice)))) {
+      failures.push(`registry-application is missing feature slice ${slice}`);
+      continue;
+    }
+    if (!(await Bun.file(pathJoin(src, slice, "index.ts")).exists())) {
+      failures.push(`registry-application feature slice ${slice} is missing index.ts`);
     }
   }
 }
@@ -332,13 +368,19 @@ async function filesUnder(path: string, pattern = "**/*.{json,ts,tsx}"): Promise
 }
 
 async function hasFilesUnder(path: string): Promise<boolean> {
-  if (!(await Bun.file(path).exists())) return false;
-  for await (const _file of new Bun.Glob("**/*").scan({
-    cwd: path,
-    absolute: true,
-    onlyFiles: true,
-  })) {
-    return true;
+  try {
+    for await (const _file of new Bun.Glob("**/*").scan({
+      cwd: path,
+      absolute: true,
+      onlyFiles: true,
+    })) {
+      return true;
+    }
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+      return false;
+    }
+    throw error;
   }
   return false;
 }

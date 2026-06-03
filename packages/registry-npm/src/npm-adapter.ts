@@ -69,6 +69,7 @@ import {
   NpmLegacyPackageNameSchema,
   NpmTarballFilenameSchema,
   packagePath,
+  parseNpmStoredVersionMetadata,
 } from "./npm-validation";
 import { buildPackument, mergePackuments } from "./packument";
 
@@ -219,10 +220,14 @@ export class NpmAdapter implements RegistryPlugin {
     const pkg = await this.findPackage(ctx, name);
     if (!pkg) return Response.json({ error: "Not found" }, { status: 404 });
     const versions = await this.liveVersions(pkg.id);
-    const match = versions.find(
-      (v) => (v.metadata as { dist?: NpmDist })?.dist?.filename === filename,
-    );
-    const dist = (match?.metadata as { dist?: NpmDist } | undefined)?.dist;
+    let dist: NpmDist | undefined;
+    for (const version of versions) {
+      const metadata = parseNpmStoredVersionMetadata(version.metadata);
+      if (metadata.dist?.filename === filename) {
+        dist = metadata.dist;
+        break;
+      }
+    }
     if (!dist || !(await ctx.blobs.exists(dist.blobDigest))) {
       return Response.json({ error: "Not found" }, { status: 404 });
     }
@@ -489,7 +494,9 @@ export class NpmAdapter implements RegistryPlugin {
       let { manifest } = proxyManifest;
       const { tarballUrl, upstreamDist } = proxyManifest;
       const existingVersion = pkg ? await findLiveVersion(pkg.id, ver) : null;
-      const existingDist = (existingVersion?.metadata as { dist?: NpmDist } | undefined)?.dist;
+      const existingDist = existingVersion
+        ? parseNpmStoredVersionMetadata(existingVersion.metadata).dist
+        : undefined;
       if (pkg && existingDist && upstreamDistMatchesStored(upstreamDist, existingDist)) {
         manifest = rewriteNpmProxyManifestForExistingDist({
           manifest,

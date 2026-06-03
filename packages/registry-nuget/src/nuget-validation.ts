@@ -38,6 +38,32 @@ export const NugetPublishQuerySchema = z.strictObject({
   version: NugetVersionInputSchema.optional(),
 });
 
+const NugetDependencySchema = z.strictObject({
+  id: NugetIdSchema,
+  range: z.string().min(1).max(512),
+  include: z.string().min(1).max(512).optional(),
+  exclude: z.string().min(1).max(512).optional(),
+});
+
+const NugetDependencyGroupSchema = z.strictObject({
+  targetFramework: z.string().min(1).max(256).optional(),
+  dependencies: z.array(NugetDependencySchema).max(512),
+});
+
+export const NugetVersionMetaSchema = z.strictObject({
+  nupkgDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+  file: NugetFileSchema,
+  displayId: NugetIdSchema.optional(),
+  listed: z.boolean().optional(),
+  semVer2: z.boolean().optional(),
+  dependencyGroups: z.array(NugetDependencyGroupSchema).max(512).optional(),
+});
+
+export function parseNugetVersionMeta(value: unknown): NugetVersionMeta | null {
+  const parsed = NugetVersionMetaSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
 export const NugetSearchQuerySchema = z
   .strictObject({
     q: z.string().optional(),

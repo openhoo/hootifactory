@@ -1,5 +1,5 @@
 import { parseRegistryInput } from "@hootifactory/registry";
-import { NpmSearchQuerySchema, packagePath } from "./npm-validation";
+import { NpmSearchQuerySchema, packagePath, parseNpmStoredVersionMetadata } from "./npm-validation";
 
 export interface NpmSearchQuery {
   text: string;
@@ -47,8 +47,7 @@ export function buildNpmSearchObject(input: {
   baseUrl: string;
   mountPath: string;
 }): NpmSearchObject {
-  const manifest =
-    (input.selected.metadata as { manifest?: Record<string, unknown> } | undefined)?.manifest ?? {};
+  const manifest = parseNpmStoredVersionMetadata(input.selected.metadata).manifest;
   return {
     package: {
       name: input.packageName,

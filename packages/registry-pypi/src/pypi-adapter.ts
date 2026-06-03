@@ -113,12 +113,12 @@ export class PypiAdapter implements RegistryPlugin {
     packageId?: string,
   ): Promise<PypiFileMeta[]> {
     const rows = await listRepositoryVersionMetadata(ctx, { packageId, liveOnly: true });
-    return rows.flatMap((r) => (r.metadata as { files?: PypiFileMeta[] })?.files ?? []);
+    return rows.flatMap((r) => normalizePypiVersionMetadata(r.metadata).files ?? []);
   }
 
   private async allFiles(ctx: RegistryRequestContext): Promise<PypiFileMeta[]> {
     const rows = await listRepositoryVersionMetadata(ctx, { liveOnly: false });
-    return rows.flatMap((r) => (r.metadata as { files?: PypiFileMeta[] })?.files ?? []);
+    return rows.flatMap((r) => normalizePypiVersionMetadata(r.metadata).files ?? []);
   }
 
   private async simpleProject(

@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
+  asRecord,
+  asString,
   findingKey,
   isValidRepositoryPattern,
   maxSeverity,
@@ -9,6 +11,15 @@ import {
 } from "./index";
 
 describe("scan-core severity helpers", () => {
+  test("validates scanner JSON object helpers with Zod", () => {
+    expect(asRecord({ matches: [] })).toEqual({ matches: [] });
+    expect(asRecord(["matches"])).toBeNull();
+    expect(asRecord(null)).toBeNull();
+    expect(asString("CVE-1")).toBe("CVE-1");
+    expect(asString("")).toBeUndefined();
+    expect(asString(123)).toBeUndefined();
+  });
+
   test("normalizes scanner severity labels to the canonical scale", () => {
     expect(normalizeSeverity("CRITICAL")).toBe("critical");
     expect(normalizeSeverity("moderate")).toBe("medium");

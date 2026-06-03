@@ -1,4 +1,17 @@
 /** Side-effect-free scanning domain types + pure helpers (used by the worker + API). */
+import { z } from "zod";
+
+export const JsonRecordSchema = z.record(z.string(), z.unknown());
+export type JsonRecord = z.output<typeof JsonRecordSchema>;
+
+export function asRecord(value: unknown): JsonRecord | null {
+  const parsed = JsonRecordSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
+export function asString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
 
 export type Severity = "critical" | "high" | "medium" | "low" | "negligible" | "unknown";
 

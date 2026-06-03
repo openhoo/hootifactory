@@ -38,7 +38,13 @@ import {
   NugetVersionInputSchema,
   type NugetVersionMeta,
   normalizeNugetVersion,
+  parseNugetVersionMeta,
 } from "./nuget-validation";
+
+type LivePackageVersionRow = Awaited<ReturnType<typeof listLivePackageVersions>>[number];
+type StoredNugetVersionRow = Omit<LivePackageVersionRow, "metadata"> & {
+  metadata: NugetVersionMeta;
+};
 
 function parseNugetId(id: string): string {
   return parseRegistryInput(NugetIdSchema, id, {
@@ -132,13 +138,19 @@ export class NugetAdapter implements RegistryPlugin {
     return findPackageByName(ctx, id.toLowerCase());
   }
 
-  private async listVersions(packageId: string, opts: { includeUnlisted?: boolean } = {}) {
+  private async listVersions(
+    packageId: string,
+    opts: { includeUnlisted?: boolean } = {},
+  ): Promise<StoredNugetVersionRow[]> {
     // Live versions only; sorted by SemVer so flat-container + registration bounds are correct.
     const rows = await listLivePackageVersions(packageId);
     return rows
-      .filter(
-        (r) => opts.includeUnlisted || (r.metadata as unknown as NugetVersionMeta).listed !== false,
-      )
+      .flatMap((row) => {
+        const metadata = parseNugetVersionMeta(row.metadata);
+        if (!metadata) return [];
+        if (!opts.includeUnlisted && metadata.listed === false) return [];
+        return [{ ...row, metadata }];
+      })
       .sort((a, b) => compareNugetVersions(a.version, b.version));
   }
 
@@ -166,7 +178,7 @@ export class NugetAdapter implements RegistryPlugin {
         base,
         versions: rows.map((row) => ({
           version: row.version,
-          metadata: row.metadata as unknown as NugetVersionMeta,
+          metadata: row.metadata,
         })),
       }),
     );
@@ -188,11 +200,13 @@ export class NugetAdapter implements RegistryPlugin {
     if (!pkg) return new Response("Not Found", { status: 404 });
     const row = await findLiveVersion(pkg.id, norm);
     if (!row) throw Errors.notFound();
+    const metadata = parseNugetVersionMeta(row.metadata);
+    if (!metadata) throw Errors.notFound();
     return Response.json(
       buildNugetRegistrationItem({
         id,
         version: row.version,
-        metadata: row.metadata as unknown as NugetVersionMeta,
+        metadata,
         base,
       }),
     );
@@ -211,7 +225,7 @@ export class NugetAdapter implements RegistryPlugin {
       const versions = filterNugetSearchVersions(
         (await this.listVersions(pkg.id)).map((version) => ({
           version: version.version,
-          metadata: version.metadata as unknown as NugetVersionMeta,
+          metadata: version.metadata,
         })),
         query,
       );
@@ -242,7 +256,7 @@ export class NugetAdapter implements RegistryPlugin {
     const expected = `${id.toLowerCase()}.${norm}.${ext}`;
     if (file && file.toLowerCase() !== expected) throw Errors.notFound();
     const v = await findLiveVersion(pkg.id, norm);
-    const digest = (v?.metadata as unknown as NugetVersionMeta | undefined)?.nupkgDigest;
+    const digest = parseNugetVersionMeta(v?.metadata)?.nupkgDigest;
     if (!digest || !(await ctx.blobs.exists(digest))) throw Errors.notFound();
     if (file.toLowerCase().endsWith(".nuspec")) {
       return new Response(
@@ -271,7 +285,8 @@ export class NugetAdapter implements RegistryPlugin {
     if (!norm) throw Errors.notFound();
     const row = await findLiveVersion(pkg.id, norm);
     if (!row) throw Errors.notFound();
-    const metadata = (row.metadata ?? {}) as unknown as NugetVersionMeta;
+    const metadata = parseNugetVersionMeta(row.metadata);
+    if (!metadata) throw Errors.notFound();
     await updatePackageVersionMetadata(row.id, { ...metadata, listed });
     return new Response(null, { status: listed ? 200 : 204 });
   }

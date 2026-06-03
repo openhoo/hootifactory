@@ -36,10 +36,15 @@ describe("PyPI validation helpers", () => {
     });
     const file = {
       filename: "pkg-1.0.0.tar.gz",
-      blobDigest: "sha256:abc",
-      sha256: "abc",
+      blobDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      sha256: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       size: 3,
     };
     expect(normalizePypiVersionMetadata({ files: [file] })).toEqual({ files: [file] });
+    expect(
+      normalizePypiVersionMetadata({
+        files: [{ ...file, filename: "../pkg-1.0.0.tar.gz", blobDigest: "not-a-digest" }],
+      }),
+    ).toEqual({ files: [] });
   });
 });

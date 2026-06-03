@@ -6,6 +6,7 @@ import {
   isSemVer2NugetVersion,
   NugetSearchQuerySchema,
   normalizeNugetVersion,
+  parseNugetVersionMeta,
 } from "./nuget-validation";
 
 describe("NuGet validation helpers", () => {
@@ -72,5 +73,42 @@ describe("NuGet validation helpers", () => {
       includePrerelease: false,
       includeSemVer2: false,
     });
+  });
+
+  test("parses stored NuGet version metadata through a strict schema", () => {
+    expect(
+      parseNugetVersionMeta({
+        nupkgDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        file: "hoot.lib.1.2.3.nupkg",
+        displayId: "Hoot.Lib",
+        listed: false,
+        semVer2: true,
+        dependencyGroups: [
+          {
+            targetFramework: "net8.0",
+            dependencies: [{ id: "Other.Lib", range: "[2.0.0, )" }],
+          },
+        ],
+      }),
+    ).toEqual({
+      nupkgDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      file: "hoot.lib.1.2.3.nupkg",
+      displayId: "Hoot.Lib",
+      listed: false,
+      semVer2: true,
+      dependencyGroups: [
+        {
+          targetFramework: "net8.0",
+          dependencies: [{ id: "Other.Lib", range: "[2.0.0, )" }],
+        },
+      ],
+    });
+
+    expect(
+      parseNugetVersionMeta({
+        nupkgDigest: "not-a-digest",
+        file: "../bad.nupkg",
+      }),
+    ).toBeNull();
   });
 });

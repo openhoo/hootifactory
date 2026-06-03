@@ -6,6 +6,7 @@ import {
   isValidNpmName,
   isValidNpmVersion,
   packagePath,
+  parseNpmStoredVersionMetadata,
 } from "./npm-validation";
 
 describe("npm validation helpers", () => {
@@ -35,5 +36,42 @@ describe("npm validation helpers", () => {
     expect(isValidDistTag("1.0.0")).toBe(false);
     expect(isValidDistTag("v1")).toBe(false);
     expect(isValidDistTag("_bad")).toBe(false);
+  });
+
+  test("parses stored npm version metadata through a strict dist schema", () => {
+    expect(
+      parseNpmStoredVersionMetadata({
+        manifest: { name: "pkg", version: "1.0.0" },
+        dist: {
+          filename: "pkg-1.0.0.tgz",
+          blobDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          shasum: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          integrity: "sha512-deadbeef",
+          size: 123,
+        },
+      }),
+    ).toEqual({
+      manifest: { name: "pkg", version: "1.0.0" },
+      dist: {
+        filename: "pkg-1.0.0.tgz",
+        blobDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        shasum: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        integrity: "sha512-deadbeef",
+        size: 123,
+      },
+    });
+
+    expect(
+      parseNpmStoredVersionMetadata({
+        manifest: "not a manifest",
+        dist: {
+          filename: "../pkg.tgz",
+          blobDigest: "not-a-digest",
+          shasum: "not-a-sha1",
+          integrity: "",
+          size: -1,
+        },
+      }),
+    ).toEqual({ manifest: {} });
   });
 });

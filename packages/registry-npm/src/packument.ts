@@ -1,4 +1,5 @@
 import type { FormatMetadata } from "@hootifactory/registry";
+import { parseNpmStoredVersionMetadata } from "./npm-validation";
 
 export interface VersionRow {
   version: string;
@@ -18,10 +19,11 @@ export function buildPackument(
   let modified: Date | null = null;
 
   for (const v of versions) {
-    const manifest = (v.metadata as { manifest?: Record<string, unknown> })?.manifest ?? {
-      name,
-      version: v.version,
-    };
+    const storedMetadata = parseNpmStoredVersionMetadata(v.metadata);
+    const manifest =
+      Object.keys(storedMetadata.manifest).length > 0
+        ? storedMetadata.manifest
+        : { name, version: v.version };
     versionsObj[v.version] = manifest;
     time[v.version] = v.createdAt.toISOString();
     if (!created || v.createdAt < created) created = v.createdAt;

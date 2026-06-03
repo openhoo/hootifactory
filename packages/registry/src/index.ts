@@ -1,4 +1,5 @@
 export {
+  asJsonRecord,
   assertDigest,
   blobKey,
   computeDigest,
@@ -7,6 +8,9 @@ export {
   Errors,
   InvalidDigestError,
   isValidDigest,
+  type JsonRecord,
+  JsonRecordSchema,
+  jsonRecordOrEmpty,
   type OciErrorCode,
   parseRegistryInput,
   RegistryError,

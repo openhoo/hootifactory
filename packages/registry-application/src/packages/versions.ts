@@ -10,7 +10,7 @@ import {
   lockDigestsTx,
   releaseBlobRef,
   type StoredBlob,
-} from "./service-blobs";
+} from "../content/blobs";
 import {
   adjustArtifactsUsedTx,
   adjustStorageUsedTx,
@@ -18,7 +18,7 @@ import {
   assertStorageQuotaRowAllows,
   lockOrgQuotaTx,
   orgAlreadyReferencesDigestTx,
-} from "./service-quota";
+} from "../governance/quota";
 
 export function publisherOf(ctx: RegistryRequestContext): {
   publishedByUserId: string | null;

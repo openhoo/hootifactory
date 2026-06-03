@@ -1,6 +1,6 @@
 import { and, blobRefs, db, eq, repositories, uploadSessions } from "@hootifactory/db";
 import type { RegistryRequestContext } from "@hootifactory/registry";
-import type { Tx } from "./service-quota";
+import type { Tx } from "../governance/quota";
 
 export type OciUploadSessionRow = typeof uploadSessions.$inferSelect;
 

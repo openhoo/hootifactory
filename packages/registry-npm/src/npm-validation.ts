@@ -1,4 +1,5 @@
-import { z } from "@hootifactory/registry";
+import { asJsonRecord, type JsonRecord, jsonRecordOrEmpty, z } from "@hootifactory/registry";
+import type { NpmDist } from "./npm-integrity";
 
 export function basename(name: string): string {
   const i = name.lastIndexOf("/");
@@ -81,3 +82,28 @@ export const NpmPublishBodySchema = z.looseObject({
   _attachments: z.record(z.string(), z.looseObject({ data: z.string() })).default({}),
   "dist-tags": z.record(z.string(), z.string()).optional(),
 });
+
+export const NpmStoredDistSchema = z.strictObject({
+  filename: NpmTarballFilenameSchema,
+  blobDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+  shasum: z.string().regex(/^[a-f0-9]{40}$/),
+  integrity: z.string().min(1).max(1024),
+  size: z.number().int().safe().min(0),
+});
+
+export interface NpmStoredVersionMetadata extends JsonRecord {
+  manifest: JsonRecord;
+  dist?: NpmDist;
+}
+
+export function parseNpmStoredVersionMetadata(value: unknown): NpmStoredVersionMetadata {
+  const metadata = jsonRecordOrEmpty(value);
+  const manifest = asJsonRecord(metadata.manifest) ?? {};
+  const parsedDist = NpmStoredDistSchema.safeParse(metadata.dist);
+  const { dist: _dist, manifest: _manifest, ...rest } = metadata;
+  return {
+    ...rest,
+    manifest,
+    ...(parsedDist.success ? { dist: parsedDist.data } : {}),
+  };
+}

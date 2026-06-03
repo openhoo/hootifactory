@@ -8,7 +8,7 @@ import {
   lockOrgQuotaTx,
   orgAlreadyReferencesDigestTx,
   type Tx,
-} from "./service-quota";
+} from "../governance/quota";
 
 export type BlobRefKind =
   | "oci_layer"

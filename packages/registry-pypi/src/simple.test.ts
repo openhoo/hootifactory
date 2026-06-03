@@ -1,10 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { isSafeDistributionFilename, isValidProjectName } from "./pypi-validation";
 import {
   buildSimpleProjectFiles,
   buildSimpleProjectJson,
   buildSimpleRootJson,
-  isSafeDistributionFilename,
-  isValidProjectName,
   LEGACY_HTML_CONTENT_TYPE,
   normalizeName,
   preferredSimpleResponse,
@@ -71,8 +70,10 @@ describe("PyPI simple API rendering", () => {
             metadata: {
               files: [
                 {
-                  filename: "pkg name-1.0.0.tar.gz",
-                  sha256: "abc123",
+                  filename: "pkg-name-1.0.0.tar.gz",
+                  blobDigest:
+                    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  sha256: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
                   requiresPython: ">=3.11",
                   size: 7,
                 },
@@ -89,9 +90,9 @@ describe("PyPI simple API rendering", () => {
       ),
     ).toEqual([
       {
-        filename: "pkg name-1.0.0.tar.gz",
-        url: "https://repo.test/org/pypi/files/pkg%20name-1.0.0.tar.gz",
-        sha256: "abc123",
+        filename: "pkg-name-1.0.0.tar.gz",
+        url: "https://repo.test/org/pypi/files/pkg-name-1.0.0.tar.gz",
+        sha256: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         requiresPython: ">=3.11",
         size: 7,
         uploadTime: "2026-01-02T03:04:05.000Z",

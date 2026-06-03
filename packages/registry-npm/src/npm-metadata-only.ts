@@ -1,4 +1,4 @@
-import { parseRegistryInput } from "@hootifactory/registry";
+import { asJsonRecord, jsonRecordOrEmpty, parseRegistryInput } from "@hootifactory/registry";
 import { NpmVersionSchema } from "./npm-validation";
 
 export interface NpmMetadataOnlyVersionPatchInput {
@@ -44,8 +44,8 @@ export function buildNpmMetadataOnlyVersionPatch(
   }
   if (!Object.hasOwn(input.manifest, "deprecated")) return { ok: true, version };
 
-  const metadata = recordOrEmpty(input.liveMetadata);
-  const existingManifest = recordOrNull(metadata.manifest) ?? {
+  const metadata = jsonRecordOrEmpty(input.liveMetadata);
+  const existingManifest = asJsonRecord(metadata.manifest) ?? {
     name: input.packageName,
     version,
   };
@@ -63,13 +63,4 @@ export function buildNpmMetadataOnlyVersionPatch(
       },
     },
   };
-}
-
-function recordOrEmpty(value: unknown): Record<string, unknown> {
-  return recordOrNull(value) ?? {};
-}
-
-function recordOrNull(value: unknown): Record<string, unknown> | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  return value as Record<string, unknown>;
 }

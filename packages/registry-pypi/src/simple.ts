@@ -13,13 +13,6 @@ export interface SimpleVersionRow {
   createdAt: Date;
 }
 
-export interface StoredSimpleFile {
-  filename: string;
-  sha256: string;
-  requiresPython?: string;
-  size?: number;
-}
-
 export interface SimpleRootJson {
   meta: { "api-version": "1.1" };
   projects: Array<{ name: string }>;
@@ -104,7 +97,7 @@ export function buildSimpleProjectFiles(
 ): SimpleFile[] {
   const files: SimpleFile[] = [];
   for (const version of versions) {
-    const fileList = (version.metadata as { files?: StoredSimpleFile[] })?.files ?? [];
+    const fileList = normalizePypiVersionMetadata(version.metadata).files ?? [];
     for (const file of fileList) {
       files.push({
         filename: file.filename,
@@ -171,16 +164,4 @@ export function normalizeName(name: string): string {
   return name.toLowerCase().replace(/[-_.]+/g, "-");
 }
 
-/** Core Metadata project names: ASCII alnum with internal dot/underscore/hyphen separators. */
-export function isValidProjectName(name: string): boolean {
-  return /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/.test(name);
-}
-
-export function isSafeDistributionFilename(filename: string): boolean {
-  return (
-    Boolean(filename) &&
-    /^[A-Za-z0-9][A-Za-z0-9._+!-]*$/.test(filename) &&
-    !filename.includes("/") &&
-    !filename.includes("\\")
-  );
-}
+import { normalizePypiVersionMetadata } from "./pypi-validation";

@@ -1,5 +1,4 @@
-import { z } from "@hootifactory/registry";
-import { isSafeDistributionFilename, isValidProjectName } from "./simple";
+import { asJsonRecord, z } from "@hootifactory/registry";
 
 export interface PypiFileMeta {
   filename: string;
@@ -19,6 +18,20 @@ export type PypiVersionMetadata = {
 export type AddPypiFileResult =
   | { ok: true; versionId: string }
   | { ok: false; reason: "file_exists" | "version_exists" };
+
+/** Core Metadata project names: ASCII alnum with internal dot/underscore/hyphen separators. */
+export function isValidProjectName(name: string): boolean {
+  return /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/.test(name);
+}
+
+export function isSafeDistributionFilename(filename: string): boolean {
+  return (
+    Boolean(filename) &&
+    /^[A-Za-z0-9][A-Za-z0-9._+!-]*$/.test(filename) &&
+    !filename.includes("/") &&
+    !filename.includes("\\")
+  );
+}
 
 export const PypiProjectParamSchema = z
   .string()
@@ -40,6 +53,15 @@ export const PypiUploadFieldsSchema = z.strictObject({
     .regex(/^[a-fA-F0-9]{64}$/)
     .optional(),
   requires_python: z.string().min(1).max(256).optional(),
+  filetype: z.string().min(1).max(64).optional(),
+});
+
+export const PypiFileMetaSchema = z.strictObject({
+  filename: PypiFilenameSchema,
+  blobDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+  sha256: z.string().regex(/^[a-fA-F0-9]{64}$/),
+  requiresPython: z.string().min(1).max(256).optional(),
+  size: z.number().int().safe().min(0),
   filetype: z.string().min(1).max(64).optional(),
 });
 
@@ -69,12 +91,20 @@ export function parsePypiFilename(filename: string): { name: string; version: st
 }
 
 export function normalizePypiVersionMetadata(value: unknown): PypiVersionMetadata {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  const metadata = value as PypiVersionMetadata;
-  return {
-    ...metadata,
-    files: Array.isArray(metadata.files) ? metadata.files : [],
-  };
+  const metadata = asJsonRecord(value);
+  if (!metadata) return {};
+
+  const out: PypiVersionMetadata = {};
+  if (typeof metadata.name === "string") out.name = metadata.name;
+  if (typeof metadata.requiresPython === "string") out.requiresPython = metadata.requiresPython;
+  if (Object.hasOwn(metadata, "files")) {
+    const files = Array.isArray(metadata.files) ? metadata.files : [];
+    out.files = files.flatMap((file) => {
+      const parsed = PypiFileMetaSchema.safeParse(file);
+      return parsed.success ? [parsed.data] : [];
+    });
+  }
+  return out;
 }
 
 function normalizeFilenameVersionToken(version: string): string {

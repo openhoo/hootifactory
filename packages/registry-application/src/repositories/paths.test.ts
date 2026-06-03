@@ -4,7 +4,7 @@ import {
   isValidRepositoryName,
   isValidRepositoryNameForFormat,
   mountSegment,
-} from "./repo";
+} from "./paths";
 
 describe("repository path helpers", () => {
   test("maps OCI-family formats to the shared v2 mount segment", () => {
