@@ -1,10 +1,12 @@
 import {
   type ApiTokenRow,
+  type ApiTokenWithOwner,
   authorize,
   createApiToken,
   getApiTokenById,
   getApiTokenWithOwner,
   listOrgTokens,
+  listOrgTokensOwnedBy,
   revokeToken,
   rotateToken,
   validateTokenGrant,
@@ -64,6 +66,62 @@ async function authorizeTokenRotation(c: Context<AppEnv>, token: ApiTokenRow) {
   return authorizationDenied(c, decision);
 }
 
+async function authorizeTokenRead(c: Context<AppEnv>, token: ApiTokenRow) {
+  const principal = c.get("principal");
+  if (principal.kind === "token" && principal.tokenId === token.id) {
+    return tokenResource(c, token, "read");
+  }
+  if (principal.kind === "user" && token.ownerUserId === principal.userId) {
+    const decision = await authorize(principal, "read", {
+      type: "token",
+      orgId: token.orgId,
+      tokenId: token.id,
+      tokenTarget: "self",
+    });
+    if (decision.allowed) return undefined;
+    return authorizationDenied(c, decision);
+  }
+  const decision = await authorize(principal, "admin", {
+    type: "token",
+    orgId: token.orgId,
+    tokenId: token.id,
+    tokenTarget: "org",
+  });
+  if (decision.allowed) return undefined;
+  return authorizationDenied(c, decision);
+}
+
+async function listVisibleTokens(
+  c: Context<AppEnv>,
+  orgId: string,
+): Promise<{ ok: true; rows: ApiTokenWithOwner[] } | { ok: false; response: Response }> {
+  const principal = c.get("principal");
+  const adminDecision = await authorize(principal, "admin", {
+    type: "token",
+    orgId,
+    tokenTarget: "org",
+  });
+  if (adminDecision.allowed) return { ok: true, rows: await listOrgTokens(orgId) };
+
+  if (principal.kind === "user") {
+    const readDecision = await authorize(principal, "read", { type: "org", orgId });
+    if (!readDecision.allowed) {
+      return { ok: false, response: authorizationDenied(c, readDecision) };
+    }
+    return { ok: true, rows: await listOrgTokensOwnedBy(orgId, principal.userId) };
+  }
+
+  const readDecision = await authorize(principal, "read", {
+    type: "token",
+    orgId,
+    tokenTarget: "org",
+  });
+  if (!readDecision.allowed) {
+    return { ok: false, response: authorizationDenied(c, readDecision) };
+  }
+  return { ok: true, rows: await listOrgTokens(orgId) };
+}
+
 export function registerApiV1TokenRoutes(apiV1Router: Hono<AppEnv>) {
   apiV1Router.get(
     "/orgs/:orgId/tokens",
@@ -81,13 +139,9 @@ export function registerApiV1TokenRoutes(apiV1Router: Hono<AppEnv>) {
       if (!params.ok) return params.response;
       const pagination = validatePagination(c);
       if (!pagination.ok) return pagination.response;
-      const decision = await authorize(c.get("principal"), "read", {
-        type: "token",
-        orgId: params.data.orgId,
-        tokenTarget: "org",
-      });
-      if (!decision.allowed) return authorizationDenied(c, decision);
-      const rows = await listOrgTokens(params.data.orgId);
+      const visible = await listVisibleTokens(c, params.data.orgId);
+      if (!visible.ok) return visible.response;
+      const rows = visible.rows;
       const page = rows.slice(
         pagination.data.offset,
         pagination.data.offset + pagination.data.limit,
@@ -180,7 +234,7 @@ export function registerApiV1TokenRoutes(apiV1Router: Hono<AppEnv>) {
       if (!params.ok) return params.response;
       const row = await getApiTokenWithOwner(params.data.tokenId);
       if (!row) return errorResponse(c, 404, "NOT_FOUND", "token not found");
-      const response = await tokenResource(c, row.token, "read");
+      const response = await authorizeTokenRead(c, row.token);
       if (response) return response;
       return dataResponse(c, tokenDto(row.token, row.ownerUsername));
     },

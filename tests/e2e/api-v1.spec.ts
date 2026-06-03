@@ -182,6 +182,59 @@ test.describe("external api v1", () => {
     expect(newMe.status()).toBe(200);
   });
 
+  test("viewers cannot read other users' v1 token metadata", async ({ baseURL }) => {
+    const owner = await setupOwner(baseURL!);
+    const viewer = await setupOwner(baseURL!);
+    const admin = await setupOwner(baseURL!);
+    const viewerMe = (await (await viewer.ctx.get("/api/v1/me")).json()) as {
+      data: { principal: { userId: string } };
+    };
+    const adminMe = (await (await admin.ctx.get("/api/v1/me")).json()) as {
+      data: { principal: { userId: string } };
+    };
+    insertOrgRoleBinding({
+      orgId: owner.orgId,
+      userId: viewerMe.data.principal.userId,
+      role: "viewer",
+    });
+    insertOrgRoleBinding({
+      orgId: owner.orgId,
+      userId: adminMe.data.principal.userId,
+      role: "admin",
+    });
+
+    const created = await createV1Token(owner.ctx, owner.orgId, {
+      name: "owner-ci",
+      type: "robot",
+      role: "owner",
+      grants: [{ resource: "token", target: "org", actions: ["admin"] }],
+    });
+
+    const viewerList = await viewer.ctx.get(`/api/v1/orgs/${owner.orgId}/tokens`);
+    expect(viewerList.status()).toBe(200);
+    const viewerListBody = await viewerList.json();
+    expect(viewerListBody.data).toEqual([]);
+    expect(viewerListBody.pagination.total).toBe(0);
+
+    const viewerDetail = await viewer.ctx.get(`/api/v1/tokens/${created.data.token.id}`);
+    expect(viewerDetail.status()).toBe(403);
+
+    const ownerDetail = await owner.ctx.get(`/api/v1/tokens/${created.data.token.id}`);
+    expect(ownerDetail.status()).toBe(200);
+    const ownerBody = await ownerDetail.json();
+    expect(ownerBody.data.name).toBe("owner-ci");
+    expect(ownerBody.data.grants).toEqual([
+      { resource: "token", target: "org", actions: ["admin"] },
+    ]);
+
+    const adminList = await admin.ctx.get(`/api/v1/orgs/${owner.orgId}/tokens`);
+    expect(adminList.status()).toBe(200);
+    const adminListBody = await adminList.json();
+    expect(adminListBody.data).toContainEqual(
+      expect.objectContaining({ id: created.data.token.id, ownerUsername: owner.username }),
+    );
+  });
+
   test("developers cannot rotate and capture another org token", async ({ baseURL }) => {
     const owner = await setupOwner(baseURL!);
     const developer = await setupOwner(baseURL!);
