@@ -23,7 +23,9 @@ x-app-env: &app-env
   EMAIL_SMTP_PORT: "1025"
   EMAIL_SMTP_SECURE: "false"
   SCANNER_ENABLED: "true"
-  SCANNER_CLI_RUNTIME: docker
+  # The app image does not include Docker or mount the host Docker socket.
+  # Keep the local demo stack heuristic-only unless a scanner runtime is added.
+  SCANNER_CLI_RUNTIME: disabled
   SCANNER_DOCKER_COMMAND: docker
   SYFT_IMAGE: anchore/syft:latest
   GRYPE_IMAGE: anchore/grype:latest

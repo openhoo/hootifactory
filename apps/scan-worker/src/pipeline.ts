@@ -20,9 +20,11 @@ import {
 } from "@hootifactory/observability";
 import type { NormalizedFinding } from "@hootifactory/scan-core";
 import {
+  type AvailableScanners,
   detectScanners,
   osvScanDependencies,
   runExternalScanners,
+  type ScannerRuntimeOptions,
   scanDependencies,
   scanForMalware,
   scannerOptionsFromEnv,
@@ -37,6 +39,33 @@ export { dedupeFindings } from "./scan-policy";
 export { recordScanFailure } from "./scan-results";
 
 const OCI_FORMATS = new Set(["docker", "oci", "helm"]);
+
+export function externalContentScannerRequired(options: ScannerRuntimeOptions): boolean {
+  return (
+    Boolean(options.clamavRestUrl) ||
+    Boolean(options.trivyServerUrl) ||
+    (options.cliRuntime ?? "docker") !== "disabled"
+  );
+}
+
+export function externalContentScannerAvailable(scanners: AvailableScanners): boolean {
+  return scanners.grype || scanners.trivy || scanners.clamav;
+}
+
+export function shouldFailForMissingExternalScanner(
+  options: ScannerRuntimeOptions,
+  scanners: AvailableScanners,
+): boolean {
+  return externalContentScannerRequired(options) && !externalContentScannerAvailable(scanners);
+}
+
+function unavailableExternalScannerMessage(options: ScannerRuntimeOptions): string {
+  return [
+    "external scanner runtime is configured but no content scanner is available",
+    `(SCANNER_CLI_RUNTIME=${options.cliRuntime ?? "docker"})`,
+    "set SCANNER_CLI_RUNTIME=disabled for heuristic-only scanning or configure Grype, Trivy, or ClamAV",
+  ].join("; ");
+}
 
 /** Run the scan pipeline for one artifact and apply the policy decision. */
 export async function processScan(artifactId: string): Promise<void> {
@@ -159,6 +188,17 @@ async function processScanInner(artifactId: string): Promise<void> {
         "scan.external.trivy": Boolean(scanners.trivy),
         "scan.external.clamav": Boolean(scanners.clamav),
       });
+      if (shouldFailForMissingExternalScanner(scannerOptions, scanners)) {
+        const message = unavailableExternalScannerMessage(scannerOptions);
+        addSpanEvent("scan.external_unavailable", {
+          "scan.cli_runtime": scannerOptions.cliRuntime ?? "docker",
+        });
+        logger.warn("external scanner runtime unavailable", {
+          cliRuntime: scannerOptions.cliRuntime ?? "docker",
+          scanners,
+        });
+        throw new Error(message);
+      }
       if (scanners.grype || scanners.trivy || scanners.clamav) {
         let dir: string | null = null;
         try {

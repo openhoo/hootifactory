@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { ociManifestReferences } from "@hootifactory/types";
+import { externalContentScannerRequired, shouldFailForMissingExternalScanner } from "./pipeline";
 
 describe("scan pipeline pure helpers", () => {
   test("extracts blob and child manifest references from OCI manifests", () => {
@@ -21,5 +22,33 @@ describe("scan pipeline pure helpers", () => {
 
   test("treats invalid manifest JSON as having no references", () => {
     expect(ociManifestReferences("{bad json")).toEqual({ blobs: [], manifests: [] });
+  });
+
+  test("fails closed when a configured external scanner runtime has no content scanner", () => {
+    expect(externalContentScannerRequired({ cliRuntime: "disabled" })).toBe(false);
+    expect(
+      shouldFailForMissingExternalScanner(
+        { cliRuntime: "docker" },
+        { syft: false, grype: false, trivy: false, clamav: false },
+      ),
+    ).toBe(true);
+    expect(
+      shouldFailForMissingExternalScanner(
+        { cliRuntime: "host" },
+        { syft: true, grype: false, trivy: false, clamav: false },
+      ),
+    ).toBe(true);
+    expect(
+      shouldFailForMissingExternalScanner(
+        { cliRuntime: "docker" },
+        { syft: false, grype: true, trivy: false, clamav: false },
+      ),
+    ).toBe(false);
+    expect(
+      shouldFailForMissingExternalScanner(
+        { cliRuntime: "disabled", clamavRestUrl: "http://clamav:3310/scan" },
+        { syft: false, grype: false, trivy: false, clamav: true },
+      ),
+    ).toBe(false);
   });
 });
