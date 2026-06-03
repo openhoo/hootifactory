@@ -10,15 +10,11 @@ import {
   readWritePermission,
 } from "@hootifactory/registry";
 import {
-  commitVersionOrReleaseBlob,
   findLiveVersion,
-  findOrCreatePackage,
   findPackageByName,
   listLivePackageVersions,
   listLiveVersionPublishers,
-  listPackageVersionNames,
   serveBlobIfClean,
-  storeBlobWithRef,
   updatePackageVersionMetadata,
 } from "@hootifactory/registry-application";
 import {
@@ -26,24 +22,14 @@ import {
   buildCargoOwnersUpdateBody,
   parseCargoOwnersRequest,
 } from "./cargo-owners";
-import {
-  buildCargoIndexEntry,
-  cargoBlobScope,
-  digestCargoCrate,
-  parseCargoPublishBody,
-} from "./cargo-publish";
+import { handleCargoPublish } from "./cargo-publish-lifecycle";
 import {
   CargoCrateNameSchema,
   CargoIndexPathSchema,
   CargoVersionSchema,
   cargoIndexPath,
-  cargoVersionIdentity,
   parseCargoVersionMeta,
 } from "./cargo-validation";
-
-function cargoError(detail: string, status: number): Response {
-  return Response.json({ errors: [{ detail }] }, { status });
-}
 
 function parseCrateName(crate: string): string {
   return parseRegistryInput(CargoCrateNameSchema, crate, {
@@ -206,51 +192,6 @@ export class CargoAdapter implements RegistryPlugin {
   }
 
   private async publish(req: Request, ctx: RegistryRequestContext): Promise<Response> {
-    const { metadata: meta, crateBytes } = parseCargoPublishBody(
-      new Uint8Array(await req.arrayBuffer()),
-    );
-
-    const name = meta.name.toLowerCase();
-    const cksum = digestCargoCrate(crateBytes);
-    const scope = cargoBlobScope(name, meta.vers);
-    const pkg = await findOrCreatePackage({
-      orgId: ctx.repo.orgId,
-      repositoryId: ctx.repo.id,
-      name,
-    });
-    const existingVersions = await listPackageVersionNames(pkg.id);
-    if (
-      existingVersions.some(
-        (version) => cargoVersionIdentity(version.version) === cargoVersionIdentity(meta.vers),
-      )
-    ) {
-      return cargoError("version already exists", 409);
-    }
-
-    const stored = await storeBlobWithRef(ctx, {
-      data: crateBytes,
-      kind: "generic_file",
-      scope,
-      mediaType: "application/octet-stream",
-    });
-    const indexEntry = buildCargoIndexEntry(meta, cksum);
-    const result = await commitVersionOrReleaseBlob(ctx, {
-      stored,
-      kind: "generic_file",
-      scope,
-      packageId: pkg.id,
-      version: meta.vers,
-      metadata: { index: indexEntry, crateDigest: stored.digest },
-      sizeBytes: crateBytes.length,
-      scan: {
-        name,
-        version: meta.vers,
-        mediaType: "application/octet-stream",
-      },
-    });
-    if ("conflict" in result) {
-      return cargoError("version already exists", 409);
-    }
-    return Response.json({ warnings: { invalid_categories: [], invalid_badges: [], other: [] } });
+    return handleCargoPublish(req, ctx);
   }
 }
