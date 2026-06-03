@@ -6,15 +6,12 @@ import { enqueue, QUEUES } from "@hootifactory/queue";
 import type { Context } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { SESSION_COOKIE } from "../middleware/authenticate";
+import { clientIp, UNKNOWN_CLIENT_IP } from "../request-ip";
 import type { AppEnv } from "../types";
 
 const OIDC_STATE_COOKIE = "hoot_oidc_state";
 
-export function clientIp(c: Context<AppEnv>): string {
-  return (
-    c.req.header("x-forwarded-for")?.split(",")[0]?.trim() || c.req.header("x-real-ip") || "unknown"
-  );
-}
+export { clientIp } from "../request-ip";
 
 export function oidcConfig(): OidcProviderConfig | null {
   if (!env.AUTH_OIDC_ENABLED) return null;
@@ -115,8 +112,9 @@ export async function createRequestSession(
   userId: string,
   options: { includeUserAgent?: boolean } = {},
 ): Promise<void> {
+  const ip = clientIp(c);
   const { secret, expiresAt } = await createSession(userId, {
-    ip: c.req.header("x-forwarded-for") ?? undefined,
+    ip: ip === UNKNOWN_CLIENT_IP ? undefined : ip,
     userAgent:
       options.includeUserAgent === false ? undefined : (c.req.header("user-agent") ?? undefined),
   });

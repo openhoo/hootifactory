@@ -3,9 +3,13 @@ import { randomUUID } from "node:crypto";
 import {
   authenticateUserPasswordWithThrottle,
   currentThrottleBucket,
+  loginIdentityThrottleKey,
   loginIsThrottled,
   loginThrottleKey,
+  passwordResetIdentityThrottleKey,
+  passwordResetRequestIsThrottled,
   pruneThrottleBuckets,
+  recordPasswordResetRequestAttempt,
   retryAfterSeconds,
 } from "./auth-throttle";
 
@@ -14,6 +18,8 @@ describe("auth throttle helpers", () => {
     expect(loginThrottleKey("  Alice@example.test ", "203.0.113.5")).toBe(
       "alice@example.test\u0000203.0.113.5",
     );
+    expect(loginIdentityThrottleKey("  Alice@example.test ")).toBe("alice@example.test");
+    expect(passwordResetIdentityThrottleKey("  Alice@example.test ")).toBe("alice@example.test");
   });
 
   test("reuses active buckets and resets expired windows", () => {
@@ -73,6 +79,39 @@ describe("auth throttle helpers", () => {
     ).resolves.toMatchObject({ kind: "throttled" });
     expect(calls).toBe(5);
     expect(loginIsThrottled(loginThrottleKey(username, "203.0.113.10")).throttled).toBe(true);
+  });
+
+  test("throttles password verification across changing client addresses", async () => {
+    const username = `spoofed-${randomUUID()}@example.test`;
+    let calls = 0;
+    const verify = async () => {
+      calls += 1;
+      return null;
+    };
+
+    for (let attempts = 1; attempts <= 5; attempts++) {
+      await expect(
+        authenticateUserPasswordWithThrottle(username, "wrong", `203.0.113.${attempts}`, verify),
+      ).resolves.toMatchObject({ kind: "invalid", failure: { count: attempts } });
+    }
+
+    await expect(
+      authenticateUserPasswordWithThrottle(username, "wrong", "203.0.113.250", verify),
+    ).resolves.toMatchObject({ kind: "throttled" });
+    expect(calls).toBe(5);
+  });
+
+  test("throttles password reset requests across changing client addresses", () => {
+    const email = `reset-${randomUUID()}@example.test`;
+
+    for (let attempts = 1; attempts <= 3; attempts++) {
+      expect(passwordResetRequestIsThrottled(email, `203.0.113.${attempts}`).throttled).toBe(false);
+      expect(recordPasswordResetRequestAttempt(email, `203.0.113.${attempts}`).count).toBe(
+        attempts,
+      );
+    }
+
+    expect(passwordResetRequestIsThrottled(email, "203.0.113.250").throttled).toBe(true);
   });
 
   test("successful shared password verification clears prior failures", async () => {

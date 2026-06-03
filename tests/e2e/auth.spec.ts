@@ -47,21 +47,22 @@ test.describe("authentication", () => {
     expect(res.status()).toBe(401);
   });
 
-  test("repeated failed logins are throttled by username and client IP", async ({ baseURL }) => {
+  test("repeated failed logins are throttled across changing forwarded IPs", async ({
+    baseURL,
+  }) => {
     const owner = await setupOwner(baseURL!);
     const anon = await anonContext(baseURL!);
-    const headers = { "x-forwarded-for": "203.0.113.42" };
 
     for (let i = 0; i < 5; i++) {
       const res = await anon.post("/api/auth/login", {
-        headers,
+        headers: { "x-forwarded-for": `203.0.113.${42 + i}` },
         data: { username: owner.username, password: `wrong-password-${i}` },
       });
       expect(res.status()).toBe(401);
     }
 
     const throttled = await anon.post("/api/auth/login", {
-      headers,
+      headers: { "x-forwarded-for": "203.0.113.250" },
       data: { username: owner.username, password: owner.password },
     });
     expect(throttled.status()).toBe(429);
@@ -69,15 +70,9 @@ test.describe("authentication", () => {
     expect(await throttled.json()).toEqual({
       error: "too many login attempts, try again later",
     });
-
-    const otherIp = await anon.post("/api/auth/login", {
-      headers: { "x-forwarded-for": "203.0.113.43" },
-      data: { username: owner.username, password: owner.password },
-    });
-    expect(otherIp.status()).toBe(200);
   });
 
-  test("repeated failed basic auth attempts are throttled by username and client IP", async ({
+  test("repeated failed basic auth attempts share the username throttle with login", async ({
     baseURL,
   }) => {
     const owner = await setupOwner(baseURL!);
