@@ -131,7 +131,7 @@ export function registerApiV1PolicyRoutes(apiV1Router: Hono<AppEnv>) {
       const policyResponse = await authorizePolicy(c, {
         orgId: params.data.orgId,
         policy: "quota",
-        action: "write",
+        action: "admin",
       });
       if (policyResponse) return policyResponse;
       const parsedBody = await validateJsonV1(c, V1QuotaRequestSchema, "invalid quota request");

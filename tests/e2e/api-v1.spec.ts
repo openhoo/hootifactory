@@ -203,6 +203,41 @@ test.describe("external api v1", () => {
     expect(created.status()).toBe(201);
   });
 
+  test("quota updates require admin access", async ({ baseURL }) => {
+    const owner = await setupOwner(baseURL!);
+    const developer = await setupOwner(baseURL!);
+    const developerMe = (await (await developer.ctx.get("/api/v1/me")).json()) as {
+      data: { principal: { userId: string } };
+    };
+    insertOrgRoleBinding({
+      orgId: owner.orgId,
+      userId: developerMe.data.principal.userId,
+      role: "developer",
+    });
+
+    const quota = { maxStorageBytes: 0, maxArtifacts: 0 };
+    const denied = await developer.ctx.post(`/api/v1/orgs/${owner.orgId}/quota`, {
+      data: quota,
+    });
+    expect(denied.status()).toBe(403);
+
+    const scoped = await createV1Token(developer.ctx, owner.orgId, {
+      name: "quota-writer",
+      grants: [{ resource: "policy", policy: "quota", actions: ["write"] }],
+    });
+    const anon = await anonContext(baseURL!);
+    const tokenDenied = await anon.post(`/api/v1/orgs/${owner.orgId}/quota`, {
+      headers: { authorization: `Bearer ${scoped.data.secret}` },
+      data: quota,
+    });
+    expect(tokenDenied.status()).toBe(403);
+
+    const updated = await owner.ctx.post(`/api/v1/orgs/${owner.orgId}/quota`, {
+      data: quota,
+    });
+    expect(updated.status()).toBe(200);
+  });
+
   test("token self grant can rotate itself", async ({ baseURL }) => {
     const owner = await setupOwner(baseURL!);
     const created = await createV1Token(owner.ctx, owner.orgId, {
