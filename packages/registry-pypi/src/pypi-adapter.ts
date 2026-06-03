@@ -137,7 +137,7 @@ export class PypiAdapter implements RegistryPlugin {
     const pkg = await findPackageByName(ctx, name);
     if (!pkg) return new Response("Not Found", { status: 404 });
     // Live versions only — pruned releases must drop out of the PEP 503 index.
-    const versions = await listLivePackageVersions(ctx, pkg.id);
+    const versions = await listLivePackageVersions(pkg.id);
     const files = buildSimpleProjectFiles(versions, {
       baseUrl: ctx.baseUrl,
       mountPath: ctx.repo.mountPath,
@@ -261,7 +261,7 @@ export class PypiAdapter implements RegistryPlugin {
     });
     if (created) return { ok: true, versionId: created };
 
-    return patchPackageVersion<AddPypiFileResult>(ctx, {
+    return patchPackageVersion<AddPypiFileResult>({
       packageId: opts.packageId,
       version: opts.version,
       patch: (row) => {

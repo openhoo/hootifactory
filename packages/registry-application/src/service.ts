@@ -1,3 +1,5 @@
+export { checkReadiness, type ReadinessDependencyCheck, type ReadinessState } from "./readiness";
+export { buildRegistryRequestContext } from "./request-context";
 export { isArtifactBlocked, REGISTRY_TOKEN_SERVICE, serveBlobIfClean } from "./service-artifacts";
 export {
   type BlobRefKind,

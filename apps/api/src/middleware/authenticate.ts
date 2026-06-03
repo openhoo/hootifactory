@@ -1,14 +1,13 @@
 import {
-  hashPassword,
+  authenticateUserPassword,
   type Principal,
   resolveSession,
   resolveToken,
   TOKEN_PREFIX,
-  verifyPassword,
+  userPrincipalById,
   verifyRegistryToken,
 } from "@hootifactory/auth";
 import { Errors } from "@hootifactory/core";
-import { db, eq, users } from "@hootifactory/db";
 import { logger, withSpan } from "@hootifactory/observability";
 import { REGISTRY_TOKEN_SERVICE } from "@hootifactory/registry-application";
 import type { Context } from "hono";
@@ -43,16 +42,6 @@ async function resolveHootToken(
 ): Promise<Principal | null> {
   const principal = await resolveToken(token);
   return principal ? sourcedPrincipal(c, source, principal) : null;
-}
-
-async function userPrincipalById(userId: string): Promise<Principal | null> {
-  const [u] = await db
-    .select({ id: users.id, username: users.username, isActive: users.isActive })
-    .from(users)
-    .where(eq(users.id, userId))
-    .limit(1);
-  if (!u?.isActive) return null;
-  return { kind: "user", userId: u.id, username: u.username };
 }
 
 async function authenticateBearer(c: Context<AppEnv>, token: string): Promise<Principal> {
@@ -121,24 +110,6 @@ async function authenticateSession(c: Context<AppEnv>): Promise<Principal | null
   if (!resolved) return null;
   const principal = await userPrincipalById(resolved.userId);
   return principal ? sourcedPrincipal(c, "session", principal) : null;
-}
-
-// A valid argon2id hash used to equalize timing when the username is unknown, so
-// login does not leak (via response time) whether an account exists.
-let dummyHash: Promise<string> | null = null;
-const timingHash = () => (dummyHash ??= hashPassword("hootifactory-timing-equalizer"));
-
-/** Verify username/password (UI login + registry Basic auth with user creds). */
-export async function authenticateUserPassword(
-  username: string,
-  password: string,
-): Promise<Principal | null> {
-  const [u] = await db.select().from(users).where(eq(users.username, username)).limit(1);
-  // Always run the (costly) verify — against a dummy hash when the user is absent —
-  // so the timing of a hit and a miss are indistinguishable.
-  const ok = await verifyPassword(password, u?.passwordHash ?? (await timingHash()));
-  if (!u?.isActive || !u.passwordHash || !ok) return null;
-  return { kind: "user", userId: u.id, username: u.username };
 }
 
 /**

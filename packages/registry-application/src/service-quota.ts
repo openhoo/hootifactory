@@ -1,8 +1,8 @@
 import { Errors } from "@hootifactory/core";
-import { and, blobRefs, eq, isNull, quotas, repositories, sql } from "@hootifactory/db";
+import { and, blobRefs, db, eq, isNull, quotas, repositories, sql } from "@hootifactory/db";
 import type { RegistryRequestContext } from "@hootifactory/registry";
 
-export type Tx = Parameters<Parameters<RegistryRequestContext["db"]["transaction"]>[0]>[0];
+export type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 function orgQuotaWhere(orgId: string) {
   return and(eq(quotas.orgId, orgId), isNull(quotas.repositoryId));
@@ -53,7 +53,7 @@ export async function assertStorageQuota(
   ctx: RegistryRequestContext,
   addBytes: number,
 ): Promise<void> {
-  const [q] = await ctx.db
+  const [q] = await db
     .select({ used: quotas.usedStorageBytes, max: quotas.maxStorageBytes })
     .from(quotas)
     .where(orgQuotaWhere(ctx.repo.orgId))

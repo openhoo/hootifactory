@@ -17,7 +17,6 @@
     "@hootifactory/config": "workspace:*",
     "@hootifactory/contracts": "workspace:*",
     "@hootifactory/core": "workspace:*",
-    "@hootifactory/db": "workspace:*",
     "@hootifactory/email": "workspace:*",
     "@hootifactory/observability": "workspace:*",
     "@hootifactory/queue": "workspace:*",
@@ -25,7 +24,6 @@
     "@hootifactory/registry-application": "workspace:*",
     "@hootifactory/registry-builtins": "workspace:*",
     "@hootifactory/scan-core": "workspace:*",
-    "@hootifactory/storage": "workspace:*",
     "@hootifactory/types": "workspace:*",
     "hono": "^4.12.23",
     "hono-openapi": "^1.3.0"

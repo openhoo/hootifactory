@@ -49,6 +49,25 @@ async function uniqueUsername(value: string | null, fallback: string): Promise<s
   return `${base.slice(0, 80)}-${crypto.randomUUID().slice(0, 12)}`;
 }
 
+export async function oidcIdentityBelongsToAnotherUser(input: {
+  issuer: string;
+  subject: string;
+  userId: string;
+}): Promise<boolean> {
+  const [existingIdentity] = await db
+    .select({ userId: externalIdentities.userId })
+    .from(externalIdentities)
+    .where(
+      and(
+        eq(externalIdentities.provider, OIDC_PROVIDER),
+        eq(externalIdentities.issuer, input.issuer),
+        eq(externalIdentities.subject, input.subject),
+      ),
+    )
+    .limit(1);
+  return Boolean(existingIdentity && existingIdentity.userId !== input.userId);
+}
+
 export async function syncOidcUser(
   input: SyncOidcUserInput,
   options: SyncOidcUserOptions = {},

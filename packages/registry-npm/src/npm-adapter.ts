@@ -150,18 +150,12 @@ export class NpmAdapter implements RegistryPlugin {
     return findPackageByName(ctx, name);
   }
 
-  private async liveVersions(
-    ctx: RegistryRequestContext,
-    packageId: string,
-  ): Promise<PackageVersionReadRow[]> {
-    return listLivePackageVersions(ctx, packageId);
+  private async liveVersions(packageId: string): Promise<PackageVersionReadRow[]> {
+    return listLivePackageVersions(packageId);
   }
 
-  private async distTags(
-    ctx: RegistryRequestContext,
-    packageId: string,
-  ): Promise<Record<string, string>> {
-    return listLiveDistTags(ctx, packageId);
+  private async distTags(packageId: string): Promise<Record<string, string>> {
+    return listLiveDistTags(packageId);
   }
 
   private whoamiUsername(ctx: RegistryRequestContext): string {
@@ -181,8 +175,8 @@ export class NpmAdapter implements RegistryPlugin {
     name = parseNpmName(name);
     const pkg = await this.findPackage(ctx, name);
     if (!pkg) return null;
-    const versions = await this.liveVersions(ctx, pkg.id);
-    const tags = await this.distTags(ctx, pkg.id);
+    const versions = await this.liveVersions(pkg.id);
+    const tags = await this.distTags(pkg.id);
     return {
       contentType: "application/json; charset=utf-8",
       body: JSON.stringify(buildPackument(name, versions, tags)),
@@ -201,8 +195,8 @@ export class NpmAdapter implements RegistryPlugin {
     name = parseNpmName(name);
     const pkg = await this.findPackage(ctx, name);
     if (!pkg) return Response.json({ error: "Not found" }, { status: 404 });
-    const versions = await this.liveVersions(ctx, pkg.id);
-    const tags = await this.distTags(ctx, pkg.id);
+    const versions = await this.liveVersions(pkg.id);
+    const tags = await this.distTags(pkg.id);
     const body = JSON.stringify(buildPackument(name, versions, tags));
     const etag = `"${sha1hexText(body)}"`;
     if (ifNoneMatch(req, etag)) return new Response(null, { status: 304, headers: { etag } });
@@ -224,7 +218,7 @@ export class NpmAdapter implements RegistryPlugin {
     });
     const pkg = await this.findPackage(ctx, name);
     if (!pkg) return Response.json({ error: "Not found" }, { status: 404 });
-    const versions = await this.liveVersions(ctx, pkg.id);
+    const versions = await this.liveVersions(pkg.id);
     const match = versions.find(
       (v) => (v.metadata as { dist?: NpmDist })?.dist?.filename === filename,
     );
@@ -269,8 +263,7 @@ export class NpmAdapter implements RegistryPlugin {
     const distTagTargets = await resolveNpmPublishDistTags(
       distTags,
       publishVersions.map((version) => version.version),
-      (version) =>
-        existingPkg ? this.versionId(ctx, existingPkg.id, version) : Promise.resolve(null),
+      (version) => (existingPkg ? this.versionId(existingPkg.id, version) : Promise.resolve(null)),
     );
     if (!distTagTargets.ok) {
       return Response.json({ error: distTagTargets.error }, { status: 400 });
@@ -291,7 +284,7 @@ export class NpmAdapter implements RegistryPlugin {
     // Any version row, including a retention tombstone, reserves the npm version.
     // Retention hides bytes from readers; it must not make immutable versions
     // publishable again.
-    const used = await listPackageVersionNames(ctx, pkg.id);
+    const used = await listPackageVersionNames(pkg.id);
     const usedSet = new Set(used.map((v) => v.version));
 
     for (const { version: ver, manifest, tarball } of publishVersions) {
@@ -346,17 +339,17 @@ export class NpmAdapter implements RegistryPlugin {
     for (const [tag, ver] of Object.entries(distTags)) {
       const versionId = versionIds.get(ver) ?? distTagTargets.existingVersionIds.get(ver);
       if (!versionId) throw new Error(`validated npm dist-tag ${tag} lost version ${ver}`);
-      await setDistTag(ctx, pkg.id, tag, versionId);
+      await setDistTag(pkg.id, tag, versionId);
     }
     if (distTags.latest) {
-      await updatePackageLatestVersion(ctx, pkg.id, distTags.latest);
+      await updatePackageLatestVersion(pkg.id, distTags.latest);
     }
 
     return Response.json({ success: true }, { status: 201 });
   }
 
-  private async versionId(ctx: RegistryRequestContext, packageId: string, version: string) {
-    return (await findLiveVersion(ctx, packageId, version))?.id ?? null;
+  private async versionId(packageId: string, version: string) {
+    return (await findLiveVersion(packageId, version))?.id ?? null;
   }
 
   private async updateMetadataOnly(
@@ -378,7 +371,7 @@ export class NpmAdapter implements RegistryPlugin {
       );
     }
 
-    const liveRows = await this.liveVersions(ctx, pkg.id);
+    const liveRows = await this.liveVersions(pkg.id);
     const liveByVersion = new Map(liveRows.map((row) => [row.version, row]));
     const versionIds = new Map<string, string>();
     for (const [ver, manifestRaw] of entries) {
@@ -407,16 +400,16 @@ export class NpmAdapter implements RegistryPlugin {
         versionMessage: `dist-tag ${tag} points to an invalid version`,
       });
       const versionId =
-        versionIds.get(distTag.version) ?? (await this.versionId(ctx, pkg.id, distTag.version));
+        versionIds.get(distTag.version) ?? (await this.versionId(pkg.id, distTag.version));
       if (!versionId) {
         return Response.json(
           { error: `dist-tag ${distTag.tag} points to an unknown version` },
           { status: 400 },
         );
       }
-      await setDistTag(ctx, pkg.id, distTag.tag, versionId);
+      await setDistTag(pkg.id, distTag.tag, versionId);
       if (distTag.tag === "latest") {
-        await updatePackageLatestVersion(ctx, pkg.id, distTag.version);
+        await updatePackageLatestVersion(pkg.id, distTag.version);
       }
     }
 
@@ -427,7 +420,7 @@ export class NpmAdapter implements RegistryPlugin {
     name = parseNpmName(name);
     const pkg = await this.findPackage(ctx, name);
     if (!pkg) return Response.json({}, { status: 404 });
-    return Response.json(await this.distTags(ctx, pkg.id));
+    return Response.json(await this.distTags(pkg.id));
   }
 
   private async distTagSet(
@@ -441,11 +434,11 @@ export class NpmAdapter implements RegistryPlugin {
     if (!pkg) return Response.json({ error: "Not found" }, { status: 404 });
     tag = parseNpmDistTag(tag);
     const version = parseNpmDistTagRequestBody(await req.text());
-    const versionId = await this.versionId(ctx, pkg.id, version);
+    const versionId = await this.versionId(pkg.id, version);
     if (!versionId) return Response.json({ error: "version not found" }, { status: 404 });
-    await setDistTag(ctx, pkg.id, tag, versionId);
+    await setDistTag(pkg.id, tag, versionId);
     if (tag === "latest") {
-      await updatePackageLatestVersion(ctx, pkg.id, version);
+      await updatePackageLatestVersion(pkg.id, version);
     }
     return Response.json({ ok: true });
   }
@@ -459,9 +452,9 @@ export class NpmAdapter implements RegistryPlugin {
     const pkg = await this.findPackage(ctx, name);
     if (!pkg) return Response.json({ error: "Not found" }, { status: 404 });
     tag = parseNpmDistTag(tag);
-    await deleteDistTag(ctx, pkg.id, tag);
+    await deleteDistTag(pkg.id, tag);
     if (tag === "latest") {
-      await updatePackageLatestVersion(ctx, pkg.id, null);
+      await updatePackageLatestVersion(pkg.id, null);
     }
     return Response.json({ ok: true });
   }
@@ -495,7 +488,7 @@ export class NpmAdapter implements RegistryPlugin {
       if (!proxyManifest) continue;
       let { manifest } = proxyManifest;
       const { tarballUrl, upstreamDist } = proxyManifest;
-      const existingVersion = pkg ? await findLiveVersion(ctx, pkg.id, ver) : null;
+      const existingVersion = pkg ? await findLiveVersion(pkg.id, ver) : null;
       const existingDist = (existingVersion?.metadata as { dist?: NpmDist } | undefined)?.dist;
       if (pkg && existingDist && upstreamDistMatchesStored(upstreamDist, existingDist)) {
         manifest = rewriteNpmProxyManifestForExistingDist({
@@ -575,10 +568,10 @@ export class NpmAdapter implements RegistryPlugin {
     const desiredTags = new Map<string, { version: string; versionId: string }>();
     for (const [tag, ver] of Object.entries(packument["dist-tags"] ?? {})) {
       if (!isValidDistTag(tag) || typeof ver !== "string") continue;
-      const vid = await this.versionId(ctx, pkg.id, ver);
+      const vid = await this.versionId(pkg.id, ver);
       if (vid) desiredTags.set(tag, { version: ver, versionId: vid });
     }
-    await replaceDistTags(ctx, pkg.id, desiredTags);
+    await replaceDistTags(pkg.id, desiredTags);
     return true;
   }
 
@@ -588,10 +581,10 @@ export class NpmAdapter implements RegistryPlugin {
 
     const objects: NpmSearchObject[] = [];
     for (const p of rows) {
-      const versions = await listLivePackageVersions(ctx, p.id, { orderByCreated: "desc" });
+      const versions = await listLivePackageVersions(p.id, { orderByCreated: "desc" });
       if (versions.length === 0) continue;
 
-      const tags = await this.distTags(ctx, p.id);
+      const tags = await this.distTags(p.id);
       const version = tags.latest ?? versions[0]!.version;
       const selected = versions.find((v) => v.version === version) ?? versions[0]!;
       objects.push(

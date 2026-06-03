@@ -75,8 +75,8 @@ export class GoAdapter implements RegistryPlugin {
     }
   }
 
-  private versions(ctx: RegistryRequestContext, packageId: string) {
-    return listLivePackageVersions(ctx, packageId, { orderByCreated: "asc" });
+  private versions(packageId: string) {
+    return listLivePackageVersions(packageId, { orderByCreated: "asc" });
   }
 
   private async list(moduleName: string, ctx: RegistryRequestContext): Promise<Response> {
@@ -84,7 +84,7 @@ export class GoAdapter implements RegistryPlugin {
     // 200 would falsely assert "known module, no versions".
     const pkg = await findPackageByName(ctx, moduleName);
     if (!pkg) throw Errors.notFound();
-    const rows = await this.versions(ctx, pkg.id);
+    const rows = await this.versions(pkg.id);
     return new Response(
       `${rows
         .map((r) => r.version)
@@ -99,7 +99,7 @@ export class GoAdapter implements RegistryPlugin {
   private async latest(moduleName: string, ctx: RegistryRequestContext): Promise<Response> {
     const pkg = await findPackageByName(ctx, moduleName);
     if (!pkg) throw Errors.notFound();
-    const rows = await this.versions(ctx, pkg.id);
+    const rows = await this.versions(pkg.id);
     const latestVer = pickLatest(rows.map((r) => r.version));
     const row = rows.find((r) => r.version === latestVer);
     if (!row) throw Errors.notFound();
@@ -128,7 +128,7 @@ export class GoAdapter implements RegistryPlugin {
       message: "invalid Go version",
     });
     const ext = file.slice(dot + 1);
-    const row = await findLiveVersion(ctx, pkg.id, version);
+    const row = await findLiveVersion(pkg.id, version);
     if (!row) throw Errors.notFound();
     const meta = row.metadata as unknown as GoVersionMeta;
 
@@ -162,7 +162,7 @@ export class GoAdapter implements RegistryPlugin {
     const { metadata, scope, version, zipBytes } = upload;
     const existingPkg = await findPackageByName(ctx, moduleName);
     if (existingPkg) {
-      if (await packageVersionExists(ctx, existingPkg.id, version)) {
+      if (await packageVersionExists(existingPkg.id, version)) {
         return Response.json({ error: "version already exists" }, { status: 409 });
       }
     }

@@ -153,6 +153,21 @@ const rules: BoundaryRule[] = [
     forbidden: [/@hootifactory\/db\b/, /\bdb\./],
   },
   {
+    name: "auth delivery slice stays DB-free",
+    roots: [
+      "apps/api/src/routes/auth-local-routes.ts",
+      "apps/api/src/routes/auth-password-reset-routes.ts",
+      "apps/api/src/routes/auth-oidc-routes.ts",
+      "apps/api/src/middleware/authenticate.ts",
+    ],
+    forbidden: [/@hootifactory\/db\b/, /\bdb\./],
+  },
+  {
+    name: "api app stays DB-free",
+    roots: ["apps/api/src", "apps/api/package.json"],
+    forbidden: [/@hootifactory\/db\b/, /\bdb\./],
+  },
+  {
     name: "registry protocol plugins avoid delivery and platform infrastructure",
     roots: [
       "packages/registry-cargo/src",

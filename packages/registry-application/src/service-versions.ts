@@ -1,4 +1,4 @@
-import { and, blobRefs, blobs, eq, packageVersions, versionTags } from "@hootifactory/db";
+import { and, blobRefs, blobs, db, eq, packageVersions, versionTags } from "@hootifactory/db";
 import { computeDigest, type RegistryRequestContext } from "@hootifactory/registry";
 import {
   type BlobRefKind,
@@ -72,7 +72,7 @@ export async function upsertPackageVersion(
   },
 ): Promise<string> {
   const publisher = publisherOf(ctx);
-  return ctx.db.transaction(async (tx) => {
+  return db.transaction(async (tx) => {
     const [existing] = await tx
       .select({ id: packageVersions.id })
       .from(packageVersions)
@@ -123,7 +123,7 @@ export async function upsertPackageVersionWithBlobRef(
   let deleteCasAfterCommit: string | null = null;
 
   try {
-    const result = await ctx.db.transaction(async (tx) => {
+    const result = await db.transaction(async (tx) => {
       await lockDigestsTx(
         tx,
         [digest, previousDigestInput].filter((d): d is string => !!d),
@@ -226,7 +226,7 @@ export async function createPackageVersion(
   },
 ): Promise<string | null> {
   const publisher = publisherOf(ctx);
-  return ctx.db.transaction(async (tx) => {
+  return db.transaction(async (tx) => {
     const quota = await lockOrgQuotaTx(tx, ctx.repo.orgId);
     const [row] = await tx
       .insert(packageVersions)
@@ -280,13 +280,8 @@ export async function commitVersionOrReleaseBlob(
   return { versionId };
 }
 
-export async function setDistTag(
-  ctx: RegistryRequestContext,
-  packageId: string,
-  tag: string,
-  versionId: string,
-): Promise<void> {
-  await ctx.db
+export async function setDistTag(packageId: string, tag: string, versionId: string): Promise<void> {
+  await db
     .insert(versionTags)
     .values({ packageId, tag, versionId })
     .onConflictDoUpdate({ target: [versionTags.packageId, versionTags.tag], set: { versionId } });

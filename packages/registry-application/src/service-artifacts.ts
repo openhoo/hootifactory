@@ -1,21 +1,28 @@
-import { and, artifacts, eq, scanPolicies } from "@hootifactory/db";
+import { and, artifacts, db, eq, scanPolicies } from "@hootifactory/db";
 import type { RegistryRequestContext } from "@hootifactory/registry";
 import { resolveScanPolicy, type ScanPolicyPattern } from "@hootifactory/scan-core";
 
 export const REGISTRY_TOKEN_SERVICE = "hootifactory";
 
 type ScanPolicyRow = ScanPolicyPattern & { mode: "audit" | "enforce" };
+type BlobResponseOptions = {
+  digest: string;
+  contentType: string;
+  extraHeaders?: Record<string, string>;
+  blocked: () => Response;
+  notModified?: () => Response | null;
+};
 
 export async function isArtifactBlocked(
   ctx: RegistryRequestContext,
   digest: string,
 ): Promise<boolean> {
-  const policies = (await ctx.db
+  const policies = (await db
     .select()
     .from(scanPolicies)
     .where(eq(scanPolicies.orgId, ctx.repo.orgId))) as ScanPolicyRow[];
   const policy = resolveScanPolicy(policies, ctx.repo.name);
-  const [row] = await ctx.db
+  const [row] = await db
     .select({ state: artifacts.state })
     .from(artifacts)
     .where(
@@ -45,15 +52,17 @@ export async function isArtifactBlocked(
  */
 export async function serveBlobIfClean(
   ctx: RegistryRequestContext,
-  opts: {
-    digest: string;
-    contentType: string;
-    extraHeaders?: Record<string, string>;
-    blocked: () => Response;
-    notModified?: () => Response | null;
-  },
+  opts: BlobResponseOptions,
 ): Promise<Response> {
-  if (await isArtifactBlocked(ctx, opts.digest)) return opts.blocked();
+  return serveBlobWithScanGate(ctx, opts, (digest) => isArtifactBlocked(ctx, digest));
+}
+
+export async function serveBlobWithScanGate(
+  ctx: Pick<RegistryRequestContext, "blobs">,
+  opts: BlobResponseOptions,
+  isBlocked: (digest: string) => Promise<boolean>,
+): Promise<Response> {
+  if (await isBlocked(opts.digest)) return opts.blocked();
   const notModified = opts.notModified?.();
   if (notModified) return notModified;
   return new Response(ctx.blobs.get(opts.digest), {

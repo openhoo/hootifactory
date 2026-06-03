@@ -287,15 +287,15 @@ export class DockerAdapter implements RegistryPlugin {
       const pkg = await findPackageByName(ctx, image);
       if (!pkg) throw Errors.manifestUnknown({ reference });
 
-      await deleteOciTagsForManifest(ctx, { packageId: pkg.id, manifestId: scoped.id });
-      await markOciPackageVersionsDeletedByDigest(ctx, { packageId: pkg.id, digest: reference });
+      await deleteOciTagsForManifest({ packageId: pkg.id, manifestId: scoped.id });
+      await markOciPackageVersionsDeletedByDigest({ packageId: pkg.id, digest: reference });
       await deleteOciManifestIfUnassociated(ctx, { manifestId: scoped.id, digest: reference });
       await this.releaseManifestBlobs(ctx, image, manifestBlobDigests(scoped.raw));
     } else {
       // Tag delete only removes the mutable pointer; the manifest + its blobs remain.
       const pkg = await findPackageByName(ctx, image);
       if (!pkg) throw Errors.manifestUnknown({ reference });
-      const deleted = await deleteOciTag(ctx, { packageId: pkg.id, tag: reference });
+      const deleted = await deleteOciTag({ packageId: pkg.id, tag: reference });
       if (!deleted) throw Errors.manifestUnknown({ reference });
     }
     return new Response(null, { status: 202 });
@@ -334,7 +334,7 @@ export class DockerAdapter implements RegistryPlugin {
   ): Promise<Response> {
     const pkg = await findPackageByName(ctx, image);
     if (!pkg) throw Errors.nameUnknown({ image });
-    const tags = await listOciTags(ctx, pkg.id);
+    const tags = await listOciTags(pkg.id);
     return buildOciTagsListResponse({
       baseUrl: ctx.baseUrl,
       mountPath: ctx.repo.mountPath,

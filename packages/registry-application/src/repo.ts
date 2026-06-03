@@ -113,7 +113,7 @@ export async function findPackageByName(
   ctx: RegistryRequestContext,
   name: string,
 ): Promise<PackageRow | null> {
-  const [row] = await ctx.db
+  const [row] = await db
     .select()
     .from(packages)
     .where(and(eq(packages.repositoryId, ctx.repo.id), eq(packages.name, name)))
@@ -137,11 +137,10 @@ export async function findVersion(
 
 /** Find a single live (not soft-deleted) version by (packageId, version). */
 export async function findLiveVersion(
-  ctx: RegistryRequestContext,
   packageId: string,
   version: string,
 ): Promise<PackageVersionRow | null> {
-  const [row] = await ctx.db
+  const [row] = await db
     .select()
     .from(packageVersions)
     .where(
@@ -303,7 +302,6 @@ export async function applyRetention(repositoryId: string, keepLastN: number): P
   });
 
   // Delete reclaimed objects from the CAS only if no concurrent upload reactivated them.
-  for (const digest of casToDelete)
-    await deleteUnreferencedCasBlob({ db, blobs: blobStore }, digest);
+  for (const digest of casToDelete) await deleteUnreferencedCasBlob({ blobs: blobStore }, digest);
   return pruned;
 }

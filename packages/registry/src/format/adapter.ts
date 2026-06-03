@@ -118,17 +118,6 @@ export interface BlobStore {
   presignPutKey(key: string, expiresIn?: number): string;
 }
 
-export interface RegistryDatabase {
-  transaction<T>(fn: (tx: any) => Promise<T> | T): Promise<T>;
-  // Opaque Drizzle port. Protocol packages should move query-heavy behavior
-  // behind application services before this can be narrowed.
-  select(...args: any[]): any;
-  insert(...args: any[]): any;
-  update(...args: any[]): any;
-  delete(...args: any[]): any;
-  execute(...args: any[]): Promise<unknown> | unknown;
-}
-
 export type HttpMethod = "GET" | "HEAD" | "PUT" | "POST" | "PATCH" | "DELETE";
 
 /** A declarative route, relative to the repository's mount path. */
@@ -183,7 +172,6 @@ export interface RegistryRequestContext {
   repo: ResolvedRepo;
   principal: RegistryPrincipal;
   blobs: BlobStore;
-  db: RegistryDatabase;
   /** Runtime knobs injected by the application layer. */
   limits: {
     maxUploadBytes: number;

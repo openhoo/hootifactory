@@ -2,6 +2,7 @@ import {
   consumeAuthEmailToken,
   createOidcAuthorizationRequest,
   OidcEmailLinkRequiredError,
+  oidcIdentityBelongsToAnotherUser,
   resolveOidcCallbackClaims,
   safeOidcReturnTo,
   signOidcState,
@@ -9,7 +10,6 @@ import {
   verifyOidcState,
 } from "@hootifactory/auth";
 import { env } from "@hootifactory/config";
-import { and, db, eq, externalIdentities } from "@hootifactory/db";
 import { addSpanEvent, logger, setActiveSpanAttributes } from "@hootifactory/observability";
 import type { Hono } from "hono";
 import type { AppEnv } from "../types";
@@ -129,18 +129,13 @@ export function registerOidcRoutes(router: Hono<AppEnv>): void {
     if (!metadata.success) return c.redirect(loginRedirect("sso_link_invalid"));
     const { claims, returnTo } = metadata.data;
 
-    const [existingIdentity] = await db
-      .select({ userId: externalIdentities.userId })
-      .from(externalIdentities)
-      .where(
-        and(
-          eq(externalIdentities.provider, "oidc"),
-          eq(externalIdentities.issuer, claims.issuer),
-          eq(externalIdentities.subject, claims.subject),
-        ),
-      )
-      .limit(1);
-    if (existingIdentity && existingIdentity.userId !== token.userId) {
+    if (
+      await oidcIdentityBelongsToAnotherUser({
+        issuer: claims.issuer,
+        subject: claims.subject,
+        userId: token.userId,
+      })
+    ) {
       return c.redirect(loginRedirect("sso_link_invalid"));
     }
 

@@ -133,7 +133,7 @@ export class CargoAdapter implements RegistryPlugin {
     if (path !== cargoIndexPath(name)) return new Response("", { status: 404 });
     const pkg = await this.findCrate(ctx, name);
     if (!pkg) return new Response("", { status: 404 });
-    const vers = await listLivePackageVersions(ctx, pkg.id, { orderByCreated: "asc" });
+    const vers = await listLivePackageVersions(pkg.id, { orderByCreated: "asc" });
     const lines = vers
       .map((v) => JSON.stringify((v.metadata as unknown as CargoVersionMeta).index))
       .join("\n");
@@ -149,7 +149,7 @@ export class CargoAdapter implements RegistryPlugin {
     version = parseCrateVersion(version);
     const pkg = await this.findCrate(ctx, crate);
     if (!pkg) throw Errors.notFound();
-    const v = await findLiveVersion(ctx, pkg.id, version);
+    const v = await findLiveVersion(pkg.id, version);
     const digest = (v?.metadata as unknown as CargoVersionMeta | undefined)?.crateDigest;
     if (!digest || !(await ctx.blobs.exists(digest))) throw Errors.notFound();
     return serveBlobIfClean(ctx, {
@@ -170,10 +170,10 @@ export class CargoAdapter implements RegistryPlugin {
     version = parseCrateVersion(version);
     const pkg = await this.findCrate(ctx, crate);
     if (!pkg) throw Errors.notFound();
-    const v = await findLiveVersion(ctx, pkg.id, version);
+    const v = await findLiveVersion(pkg.id, version);
     if (!v) throw Errors.notFound();
     const meta = (v.metadata ?? {}) as { index?: Record<string, unknown> };
-    await updatePackageVersionMetadata(ctx, v.id, {
+    await updatePackageVersionMetadata(v.id, {
       ...meta,
       index: { ...(meta.index ?? {}), yanked },
     });
@@ -184,7 +184,7 @@ export class CargoAdapter implements RegistryPlugin {
     crate = parseCrateName(crate).toLowerCase();
     const pkg = await this.findCrate(ctx, crate);
     if (!pkg) throw Errors.notFound();
-    const rows = await listLiveVersionPublishers(ctx, pkg.id);
+    const rows = await listLiveVersionPublishers(pkg.id);
     return Response.json(buildCargoOwnersBody(rows));
   }
 
@@ -214,7 +214,7 @@ export class CargoAdapter implements RegistryPlugin {
       repositoryId: ctx.repo.id,
       name,
     });
-    const existingVersions = await listPackageVersionNames(ctx, pkg.id);
+    const existingVersions = await listPackageVersionNames(pkg.id);
     if (
       existingVersions.some(
         (version) => cargoVersionIdentity(version.version) === cargoVersionIdentity(meta.vers),

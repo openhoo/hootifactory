@@ -198,7 +198,7 @@ async function tryCrossRepositoryMount(input: {
   from?: string;
   ctx: RegistryRequestContext;
 }): Promise<Response | null> {
-  const sources = (await listOciMountSources(input.ctx, input.mount)).map((source) => ({
+  const sources = (await listOciMountSources(input.mount)).map((source) => ({
     ...source,
     full: `${source.mountPath.replace(/^v2\//, "")}/${source.scope}`,
   }));

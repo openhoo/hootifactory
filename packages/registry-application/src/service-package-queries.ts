@@ -2,6 +2,7 @@ import {
   and,
   asc,
   count,
+  db,
   desc,
   eq,
   isNull,
@@ -68,7 +69,7 @@ export interface PatchPackageVersionUpdate<T> {
 export async function listRepositoryPackageNames(
   ctx: RegistryRequestContext,
 ): Promise<PackageNameRow[]> {
-  return ctx.db
+  return db
     .select({ name: packages.name })
     .from(packages)
     .where(eq(packages.repositoryId, ctx.repo.id));
@@ -77,7 +78,7 @@ export async function listRepositoryPackageNames(
 export async function listRepositoryPackages(
   ctx: RegistryRequestContext,
 ): Promise<PackageSummaryRow[]> {
-  return ctx.db
+  return db
     .select({ id: packages.id, name: packages.name })
     .from(packages)
     .where(eq(packages.repositoryId, ctx.repo.id));
@@ -91,10 +92,10 @@ export async function searchRepositoryPackages(
     eq(packages.repositoryId, ctx.repo.id),
     opts.text ? like(packages.name, `%${opts.text}%`) : sql`true`,
   );
-  const totalRows = (await ctx.db.select({ value: count() }).from(packages).where(where)) as Array<{
+  const totalRows = (await db.select({ value: count() }).from(packages).where(where)) as Array<{
     value: number;
   }>;
-  const rows = (await ctx.db
+  const rows = (await db
     .select({ id: packages.id, name: packages.name })
     .from(packages)
     .where(where)
@@ -104,11 +105,10 @@ export async function searchRepositoryPackages(
 }
 
 export async function listLivePackageVersions(
-  ctx: RegistryRequestContext,
   packageId: string,
   opts: { orderByCreated?: "asc" | "desc" } = {},
 ): Promise<PackageVersionReadRow[]> {
-  const query = ctx.db
+  const query = db
     .select()
     .from(packageVersions)
     .where(and(eq(packageVersions.packageId, packageId), isNull(packageVersions.deletedAt)));
@@ -118,21 +118,15 @@ export async function listLivePackageVersions(
   return query;
 }
 
-export async function listPackageVersionNames(
-  ctx: RegistryRequestContext,
-  packageId: string,
-): Promise<PackageVersionNameRow[]> {
-  return ctx.db
+export async function listPackageVersionNames(packageId: string): Promise<PackageVersionNameRow[]> {
+  return db
     .select({ version: packageVersions.version })
     .from(packageVersions)
     .where(eq(packageVersions.packageId, packageId));
 }
 
-export async function listLiveDistTags(
-  ctx: RegistryRequestContext,
-  packageId: string,
-): Promise<Record<string, string>> {
-  const rows = (await ctx.db
+export async function listLiveDistTags(packageId: string): Promise<Record<string, string>> {
+  const rows = (await db
     .select({ tag: versionTags.tag, version: packageVersions.version })
     .from(versionTags)
     .innerJoin(packageVersions, eq(versionTags.versionId, packageVersions.id))
@@ -144,49 +138,39 @@ export async function listLiveDistTags(
   return tags;
 }
 
-export async function deleteDistTag(
-  ctx: RegistryRequestContext,
-  packageId: string,
-  tag: string,
-): Promise<void> {
-  await ctx.db
+export async function deleteDistTag(packageId: string, tag: string): Promise<void> {
+  await db
     .delete(versionTags)
     .where(and(eq(versionTags.packageId, packageId), eq(versionTags.tag, tag)));
 }
 
 export async function updatePackageLatestVersion(
-  ctx: RegistryRequestContext,
   packageId: string,
   latestVersion: string | null,
 ): Promise<void> {
-  await ctx.db.update(packages).set({ latestVersion }).where(eq(packages.id, packageId));
+  await db.update(packages).set({ latestVersion }).where(eq(packages.id, packageId));
 }
 
 export async function replaceDistTags(
-  ctx: RegistryRequestContext,
   packageId: string,
   desiredTags: Map<string, { version: string; versionId: string }>,
 ): Promise<void> {
-  const currentTags = await listLiveDistTags(ctx, packageId);
+  const currentTags = await listLiveDistTags(packageId);
   for (const tag of Object.keys(currentTags)) {
     if (desiredTags.has(tag)) continue;
-    await deleteDistTag(ctx, packageId, tag);
+    await deleteDistTag(packageId, tag);
   }
   for (const [tag, { versionId }] of desiredTags) {
-    await ctx.db
+    await db
       .insert(versionTags)
       .values({ packageId, tag, versionId })
       .onConflictDoUpdate({ target: [versionTags.packageId, versionTags.tag], set: { versionId } });
   }
-  await updatePackageLatestVersion(ctx, packageId, desiredTags.get("latest")?.version ?? null);
+  await updatePackageLatestVersion(packageId, desiredTags.get("latest")?.version ?? null);
 }
 
-export async function packageVersionExists(
-  ctx: RegistryRequestContext,
-  packageId: string,
-  version: string,
-): Promise<boolean> {
-  const [row] = await ctx.db
+export async function packageVersionExists(packageId: string, version: string): Promise<boolean> {
+  const [row] = await db
     .select({ id: packageVersions.id })
     .from(packageVersions)
     .where(and(eq(packageVersions.packageId, packageId), eq(packageVersions.version, version)))
@@ -204,7 +188,7 @@ export async function listRepositoryVersionMetadata(
       : eq(packages.repositoryId, ctx.repo.id),
   ];
   if (opts.liveOnly ?? true) conditions.push(isNull(packageVersions.deletedAt));
-  return ctx.db
+  return db
     .select({
       version: packageVersions.version,
       metadata: packageVersions.metadata,
@@ -216,26 +200,22 @@ export async function listRepositoryVersionMetadata(
 }
 
 export async function updatePackageVersionMetadata(
-  ctx: RegistryRequestContext,
   versionId: string,
   metadata: Record<string, unknown>,
   opts: { sizeBytes?: number } = {},
 ): Promise<void> {
-  await ctx.db
+  await db
     .update(packageVersions)
     .set({ metadata, ...(opts.sizeBytes === undefined ? {} : { sizeBytes: opts.sizeBytes }) })
     .where(eq(packageVersions.id, versionId));
 }
 
-export async function patchPackageVersion<T>(
-  ctx: RegistryRequestContext,
-  opts: {
-    packageId: string;
-    version: string;
-    patch: (row: PatchPackageVersionRow | null) => PatchPackageVersionUpdate<T>;
-  },
-): Promise<T> {
-  return ctx.db.transaction(async (tx) => {
+export async function patchPackageVersion<T>(opts: {
+  packageId: string;
+  version: string;
+  patch: (row: PatchPackageVersionRow | null) => PatchPackageVersionUpdate<T>;
+}): Promise<T> {
+  return db.transaction(async (tx) => {
     const [row] = await tx
       .select({
         id: packageVersions.id,
@@ -267,11 +247,8 @@ export async function patchPackageVersion<T>(
   });
 }
 
-export async function listLiveVersionPublishers(
-  ctx: RegistryRequestContext,
-  packageId: string,
-): Promise<VersionPublisherRow[]> {
-  return ctx.db
+export async function listLiveVersionPublishers(packageId: string): Promise<VersionPublisherRow[]> {
+  return db
     .select({
       id: users.id,
       login: users.username,

@@ -1,5 +1,5 @@
 import { Errors } from "@hootifactory/core";
-import { and, blobRefs, blobs, eq, repositories, sql } from "@hootifactory/db";
+import { and, blobRefs, blobs, db, eq, repositories, sql } from "@hootifactory/db";
 import { type BlobStore, computeDigest, type RegistryRequestContext } from "@hootifactory/registry";
 import {
   adjustStorageUsedTx,
@@ -34,7 +34,7 @@ interface BlobPutResult extends BlobPut {
   deduped: boolean;
 }
 
-type BlobLifecycleContext = { db: RegistryRequestContext["db"]; blobs: BlobStore };
+type BlobLifecycleContext = { blobs: BlobStore };
 
 export async function lockDigestTx(tx: Tx, digest: string): Promise<void> {
   await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${digest}, 0))`);
@@ -54,7 +54,7 @@ async function deleteUnrecordedCasBlob(
 ): Promise<void> {
   if (!put || put.deduped) return;
   try {
-    await ctx.db.transaction(async (tx) => {
+    await db.transaction(async (tx) => {
       await lockDigestTx(tx, put.digest);
       const [row] = await tx
         .select({ digest: blobs.digest })
@@ -74,7 +74,7 @@ export async function deleteUnreferencedCasBlob(
   digest: string,
 ): Promise<void> {
   try {
-    await ctx.db.transaction(async (tx) => {
+    await db.transaction(async (tx) => {
       await lockDigestTx(tx, digest);
       const deleted = await tx
         .delete(blobs)
@@ -195,7 +195,7 @@ async function runStoreBlobWithRef(
 ): Promise<StoredBlob> {
   let putForCleanup: BlobPutResult | null = null;
   try {
-    return await ctx.db.transaction(async (tx) => {
+    return await db.transaction(async (tx) => {
       const put = await acquire(tx, (p) => {
         putForCleanup = p;
       });
@@ -212,7 +212,7 @@ export async function storeBlobWithRef(
   opts: { data: Uint8Array; mediaType?: string; kind: BlobRefKind; scope: string },
 ): Promise<StoredBlob> {
   const digest = computeDigest(opts.data);
-  const [existingOrgRef] = await ctx.db
+  const [existingOrgRef] = await db
     .select({ id: blobRefs.id })
     .from(blobRefs)
     .innerJoin(repositories, eq(blobRefs.repositoryId, repositories.id))
@@ -250,7 +250,7 @@ export async function ensureBlobRef(
   ctx: RegistryRequestContext,
   ref: { digest: string; kind: BlobRefKind; scope: string },
 ): Promise<void> {
-  await ctx.db.transaction(async (tx) => {
+  await db.transaction(async (tx) => {
     const [b] = await tx
       .select({ size: blobs.sizeBytes })
       .from(blobs)
@@ -283,7 +283,7 @@ export async function releaseBlobRef(
 ): Promise<void> {
   let maybeDeleteCasDigest: string | null = null;
   try {
-    await ctx.db.transaction(async (tx) => {
+    await db.transaction(async (tx) => {
       await lockDigestTx(tx, ref.digest);
       const deleted = await tx
         .delete(blobRefs)

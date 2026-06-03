@@ -16,12 +16,23 @@ import {
   createAuthEmailToken,
   resetPasswordWithToken,
 } from "./email-tokens";
-import { OIDC_PROVIDER, OidcEmailLinkRequiredError, syncOidcUser } from "./oidc";
+import {
+  OIDC_PROVIDER,
+  OidcEmailLinkRequiredError,
+  oidcIdentityBelongsToAnotherUser,
+  syncOidcUser,
+} from "./oidc";
 import { hashPassword, verifyPassword } from "./password";
 import type { Principal } from "./principal";
 import { issueRegistryToken, registryJwks, verifyRegistryToken } from "./registry-jwt";
 import { createSession, resolveSession, revokeSession } from "./sessions";
 import { createApiToken, resolveToken, revokeToken } from "./tokens";
+import {
+  authenticateUserPassword,
+  createLocalUser,
+  findPasswordResetUser,
+  userPrincipalById,
+} from "./users";
 
 let orgId = "";
 let userId = "";
@@ -294,6 +305,42 @@ describe("sessions (DB)", () => {
 });
 
 describe("auth email tokens (DB)", () => {
+  test("password reset user lookup only returns active local accounts", async () => {
+    const localPassword = "reset-password";
+    const local = await createLocalUser({
+      email: `${crypto.randomUUID()}@reset.test`,
+      username: `reset-${crypto.randomUUID().slice(0, 8)}`,
+      password: localPassword,
+    });
+    cleanupUserIds.push(local.id);
+    const [ssoOnly] = await db
+      .insert(users)
+      .values({
+        email: `${crypto.randomUUID()}@reset.test`,
+        username: `sso-only-${crypto.randomUUID().slice(0, 8)}`,
+        passwordHash: null,
+      })
+      .returning();
+    cleanupUserIds.push(ssoOnly!.id);
+    const [disabled] = await db
+      .insert(users)
+      .values({
+        email: `${crypto.randomUUID()}@reset.test`,
+        username: `disabled-reset-${crypto.randomUUID().slice(0, 8)}`,
+        passwordHash: await hashPassword(localPassword),
+        isActive: false,
+      })
+      .returning();
+    cleanupUserIds.push(disabled!.id);
+
+    await expect(findPasswordResetUser(local.email)).resolves.toEqual({
+      id: local.id,
+      email: local.email,
+    });
+    await expect(findPasswordResetUser(ssoOnly!.email)).resolves.toBeNull();
+    await expect(findPasswordResetUser(disabled!.email)).resolves.toBeNull();
+  });
+
   test("password reset tokens are single-use and revoke existing sessions", async () => {
     const oldPassword = "old-password";
     const newPassword = "new-password";
@@ -336,7 +383,76 @@ describe("auth email tokens (DB)", () => {
   });
 });
 
+describe("local users (DB)", () => {
+  test("createLocalUser hashes credentials and principal helpers ignore disabled users", async () => {
+    const password = "local-user-password";
+    const user = await createLocalUser({
+      email: `${crypto.randomUUID()}@local.test`,
+      username: `local-${crypto.randomUUID().slice(0, 8)}`,
+      password,
+      displayName: "Local User",
+    });
+    cleanupUserIds.push(user.id);
+
+    expect(user.passwordHash).not.toBe(password);
+    expect(await verifyPassword(password, user.passwordHash!)).toBe(true);
+    await expect(authenticateUserPassword(user.username, password)).resolves.toEqual({
+      kind: "user",
+      userId: user.id,
+      username: user.username,
+    });
+    await expect(authenticateUserPassword(user.username, "wrong-password")).resolves.toBeNull();
+    await expect(userPrincipalById(user.id)).resolves.toEqual({
+      kind: "user",
+      userId: user.id,
+      username: user.username,
+    });
+
+    await db.update(users).set({ isActive: false }).where(eq(users.id, user.id));
+    await expect(authenticateUserPassword(user.username, password)).resolves.toBeNull();
+    await expect(userPrincipalById(user.id)).resolves.toBeNull();
+  });
+});
+
 describe("OIDC user sync (DB)", () => {
+  test("detects OIDC identities owned by a different user", async () => {
+    const subject = crypto.randomUUID();
+    const user = await syncOidcUser({
+      issuer: "https://idp.test",
+      subject,
+      email: `${crypto.randomUUID()}@oidc.test`,
+      emailVerified: true,
+      username: "owned-identity",
+      displayName: "Owned Identity",
+      groups: ["developers"],
+      grants: [{ org: orgSlug, role: "developer", groups: ["developers"] }],
+    });
+    cleanupUserIds.push(user.id);
+    const [otherUser] = await db
+      .insert(users)
+      .values({
+        email: `${crypto.randomUUID()}@oidc.test`,
+        username: `other-identity-${crypto.randomUUID().slice(0, 8)}`,
+      })
+      .returning();
+    cleanupUserIds.push(otherUser!.id);
+
+    await expect(
+      oidcIdentityBelongsToAnotherUser({
+        issuer: "https://idp.test",
+        subject,
+        userId: user.id,
+      }),
+    ).resolves.toBe(false);
+    await expect(
+      oidcIdentityBelongsToAnotherUser({
+        issuer: "https://idp.test",
+        subject,
+        userId: otherUser!.id,
+      }),
+    ).resolves.toBe(true);
+  });
+
   test("auto-provisions a mapped user and grants org access", async () => {
     const email = `${crypto.randomUUID()}@oidc.test`;
     const user = await syncOidcUser({

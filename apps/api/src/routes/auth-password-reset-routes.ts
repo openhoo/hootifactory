@@ -1,6 +1,5 @@
-import { resetPasswordWithToken } from "@hootifactory/auth";
+import { findPasswordResetUser, resetPasswordWithToken } from "@hootifactory/auth";
 import { env } from "@hootifactory/config";
-import { db, eq, users } from "@hootifactory/db";
 import { addSpanEvent, logger } from "@hootifactory/observability";
 import type { Hono } from "hono";
 import type { AppEnv } from "../types";
@@ -46,8 +45,8 @@ export function registerPasswordResetRoutes(router: Hono<AppEnv>): void {
       return c.json({ ok: true });
     }
 
-    const [user] = await db.select().from(users).where(eq(users.email, email)).limit(1);
-    if (user?.isActive && user.passwordHash) {
+    const user = await findPasswordResetUser(email);
+    if (user) {
       try {
         const { job } = await createPasswordResetEmail({
           userId: user.id,

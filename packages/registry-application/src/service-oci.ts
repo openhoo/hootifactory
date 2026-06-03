@@ -1,6 +1,7 @@
 import {
   and,
   blobRefs,
+  db,
   eq,
   inArray,
   isNull,
@@ -50,7 +51,7 @@ export async function listExistingOciBlobRefDigests(
   opts: { scope: string; digests: string[] },
 ): Promise<string[]> {
   if (opts.digests.length === 0) return [];
-  const rows = (await ctx.db
+  const rows = (await db
     .select({ digest: blobRefs.digest })
     .from(blobRefs)
     .where(
@@ -67,7 +68,7 @@ export async function ociBlobRefExists(
   ctx: RegistryRequestContext,
   opts: { scope: string; digest: string },
 ): Promise<boolean> {
-  const [ref] = await ctx.db
+  const [ref] = await db
     .select({ id: blobRefs.id })
     .from(blobRefs)
     .where(
@@ -85,7 +86,7 @@ export async function upsertOciManifest(
   ctx: RegistryRequestContext,
   input: UpsertOciManifestInput,
 ): Promise<{ id: string }> {
-  const [manifest] = await ctx.db
+  const [manifest] = await db
     .insert(ociManifests)
     .values({
       repositoryId: ctx.repo.id,
@@ -117,7 +118,7 @@ export async function upsertOciTag(
   ctx: RegistryRequestContext,
   opts: { packageId: string; tag: string; manifestId: string },
 ): Promise<void> {
-  await ctx.db
+  await db
     .insert(ociTags)
     .values({
       repositoryId: ctx.repo.id,
@@ -136,7 +137,7 @@ export async function resolveOciManifest(
   opts: { packageId: string; reference: string },
 ): Promise<OciManifestRow | null> {
   if (opts.reference.startsWith("sha256:")) {
-    const [tagged] = await ctx.db
+    const [tagged] = await db
       .select({ manifest: ociManifests })
       .from(ociTags)
       .innerJoin(ociManifests, eq(ociTags.manifestId, ociManifests.id))
@@ -144,7 +145,7 @@ export async function resolveOciManifest(
       .limit(1);
     if (tagged) return tagged.manifest;
 
-    const [digestVersion] = await ctx.db
+    const [digestVersion] = await db
       .select({ id: packageVersions.id })
       .from(packageVersions)
       .where(
@@ -157,7 +158,7 @@ export async function resolveOciManifest(
       .limit(1);
     if (!digestVersion) return null;
 
-    const [manifest] = await ctx.db
+    const [manifest] = await db
       .select()
       .from(ociManifests)
       .where(
@@ -167,7 +168,7 @@ export async function resolveOciManifest(
     return manifest ?? null;
   }
 
-  const [tagged] = await ctx.db
+  const [tagged] = await db
     .select({ manifest: ociManifests })
     .from(ociTags)
     .innerJoin(ociManifests, eq(ociTags.manifestId, ociManifests.id))
@@ -176,20 +177,20 @@ export async function resolveOciManifest(
   return tagged?.manifest ?? null;
 }
 
-export async function deleteOciTagsForManifest(
-  ctx: RegistryRequestContext,
-  opts: { packageId: string; manifestId: string },
-): Promise<void> {
-  await ctx.db
+export async function deleteOciTagsForManifest(opts: {
+  packageId: string;
+  manifestId: string;
+}): Promise<void> {
+  await db
     .delete(ociTags)
     .where(and(eq(ociTags.packageId, opts.packageId), eq(ociTags.manifestId, opts.manifestId)));
 }
 
-export async function markOciPackageVersionsDeletedByDigest(
-  ctx: RegistryRequestContext,
-  opts: { packageId: string; digest: string },
-): Promise<void> {
-  await ctx.db
+export async function markOciPackageVersionsDeletedByDigest(opts: {
+  packageId: string;
+  digest: string;
+}): Promise<void> {
+  await db
     .update(packageVersions)
     .set({ deletedAt: new Date() })
     .where(
@@ -206,7 +207,7 @@ export async function deleteOciManifestIfUnassociated(
   opts: { manifestId: string; digest: string },
 ): Promise<boolean> {
   if (await ociManifestHasLiveAssociations(ctx, opts)) return false;
-  const deleted = await ctx.db
+  const deleted = await db
     .delete(ociManifests)
     .where(and(eq(ociManifests.repositoryId, ctx.repo.id), eq(ociManifests.digest, opts.digest)))
     .returning({ id: ociManifests.id });
@@ -217,14 +218,14 @@ async function ociManifestHasLiveAssociations(
   ctx: RegistryRequestContext,
   opts: { manifestId: string; digest: string },
 ): Promise<boolean> {
-  const [tag] = await ctx.db
+  const [tag] = await db
     .select({ id: ociTags.id })
     .from(ociTags)
     .where(eq(ociTags.manifestId, opts.manifestId))
     .limit(1);
   if (tag) return true;
 
-  const [version] = await ctx.db
+  const [version] = await db
     .select({ id: packageVersions.id })
     .from(packageVersions)
     .innerJoin(packages, eq(packageVersions.packageId, packages.id))
@@ -239,11 +240,8 @@ async function ociManifestHasLiveAssociations(
   return Boolean(version);
 }
 
-export async function deleteOciTag(
-  ctx: RegistryRequestContext,
-  opts: { packageId: string; tag: string },
-): Promise<boolean> {
-  const deleted = await ctx.db
+export async function deleteOciTag(opts: { packageId: string; tag: string }): Promise<boolean> {
+  const deleted = await db
     .delete(ociTags)
     .where(and(eq(ociTags.packageId, opts.packageId), eq(ociTags.tag, opts.tag)))
     .returning({ id: ociTags.id });
@@ -254,12 +252,12 @@ export async function listLiveOciManifestsForPackage(
   ctx: RegistryRequestContext,
   packageId: string,
 ): Promise<OciManifestRawRow[]> {
-  const tagRows = (await ctx.db
+  const tagRows = (await db
     .select({ digest: ociManifests.digest })
     .from(ociTags)
     .innerJoin(ociManifests, eq(ociTags.manifestId, ociManifests.id))
     .where(eq(ociTags.packageId, packageId))) as OciDigestRow[];
-  const versionRows = (await ctx.db
+  const versionRows = (await db
     .select({ metadata: packageVersions.metadata })
     .from(packageVersions)
     .where(
@@ -273,7 +271,7 @@ export async function listLiveOciManifestsForPackage(
   }
   if (digests.size === 0) return [];
 
-  return ctx.db
+  return db
     .select({ digest: ociManifests.digest, raw: ociManifests.raw })
     .from(ociManifests)
     .where(
@@ -281,11 +279,8 @@ export async function listLiveOciManifestsForPackage(
     );
 }
 
-export async function listOciTags(
-  ctx: RegistryRequestContext,
-  packageId: string,
-): Promise<string[]> {
-  const rows = (await ctx.db
+export async function listOciTags(packageId: string): Promise<string[]> {
+  const rows = (await db
     .select({ tag: ociTags.tag })
     .from(ociTags)
     .where(eq(ociTags.packageId, packageId))) as OciTagRow[];
@@ -296,7 +291,7 @@ export async function listOciSubjectManifests(
   ctx: RegistryRequestContext,
   subjectDigest: string,
 ): Promise<OciManifestRow[]> {
-  return ctx.db
+  return db
     .select()
     .from(ociManifests)
     .where(

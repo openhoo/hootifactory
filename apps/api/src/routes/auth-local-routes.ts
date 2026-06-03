@@ -1,7 +1,6 @@
-import { hashPassword, revokeSession } from "@hootifactory/auth";
+import { authenticateUserPassword, createLocalUser, revokeSession } from "@hootifactory/auth";
 import { env } from "@hootifactory/config";
 import { isUniqueViolation } from "@hootifactory/core";
-import { db, users } from "@hootifactory/db";
 import {
   addSpanEvent,
   logger,
@@ -9,7 +8,6 @@ import {
   withSpan,
 } from "@hootifactory/observability";
 import type { Hono } from "hono";
-import { authenticateUserPassword } from "../middleware/authenticate";
 import type { AppEnv } from "../types";
 import { validateJsonBody } from "../validation";
 import {
@@ -50,18 +48,9 @@ export function registerLocalAuthRoutes(router: Hono<AppEnv>): void {
     const password = body.password;
     const displayName = body.displayName;
     try {
-      const [user] = await withSpan("auth.register_user", {}, async () =>
-        db
-          .insert(users)
-          .values({
-            username,
-            email,
-            displayName,
-            passwordHash: await hashPassword(password),
-          })
-          .returning(),
+      const user = await withSpan("auth.register_user", {}, () =>
+        createLocalUser({ username, email, password, displayName }),
       );
-      if (!user) return c.json({ error: "failed to create user" }, 500);
       await createRequestSession(c, user.id, { includeUserAgent: false });
       setActiveSpanAttributes({ "enduser.id": user.id, "auth.event": "registration" });
       logger.info("user registered", { userId: user.id });

@@ -1,4 +1,4 @@
-import { and, blobRefs, eq, repositories, uploadSessions } from "@hootifactory/db";
+import { and, blobRefs, db, eq, repositories, uploadSessions } from "@hootifactory/db";
 import type { RegistryRequestContext } from "@hootifactory/registry";
 import type { Tx } from "./service-quota";
 
@@ -29,7 +29,7 @@ export async function createOciUploadSession(
     expiresAt: Date;
   },
 ): Promise<void> {
-  await ctx.db.insert(uploadSessions).values({
+  await db.insert(uploadSessions).values({
     id: input.id,
     repositoryId: ctx.repo.id,
     scope: input.scope,
@@ -55,7 +55,7 @@ export async function withLockedOciUploadSession<T>(
     run: (session: OciUploadSessionRow | null, mutations: OciUploadSessionMutations) => Promise<T>;
   },
 ): Promise<T> {
-  return ctx.db.transaction(async (tx) => {
+  return db.transaction(async (tx) => {
     const session = await loadOciUploadSessionWith(opts.scope, opts.uuid, ctx, tx);
     const mutations: OciUploadSessionMutations = {
       updateOpen: async (patch) => {
@@ -96,17 +96,14 @@ export async function markOciUploadSessionAborted(
   ctx: RegistryRequestContext,
   opts: { scope: string; uuid: string },
 ): Promise<void> {
-  await ctx.db
+  await db
     .update(uploadSessions)
     .set({ state: "aborted" })
     .where(openOciUploadSessionWhere(ctx, opts.scope, opts.uuid));
 }
 
-export async function listOciMountSources(
-  ctx: RegistryRequestContext,
-  digest: string,
-): Promise<OciMountSourceRow[]> {
-  return ctx.db
+export async function listOciMountSources(digest: string): Promise<OciMountSourceRow[]> {
+  return db
     .select({
       orgId: repositories.orgId,
       id: repositories.id,
@@ -125,7 +122,7 @@ async function loadOciUploadSessionWith(
   ctx: RegistryRequestContext,
   tx?: Tx,
 ): Promise<OciUploadSessionRow | null> {
-  const query = (tx ?? ctx.db)
+  const query = (tx ?? db)
     .select()
     .from(uploadSessions)
     .where(
