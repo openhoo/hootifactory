@@ -3,6 +3,7 @@ import {
   bigint,
   index,
   integer,
+  jsonb,
   pgTable,
   text,
   timestamp,
@@ -12,8 +13,9 @@ import {
 } from "drizzle-orm/pg-core";
 import { primaryId, timestamps } from "./_helpers";
 import { blobRefKindEnum, blobStateEnum, uploadStateEnum } from "./enums";
-import { packages } from "./packages";
+import { packages, packageVersions } from "./packages";
 import { repositories } from "./repositories";
+import { organizations } from "./tenancy";
 
 /**
  * Global content-addressable blob registry. One row per unique sha256 across
@@ -87,6 +89,52 @@ export const ociManifests = pgTable(
   (t) => [
     uniqueIndex("oci_manifests_repo_digest_uq").on(t.repositoryId, t.digest),
     index("oci_manifests_subject_idx").on(t.repositoryId, t.subjectDigest),
+  ],
+);
+
+/**
+ * Normalized registry asset catalog. This is the format-agnostic ownership row
+ * for payloads exposed by packages/versions/manifests. Protocol metadata may
+ * still snapshot digests, but asset rows are the durable data-management truth.
+ */
+export const registryAssets = pgTable(
+  "registry_assets",
+  {
+    id: primaryId(),
+    orgId: uuid()
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    repositoryId: uuid()
+      .notNull()
+      .references(() => repositories.id, { onDelete: "cascade" }),
+    packageId: uuid().references(() => packages.id, { onDelete: "cascade" }),
+    packageVersionId: uuid().references(() => packageVersions.id, { onDelete: "cascade" }),
+    ociManifestId: uuid().references(() => ociManifests.id, { onDelete: "cascade" }),
+    blobRefId: uuid().references(() => blobRefs.id, { onDelete: "set null" }),
+    digest: varchar({ length: 80 }).notNull(),
+    /** Stable role from the registry data contract, e.g. npm_tarball or oci_layer. */
+    role: text().notNull(),
+    /** Logical protocol owner: name@version, filename, image path, manifest digest. */
+    scope: text().notNull().default(""),
+    path: text(),
+    mediaType: text(),
+    sizeBytes: bigint({ mode: "number" }).notNull().default(0),
+    metadata: jsonb().$type<Record<string, unknown>>().notNull().default({}),
+    ...timestamps(),
+  },
+  (t) => [
+    uniqueIndex("registry_assets_repo_role_scope_digest_uq").on(
+      t.repositoryId,
+      t.role,
+      t.scope,
+      t.digest,
+    ),
+    index("registry_assets_org_idx").on(t.orgId),
+    index("registry_assets_repo_idx").on(t.repositoryId),
+    index("registry_assets_package_idx").on(t.packageId),
+    index("registry_assets_version_idx").on(t.packageVersionId),
+    index("registry_assets_digest_idx").on(t.digest),
+    index("registry_assets_manifest_idx").on(t.ociManifestId),
   ],
 );
 

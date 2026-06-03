@@ -33,4 +33,28 @@ describe("Hootifactory API client", () => {
       message: "Internal Server Error",
     });
   });
+
+  test("uses API v1 paths for registry version and asset contracts", async () => {
+    const requests: Array<{ path: string; method?: string }> = [];
+    const client = createHootifactoryClient(async (path, init) => {
+      requests.push({ path, method: init?.method });
+      return Response.json({ data: [], pagination: { limit: 25, offset: 5, total: 0 } });
+    });
+
+    await client.version("pkg-1", "1.0.0+build");
+    await client.assets("repo-1", {
+      limit: 25,
+      offset: 5,
+      packageId: "pkg-1",
+      digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    });
+
+    expect(requests).toEqual([
+      { method: "GET", path: "/api/v1/packages/pkg-1/versions/1.0.0%2Bbuild" },
+      {
+        method: "GET",
+        path: "/api/v1/repositories/repo-1/assets?limit=25&offset=5&packageId=pkg-1&digest=sha256%3Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      },
+    ]);
+  });
 });

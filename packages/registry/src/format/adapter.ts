@@ -1,4 +1,5 @@
 import type { PackageFormat, RepoKind, Visibility } from "@hootifactory/types";
+import type { RegistryDataService } from "./data";
 
 export type Action = "read" | "write" | "delete" | "admin";
 export type TokenAction = Action;
@@ -171,6 +172,8 @@ export interface UpstreamClient {
 export interface RegistryRequestContext {
   repo: ResolvedRepo;
   principal: RegistryPrincipal;
+  /** Request-scoped registry data-management service. */
+  data: RegistryDataService;
   blobs: BlobStore;
   /** Runtime knobs injected by the application layer. */
   limits: {

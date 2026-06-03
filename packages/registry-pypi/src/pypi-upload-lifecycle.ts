@@ -1,13 +1,4 @@
 import { digestHex, type RegistryRequestContext } from "@hootifactory/registry";
-import {
-  createPackageVersion,
-  findOrCreatePackage,
-  findVersion,
-  listRepositoryVersionMetadata,
-  patchPackageVersion,
-  releaseBlobRef,
-  storeBlobWithRef,
-} from "@hootifactory/registry-application";
 import { type PypiUploadPlan, parsePypiUploadRequest } from "./pypi-upload";
 import {
   type AddPypiFileResult,
@@ -47,17 +38,15 @@ export async function handlePypiUpload(
     return Response.json({ message: "File already exists." }, { status: 409 });
   }
 
-  const pkg = await findOrCreatePackage({
-    orgId: ctx.repo.orgId,
-    repositoryId: ctx.repo.id,
+  const pkg = await ctx.data.packages.findOrCreate({
     name,
   });
-  const existing = await findVersion(pkg.id, version);
+  const existing = await ctx.data.versions.find(pkg.id, version);
   if (existing?.deletedAt) {
     return Response.json({ message: "Release version already exists." }, { status: 409 });
   }
 
-  const stored = await storeBlobWithRef(ctx, {
+  const stored = await ctx.data.content.storeBlobWithRef({
     data: bytes,
     kind: "pypi_file",
     scope: filename,
@@ -71,10 +60,15 @@ export async function handlePypiUpload(
     rawName,
     requiresPython,
     fileMeta,
+    storedDigest: stored.digest,
   });
   if (!added.ok) {
     if (stored.refCreated) {
-      await releaseBlobRef(ctx, { digest: stored.digest, kind: "pypi_file", scope: filename });
+      await ctx.data.content.releaseBlobRef({
+        digest: stored.digest,
+        kind: "pypi_file",
+        scope: filename,
+      });
     }
     return Response.json(
       {
@@ -98,7 +92,7 @@ export async function handlePypiUpload(
 }
 
 async function allFiles(ctx: RegistryRequestContext): Promise<PypiFileMeta[]> {
-  const rows = await listRepositoryVersionMetadata(ctx, { liveOnly: false });
+  const rows = await ctx.data.versions.listRepositoryMetadata({ liveOnly: false });
   return rows.flatMap((r) => normalizePypiVersionMetadata(r.metadata).files ?? []);
 }
 
@@ -110,9 +104,10 @@ async function addFileToVersion(
     rawName: string;
     requiresPython?: string;
     fileMeta: PypiFileMeta;
+    storedDigest: string;
   },
 ): Promise<AddPypiFileResult> {
-  const created = await createPackageVersion(ctx, {
+  const created = await ctx.data.versions.create({
     packageId: opts.packageId,
     version: opts.version,
     metadata: {
@@ -122,9 +117,22 @@ async function addFileToVersion(
     },
     sizeBytes: opts.fileMeta.size,
   });
-  if (created) return { ok: true, versionId: created };
+  if (created) {
+    await ctx.data.assets.upsert({
+      digest: opts.storedDigest,
+      role: "pypi_file",
+      packageId: opts.packageId,
+      packageVersionId: created,
+      scope: opts.fileMeta.filename,
+      path: opts.fileMeta.filename,
+      mediaType: "application/octet-stream",
+      sizeBytes: opts.fileMeta.size,
+      metadata: { filetype: opts.fileMeta.filetype },
+    });
+    return { ok: true, versionId: created };
+  }
 
-  return patchPackageVersion<AddPypiFileResult>({
+  const result = await ctx.data.versions.patch<AddPypiFileResult>({
     packageId: opts.packageId,
     version: opts.version,
     patch: (row) => {
@@ -152,4 +160,18 @@ async function addFileToVersion(
       };
     },
   });
+  if (result.ok) {
+    await ctx.data.assets.upsert({
+      digest: opts.storedDigest,
+      role: "pypi_file",
+      packageId: opts.packageId,
+      packageVersionId: result.versionId,
+      scope: opts.fileMeta.filename,
+      path: opts.fileMeta.filename,
+      mediaType: "application/octet-stream",
+      sizeBytes: opts.fileMeta.size,
+      metadata: { filetype: opts.fileMeta.filetype },
+    });
+  }
+  return result;
 }

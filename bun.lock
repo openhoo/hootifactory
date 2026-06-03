@@ -231,7 +231,6 @@
       "version": "0.0.0",
       "dependencies": {
         "@hootifactory/registry": "workspace:*",
-        "@hootifactory/registry-application": "workspace:*",
       },
     },
     "packages/registry-go": {
@@ -239,7 +238,6 @@
       "version": "0.0.0",
       "dependencies": {
         "@hootifactory/registry": "workspace:*",
-        "@hootifactory/registry-application": "workspace:*",
       },
     },
     "packages/registry-npm": {
@@ -247,7 +245,6 @@
       "version": "0.0.0",
       "dependencies": {
         "@hootifactory/registry": "workspace:*",
-        "@hootifactory/registry-application": "workspace:*",
       },
     },
     "packages/registry-nuget": {
@@ -255,7 +252,6 @@
       "version": "0.0.0",
       "dependencies": {
         "@hootifactory/registry": "workspace:*",
-        "@hootifactory/registry-application": "workspace:*",
       },
     },
     "packages/registry-oci": {
@@ -263,7 +259,6 @@
       "version": "0.0.0",
       "dependencies": {
         "@hootifactory/registry": "workspace:*",
-        "@hootifactory/registry-application": "workspace:*",
         "@hootifactory/types": "workspace:*",
       },
     },
@@ -272,7 +267,6 @@
       "version": "0.0.0",
       "dependencies": {
         "@hootifactory/registry": "workspace:*",
-        "@hootifactory/registry-application": "workspace:*",
       },
     },
     "packages/scan-core": {

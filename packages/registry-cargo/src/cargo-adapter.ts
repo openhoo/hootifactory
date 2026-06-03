@@ -10,14 +10,6 @@ import {
   readWritePermission,
 } from "@hootifactory/registry";
 import {
-  findLiveVersion,
-  findPackageByName,
-  listLivePackageVersions,
-  listLiveVersionPublishers,
-  serveBlobIfClean,
-  updatePackageVersionMetadata,
-} from "@hootifactory/registry-application";
-import {
   buildCargoOwnersBody,
   buildCargoOwnersUpdateBody,
   parseCargoOwnersRequest,
@@ -106,7 +98,7 @@ export class CargoAdapter implements RegistryPlugin {
   }
 
   private findCrate(ctx: RegistryRequestContext, name: string) {
-    return findPackageByName(ctx, name.toLowerCase());
+    return ctx.data.packages.findByName(name.toLowerCase());
   }
 
   private async index(path: string, ctx: RegistryRequestContext): Promise<Response> {
@@ -119,7 +111,7 @@ export class CargoAdapter implements RegistryPlugin {
     if (path !== cargoIndexPath(name)) return new Response("", { status: 404 });
     const pkg = await this.findCrate(ctx, name);
     if (!pkg) return new Response("", { status: 404 });
-    const vers = await listLivePackageVersions(pkg.id, { orderByCreated: "asc" });
+    const vers = await ctx.data.versions.listLive(pkg.id, { orderByCreated: "asc" });
     const lines = vers
       .flatMap((v) => {
         const metadata = parseCargoVersionMeta(v.metadata);
@@ -138,10 +130,10 @@ export class CargoAdapter implements RegistryPlugin {
     version = parseCrateVersion(version);
     const pkg = await this.findCrate(ctx, crate);
     if (!pkg) throw Errors.notFound();
-    const v = await findLiveVersion(pkg.id, version);
+    const v = await ctx.data.versions.findLive(pkg.id, version);
     const digest = parseCargoVersionMeta(v?.metadata)?.crateDigest;
     if (!digest || !(await ctx.blobs.exists(digest))) throw Errors.notFound();
-    return serveBlobIfClean(ctx, {
+    return ctx.data.content.serveBlobIfClean({
       digest,
       contentType: "application/octet-stream",
       blocked: () => new Response("blocked by scan policy", { status: 403 }),
@@ -159,11 +151,11 @@ export class CargoAdapter implements RegistryPlugin {
     version = parseCrateVersion(version);
     const pkg = await this.findCrate(ctx, crate);
     if (!pkg) throw Errors.notFound();
-    const v = await findLiveVersion(pkg.id, version);
+    const v = await ctx.data.versions.findLive(pkg.id, version);
     if (!v) throw Errors.notFound();
     const meta = parseCargoVersionMeta(v.metadata);
     if (!meta) throw Errors.notFound();
-    await updatePackageVersionMetadata(v.id, {
+    await ctx.data.versions.updateMetadata(v.id, {
       ...meta,
       index: { ...meta.index, yanked },
     });
@@ -174,7 +166,7 @@ export class CargoAdapter implements RegistryPlugin {
     crate = parseCrateName(crate).toLowerCase();
     const pkg = await this.findCrate(ctx, crate);
     if (!pkg) throw Errors.notFound();
-    const rows = await listLiveVersionPublishers(pkg.id);
+    const rows = await ctx.data.versions.listPublishers(pkg.id);
     return Response.json(buildCargoOwnersBody(rows));
   }
 

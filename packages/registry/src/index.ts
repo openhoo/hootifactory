@@ -23,5 +23,6 @@ export {
   zodIssueTree,
 } from "@hootifactory/core";
 export * from "./format/adapter";
+export * from "./format/data";
 export * from "./format/registry";
 export * from "./routing/route-matcher";

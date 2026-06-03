@@ -1,3 +1,4 @@
+export * from "./assets";
 export * from "./content";
 export * from "./governance";
 export * from "./inventory";

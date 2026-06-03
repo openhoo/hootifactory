@@ -1,10 +1,4 @@
 import type { RegistryRequestContext } from "@hootifactory/registry";
-import {
-  commitVersionOrReleaseBlob,
-  findOrCreatePackage,
-  findVersion,
-  storeBlobWithRef,
-} from "@hootifactory/registry-application";
 import { type NugetPublishPlan, parseNugetPublishRequest } from "./nuget-publish";
 import type { NugetVersionMeta } from "./nuget-validation";
 
@@ -28,23 +22,21 @@ export async function handleNugetPublish(
   }
   const { bytes, file, lowerId, version } = parsed.plan;
 
-  const pkg = await findOrCreatePackage({
-    orgId: ctx.repo.orgId,
-    repositoryId: ctx.repo.id,
+  const pkg = await ctx.data.packages.findOrCreate({
     name: lowerId,
   });
   // NuGet packages are immutable. A retention tombstone still reserves the
   // normalized package version, so old bytes cannot be replaced by re-push.
-  const existing = await findVersion(pkg.id, version);
+  const existing = await ctx.data.versions.find(pkg.id, version);
   if (existing) return new Response(null, { status: 409 });
 
-  const stored = await storeBlobWithRef(ctx, {
+  const stored = await ctx.data.content.storeBlobWithRef({
     data: bytes,
     kind: "generic_file",
     scope: file,
     mediaType: "application/octet-stream",
   });
-  const result = await commitVersionOrReleaseBlob(ctx, {
+  const result = await ctx.data.versions.commitOrReleaseBlob({
     stored,
     kind: "generic_file",
     scope: file,
@@ -56,6 +48,13 @@ export async function handleNugetPublish(
       name: lowerId,
       version,
       mediaType: "application/octet-stream",
+    },
+    asset: {
+      role: "nuget_package",
+      scope: file,
+      path: file,
+      mediaType: "application/octet-stream",
+      metadata: { id: lowerId, version },
     },
   });
   if ("conflict" in result) {

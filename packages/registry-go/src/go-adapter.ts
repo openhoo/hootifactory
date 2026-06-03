@@ -10,12 +10,6 @@ import {
   type RouteMatch,
   readWritePermission,
 } from "@hootifactory/registry";
-import {
-  findLiveVersion,
-  findPackageByName,
-  isArtifactBlocked,
-  listLivePackageVersions,
-} from "@hootifactory/registry-application";
 import { handleGoUpload } from "./go-upload-lifecycle";
 import {
   decodeBang,
@@ -71,12 +65,8 @@ export class GoAdapter implements RegistryPlugin {
     }
   }
 
-  private versions(packageId: string) {
-    return listLivePackageVersions(packageId, { orderByCreated: "asc" });
-  }
-
-  private async storedVersions(packageId: string) {
-    const rows = await this.versions(packageId);
+  private async storedVersions(ctx: RegistryRequestContext, packageId: string) {
+    const rows = await ctx.data.versions.listLive(packageId, { orderByCreated: "asc" });
     return rows.flatMap((row) => {
       const metadata = parseGoVersionMeta(row.metadata);
       return metadata ? [{ ...row, metadata }] : [];
@@ -86,9 +76,9 @@ export class GoAdapter implements RegistryPlugin {
   private async list(moduleName: string, ctx: RegistryRequestContext): Promise<Response> {
     // Unknown module → 404 so the client falls through the proxy chain. An empty
     // 200 would falsely assert "known module, no versions".
-    const pkg = await findPackageByName(ctx, moduleName);
+    const pkg = await ctx.data.packages.findByName(moduleName);
     if (!pkg) throw Errors.notFound();
-    const rows = await this.storedVersions(pkg.id);
+    const rows = await this.storedVersions(ctx, pkg.id);
     return new Response(
       `${rows
         .map((r) => r.version)
@@ -101,9 +91,9 @@ export class GoAdapter implements RegistryPlugin {
   }
 
   private async latest(moduleName: string, ctx: RegistryRequestContext): Promise<Response> {
-    const pkg = await findPackageByName(ctx, moduleName);
+    const pkg = await ctx.data.packages.findByName(moduleName);
     if (!pkg) throw Errors.notFound();
-    const rows = await this.storedVersions(pkg.id);
+    const rows = await this.storedVersions(ctx, pkg.id);
     const latestVer = pickLatest(rows.map((r) => r.version));
     const row = rows.find((r) => r.version === latestVer);
     if (!row) throw Errors.notFound();
@@ -122,7 +112,7 @@ export class GoAdapter implements RegistryPlugin {
       code: "NAME_INVALID",
       message: "invalid Go version file",
     });
-    const pkg = await findPackageByName(ctx, moduleName);
+    const pkg = await ctx.data.packages.findByName(moduleName);
     if (!pkg) throw Errors.notFound();
     const dot = file.lastIndexOf(".");
     if (dot < 0) throw Errors.notFound();
@@ -131,7 +121,7 @@ export class GoAdapter implements RegistryPlugin {
       message: "invalid Go version",
     });
     const ext = file.slice(dot + 1);
-    const row = await findLiveVersion(pkg.id, version);
+    const row = await ctx.data.versions.findLive(pkg.id, version);
     if (!row) throw Errors.notFound();
     const meta = parseGoVersionMeta(row.metadata);
     if (!meta) throw Errors.notFound();
@@ -145,7 +135,7 @@ export class GoAdapter implements RegistryPlugin {
       });
     }
     if (ext === "zip") {
-      if (await isArtifactBlocked(ctx, meta.zipDigest)) {
+      if (await ctx.data.content.isArtifactBlocked(meta.zipDigest)) {
         return new Response("blocked by scan policy", { status: 403 });
       }
       if (!(await ctx.blobs.exists(meta.zipDigest))) throw Errors.notFound();

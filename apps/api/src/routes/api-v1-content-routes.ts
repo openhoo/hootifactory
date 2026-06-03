@@ -1,8 +1,10 @@
 import { authorize } from "@hootifactory/auth";
 import {
   countRepositoryPackages,
+  findLiveVersion,
   listArtifactFindings,
   listLivePackageVersionSummaries,
+  listRegistryAssetsForRepository,
   listRepositoryArtifactSummaries,
   listRepositoryPackageSummaries,
 } from "@hootifactory/registry-application";
@@ -10,6 +12,7 @@ import type { Hono } from "hono";
 import type { AppEnv } from "../types";
 import {
   ArtifactIdParamsSchema,
+  AssetListQuerySchema,
   artifactWithRepository,
   authorizeArtifact,
   authorizePackage,
@@ -18,6 +21,7 @@ import {
   errorResponse,
   listResponse,
   PackageIdParamsSchema,
+  PackageVersionParamsSchema,
   packageWithRepository,
   RepoIdParamsSchema,
   repositoryById,
@@ -99,6 +103,41 @@ export function registerApiV1ContentRoutes(apiV1Router: Hono<AppEnv>) {
   );
 
   apiV1Router.get(
+    "/packages/:packageId/versions/:version",
+    doc("Get a package version", "Packages"),
+    async (c) => {
+      const params = validateV1(
+        c,
+        PackageVersionParamsSchema,
+        c.req.param(),
+        "invalid path parameters",
+      );
+      if (!params.ok) return params.response;
+      const row = await packageWithRepository(params.data.packageId);
+      if (!row) return errorResponse(c, 404, "NOT_FOUND", "package not found");
+      const response = await authorizePackage(c, row, "read");
+      if (response) return response;
+      const version = await findLiveVersion(row.pkg.id, params.data.version);
+      if (!version) return errorResponse(c, 404, "NOT_FOUND", "version not found");
+      const { assets } = await listRegistryAssetsForRepository(row.repo.id, {
+        packageId: row.pkg.id,
+        packageVersionId: version.id,
+      });
+      return dataResponse(c, {
+        package: { id: row.pkg.id, name: row.pkg.name },
+        version: {
+          id: version.id,
+          version: version.version,
+          metadata: version.metadata,
+          sizeBytes: version.sizeBytes,
+          createdAt: version.createdAt,
+        },
+        assets,
+      });
+    },
+  );
+
+  apiV1Router.get(
     "/repositories/:repoId/artifacts",
     doc("List artifacts", "Artifacts"),
     async (c) => {
@@ -129,6 +168,30 @@ export function registerApiV1ContentRoutes(apiV1Router: Hono<AppEnv>) {
         limit: pagination.data.limit,
         offset: pagination.data.offset,
         total: accessible.length,
+      });
+    },
+  );
+
+  apiV1Router.get(
+    "/repositories/:repoId/assets",
+    doc("List registry assets", "Assets"),
+    async (c) => {
+      const params = validateV1(c, RepoIdParamsSchema, c.req.param(), "invalid path parameters");
+      if (!params.ok) return params.response;
+      const query = validateV1(c, AssetListQuerySchema, c.req.query(), "invalid asset query");
+      if (!query.ok) return query.response;
+      const access = await requireRepository(c, params.data.repoId, "read");
+      if (!access.ok) return access.response;
+      const { assets, total } = await listRegistryAssetsForRepository(access.repo.id, {
+        packageId: query.data.packageId,
+        digest: query.data.digest,
+        limit: query.data.limit,
+        offset: query.data.offset,
+      });
+      return listResponse(c, assets, {
+        limit: query.data.limit,
+        offset: query.data.offset,
+        total,
       });
     },
   );

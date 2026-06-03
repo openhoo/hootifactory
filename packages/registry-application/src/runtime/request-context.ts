@@ -14,6 +14,7 @@ import type {
   ResolvedRepo,
 } from "@hootifactory/registry";
 import { blobStore } from "@hootifactory/storage";
+import { createRegistryDataService } from "./data-service";
 
 function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -88,9 +89,10 @@ export function buildRegistryRequestContext(
   repo: ResolvedRepo,
   principal: Principal,
 ): RegistryRequestContext {
-  return {
+  const ctx: RegistryRequestContext = {
     repo,
     principal,
+    data: undefined as never,
     blobs: blobStore,
     baseUrl: env.REGISTRY_PUBLIC_URL,
     limits: {
@@ -109,4 +111,6 @@ export function buildRegistryRequestContext(
       }),
     enqueueScan: (input: EnqueueScanInput) => enqueueArtifactScan(repo, input),
   };
+  ctx.data = createRegistryDataService(ctx);
+  return ctx;
 }

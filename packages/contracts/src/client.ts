@@ -1,10 +1,12 @@
 import { z } from "zod";
 import type {
   ApiTokenDto,
+  AssetDto,
   AuthMethodsDto,
   HootifactoryApiClient,
   OrgDto,
   PackageDto,
+  PackageVersionDetailDto,
   PackageVersionDto,
   RepositoryDto,
 } from "./index";
@@ -92,6 +94,22 @@ export function createHootifactoryClient(
         "GET",
         `/api/packages/${packageId}/versions`,
       ),
+    version: (packageId: string, version: string) =>
+      request<{ data: PackageVersionDetailDto }>(
+        "GET",
+        `/api/v1/packages/${packageId}/versions/${encodeURIComponent(version)}`,
+      ),
+    assets: (repoId: string, query = {}) => {
+      const params = new URLSearchParams();
+      for (const [key, value] of Object.entries(query)) {
+        if (value !== undefined) params.set(key, String(value));
+      }
+      const suffix = params.size ? `?${params.toString()}` : "";
+      return request<{
+        data: AssetDto[];
+        pagination: { limit: number; offset: number; total: number };
+      }>("GET", `/api/v1/repositories/${repoId}/assets${suffix}`);
+    },
     tokens: (orgId: string) =>
       request<{ tokens: ApiTokenDto[] }>("GET", `/api/orgs/${orgId}/tokens`),
     createToken: (orgId: string, data: Record<string, unknown>) =>

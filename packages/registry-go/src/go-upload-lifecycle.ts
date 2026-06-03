@@ -1,11 +1,4 @@
 import type { RegistryRequestContext } from "@hootifactory/registry";
-import {
-  commitVersionOrReleaseBlob,
-  findOrCreatePackage,
-  findPackageByName,
-  packageVersionExists,
-  storeBlobWithRef,
-} from "@hootifactory/registry-application";
 import { type GoUploadPlan, parseGoUploadRequest, validateGoUploadPlan } from "./go-upload";
 import type { GoVersionMeta } from "./go-validation";
 
@@ -35,9 +28,9 @@ export async function handleGoUpload(
 ): Promise<Response> {
   const upload = await parseGoUploadRequest(moduleName, versionRaw, req);
   const { scope, version, zipBytes } = upload;
-  const existingPkg = await findPackageByName(ctx, moduleName);
+  const existingPkg = await ctx.data.packages.findByName(moduleName);
   if (existingPkg) {
-    if (await packageVersionExists(existingPkg.id, version)) {
+    if (await ctx.data.versions.exists(existingPkg.id, version)) {
       return goVersionConflictResponse();
     }
   }
@@ -45,19 +38,17 @@ export async function handleGoUpload(
   if (uploadError) return Response.json(uploadError.body, { status: uploadError.status });
   const pkg =
     existingPkg ??
-    (await findOrCreatePackage({
-      orgId: ctx.repo.orgId,
-      repositoryId: ctx.repo.id,
+    (await ctx.data.packages.findOrCreate({
       name: moduleName,
     }));
 
-  const stored = await storeBlobWithRef(ctx, {
+  const stored = await ctx.data.content.storeBlobWithRef({
     data: zipBytes,
     kind: "generic_file",
     scope,
     mediaType: "application/zip",
   });
-  const result = await commitVersionOrReleaseBlob(ctx, {
+  const result = await ctx.data.versions.commitOrReleaseBlob({
     stored,
     kind: "generic_file",
     scope,
@@ -66,6 +57,13 @@ export async function handleGoUpload(
     metadata: buildGoPublishedMetadata(upload, stored.digest),
     sizeBytes: zipBytes.length,
     scan: { name: moduleName, version, mediaType: "application/zip" },
+    asset: {
+      role: "go_zip",
+      scope,
+      path: `${version}.zip`,
+      mediaType: "application/zip",
+      metadata: { module: moduleName },
+    },
   });
   if ("conflict" in result) {
     return goVersionConflictResponse();

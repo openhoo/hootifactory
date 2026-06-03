@@ -10,13 +10,6 @@ import {
   type RouteMatch,
   readWritePermission,
 } from "@hootifactory/registry";
-import {
-  findPackageByName,
-  listLivePackageVersions,
-  listRepositoryPackageNames,
-  listRepositoryVersionMetadata,
-  serveBlobIfClean,
-} from "@hootifactory/registry-application";
 import { handlePypiUpload } from "./pypi-upload-lifecycle";
 import {
   normalizePypiVersionMetadata,
@@ -87,7 +80,7 @@ export class PypiAdapter implements RegistryPlugin {
     const redirect = this.redirectToSlash(req);
     if (redirect) return redirect;
 
-    const rows = await listRepositoryPackageNames(ctx);
+    const rows = await ctx.data.packages.listNames();
     const projects = rows.map((r) => r.name).sort();
     if (preferredSimpleResponse(req.headers.get("accept")) === "json") {
       return Response.json(buildSimpleRootJson(projects), {
@@ -104,7 +97,7 @@ export class PypiAdapter implements RegistryPlugin {
     ctx: RegistryRequestContext,
     packageId?: string,
   ): Promise<PypiFileMeta[]> {
-    const rows = await listRepositoryVersionMetadata(ctx, { packageId, liveOnly: true });
+    const rows = await ctx.data.versions.listRepositoryMetadata({ packageId, liveOnly: true });
     return rows.flatMap((r) => normalizePypiVersionMetadata(r.metadata).files ?? []);
   }
 
@@ -121,10 +114,10 @@ export class PypiAdapter implements RegistryPlugin {
       message: "invalid project name",
     });
     const name = normalizeName(projectRaw);
-    const pkg = await findPackageByName(ctx, name);
+    const pkg = await ctx.data.packages.findByName(name);
     if (!pkg) return new Response("Not Found", { status: 404 });
     // Live versions only — pruned releases must drop out of the PEP 503 index.
-    const versions = await listLivePackageVersions(pkg.id);
+    const versions = await ctx.data.versions.listLive(pkg.id);
     const files = buildSimpleProjectFiles(versions, {
       baseUrl: ctx.baseUrl,
       mountPath: ctx.repo.mountPath,
@@ -151,7 +144,7 @@ export class PypiAdapter implements RegistryPlugin {
     if (!file || !(await ctx.blobs.exists(file.blobDigest))) {
       return new Response("Not Found", { status: 404 });
     }
-    return serveBlobIfClean(ctx, {
+    return ctx.data.content.serveBlobIfClean({
       digest: file.blobDigest,
       contentType: "application/octet-stream",
       blocked: () => new Response("artifact blocked by scan policy", { status: 403 }),

@@ -1,3 +1,7 @@
+import type {
+  RegistryOciUploadSessionMutations,
+  RegistryOciUploadSessionRow,
+} from "@hootifactory/registry";
 import {
   computeDigest,
   Errors,
@@ -5,18 +9,6 @@ import {
   type RegistryRequestContext,
   stagingKey,
 } from "@hootifactory/registry";
-import {
-  createOciUploadSession,
-  ensureBlobRef,
-  listOciMountSources,
-  loadOciUploadSession,
-  markOciUploadSessionAborted,
-  type OciUploadSessionMutations,
-  type OciUploadSessionRow,
-  storeBlobStreamWithRef,
-  storeBlobWithRef,
-  withLockedOciUploadSession,
-} from "@hootifactory/registry-application";
 import {
   buildOciBlobCreatedResponse,
   buildOciUploadAcceptedResponse,
@@ -62,13 +54,23 @@ export async function startUpload(
   if (digest) {
     const bytes = await bodyBytes(req);
     if (computeDigest(bytes) !== digest) throw Errors.digestInvalid();
-    await storeBlobWithRef(ctx, { data: bytes, kind: "oci_layer", scope: image });
+    await ctx.data.content.storeBlobWithRef({
+      data: bytes,
+      kind: "oci_layer",
+      scope: image,
+      asset: {
+        role: "oci_layer",
+        scope: image,
+        path: `${image}/blobs/${digest}`,
+        mediaType: "application/octet-stream",
+      },
+    });
     return buildOciBlobCreatedResponse({ ctx, image, digest });
   }
 
   const uuid = crypto.randomUUID();
   const key = stagingKey(uuid);
-  await createOciUploadSession(ctx, {
+  await ctx.data.oci.createUploadSession({
     id: uuid,
     scope: image,
     storageKey: key,
@@ -96,7 +98,7 @@ export async function patchUpload(
 ): Promise<Response> {
   const parsedUuid = parseUploadUuid(uuid);
   const chunk = await bodyBytes(req);
-  const offset = await withLockedOciUploadSession(ctx, {
+  const offset = await ctx.data.oci.withLockedUploadSession({
     scope: image,
     uuid: parsedUuid,
     run: async (session, mutations) => {
@@ -131,7 +133,7 @@ export async function putUpload(
 
   const chunk = await bodyBytes(req);
   const parsedUuid = parseUploadUuid(uuid);
-  const committed = await withLockedOciUploadSession(ctx, {
+  const committed = await ctx.data.oci.withLockedUploadSession({
     scope: image,
     uuid: parsedUuid,
     run: async (session, mutations) => {
@@ -146,17 +148,25 @@ export async function putUpload(
       const state = uploadMultipartState(openSession.multipart);
       const existing = state.chunks.reduce((sum, part) => sum + part.size, 0);
       assertUploadOffset(existing, openSession.offsetBytes);
-      const stored = await storeBlobStreamWithRef(ctx, {
-        data: uploadChunkStream(ctx, state.chunks, chunk),
-        expectedDigest: digest,
-        kind: "oci_layer",
-        scope: image,
-      }).catch((err) => {
-        if (err instanceof Error && err.name === "InvalidDigestError") {
-          throw Errors.digestInvalid({ expected: digest, error: err.message });
-        }
-        throw err;
-      });
+      const stored = await ctx.data.content
+        .storeBlobStreamWithRef({
+          data: uploadChunkStream(ctx, state.chunks, chunk),
+          expectedDigest: digest,
+          kind: "oci_layer",
+          scope: image,
+          asset: {
+            role: "oci_layer",
+            scope: image,
+            path: `${image}/blobs/${digest}`,
+            mediaType: "application/octet-stream",
+          },
+        })
+        .catch((err) => {
+          if (err instanceof Error && err.name === "InvalidDigestError") {
+            throw Errors.digestInvalid({ expected: digest, error: err.message });
+          }
+          throw err;
+        });
       await mutations.commit(stored.size);
       return { size: stored.size, storageKey: openSession.storageKey, chunks: state.chunks };
     },
@@ -173,7 +183,7 @@ export async function cancelUpload(
   ctx: RegistryRequestContext,
 ): Promise<Response> {
   const parsedUuid = parseUploadUuid(uuid);
-  await withLockedOciUploadSession(ctx, {
+  await ctx.data.oci.withLockedUploadSession({
     scope: image,
     uuid: parsedUuid,
     run: async (session, mutations) => {
@@ -198,7 +208,7 @@ async function tryCrossRepositoryMount(input: {
   from?: string;
   ctx: RegistryRequestContext;
 }): Promise<Response | null> {
-  const sources = (await listOciMountSources(input.mount)).map((source) => ({
+  const sources = (await input.ctx.data.oci.listMountSources(input.mount)).map((source) => ({
     ...source,
     full: `${source.mountPath.replace(/^v2\//, "")}/${source.scope}`,
   }));
@@ -211,10 +221,17 @@ async function tryCrossRepositoryMount(input: {
       visibility: source.visibility,
     });
     if (decision.allowed && (await input.ctx.blobs.exists(input.mount))) {
-      await ensureBlobRef(input.ctx, {
+      await input.ctx.data.content.ensureBlobRef({
         digest: input.mount,
         kind: "oci_layer",
         scope: input.image,
+        asset: {
+          role: "oci_layer",
+          scope: input.image,
+          path: `${input.image}/blobs/${input.mount}`,
+          mediaType: "application/octet-stream",
+          metadata: { mountedFrom: source.full },
+        },
       });
       return buildOciBlobCreatedResponse({
         ctx: input.ctx,
@@ -227,7 +244,7 @@ async function tryCrossRepositoryMount(input: {
 }
 
 async function loadSession(image: string, uuid: string, ctx: RegistryRequestContext) {
-  return loadOciUploadSession(ctx, { scope: image, uuid });
+  return ctx.data.oci.loadUploadSession({ scope: image, uuid });
 }
 
 async function loadOpenSession(image: string, uuid: string, ctx: RegistryRequestContext) {
@@ -238,7 +255,7 @@ async function loadOpenSession(image: string, uuid: string, ctx: RegistryRequest
     uuid,
     ctx,
     session,
-    markAborted: () => markOciUploadSessionAborted(ctx, { scope: image, uuid }),
+    markAborted: () => ctx.data.oci.markUploadSessionAborted({ scope: image, uuid }),
   });
   return session;
 }
@@ -247,9 +264,9 @@ async function assertLoadedOpenSession(input: {
   image: string;
   uuid: string;
   ctx: RegistryRequestContext;
-  session: OciUploadSessionRow | null;
-  mutations: OciUploadSessionMutations;
-}): Promise<OciUploadSessionRow> {
+  session: RegistryOciUploadSessionRow | null;
+  mutations: RegistryOciUploadSessionMutations;
+}): Promise<RegistryOciUploadSessionRow> {
   const { image, uuid, ctx, session, mutations } = input;
   if (!session) throw Errors.blobUploadUnknown({ uuid });
   await assertOpenSession({

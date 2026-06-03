@@ -84,7 +84,32 @@ test.describe("external api v1", () => {
 
     const versions = await anon.get(`/api/v1/packages/${pkg.id}/versions`, { headers: auth });
     expect(versions.status()).toBe(200);
-    expect((await versions.json()).data.versions[0].version).toBe("1.0.0");
+    const versionsBody = await versions.json();
+    expect(versionsBody.data.versions[0].version).toBe("1.0.0");
+
+    const versionDetail = await anon.get(`/api/v1/packages/${pkg.id}/versions/1.0.0`, {
+      headers: auth,
+    });
+    expect(versionDetail.status()).toBe(200);
+    const versionDetailBody = await versionDetail.json();
+    expect(versionDetailBody.data.version.version).toBe("1.0.0");
+    const tarballAsset = versionDetailBody.data.assets.find(
+      (asset: { role: string }) => asset.role === "npm_tarball",
+    );
+    expect(tarballAsset).toMatchObject({
+      packageId: pkg.id,
+      packageVersionId: versionDetailBody.data.version.id,
+      scope: `${pkgName}@1.0.0`,
+    });
+    expect(tarballAsset.digest).toMatch(/^sha256:[a-f0-9]{64}$/);
+
+    const assets = await anon.get(`/api/v1/repositories/${repo.id}/assets?packageId=${pkg.id}`, {
+      headers: auth,
+    });
+    expect(assets.status()).toBe(200);
+    const assetsBody = await assets.json();
+    expect(assetsBody.data).toContainEqual(expect.objectContaining({ id: tarballAsset.id }));
+    expect(assetsBody.pagination.total).toBeGreaterThanOrEqual(1);
 
     const denied = await anon.get(`/api/v1/packages/${pkg.id}/versions`, {
       headers: { authorization: `Bearer ${wrong.data.secret}` },

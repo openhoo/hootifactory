@@ -8,14 +8,6 @@ import {
   type RouteEntry,
   type RouteMatch,
 } from "@hootifactory/registry";
-import {
-  findPackageByName,
-  isArtifactBlocked,
-  listOciSubjectManifests,
-  listOciTags,
-  ociBlobRefExists,
-  REGISTRY_TOKEN_SERVICE,
-} from "@hootifactory/registry-application";
 import { buildOciBlobResponse } from "./oci-blobs";
 import {
   deleteOciBlobReference,
@@ -40,6 +32,7 @@ const UPLOAD_CONTROL_HANDLERS = new Set([
   "putUpload",
   "cancelUpload",
 ]);
+const REGISTRY_TOKEN_SERVICE = "hootifactory";
 
 export class DockerAdapter implements RegistryPlugin {
   readonly format = "docker" as const;
@@ -157,7 +150,7 @@ export class DockerAdapter implements RegistryPlugin {
     parseReference(reference);
     const m = await resolveOciManifestForImage(ctx, image, reference);
     if (!m) throw Errors.manifestUnknown({ reference });
-    if (await isArtifactBlocked(ctx, m.digest))
+    if (await ctx.data.content.isArtifactBlocked(m.digest))
       throw Errors.denied({ reason: "blocked by scan policy" });
     const headers = {
       "content-type": m.mediaType,
@@ -183,9 +176,9 @@ export class DockerAdapter implements RegistryPlugin {
     req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
-    const pkg = await findPackageByName(ctx, image);
+    const pkg = await ctx.data.packages.findByName(image);
     if (!pkg) throw Errors.nameUnknown({ image });
-    const tags = await listOciTags(pkg.id);
+    const tags = await ctx.data.oci.listTags(pkg.id);
     return buildOciTagsListResponse({
       baseUrl: ctx.baseUrl,
       mountPath: ctx.repo.mountPath,
@@ -208,7 +201,7 @@ export class DockerAdapter implements RegistryPlugin {
       message: "invalid subject digest",
     });
     const { artifactType: artifactTypeFilter } = parseOciReferrersQuery(req.url);
-    const rows = await listOciSubjectManifests(ctx, digest);
+    const rows = await ctx.data.oci.listSubjectManifests(digest);
     const manifests = [];
     for (const m of rows) {
       if (!(await resolveOciManifestForImage(ctx, image, m.digest))) continue;
@@ -231,7 +224,7 @@ export class DockerAdapter implements RegistryPlugin {
       code: "DIGEST_INVALID",
       message: "invalid blob digest",
     });
-    if (!(await ociBlobRefExists(ctx, { scope: image, digest })))
+    if (!(await ctx.data.oci.blobRefExists({ scope: image, digest })))
       throw Errors.blobUnknown({ digest });
     // Defense-in-depth: a layer reachable only through blocked manifests is blocked too.
     if (await isOciBlobBlocked(ctx, { image, digest })) {

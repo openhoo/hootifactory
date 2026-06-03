@@ -32,9 +32,20 @@ export const PaginationQuerySchema = z.strictObject({
 export const OrgIdParamsSchema = z.strictObject({ orgId: uuidParam });
 export const RepoIdParamsSchema = z.strictObject({ repoId: uuidParam });
 export const PackageIdParamsSchema = z.strictObject({ packageId: uuidParam });
+export const PackageVersionParamsSchema = z.strictObject({
+  packageId: uuidParam,
+  version: z.string().min(1).max(256),
+});
 export const ArtifactIdParamsSchema = z.strictObject({ artifactId: uuidParam });
 export const TokenIdParamsSchema = z.strictObject({ tokenId: uuidParam });
 export const OrgTokenParamsSchema = z.strictObject({ orgId: uuidParam, tokenId: uuidParam });
+export const AssetListQuerySchema = PaginationQuerySchema.extend({
+  packageId: uuidParam.optional(),
+  digest: z
+    .string()
+    .regex(/^sha256:[a-f0-9]{64}$/)
+    .optional(),
+});
 
 export function dataResponse(
   c: Context<AppEnv>,

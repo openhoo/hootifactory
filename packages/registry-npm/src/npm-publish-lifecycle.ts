@@ -1,16 +1,4 @@
 import { jsonRecordOrEmpty, type RegistryRequestContext } from "@hootifactory/registry";
-import {
-  commitVersionOrReleaseBlob,
-  findLiveVersion,
-  findOrCreatePackage,
-  findPackageByName,
-  listLivePackageVersions,
-  listPackageVersionNames,
-  setDistTag,
-  storeBlobWithRef,
-  updatePackageLatestVersion,
-  upsertPackageVersion,
-} from "@hootifactory/registry-application";
 import { parseNpmDistTagAssignment } from "./npm-dist-tags";
 import { type NpmDist, sha1hex, sha512b64 } from "./npm-integrity";
 import { buildNpmMetadataOnlyVersionPatch } from "./npm-metadata-only";
@@ -72,11 +60,12 @@ async function publishNpmTarballs(
   ctx: RegistryRequestContext,
 ): Promise<Response> {
   const name = plan.name;
-  const existingPkg = await findPackageByName(ctx, name);
+  const existingPkg = await ctx.data.packages.findByName(name);
   const distTagTargets = await resolveNpmPublishDistTags(
     plan.distTags,
     plan.versions.map((version) => version.version),
-    (version) => (existingPkg ? findVersionId(existingPkg.id, version) : Promise.resolve(null)),
+    (version) =>
+      existingPkg ? findVersionId(ctx, existingPkg.id, version) : Promise.resolve(null),
   );
   if (!distTagTargets.ok) {
     return Response.json({ error: distTagTargets.error }, { status: 400 });
@@ -85,15 +74,13 @@ async function publishNpmTarballs(
   const scope = name.startsWith("@") ? (name.split("/")[0] ?? null) : null;
   const pkg =
     existingPkg ??
-    (await findOrCreatePackage({
-      orgId: ctx.repo.orgId,
-      repositoryId: ctx.repo.id,
+    (await ctx.data.packages.findOrCreate({
       name,
       namespace: scope,
     }));
   const versionIds = new Map<string, string>();
   // Any version row, including a retention tombstone, reserves the npm version.
-  const used = await listPackageVersionNames(pkg.id);
+  const used = await ctx.data.versions.listNames(pkg.id);
   const usedSet = new Set(used.map((v) => v.version));
 
   for (const { version, manifest, tarball } of plan.versions) {
@@ -104,7 +91,7 @@ async function publishNpmTarballs(
       );
     }
 
-    const stored = await storeBlobWithRef(ctx, {
+    const stored = await ctx.data.content.storeBlobWithRef({
       data: tarball,
       kind: "npm_tarball",
       scope: `${name}@${version}`,
@@ -122,7 +109,7 @@ async function publishNpmTarballs(
       ...jsonRecordOrEmpty(manifest.dist),
       ...manifestDist,
     };
-    const result = await commitVersionOrReleaseBlob(ctx, {
+    const result = await ctx.data.versions.commitOrReleaseBlob({
       stored,
       kind: "npm_tarball",
       scope: `${name}@${version}`,
@@ -131,6 +118,13 @@ async function publishNpmTarballs(
       metadata: { manifest, dist },
       sizeBytes: tarball.length,
       scan: { name, version, mediaType: "application/octet-stream" },
+      asset: {
+        role: "npm_tarball",
+        scope: `${name}@${version}`,
+        path: dist.filename,
+        mediaType: "application/octet-stream",
+        metadata: { shasum: dist.shasum, integrity: dist.integrity },
+      },
     });
     if ("conflict" in result) {
       return Response.json(
@@ -144,10 +138,10 @@ async function publishNpmTarballs(
   for (const [tag, version] of Object.entries(plan.distTags)) {
     const versionId = versionIds.get(version) ?? distTagTargets.existingVersionIds.get(version);
     if (!versionId) throw new Error(`validated npm dist-tag ${tag} lost version ${version}`);
-    await setDistTag(pkg.id, tag, versionId);
+    await ctx.data.tags.set(pkg.id, tag, versionId);
   }
   if (plan.distTags.latest) {
-    await updatePackageLatestVersion(pkg.id, plan.distTags.latest);
+    await ctx.data.tags.updateLatestVersion(pkg.id, plan.distTags.latest);
   }
 
   return Response.json({ success: true }, { status: 201 });
@@ -162,7 +156,7 @@ async function updateNpmMetadataOnly(
     return Response.json({ error: "publish payload must include a version" }, { status: 400 });
   }
 
-  const pkg = await findPackageByName(ctx, plan.name);
+  const pkg = await ctx.data.packages.findByName(plan.name);
   if (!pkg) {
     return Response.json(
       { error: `missing tarball attachment for ${entries[0]![0]}` },
@@ -170,7 +164,7 @@ async function updateNpmMetadataOnly(
     );
   }
 
-  const liveRows = await listLivePackageVersions(pkg.id);
+  const liveRows = await ctx.data.versions.listLive(pkg.id);
   const liveByVersion = new Map(liveRows.map((row) => [row.version, row]));
   const versionIds = new Map<string, string>();
   for (const [version, manifestRaw] of entries) {
@@ -186,7 +180,7 @@ async function updateNpmMetadataOnly(
     versionIds.set(patch.version, live.id);
     if (!patch.metadata) continue;
 
-    await upsertPackageVersion(ctx, {
+    await ctx.data.versions.upsert({
       packageId: pkg.id,
       version: patch.version,
       metadata: patch.metadata,
@@ -199,22 +193,26 @@ async function updateNpmMetadataOnly(
       versionMessage: `dist-tag ${tag} points to an invalid version`,
     });
     const versionId =
-      versionIds.get(distTag.version) ?? (await findVersionId(pkg.id, distTag.version));
+      versionIds.get(distTag.version) ?? (await findVersionId(ctx, pkg.id, distTag.version));
     if (!versionId) {
       return Response.json(
         { error: `dist-tag ${distTag.tag} points to an unknown version` },
         { status: 400 },
       );
     }
-    await setDistTag(pkg.id, distTag.tag, versionId);
+    await ctx.data.tags.set(pkg.id, distTag.tag, versionId);
     if (distTag.tag === "latest") {
-      await updatePackageLatestVersion(pkg.id, distTag.version);
+      await ctx.data.tags.updateLatestVersion(pkg.id, distTag.version);
     }
   }
 
   return Response.json({ success: true }, { status: 200 });
 }
 
-async function findVersionId(packageId: string, version: string): Promise<string | null> {
-  return (await findLiveVersion(packageId, version))?.id ?? null;
+async function findVersionId(
+  ctx: RegistryRequestContext,
+  packageId: string,
+  version: string,
+): Promise<string | null> {
+  return (await ctx.data.versions.findLive(packageId, version))?.id ?? null;
 }

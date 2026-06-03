@@ -4,20 +4,13 @@ import {
   type HttpMethod,
   type Permission,
   parseRegistryInput,
+  type RegistryPackageVersionRow,
   type RegistryPlugin,
   type RegistryRequestContext,
   type RouteEntry,
   type RouteMatch,
   readWritePermission,
 } from "@hootifactory/registry";
-import {
-  findLiveVersion,
-  findPackageByName,
-  listLivePackageVersions,
-  listRepositoryPackages,
-  serveBlobIfClean,
-  updatePackageVersionMetadata,
-} from "@hootifactory/registry-application";
 import { handleNugetPublish } from "./nuget-publish-lifecycle";
 import { buildNugetRegistrationIndex, buildNugetRegistrationItem } from "./nuget-registration";
 import {
@@ -37,8 +30,7 @@ import {
   parseNugetVersionMeta,
 } from "./nuget-validation";
 
-type LivePackageVersionRow = Awaited<ReturnType<typeof listLivePackageVersions>>[number];
-type StoredNugetVersionRow = Omit<LivePackageVersionRow, "metadata"> & {
+type StoredNugetVersionRow = Omit<RegistryPackageVersionRow, "metadata"> & {
   metadata: NugetVersionMeta;
 };
 
@@ -131,15 +123,16 @@ export class NugetAdapter implements RegistryPlugin {
   }
 
   private async findPkg(ctx: RegistryRequestContext, id: string) {
-    return findPackageByName(ctx, id.toLowerCase());
+    return ctx.data.packages.findByName(id.toLowerCase());
   }
 
   private async listVersions(
+    ctx: RegistryRequestContext,
     packageId: string,
     opts: { includeUnlisted?: boolean } = {},
   ): Promise<StoredNugetVersionRow[]> {
     // Live versions only; sorted by SemVer so flat-container + registration bounds are correct.
-    const rows = await listLivePackageVersions(packageId);
+    const rows = await ctx.data.versions.listLive(packageId);
     return rows
       .flatMap((row) => {
         const metadata = parseNugetVersionMeta(row.metadata);
@@ -154,7 +147,7 @@ export class NugetAdapter implements RegistryPlugin {
     id = parseNugetId(id);
     const pkg = await this.findPkg(ctx, id);
     if (!pkg) return new Response("Not Found", { status: 404 });
-    const rows = await this.listVersions(pkg.id, { includeUnlisted: true });
+    const rows = await this.listVersions(ctx, pkg.id, { includeUnlisted: true });
     if (rows.length === 0) return new Response("Not Found", { status: 404 });
     return Response.json({ versions: rows.map((r) => r.version) });
   }
@@ -167,7 +160,7 @@ export class NugetAdapter implements RegistryPlugin {
     id = parseNugetId(id);
     const pkg = await this.findPkg(ctx, id);
     if (!pkg) return new Response("Not Found", { status: 404 });
-    const rows = await this.listVersions(pkg.id, { includeUnlisted: true });
+    const rows = await this.listVersions(ctx, pkg.id, { includeUnlisted: true });
     return Response.json(
       buildNugetRegistrationIndex({
         id,
@@ -194,7 +187,7 @@ export class NugetAdapter implements RegistryPlugin {
     if (!norm) throw Errors.notFound();
     const pkg = await this.findPkg(ctx, id);
     if (!pkg) return new Response("Not Found", { status: 404 });
-    const row = await findLiveVersion(pkg.id, norm);
+    const row = await ctx.data.versions.findLive(pkg.id, norm);
     if (!row) throw Errors.notFound();
     const metadata = parseNugetVersionMeta(row.metadata);
     if (!metadata) throw Errors.notFound();
@@ -214,12 +207,12 @@ export class NugetAdapter implements RegistryPlugin {
     ctx: RegistryRequestContext,
   ): Promise<Response> {
     const query = parseNugetSearchQuery(req.url);
-    const rows = await listRepositoryPackages(ctx);
+    const rows = await ctx.data.packages.list();
     const data = [];
     for (const pkg of rows) {
       if (query.q && !pkg.name.toLowerCase().includes(query.q)) continue;
       const versions = filterNugetSearchVersions(
-        (await this.listVersions(pkg.id)).map((version) => ({
+        (await this.listVersions(ctx, pkg.id)).map((version) => ({
           version: version.version,
           metadata: version.metadata,
         })),
@@ -251,7 +244,7 @@ export class NugetAdapter implements RegistryPlugin {
     const ext = file.toLowerCase().endsWith(".nuspec") ? "nuspec" : "nupkg";
     const expected = `${id.toLowerCase()}.${norm}.${ext}`;
     if (file && file.toLowerCase() !== expected) throw Errors.notFound();
-    const v = await findLiveVersion(pkg.id, norm);
+    const v = await ctx.data.versions.findLive(pkg.id, norm);
     const digest = parseNugetVersionMeta(v?.metadata)?.nupkgDigest;
     if (!digest || !(await ctx.blobs.exists(digest))) throw Errors.notFound();
     if (file.toLowerCase().endsWith(".nuspec")) {
@@ -260,7 +253,7 @@ export class NugetAdapter implements RegistryPlugin {
         { headers: { "content-type": "application/xml; charset=utf-8" } },
       );
     }
-    return serveBlobIfClean(ctx, {
+    return ctx.data.content.serveBlobIfClean({
       digest,
       contentType: "application/octet-stream",
       blocked: () => new Response("blocked by scan policy", { status: 403 }),
@@ -279,11 +272,11 @@ export class NugetAdapter implements RegistryPlugin {
     if (!pkg) throw Errors.notFound();
     const norm = normalizeNugetVersion(version);
     if (!norm) throw Errors.notFound();
-    const row = await findLiveVersion(pkg.id, norm);
+    const row = await ctx.data.versions.findLive(pkg.id, norm);
     if (!row) throw Errors.notFound();
     const metadata = parseNugetVersionMeta(row.metadata);
     if (!metadata) throw Errors.notFound();
-    await updatePackageVersionMetadata(row.id, { ...metadata, listed });
+    await ctx.data.versions.updateMetadata(row.id, { ...metadata, listed });
     return new Response(null, { status: listed ? 200 : 204 });
   }
 

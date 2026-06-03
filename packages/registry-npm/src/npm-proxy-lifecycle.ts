@@ -1,12 +1,4 @@
 import { type RegistryRequestContext, safeFetch } from "@hootifactory/registry";
-import {
-  findLiveVersion,
-  findOrCreatePackage,
-  findPackageByName,
-  replaceDistTags,
-  upsertPackageVersion,
-  upsertPackageVersionWithBlobRef,
-} from "@hootifactory/registry-application";
 import { responseBytes, responseJson } from "./npm-http";
 import { upstreamDistMatchesBytes, upstreamDistMatchesStored } from "./npm-integrity";
 import {
@@ -37,7 +29,7 @@ export async function handleNpmProxyIngest(
   if (!packument) return false;
 
   const scope = pkgName.startsWith("@") ? (pkgName.split("/")[0] ?? null) : null;
-  let pkg = await findPackageByName(ctx, pkgName);
+  let pkg = await ctx.data.packages.findByName(pkgName);
   for (const [version, manifestRaw] of Object.entries(packument.versions ?? {})) {
     if (!isValidNpmVersion(version)) continue;
     const proxyManifest = normalizeNpmProxyManifest(pkgName, version, manifestRaw);
@@ -45,7 +37,7 @@ export async function handleNpmProxyIngest(
 
     let { manifest } = proxyManifest;
     const { tarballUrl, upstreamDist } = proxyManifest;
-    const existingVersion = pkg ? await findLiveVersion(pkg.id, version) : null;
+    const existingVersion = pkg ? await ctx.data.versions.findLive(pkg.id, version) : null;
     const existingDist = existingVersion
       ? parseNpmStoredVersionMetadata(existingVersion.metadata).dist
       : undefined;
@@ -59,7 +51,7 @@ export async function handleNpmProxyIngest(
         mountPath: ctx.repo.mountPath,
         packageName: pkgName,
       });
-      await upsertPackageVersion(ctx, {
+      await ctx.data.versions.upsert({
         packageId: pkg.id,
         version,
         metadata: { manifest, dist: existingDist },
@@ -76,9 +68,7 @@ export async function handleNpmProxyIngest(
     });
     if (!tarball) continue;
 
-    pkg ??= await findOrCreatePackage({
-      orgId: ctx.repo.orgId,
-      repositoryId: ctx.repo.id,
+    pkg ??= await ctx.data.packages.findOrCreate({
       name: pkgName,
       namespace: scope,
     });
@@ -92,7 +82,7 @@ export async function handleNpmProxyIngest(
       mountPath: ctx.repo.mountPath,
     });
     manifest.dist = manifestDist;
-    const { stored } = await upsertPackageVersionWithBlobRef(ctx, {
+    const { stored } = await ctx.data.versions.upsertWithBlobRef({
       packageId: pkg.id,
       version,
       metadata: { manifest, dist },
@@ -103,6 +93,17 @@ export async function handleNpmProxyIngest(
         scope: `${pkgName}@${version}`,
         mediaType: "application/octet-stream",
         previousDigest,
+        asset: {
+          role: "npm_tarball",
+          scope: `${pkgName}@${version}`,
+          path: dist.filename,
+          mediaType: "application/octet-stream",
+          metadata: {
+            shasum: dist.shasum,
+            integrity: dist.integrity,
+            upstreamTarball: tarballUrl,
+          },
+        },
       },
     });
     if (stored.digest !== dist.blobDigest) throw new Error("stored npm tarball digest mismatch");
@@ -115,10 +116,10 @@ export async function handleNpmProxyIngest(
   }
 
   if (!pkg) return false;
-  await replaceDistTags(
+  await ctx.data.tags.replace(
     pkg.id,
     await resolveNpmProxyDistTags(packument["dist-tags"] ?? {}, (version) =>
-      findVersionId(pkg.id, version),
+      findVersionId(ctx, pkg.id, version),
     ),
   );
   return true;
@@ -177,6 +178,10 @@ export async function resolveNpmProxyDistTags(
   return desiredTags;
 }
 
-async function findVersionId(packageId: string, version: string): Promise<string | null> {
-  return (await findLiveVersion(packageId, version))?.id ?? null;
+async function findVersionId(
+  ctx: RegistryRequestContext,
+  packageId: string,
+  version: string,
+): Promise<string | null> {
+  return (await ctx.data.versions.findLive(packageId, version))?.id ?? null;
 }

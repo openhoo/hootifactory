@@ -78,6 +78,13 @@
       "when": 1780415761325,
       "tag": "0010_token_grants",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1780493979725,
+      "tag": "0011_long_killmonger",
+      "breakpoints": true
     }
   ]
 }
