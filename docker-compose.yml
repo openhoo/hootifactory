@@ -16,6 +16,7 @@ x-app-env: &app-env
   S3_SECRET_ACCESS_KEY: hootifactory
   S3_BUCKET: hootifactory
   APP_PUBLIC_URL: http://localhost:3000
+  REGISTRY_ALLOW_PRIVATE_UPSTREAMS: "false"
   EMAIL_ENABLED: "true"
   EMAIL_FROM: Hootifactory <noreply@localhost>
   EMAIL_SMTP_HOST: mailpit

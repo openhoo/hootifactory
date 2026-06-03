@@ -22,6 +22,7 @@ describe("environment auth creation defaults", () => {
     expect(devEnv.AUTH_OIDC_LINK_TTL_SECONDS).toBe(15 * 60);
     expect(devEnv.EMAIL_ENABLED).toBe(false);
     expect(devEnv.REGISTRY_MAX_UPLOAD_BYTES).toBe(100 * 1024 * 1024);
+    expect(devEnv.REGISTRY_ALLOW_PRIVATE_UPSTREAMS).toBe(false);
     expect(devEnv.SCAN_MAX_BYTES).toBe(100 * 1024 * 1024);
     expect(devEnv.SCANNER_CLI_RUNTIME).toBe("docker");
     expect(devEnv.GRYPE_IMAGE).toBe("anchore/grype:latest");
@@ -66,6 +67,18 @@ describe("environment auth creation defaults", () => {
     );
     expect(() => loadEnv({ REGISTRY_MAX_UPLOAD_BYTES: "0" })).toThrow();
     expect(() => loadEnv({ REGISTRY_MAX_UPLOAD_BYTES: "-1" })).toThrow();
+  });
+
+  test("private registry upstreams require explicit non-production opt-in", () => {
+    expect(
+      loadEnv({ REGISTRY_ALLOW_PRIVATE_UPSTREAMS: "true" }).REGISTRY_ALLOW_PRIVATE_UPSTREAMS,
+    ).toBe(true);
+    expect(() =>
+      loadEnv({
+        ...prodSource,
+        REGISTRY_ALLOW_PRIVATE_UPSTREAMS: "true",
+      }),
+    ).toThrow(/REGISTRY_ALLOW_PRIVATE_UPSTREAMS cannot be enabled in production/);
   });
 
   test("trusted API origins are normalized and validated", () => {

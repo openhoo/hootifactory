@@ -26,4 +26,12 @@ describe("proxy upstream validation", () => {
       validateProxyUpstreamUrl("https://registry.example.test/", (url) => new URL(url)),
     ).toEqual({ ok: true, url: "https://registry.example.test/" });
   });
+
+  test("rejects private upstream hosts by default", () => {
+    expect(validateProxyUpstreamUrl("http://127.0.0.1:8080")).toEqual({
+      ok: false,
+      status: 400,
+      error: "refusing to fetch a private/loopback/metadata host: 127.0.0.1",
+    });
+  });
 });

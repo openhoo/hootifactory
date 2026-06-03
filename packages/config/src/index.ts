@@ -148,6 +148,7 @@ const EnvSchema = z
     APP_PUBLIC_URL: absoluteUrl.default("http://localhost:3000"),
     REGISTRY_MAX_UPLOAD_BYTES: positiveInt(100 * 1024 * 1024),
     REGISTRY_PUBLIC_URL: absoluteUrl.default("http://localhost:3000"),
+    REGISTRY_ALLOW_PRIVATE_UPSTREAMS: boolish.default(false),
     API_TRUSTED_ORIGINS: originList,
     /** When set, the API serves the built web UI (single-container deploys). */
     WEB_DIST: z.string().optional(),
@@ -247,6 +248,13 @@ const EnvSchema = z
         path: ["REGISTRY_JWT_PRIVATE_KEY"],
         message:
           "REGISTRY_JWT_PRIVATE_KEY and REGISTRY_JWT_PUBLIC_KEY are required when NODE_ENV=production",
+      });
+    }
+    if (v.NODE_ENV === "production" && v.REGISTRY_ALLOW_PRIVATE_UPSTREAMS) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["REGISTRY_ALLOW_PRIVATE_UPSTREAMS"],
+        message: "REGISTRY_ALLOW_PRIVATE_UPSTREAMS cannot be enabled in production",
       });
     }
     if (v.AUTH_OIDC_ENABLED) {

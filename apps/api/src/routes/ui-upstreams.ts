@@ -1,4 +1,4 @@
-import { isProduction } from "@hootifactory/config";
+import { env } from "@hootifactory/config";
 import { assertPublicHttpUrl } from "@hootifactory/core";
 import type { RepositoryRow } from "./ui-repository-access";
 
@@ -23,7 +23,9 @@ export function validateProxyUpstreamParent(parent: ProxyUpstreamRepo): Validati
 export function validateProxyUpstreamUrl(
   url: string,
   validateUrl: UrlValidator = (value) =>
-    assertPublicHttpUrl(value, { enforcePublicNetwork: isProduction }),
+    assertPublicHttpUrl(value, {
+      enforcePublicNetwork: !env.REGISTRY_ALLOW_PRIVATE_UPSTREAMS,
+    }),
 ): UpstreamUrlResult {
   try {
     validateUrl(url);
