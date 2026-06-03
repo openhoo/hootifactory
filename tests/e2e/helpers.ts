@@ -54,3 +54,45 @@ export async function createToken(
 ) {
   return ctx.post(`/api/orgs/${orgId}/tokens`, { data });
 }
+
+export interface CreatedRepo {
+  id: string;
+  mountPath: string;
+}
+
+/** Create a repository and return its persisted row (id + mountPath). Throws on non-201. */
+export async function createRepoReturning(
+  ctx: APIRequestContext,
+  orgId: string,
+  data: Record<string, unknown>,
+): Promise<CreatedRepo> {
+  const res = await createRepo(ctx, orgId, data);
+  if (res.status() !== 201) {
+    throw new Error(`createRepo failed: ${res.status()} ${await res.text()}`);
+  }
+  return (await res.json()).repository as CreatedRepo;
+}
+
+/** Add a hosted member repo to a virtual repository (position controls resolution order). */
+export async function addMember(
+  ctx: APIRequestContext,
+  virtualRepoId: string,
+  memberRepoId: string,
+  position: number,
+) {
+  return ctx.post(`/api/repositories/${virtualRepoId}/members`, {
+    data: { memberRepoId, position },
+  });
+}
+
+/** Configure an upstream URL on a proxy repository. */
+export async function addUpstream(
+  ctx: APIRequestContext,
+  proxyRepoId: string,
+  url: string,
+  priority = 0,
+) {
+  return ctx.post(`/api/repositories/${proxyRepoId}/upstreams`, {
+    data: { url, priority },
+  });
+}

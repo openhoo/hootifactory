@@ -1,9 +1,10 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import { CLI_IMAGES, dockerReachableUrl, dockerRun, ensureDockerAvailable } from "./docker-clients";
-import { createRepo, createToken, setupOwner } from "./helpers";
+import { addMember, createRepo, createRepoReturning, createToken, setupOwner } from "./helpers";
 
 function cargo(args: string[], cwd: string, env: NodeJS.ProcessEnv): string {
   return dockerRun(CLI_IMAGES.cargo, ["cargo", ...args], { cwd, env });
@@ -211,5 +212,418 @@ test.describe("cargo sparse registry (Dockerized real cargo)", () => {
     );
 
     cargo(["check"], consumer, env);
+  });
+});
+
+interface CargoEnv {
+  env: NodeJS.ProcessEnv;
+  registryUrl: string;
+}
+
+/** Build the CARGO_HOME-backed env + sparse registry URL for a repo mountPath. */
+function cargoEnv(baseURL: string, mountPath: string, token: string, prefix: string): CargoEnv {
+  const registryUrl = `${dockerReachableUrl(baseURL)}/${mountPath}/`;
+  const cargoHome = mkdtempSync(join(tmpdir(), prefix));
+  return {
+    registryUrl,
+    env: {
+      HOME: cargoHome,
+      CARGO_HOME: cargoHome,
+      CARGO_REGISTRIES_HOOTI_TOKEN: token,
+      CARGO_TARGET_DIR: join(cargoHome, "target"),
+    },
+  };
+}
+
+/** Sparse-index shard for a crate name (len>=4 uses the two-level prefix). */
+function cargoShard(name: string): string {
+  return `${name.slice(0, 2)}/${name.slice(2, 4)}/${name}`;
+}
+
+/** Publish a minimal library crate at `version` with optional extra Cargo.toml sections. */
+function publishCrate(
+  registryUrl: string,
+  env: NodeJS.ProcessEnv,
+  name: string,
+  version: string,
+  extraSections: string[] = [],
+): void {
+  const dir = mkdtempSync(join(tmpdir(), "hoot-cargo-x-pub-"));
+  mkdirSync(join(dir, "src"), { recursive: true });
+  writeCargoConfig(dir, registryUrl);
+  writeFileSync(
+    join(dir, "Cargo.toml"),
+    [
+      "[package]",
+      `name = "${name}"`,
+      `version = "${version}"`,
+      'edition = "2024"',
+      'license = "MIT"',
+      'description = "hootifactory e2e crate"',
+      "",
+      "[lib]",
+      'path = "src/lib.rs"',
+      "",
+      ...extraSections,
+    ].join("\n"),
+  );
+  writeFileSync(join(dir, "src", "lib.rs"), 'pub fn hoot() -> &\'static str { "hoot" }\n');
+  cargo(["publish", "--registry", "hooti", "--allow-dirty", "--no-verify"], dir, env);
+}
+
+/** Materialize a consumer crate that depends on `deps` lines, wired to `registryUrl`. */
+function consumerCrate(registryUrl: string, depLines: string[]): string {
+  const dir = mkdtempSync(join(tmpdir(), "hoot-cargo-x-consumer-"));
+  mkdirSync(join(dir, "src"), { recursive: true });
+  writeCargoConfig(dir, registryUrl);
+  writeFileSync(
+    join(dir, "Cargo.toml"),
+    [
+      "[package]",
+      'name = "consumer"',
+      'version = "1.0.0"',
+      'edition = "2024"',
+      "",
+      "[dependencies]",
+      ...depLines,
+      "",
+    ].join("\n"),
+  );
+  writeFileSync(join(dir, "src", "lib.rs"), "pub fn consumer() {}\n");
+  return dir;
+}
+
+test.describe("cargo sparse registry extended scenarios (Dockerized real cargo)", () => {
+  test.beforeAll(ensureDockerAvailable);
+
+  test("resolves semver range across multiple published versions", async ({ baseURL }) => {
+    test.setTimeout(180_000);
+    const owner = await setupOwner(baseURL!);
+    const repo = await createRepoReturning(owner.ctx, owner.orgId, {
+      name: "crates-semver-cli",
+      format: "cargo",
+      visibility: "public",
+    });
+    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "cargo" })).json())
+      .secret as string;
+    const { env, registryUrl } = cargoEnv(
+      baseURL!,
+      repo.mountPath,
+      token,
+      "hoot-cargo-semver-home-",
+    );
+
+    const crate = `hootsemver${Date.now().toString(36)}${randomUUID().slice(0, 8)}`;
+    publishCrate(registryUrl, env, crate, "1.0.0");
+    publishCrate(registryUrl, env, crate, "1.1.0");
+    publishCrate(registryUrl, env, crate, "2.0.0");
+
+    const consumer = consumerCrate(registryUrl, [
+      `${crate} = { version = "^1.0.0", registry = "hooti" }`,
+    ]);
+    cargo(["generate-lockfile"], consumer, env);
+
+    const lock = readFileSync(join(consumer, "Cargo.lock"), "utf8");
+    expect(lock).toContain(`name = "${crate}"`);
+    expect(lock).toContain('version = "1.1.0"');
+    expect(lock).not.toContain('version = "2.0.0"');
+  });
+
+  test("yanked versions are excluded from new resolution", async ({ baseURL }) => {
+    test.setTimeout(180_000);
+    const owner = await setupOwner(baseURL!);
+    const repo = await createRepoReturning(owner.ctx, owner.orgId, {
+      name: "crates-yank-cli",
+      format: "cargo",
+      visibility: "public",
+    });
+    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "cargo" })).json())
+      .secret as string;
+    const { env, registryUrl } = cargoEnv(baseURL!, repo.mountPath, token, "hoot-cargo-yank-home-");
+
+    const crate = `hootyank${Date.now().toString(36)}${randomUUID().slice(0, 8)}`;
+    publishCrate(registryUrl, env, crate, "1.0.0");
+    const pubDir = mkdtempSync(join(tmpdir(), "hoot-cargo-yank-pub-"));
+    mkdirSync(join(pubDir, "src"), { recursive: true });
+    writeCargoConfig(pubDir, registryUrl);
+    publishCrate(registryUrl, env, crate, "1.1.0");
+
+    cargo(["yank", crate, "--version", "1.1.0", "--registry", "hooti"], pubDir, env);
+    const shard = cargoShard(crate);
+    const indexText = await (await owner.ctx.get(`/${repo.mountPath}/${shard}`)).text();
+    expect(indexText).toContain('"vers":"1.1.0"');
+    expect(indexText).toContain('"yanked":true');
+
+    const consumer = consumerCrate(registryUrl, [
+      `${crate} = { version = "^1.0", registry = "hooti" }`,
+    ]);
+    cargo(["generate-lockfile"], consumer, env);
+
+    const lock = readFileSync(join(consumer, "Cargo.lock"), "utf8");
+    expect(lock).toContain(`name = "${crate}"`);
+    expect(lock).toContain('version = "1.0.0"');
+    expect(lock).not.toContain('version = "1.1.0"');
+  });
+
+  test("optional dependency gated behind a feature builds when the feature is enabled", async ({
+    baseURL,
+  }) => {
+    test.setTimeout(180_000);
+    const owner = await setupOwner(baseURL!);
+    const repo = await createRepoReturning(owner.ctx, owner.orgId, {
+      name: "crates-feature-cli",
+      format: "cargo",
+      visibility: "public",
+    });
+    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "cargo" })).json())
+      .secret as string;
+    const { env, registryUrl } = cargoEnv(
+      baseURL!,
+      repo.mountPath,
+      token,
+      "hoot-cargo-feature-home-",
+    );
+
+    const id = `${Date.now().toString(36)}${randomUUID().slice(0, 8)}`;
+    const depName = `hootfeatdep${id}`;
+    const mainName = `hootfeatmain${id}`;
+
+    publishCrate(registryUrl, env, depName, "1.0.0");
+    publishCrate(registryUrl, env, mainName, "1.0.0", [
+      "[dependencies]",
+      `${depName} = { version = "1.0.0", registry = "hooti", optional = true }`,
+      "",
+      "[features]",
+      `withdep = ["dep:${depName}"]`,
+      "",
+    ]);
+
+    const mainShard = cargoShard(mainName);
+    const mainIndexText = await (await owner.ctx.get(`/${repo.mountPath}/${mainShard}`)).text();
+    const mainIndex = JSON.parse(mainIndexText.trim().split("\n")[0]!);
+    const optionalDep = mainIndex.deps.find((d: { name: string }) => d.name === depName);
+    expect(optionalDep).toMatchObject({ name: depName, optional: true });
+
+    const consumer = consumerCrate(registryUrl, [
+      `${mainName} = { version = "1.0.0", registry = "hooti", features = ["withdep"] }`,
+    ]);
+    cargo(["check"], consumer, env);
+  });
+
+  test("cargo owner add/list/remove round-trips through the owners API", async ({ baseURL }) => {
+    test.setTimeout(180_000);
+    const owner = await setupOwner(baseURL!);
+    const repo = await createRepoReturning(owner.ctx, owner.orgId, {
+      name: "crates-owner-cli",
+      format: "cargo",
+      visibility: "public",
+    });
+    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "cargo" })).json())
+      .secret as string;
+    const { env, registryUrl } = cargoEnv(
+      baseURL!,
+      repo.mountPath,
+      token,
+      "hoot-cargo-owner-home-",
+    );
+
+    const crate = `hootowner${Date.now().toString(36)}${randomUUID().slice(0, 8)}`;
+    const pubDir = mkdtempSync(join(tmpdir(), "hoot-cargo-owner-pub-"));
+    mkdirSync(join(pubDir, "src"), { recursive: true });
+    writeCargoConfig(pubDir, registryUrl);
+    publishCrate(registryUrl, env, crate, "1.0.0");
+
+    cargo(["owner", "--add", owner.username, "--registry", "hooti", crate], pubDir, env);
+    const listed = cargo(["owner", "--list", "--registry", "hooti", crate], pubDir, env);
+    expect(typeof listed).toBe("string");
+    expect(listed.trim().length).toBeGreaterThan(0);
+    cargo(["owner", "--remove", owner.username, "--registry", "hooti", crate], pubDir, env);
+  });
+
+  test("virtual repo resolves a crate published to a hosted member", async ({ baseURL }) => {
+    test.setTimeout(180_000);
+    const owner = await setupOwner(baseURL!);
+    const member = await createRepoReturning(owner.ctx, owner.orgId, {
+      name: "crates-virt-member-cli",
+      format: "cargo",
+      visibility: "public",
+    });
+    const virtual = await createRepoReturning(owner.ctx, owner.orgId, {
+      name: "crates-virt-cli",
+      format: "cargo",
+      kind: "virtual",
+      visibility: "public",
+    });
+    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "cargo" })).json())
+      .secret as string;
+
+    const memberEnv = cargoEnv(baseURL!, member.mountPath, token, "hoot-cargo-virt-member-home-");
+    const crate = `hootvirt${Date.now().toString(36)}${randomUUID().slice(0, 8)}`;
+    publishCrate(memberEnv.registryUrl, memberEnv.env, crate, "1.0.0");
+
+    expect((await addMember(owner.ctx, virtual.id, member.id, 0)).status()).toBe(201);
+
+    const virtualEnv = cargoEnv(baseURL!, virtual.mountPath, token, "hoot-cargo-virt-home-");
+    const consumer = consumerCrate(virtualEnv.registryUrl, [
+      `${crate} = { version = "1.0.0", registry = "hooti" }`,
+    ]);
+    cargo(["fetch"], consumer, virtualEnv.env);
+
+    const shard = cargoShard(crate);
+    const virtualIndex = await (await owner.ctx.get(`/${virtual.mountPath}/${shard}`)).text();
+    expect(virtualIndex).toContain('"vers":"1.0.0"');
+  });
+});
+
+test.describe("cargo sparse registry error and edge scenarios (Dockerized real cargo)", () => {
+  test.beforeAll(ensureDockerAvailable);
+
+  test("publishing an existing version is rejected", async ({ baseURL }) => {
+    test.setTimeout(180_000);
+    const owner = await setupOwner(baseURL!);
+    const repo = await createRepoReturning(owner.ctx, owner.orgId, {
+      name: "crates-dup-cli",
+      format: "cargo",
+      visibility: "public",
+    });
+    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "cargo" })).json())
+      .secret as string;
+    const { env, registryUrl } = cargoEnv(baseURL!, repo.mountPath, token, "hoot-cargo-dup-home-");
+
+    const crate = `hootdup${Date.now().toString(36)}${randomUUID().slice(0, 8)}`;
+    publishCrate(registryUrl, env, crate, "1.0.0");
+
+    let failed = false;
+    let message = "";
+    try {
+      publishCrate(registryUrl, env, crate, "1.0.0");
+    } catch (e) {
+      failed = true;
+      message = (e as Error).message;
+    }
+    expect(failed).toBe(true);
+    expect(message).toMatch(/already|exists|conflict|409/i);
+  });
+
+  test("publishing without a token is rejected", async ({ baseURL }) => {
+    test.setTimeout(180_000);
+    const owner = await setupOwner(baseURL!);
+    const repo = await createRepoReturning(owner.ctx, owner.orgId, {
+      name: "crates-noauth-cli",
+      format: "cargo",
+    });
+    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "cargo" })).json())
+      .secret as string;
+    const { env, registryUrl } = cargoEnv(
+      baseURL!,
+      repo.mountPath,
+      token,
+      "hoot-cargo-noauth-home-",
+    );
+    // Drop the registry token so the publish carries no credentials at all.
+    const { CARGO_REGISTRIES_HOOTI_TOKEN: _omitted, ...anonEnv } = env;
+
+    const crate = `hootnoauth${Date.now().toString(36)}${randomUUID().slice(0, 8)}`;
+    const dir = mkdtempSync(join(tmpdir(), "hoot-cargo-noauth-pub-"));
+    mkdirSync(join(dir, "src"), { recursive: true });
+    writeCargoConfig(dir, registryUrl);
+    writeFileSync(
+      join(dir, "Cargo.toml"),
+      [
+        "[package]",
+        `name = "${crate}"`,
+        'version = "1.0.0"',
+        'edition = "2024"',
+        'license = "MIT"',
+        'description = "hootifactory e2e crate"',
+        "",
+        "[lib]",
+        'path = "src/lib.rs"',
+        "",
+      ].join("\n"),
+    );
+    writeFileSync(join(dir, "src", "lib.rs"), 'pub fn hoot() -> &\'static str { "hoot" }\n');
+
+    let failed = false;
+    let message = "";
+    try {
+      cargo(["publish", "--registry", "hooti", "--allow-dirty", "--no-verify"], dir, anonEnv);
+    } catch (e) {
+      failed = true;
+      message = (e as Error).message;
+    }
+    expect(failed).toBe(true);
+    expect(message).toMatch(/token|unauthorized|denied|auth|401|403/i);
+  });
+
+  test("fetching a dependency on a nonexistent crate fails", async ({ baseURL }) => {
+    test.setTimeout(180_000);
+    const owner = await setupOwner(baseURL!);
+    const repo = await createRepoReturning(owner.ctx, owner.orgId, {
+      name: "crates-missing-cli",
+      format: "cargo",
+    });
+    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "cargo" })).json())
+      .secret as string;
+    const { env, registryUrl } = cargoEnv(
+      baseURL!,
+      repo.mountPath,
+      token,
+      "hoot-cargo-missing-home-",
+    );
+
+    // Nothing was ever published to this registry, so the dependency cannot resolve.
+    const missing = `hootmissing${Date.now().toString(36)}${randomUUID().slice(0, 8)}`;
+    const consumer = consumerCrate(registryUrl, [
+      `${missing} = { version = "1.0.0", registry = "hooti" }`,
+    ]);
+
+    let failed = false;
+    let message = "";
+    try {
+      cargo(["generate-lockfile"], consumer, env);
+    } catch (e) {
+      failed = true;
+      message = (e as Error).message;
+    }
+    expect(failed).toBe(true);
+    expect(message).toMatch(/not found|no matching|does not exist|404|failed to/i);
+  });
+
+  test("depending on a nonexistent version of an existing crate fails", async ({ baseURL }) => {
+    test.setTimeout(180_000);
+    const owner = await setupOwner(baseURL!);
+    const repo = await createRepoReturning(owner.ctx, owner.orgId, {
+      name: "crates-badver-cli",
+      format: "cargo",
+      visibility: "public",
+    });
+    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "cargo" })).json())
+      .secret as string;
+    const { env, registryUrl } = cargoEnv(
+      baseURL!,
+      repo.mountPath,
+      token,
+      "hoot-cargo-badver-home-",
+    );
+
+    const crate = `hootbadver${Date.now().toString(36)}${randomUUID().slice(0, 8)}`;
+    publishCrate(registryUrl, env, crate, "1.0.0");
+
+    // The crate exists, but 9.9.9 was never published, so exact resolution must fail.
+    const consumer = consumerCrate(registryUrl, [
+      `${crate} = { version = "=9.9.9", registry = "hooti" }`,
+    ]);
+
+    let failed = false;
+    let message = "";
+    try {
+      cargo(["generate-lockfile"], consumer, env);
+    } catch (e) {
+      failed = true;
+      message = (e as Error).message;
+    }
+    expect(failed).toBe(true);
+    expect(message).toMatch(/no matching|not found|failed to select|9\.9\.9/i);
   });
 });

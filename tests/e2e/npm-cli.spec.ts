@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -320,5 +321,424 @@ test.describe("npm registry (Dockerized real CLI)", () => {
     expect(readFileSync(join(exactDir, "node_modules", pkgName, "index.js"), "utf8")).toContain(
       "stable",
     );
+  });
+});
+
+interface NpmEnv {
+  npmrc: string;
+  registry: string;
+}
+
+function npmEnv(baseURL: string, orgSlug: string, repoName: string, secret: string): NpmEnv {
+  const registry = `${dockerReachableUrl(baseURL)}/npm/${orgSlug}/${repoName}/`;
+  const npmrc = `registry=${registry}\n${registry.replace(/^https?:/, "")}:_authToken=${secret}\n`;
+  return { npmrc, registry };
+}
+
+function publishVersion(
+  env: NpmEnv,
+  pkg: string,
+  version: string,
+  manifest: Record<string, unknown> = {},
+  tag?: string,
+): void {
+  const dir = mkdtempSync(join(tmpdir(), "hoot-npm-pub-"));
+  writeFileSync(
+    join(dir, "package.json"),
+    JSON.stringify({ name: pkg, version, main: "index.js", ...manifest }),
+  );
+  writeFileSync(join(dir, "index.js"), `module.exports = ${JSON.stringify(version)};\n`);
+  writeFileSync(join(dir, ".npmrc"), env.npmrc);
+  npm(["publish", "--registry", env.registry, ...(tag ? ["--tag", tag] : [])], dir);
+}
+
+function consumerDir(env: NpmEnv, dependencies: Record<string, string> = {}): string {
+  const dir = mkdtempSync(join(tmpdir(), "hoot-npm-consumer-"));
+  writeFileSync(join(dir, ".npmrc"), env.npmrc);
+  writeFileSync(
+    join(dir, "package.json"),
+    JSON.stringify({ name: "consumer", version: "1.0.0", private: true, dependencies }),
+  );
+  return dir;
+}
+
+function installedVersion(dir: string, pkg: string): string {
+  return JSON.parse(readFileSync(join(dir, "node_modules", pkg, "package.json"), "utf8"))
+    .version as string;
+}
+
+test.describe("npm registry extended scenarios (Dockerized real CLI)", () => {
+  test.beforeAll(ensureDockerAvailable);
+
+  test("resolves semver ranges across multiple published versions", async ({ baseURL }) => {
+    test.setTimeout(120_000);
+    const owner = await setupOwner(baseURL!);
+    const repoName = "npm-semver";
+    expect(
+      (await createRepo(owner.ctx, owner.orgId, { name: repoName, format: "npm" })).status(),
+    ).toBe(201);
+    const secret = (
+      await (await createToken(owner.ctx, owner.orgId, { name: "npm-semver" })).json()
+    ).secret as string;
+    const env = npmEnv(baseURL!, owner.orgSlug, repoName, secret);
+
+    const pkg = `e2e-semver-${Date.now().toString(36)}`;
+    publishVersion(env, pkg, "1.0.0");
+    publishVersion(env, pkg, "1.1.0");
+    publishVersion(env, pkg, "2.0.0");
+
+    const caretOne = consumerDir(env);
+    npm(
+      ["install", `${pkg}@^1.0.0`, "--registry", env.registry, "--no-audit", "--no-fund"],
+      caretOne,
+    );
+    expect(installedVersion(caretOne, pkg)).toBe("1.1.0");
+
+    const tilde = consumerDir(env);
+    npm(["install", `${pkg}@~1.0.0`, "--registry", env.registry, "--no-audit", "--no-fund"], tilde);
+    expect(installedVersion(tilde, pkg)).toBe("1.0.0");
+
+    const caretTwo = consumerDir(env);
+    npm(
+      ["install", `${pkg}@^2.0.0`, "--registry", env.registry, "--no-audit", "--no-fund"],
+      caretTwo,
+    );
+    expect(installedVersion(caretTwo, pkg)).toBe("2.0.0");
+  });
+
+  test("installs transitive dependencies declared in published manifests", async ({ baseURL }) => {
+    test.setTimeout(120_000);
+    const owner = await setupOwner(baseURL!);
+    const repoName = "npm-deptree";
+    expect(
+      (await createRepo(owner.ctx, owner.orgId, { name: repoName, format: "npm" })).status(),
+    ).toBe(201);
+    const secret = (
+      await (await createToken(owner.ctx, owner.orgId, { name: "npm-deptree" })).json()
+    ).secret as string;
+    const env = npmEnv(baseURL!, owner.orgSlug, repoName, secret);
+
+    const id = Date.now().toString(36);
+    const dep = `e2e-dep-${id}`;
+    const main = `e2e-main-${id}`;
+    publishVersion(env, dep, "1.2.3");
+    publishVersion(env, main, "1.0.0", { dependencies: { [dep]: "^1.0.0" } });
+
+    const dir = consumerDir(env);
+    npm(["install", `${main}@1.0.0`, "--registry", env.registry, "--no-audit", "--no-fund"], dir);
+    expect(installedVersion(dir, main)).toBe("1.0.0");
+    expect(installedVersion(dir, dep)).toBe("1.2.3");
+  });
+
+  test("npm ci installs from a lockfile and npm audit consults the advisories endpoint", async ({
+    baseURL,
+  }) => {
+    test.setTimeout(120_000);
+    const owner = await setupOwner(baseURL!);
+    const repoName = "npm-ci-audit";
+    expect(
+      (await createRepo(owner.ctx, owner.orgId, { name: repoName, format: "npm" })).status(),
+    ).toBe(201);
+    const secret = (
+      await (await createToken(owner.ctx, owner.orgId, { name: "npm-ci-audit" })).json()
+    ).secret as string;
+    const env = npmEnv(baseURL!, owner.orgSlug, repoName, secret);
+
+    const pkg = `e2e-ci-${Date.now().toString(36)}`;
+    publishVersion(env, pkg, "1.0.0");
+
+    const dir = consumerDir(env, { [pkg]: "1.0.0" });
+    // install (no --no-audit) writes a lockfile and hits the bulk advisories endpoint
+    npm(["install", "--registry", env.registry, "--no-fund"], dir);
+    expect(existsSync(join(dir, "package-lock.json"))).toBe(true);
+
+    // npm ci wipes node_modules and reinstalls strictly from the lockfile
+    npm(["ci", "--registry", env.registry, "--no-fund"], dir);
+    expect(installedVersion(dir, pkg)).toBe("1.0.0");
+
+    // npm audit drives the security advisories endpoint; an unimplemented endpoint
+    // would make audit error out, so a clean zero-vuln report proves it responds.
+    const audit = JSON.parse(npm(["audit", "--json", "--registry", env.registry], dir)) as {
+      metadata: { vulnerabilities: { total: number } };
+    };
+    expect(audit.metadata.vulnerabilities.total).toBe(0);
+  });
+
+  test("npm search surfaces published packages and echoes their metadata", async ({ baseURL }) => {
+    test.setTimeout(120_000);
+    const owner = await setupOwner(baseURL!);
+    const repoName = "npm-search-cli";
+    expect(
+      (await createRepo(owner.ctx, owner.orgId, { name: repoName, format: "npm" })).status(),
+    ).toBe(201);
+    const secret = (
+      await (await createToken(owner.ctx, owner.orgId, { name: "npm-search-cli" })).json()
+    ).secret as string;
+    const env = npmEnv(baseURL!, owner.orgSlug, repoName, secret);
+
+    // search matches a substring of the package name; embed a unique token there
+    const token = `hootsearch${Date.now().toString(36)}`;
+    const pkg = `e2e-${token}-pkg`;
+    publishVersion(env, pkg, "1.0.0", {
+      description: `a ${token} fixture package`,
+      keywords: [token, "hootifactory"],
+    });
+
+    const dir = mkdtempSync(join(tmpdir(), "hoot-npm-search-"));
+    writeFileSync(join(dir, ".npmrc"), env.npmrc);
+    const results = JSON.parse(
+      npm(["search", token, "--json", "--registry", env.registry], dir),
+    ) as {
+      name: string;
+      version: string;
+      description?: string;
+      keywords?: string[];
+    }[];
+    const hit = results.find((r) => r.name === pkg);
+    expect(hit).toBeTruthy();
+    expect(hit?.version).toBe("1.0.0");
+    expect(hit?.description).toContain(token);
+    expect(hit?.keywords).toContain(token);
+  });
+
+  test("prerelease versions resolve explicitly while latest stays on the stable release", async ({
+    baseURL,
+  }) => {
+    test.setTimeout(120_000);
+    const owner = await setupOwner(baseURL!);
+    const repoName = "npm-prerelease";
+    expect(
+      (await createRepo(owner.ctx, owner.orgId, { name: repoName, format: "npm" })).status(),
+    ).toBe(201);
+    const secret = (
+      await (await createToken(owner.ctx, owner.orgId, { name: "npm-prerelease" })).json()
+    ).secret as string;
+    const env = npmEnv(baseURL!, owner.orgSlug, repoName, secret);
+
+    const pkg = `e2e-prerelease-${Date.now().toString(36)}`;
+    publishVersion(env, pkg, "1.0.0");
+    // publish the prerelease under a non-default tag so "latest" is untouched
+    publishVersion(env, pkg, "1.1.0-rc.1", {}, "rc");
+
+    const stable = consumerDir(env);
+    npm(["install", pkg, "--registry", env.registry, "--no-audit", "--no-fund"], stable);
+    expect(installedVersion(stable, pkg)).toBe("1.0.0");
+
+    const pre = consumerDir(env);
+    npm(
+      ["install", `${pkg}@^1.1.0-rc.1`, "--registry", env.registry, "--no-audit", "--no-fund"],
+      pre,
+    );
+    expect(installedVersion(pre, pkg)).toBe("1.1.0-rc.1");
+  });
+});
+
+test.describe("npm registry error and edge scenarios (Dockerized real CLI)", () => {
+  test.beforeAll(ensureDockerAvailable);
+
+  test("republishing an existing version is rejected", async ({ baseURL }) => {
+    test.setTimeout(180_000);
+    const owner = await setupOwner(baseURL!);
+    const suffix = `${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
+    const repoName = `npm-err-republish-${suffix}`;
+    expect(
+      (await createRepo(owner.ctx, owner.orgId, { name: repoName, format: "npm" })).status(),
+    ).toBe(201);
+    const secret = (
+      await (await createToken(owner.ctx, owner.orgId, { name: `npm-republish-${suffix}` })).json()
+    ).secret as string;
+    const env = npmEnv(baseURL!, owner.orgSlug, repoName, secret);
+
+    const pkg = `e2e-republish-${suffix}`;
+    publishVersion(env, pkg, "1.0.0");
+
+    // immutability: republishing the same name@version must be rejected
+    let failed = false;
+    let message = "";
+    try {
+      publishVersion(env, pkg, "1.0.0");
+    } catch (e) {
+      failed = true;
+      message = (e as Error).message;
+    }
+    expect(failed).toBe(true);
+    expect(message).toMatch(
+      /409|conflict|cannot publish over|previously published|EPUBLISHCONFLICT/i,
+    );
+  });
+
+  test("installing a nonexistent package fails", async ({ baseURL }) => {
+    test.setTimeout(180_000);
+    const owner = await setupOwner(baseURL!);
+    const suffix = `${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
+    const repoName = `npm-err-missing-pkg-${suffix}`;
+    expect(
+      (await createRepo(owner.ctx, owner.orgId, { name: repoName, format: "npm" })).status(),
+    ).toBe(201);
+    const secret = (
+      await (
+        await createToken(owner.ctx, owner.orgId, { name: `npm-missing-pkg-${suffix}` })
+      ).json()
+    ).secret as string;
+    const env = npmEnv(baseURL!, owner.orgSlug, repoName, secret);
+
+    // empty repo: nothing was ever published here
+    const dir = consumerDir(env);
+    const missing = `e2e-absent-${suffix}`;
+    let failed = false;
+    let message = "";
+    try {
+      npm(
+        ["install", `${missing}@1.0.0`, "--registry", env.registry, "--no-audit", "--no-fund"],
+        dir,
+      );
+    } catch (e) {
+      failed = true;
+      message = (e as Error).message;
+    }
+    expect(failed).toBe(true);
+    expect(message).toMatch(/404|not found|E404/i);
+  });
+
+  test("installing a nonexistent version of an existing package fails", async ({ baseURL }) => {
+    test.setTimeout(180_000);
+    const owner = await setupOwner(baseURL!);
+    const suffix = `${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
+    const repoName = `npm-err-missing-ver-${suffix}`;
+    expect(
+      (await createRepo(owner.ctx, owner.orgId, { name: repoName, format: "npm" })).status(),
+    ).toBe(201);
+    const secret = (
+      await (
+        await createToken(owner.ctx, owner.orgId, { name: `npm-missing-ver-${suffix}` })
+      ).json()
+    ).secret as string;
+    const env = npmEnv(baseURL!, owner.orgSlug, repoName, secret);
+
+    const pkg = `e2e-missing-ver-${suffix}`;
+    publishVersion(env, pkg, "1.0.0");
+
+    // the package exists, but 9.9.9 was never published -> no satisfying version
+    const dir = consumerDir(env);
+    let failed = false;
+    let message = "";
+    try {
+      npm(["install", `${pkg}@9.9.9`, "--registry", env.registry, "--no-audit", "--no-fund"], dir);
+    } catch (e) {
+      failed = true;
+      message = (e as Error).message;
+    }
+    expect(failed).toBe(true);
+    expect(message).toMatch(/No matching version|notarget|ETARGET|404|not found/i);
+  });
+
+  test("publishing with an invalid token is rejected", async ({ baseURL }) => {
+    test.setTimeout(180_000);
+    const owner = await setupOwner(baseURL!);
+    const suffix = `${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
+    const repoName = `npm-err-bad-token-${suffix}`;
+    expect(
+      (await createRepo(owner.ctx, owner.orgId, { name: repoName, format: "npm" })).status(),
+    ).toBe(201);
+
+    // build an .npmrc whose _authToken is deliberately wrong
+    const registry = `${dockerReachableUrl(baseURL!)}/npm/${owner.orgSlug}/${repoName}/`;
+    const npmrc = [
+      `registry=${registry}`,
+      `${registry.replace(/^https?:/, "")}:_authToken=wrong-token`,
+      "",
+    ].join("\n");
+
+    const pkg = `e2e-bad-token-${suffix}`;
+    const dir = mkdtempSync(join(tmpdir(), "hoot-npm-bad-token-"));
+    writeFileSync(
+      join(dir, "package.json"),
+      JSON.stringify({ name: pkg, version: "1.0.0", description: "bad token", main: "index.js" }),
+    );
+    writeFileSync(join(dir, "index.js"), "module.exports = 'bad token';\n");
+    writeFileSync(join(dir, ".npmrc"), npmrc);
+
+    let failed = false;
+    let message = "";
+    try {
+      npm(["publish", "--registry", registry], dir);
+    } catch (e) {
+      failed = true;
+      message = (e as Error).message;
+    }
+    expect(failed).toBe(true);
+    expect(message).toMatch(/401|403|unauth|forbidden|denied|E401|E403/i);
+  });
+
+  test("installing from a private repo without a token is rejected", async ({ baseURL }) => {
+    test.setTimeout(180_000);
+    const owner = await setupOwner(baseURL!);
+    const suffix = `${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
+    // private is the default (visibility omitted)
+    const repoName = `npm-err-private-${suffix}`;
+    expect(
+      (await createRepo(owner.ctx, owner.orgId, { name: repoName, format: "npm" })).status(),
+    ).toBe(201);
+    const secret = (
+      await (await createToken(owner.ctx, owner.orgId, { name: `npm-private-${suffix}` })).json()
+    ).secret as string;
+    const env = npmEnv(baseURL!, owner.orgSlug, repoName, secret);
+
+    // publish with a valid token so the package genuinely exists
+    const pkg = `e2e-private-${suffix}`;
+    publishVersion(env, pkg, "1.0.0");
+
+    // now consume with an .npmrc that names the registry but carries NO _authToken
+    const registry = env.registry;
+    const anonNpmrc = `registry=${registry}\n`;
+    const dir = mkdtempSync(join(tmpdir(), "hoot-npm-private-anon-"));
+    writeFileSync(join(dir, ".npmrc"), anonNpmrc);
+    writeFileSync(
+      join(dir, "package.json"),
+      JSON.stringify({ name: "consumer", version: "1.0.0", private: true }),
+    );
+
+    let failed = false;
+    let message = "";
+    try {
+      npm(["install", `${pkg}@1.0.0`, "--registry", registry, "--no-audit", "--no-fund"], dir);
+    } catch (e) {
+      failed = true;
+      message = (e as Error).message;
+    }
+    expect(failed).toBe(true);
+    expect(message).toMatch(/401|403|unauth|forbidden|denied|E401|E403/i);
+  });
+
+  test("npm view on a nonexistent package fails", async ({ baseURL }) => {
+    test.setTimeout(180_000);
+    const owner = await setupOwner(baseURL!);
+    const suffix = `${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
+    const repoName = `npm-err-view-missing-${suffix}`;
+    expect(
+      (await createRepo(owner.ctx, owner.orgId, { name: repoName, format: "npm" })).status(),
+    ).toBe(201);
+    const secret = (
+      await (
+        await createToken(owner.ctx, owner.orgId, { name: `npm-view-missing-${suffix}` })
+      ).json()
+    ).secret as string;
+    const env = npmEnv(baseURL!, owner.orgSlug, repoName, secret);
+
+    // empty repo: this package was never published
+    const dir = mkdtempSync(join(tmpdir(), "hoot-npm-view-missing-"));
+    writeFileSync(join(dir, ".npmrc"), env.npmrc);
+    const missing = `e2e-view-absent-${suffix}`;
+
+    let failed = false;
+    let message = "";
+    try {
+      npm(["view", `${missing}@1.0.0`, "--registry", env.registry], dir);
+    } catch (e) {
+      failed = true;
+      message = (e as Error).message;
+    }
+    expect(failed).toBe(true);
+    expect(message).toMatch(/404|not found|E404/i);
   });
 });
