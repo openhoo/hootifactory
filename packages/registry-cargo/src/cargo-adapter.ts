@@ -1,16 +1,15 @@
 import {
   bearerAuthChallenge,
   defineRegistryPlugin,
+  delegateRegistryPlugin,
   Errors,
   type HttpMethod,
   type Permission,
   parseRegistryInput,
   type RegistryPlugin,
   type RegistryRequestContext,
-  type RouteEntry,
-  type RouteMatch,
   readWritePermission,
-  registryRoute,
+  registryRoutes,
   serveRegistryBlob,
 } from "@hootifactory/registry";
 import {
@@ -57,81 +56,47 @@ export class CargoAdapter implements RegistryPlugin {
     capabilities: this.capabilities,
     authChallenge: this.authChallenge,
     routes: [
-      registryRoute({
-        method: "GET",
-        pattern: "/config.json",
-        handlerId: "config",
-        handler: ({ ctx }) =>
-          Response.json({
-            dl: `${ctx.baseUrl}/${ctx.repo.mountPath}/api/v1/crates`,
-            api: `${ctx.baseUrl}/${ctx.repo.mountPath}`,
-          }),
-      }),
-      registryRoute({
-        method: "PUT",
-        pattern: "/api/v1/crates/new",
-        handlerId: "publish",
-        handler: ({ req, ctx }) => this.publish(req, ctx),
-      }),
-      registryRoute({
-        method: "GET",
-        pattern: "/api/v1/crates/:crate/:version/download",
-        handlerId: "download",
-        handler: ({ params, ctx }) => this.download(params.crate ?? "", params.version ?? "", ctx),
-      }),
-      registryRoute({
-        method: "DELETE",
-        pattern: "/api/v1/crates/:crate/:version/yank",
-        handlerId: "yank",
-        handler: ({ params, ctx }) =>
-          this.setYank(params.crate ?? "", params.version ?? "", true, ctx),
-      }),
-      registryRoute({
-        method: "PUT",
-        pattern: "/api/v1/crates/:crate/:version/unyank",
-        handlerId: "unyank",
-        handler: ({ params, ctx }) =>
-          this.setYank(params.crate ?? "", params.version ?? "", false, ctx),
-      }),
-      registryRoute({
-        method: "GET",
-        pattern: "/api/v1/crates/:crate/owners",
-        handlerId: "ownersList",
-        handler: ({ params, ctx }) => this.listOwners(params.crate ?? "", ctx),
-      }),
-      registryRoute({
-        method: "PUT",
-        pattern: "/api/v1/crates/:crate/owners",
-        handlerId: "ownersAdd",
-        handler: ({ params, req, ctx }) => this.updateOwners(params.crate ?? "", req, "add", ctx),
-      }),
-      registryRoute({
-        method: "DELETE",
-        pattern: "/api/v1/crates/:crate/owners",
-        handlerId: "ownersRemove",
-        handler: ({ params, req, ctx }) =>
-          this.updateOwners(params.crate ?? "", req, "remove", ctx),
-      }),
-      registryRoute({
-        method: "GET",
-        pattern: "/:path+",
-        handlerId: "index",
-        handler: ({ params, ctx }) => this.index(params.path ?? "", ctx),
-      }),
+      registryRoutes.get("/config.json", "config", ({ ctx }) =>
+        Response.json({
+          dl: `${ctx.baseUrl}/${ctx.repo.mountPath}/api/v1/crates`,
+          api: `${ctx.baseUrl}/${ctx.repo.mountPath}`,
+        }),
+      ),
+      registryRoutes.put("/api/v1/crates/new", "publish", ({ req, ctx }) => this.publish(req, ctx)),
+      registryRoutes.get("/api/v1/crates/:crate/:version/download", "download", ({ params, ctx }) =>
+        this.download(params.crate ?? "", params.version ?? "", ctx),
+      ),
+      registryRoutes.delete("/api/v1/crates/:crate/:version/yank", "yank", ({ params, ctx }) =>
+        this.setYank(params.crate ?? "", params.version ?? "", true, ctx),
+      ),
+      registryRoutes.put("/api/v1/crates/:crate/:version/unyank", "unyank", ({ params, ctx }) =>
+        this.setYank(params.crate ?? "", params.version ?? "", false, ctx),
+      ),
+      registryRoutes.get("/api/v1/crates/:crate/owners", "ownersList", ({ params, ctx }) =>
+        this.listOwners(params.crate ?? "", ctx),
+      ),
+      registryRoutes.put("/api/v1/crates/:crate/owners", "ownersAdd", ({ params, req, ctx }) =>
+        this.updateOwners(params.crate ?? "", req, "add", ctx),
+      ),
+      registryRoutes.delete(
+        "/api/v1/crates/:crate/owners",
+        "ownersRemove",
+        ({ params, req, ctx }) => this.updateOwners(params.crate ?? "", req, "remove", ctx),
+      ),
+      registryRoutes.get("/:path+", "index", ({ params, ctx }) =>
+        this.index(params.path ?? "", ctx),
+      ),
     ],
   });
+  private readonly delegate = delegateRegistryPlugin(this.plugin);
 
-  routes(): RouteEntry[] {
-    return this.plugin.routes();
-  }
+  routes = this.delegate.routes;
 
   requiredPermission(method: HttpMethod): Permission {
     return readWritePermission(method);
   }
 
-  async handle(match: RouteMatch, req: Request, ctx: RegistryRequestContext): Promise<Response> {
-    return this.plugin.handle(match, req, ctx);
-  }
+  handle = this.delegate.handle;
 
   private findCrate(ctx: RegistryRequestContext, name: string) {
     return ctx.data.packages.findByName(name.toLowerCase());

@@ -1,6 +1,7 @@
 import {
   basicAuthChallenge,
   defineRegistryPlugin,
+  delegateRegistryPlugin,
   type FormatMetadata,
   type HttpMethod,
   type Permission,
@@ -8,9 +9,8 @@ import {
   type RegistryPackageVersionRow,
   type RegistryPlugin,
   type RegistryRequestContext,
-  type RouteEntry,
   type RouteMatch,
-  registryRoute,
+  registryRoutes,
   type SearchQuery,
   type SearchResult,
   serveRegistryBlob,
@@ -60,82 +60,40 @@ export class NpmAdapter implements RegistryPlugin {
     search: (query, ctx) => this.search(query, ctx),
     proxyIngest: (name, upstreamBase, ctx) => this.proxyIngest(name, upstreamBase, ctx),
     routes: [
-      registryRoute({
-        method: "GET",
-        pattern: "/-/ping",
-        handlerId: "ping",
-        handler: () => Response.json({}),
-      }),
-      registryRoute({
-        method: "GET",
-        pattern: "/-/whoami",
-        handlerId: "whoami",
-        handler: ({ ctx }) => Response.json({ username: this.whoamiUsername(ctx) }),
-      }),
-      registryRoute({
-        method: "GET",
-        pattern: "/-/v1/search",
-        handlerId: "search",
-        handler: ({ req, ctx }) => this.searchHandler(req, ctx),
-      }),
-      registryRoute({
-        method: "POST",
-        pattern: "/-/npm/v1/security/advisories/bulk",
-        handlerId: "auditBulk",
-        permission: { action: "read" },
-        handler: () => Response.json({}),
-      }),
-      registryRoute({
-        method: "POST",
-        pattern: "/-/npm/v1/security/audits/quick",
-        handlerId: "auditQuick",
-        permission: { action: "read" },
-        handler: () => Response.json({ advisories: {}, vulnerabilities: {}, metadata: {} }),
-      }),
-      registryRoute({
-        method: "GET",
-        pattern: "/-/package/:pkg+/dist-tags",
-        handlerId: "distTagsList",
-        handler: ({ params, ctx }) => this.distTagsList(params.pkg ?? "", ctx),
-      }),
-      registryRoute({
-        method: "PUT",
-        pattern: "/-/package/:pkg+/dist-tags/:tag",
-        handlerId: "distTagSet",
-        handler: ({ params, req, ctx }) =>
-          this.distTagSet(params.pkg ?? "", params.tag ?? "", req, ctx),
-      }),
-      registryRoute({
-        method: "DELETE",
-        pattern: "/-/package/:pkg+/dist-tags/:tag",
-        handlerId: "distTagDelete",
-        handler: ({ params, ctx }) => this.distTagDelete(params.pkg ?? "", params.tag ?? "", ctx),
-      }),
-      registryRoute({
-        method: "GET",
-        pattern: "/:pkg+/-/:filename",
-        handlerId: "tarball",
-        handler: ({ params, req, ctx }) =>
-          this.tarball(params.pkg ?? "", params.filename ?? "", req, ctx),
-      }),
-      registryRoute({
-        method: "PUT",
-        pattern: "/:pkg+",
-        handlerId: "publish",
-        handler: ({ params, req, ctx }) => this.publish(params.pkg ?? "", req, ctx),
-      }),
-      registryRoute({
-        method: "GET",
-        pattern: "/:pkg+",
-        handlerId: "packument",
-        handler: ({ params, req, ctx }) => this.packument(params.pkg ?? "", req, ctx),
-      }),
+      registryRoutes.get("/-/ping", "ping", () => Response.json({})),
+      registryRoutes.get("/-/whoami", "whoami", ({ ctx }) =>
+        Response.json({ username: this.whoamiUsername(ctx) }),
+      ),
+      registryRoutes.get("/-/v1/search", "search", ({ req, ctx }) => this.searchHandler(req, ctx)),
+      registryRoutes.post("/-/npm/v1/security/advisories/bulk", "auditBulk", () =>
+        Response.json({}),
+      ),
+      registryRoutes.post("/-/npm/v1/security/audits/quick", "auditQuick", () =>
+        Response.json({ advisories: {}, vulnerabilities: {}, metadata: {} }),
+      ),
+      registryRoutes.get("/-/package/:pkg+/dist-tags", "distTagsList", ({ params, ctx }) =>
+        this.distTagsList(params.pkg ?? "", ctx),
+      ),
+      registryRoutes.put("/-/package/:pkg+/dist-tags/:tag", "distTagSet", ({ params, req, ctx }) =>
+        this.distTagSet(params.pkg ?? "", params.tag ?? "", req, ctx),
+      ),
+      registryRoutes.delete("/-/package/:pkg+/dist-tags/:tag", "distTagDelete", ({ params, ctx }) =>
+        this.distTagDelete(params.pkg ?? "", params.tag ?? "", ctx),
+      ),
+      registryRoutes.get("/:pkg+/-/:filename", "tarball", ({ params, req, ctx }) =>
+        this.tarball(params.pkg ?? "", params.filename ?? "", req, ctx),
+      ),
+      registryRoutes.put("/:pkg+", "publish", ({ params, req, ctx }) =>
+        this.publish(params.pkg ?? "", req, ctx),
+      ),
+      registryRoutes.get("/:pkg+", "packument", ({ params, req, ctx }) =>
+        this.packument(params.pkg ?? "", req, ctx),
+      ),
     ],
   });
+  private readonly delegate = delegateRegistryPlugin(this.plugin);
 
-  routes(): RouteEntry[] {
-    return this.plugin.routes();
-  }
+  routes = this.delegate.routes;
 
   requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
     return this.requiredRoutePermission(method, match);
@@ -150,9 +108,7 @@ export class NpmAdapter implements RegistryPlugin {
     };
   }
 
-  async handle(match: RouteMatch, req: Request, ctx: RegistryRequestContext): Promise<Response> {
-    return this.plugin.handle(match, req, ctx);
-  }
+  handle = this.delegate.handle;
 
   private async findPackage(ctx: RegistryRequestContext, name: string) {
     return ctx.data.packages.findByName(name);

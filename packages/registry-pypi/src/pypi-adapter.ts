@@ -1,15 +1,14 @@
 import {
   basicAuthChallenge,
   defineRegistryPlugin,
+  delegateRegistryPlugin,
   type HttpMethod,
   type Permission,
   parseRegistryInput,
   type RegistryPlugin,
   type RegistryRequestContext,
-  type RouteEntry,
-  type RouteMatch,
   readWritePermission,
-  registryRoute,
+  registryRoutes,
   serveRegistryBlob,
 } from "@hootifactory/registry";
 import { handlePypiUpload } from "./pypi-upload-lifecycle";
@@ -46,50 +45,26 @@ export class PypiAdapter implements RegistryPlugin {
     capabilities: this.capabilities,
     authChallenge: this.authChallenge,
     routes: [
-      registryRoute({
-        method: "GET",
-        pattern: "/simple/",
-        handlerId: "simpleRoot",
-        handler: ({ req, ctx }) => this.simpleRoot(req, ctx),
-      }),
-      registryRoute({
-        method: "GET",
-        pattern: "/simple/:project/",
-        handlerId: "simpleProject",
-        handler: ({ params, req, ctx }) => this.simpleProject(params.project ?? "", req, ctx),
-      }),
-      registryRoute({
-        method: "GET",
-        pattern: "/files/:filename",
-        handlerId: "download",
-        handler: ({ params, ctx }) => this.download(params.filename ?? "", ctx),
-      }),
-      registryRoute({
-        method: "POST",
-        pattern: "/",
-        handlerId: "upload",
-        handler: ({ req, ctx }) => this.upload(req, ctx),
-      }),
-      registryRoute({
-        method: "POST",
-        pattern: "/legacy/",
-        handlerId: "upload",
-        handler: ({ req, ctx }) => this.upload(req, ctx),
-      }),
+      registryRoutes.get("/simple/", "simpleRoot", ({ req, ctx }) => this.simpleRoot(req, ctx)),
+      registryRoutes.get("/simple/:project/", "simpleProject", ({ params, req, ctx }) =>
+        this.simpleProject(params.project ?? "", req, ctx),
+      ),
+      registryRoutes.get("/files/:filename", "download", ({ params, ctx }) =>
+        this.download(params.filename ?? "", ctx),
+      ),
+      registryRoutes.post("/", "upload", ({ req, ctx }) => this.upload(req, ctx)),
+      registryRoutes.post("/legacy/", "upload", ({ req, ctx }) => this.upload(req, ctx)),
     ],
   });
+  private readonly delegate = delegateRegistryPlugin(this.plugin);
 
-  routes(): RouteEntry[] {
-    return this.plugin.routes();
-  }
+  routes = this.delegate.routes;
 
   requiredPermission(method: HttpMethod): Permission {
     return readWritePermission(method);
   }
 
-  async handle(match: RouteMatch, req: Request, ctx: RegistryRequestContext): Promise<Response> {
-    return this.plugin.handle(match, req, ctx);
-  }
+  handle = this.delegate.handle;
 
   private redirectToSlash(req: Request): Response | null {
     if (new URL(req.url).pathname.endsWith("/")) return null;

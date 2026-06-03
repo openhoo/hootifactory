@@ -44,6 +44,16 @@ export interface RegistryRouteSpec<Params extends Record<string, string> = Recor
   handler: RegistryRouteHandler<Params>;
 }
 
+export type RegistryRouteOptions<Params extends Record<string, string> = Record<string, string>> =
+  Omit<RegistryRouteSpec<Params>, keyof RouteEntry | "handler">;
+
+export type RegistryRouteFactory = <Params extends Record<string, string> = Record<string, string>>(
+  pattern: string,
+  handlerId: string,
+  handler: RegistryRouteHandler<Params>,
+  options?: RegistryRouteOptions<Params>,
+) => RegistryRouteSpec<Params>;
+
 export interface DefineRegistryPluginInput {
   format: RegistryPlugin["format"];
   capabilities: RegistryPlugin["capabilities"];
@@ -140,8 +150,40 @@ export function registryRoute<Params extends Record<string, string> = Record<str
   return spec;
 }
 
+function registryRouteWithMethod(method: HttpMethod): RegistryRouteFactory {
+  return (pattern, handlerId, handler, options) =>
+    registryRoute({ method, pattern, handlerId, ...(options ?? {}), handler });
+}
+
+export const registryRoutes = {
+  get: registryRouteWithMethod("GET"),
+  head: registryRouteWithMethod("HEAD"),
+  put: registryRouteWithMethod("PUT"),
+  post: registryRouteWithMethod("POST"),
+  patch: registryRouteWithMethod("PATCH"),
+  delete: registryRouteWithMethod("DELETE"),
+} as const;
+
 export function defineRegistryPlugin(input: DefineRegistryPluginInput): RegistryPlugin {
   return new DefinedRegistryPlugin(input);
+}
+
+export interface DelegateRegistryPluginOptions {
+  beforeHandle?: (input: RegistryRouteInput) => MaybePromise<void>;
+}
+
+export function delegateRegistryPlugin(
+  plugin: RegistryPlugin,
+  options: DelegateRegistryPluginOptions = {},
+): Pick<RegistryPlugin, "routes" | "requiredPermission" | "handle"> {
+  return {
+    routes: () => plugin.routes(),
+    requiredPermission: (method, match, ctx) => plugin.requiredPermission(method, match, ctx),
+    handle: async (match, req, ctx) => {
+      await options.beforeHandle?.({ match, params: match.params, req, ctx });
+      return plugin.handle(match, req, ctx);
+    },
+  };
 }
 
 export function readOnlyPermission(): Permission {
