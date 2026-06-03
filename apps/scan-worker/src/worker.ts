@@ -7,6 +7,7 @@ import {
   withSpan,
 } from "@hootifactory/observability";
 import { intEnv } from "@hootifactory/queue";
+import { reapExpiredOciUploadSessions } from "@hootifactory/registry-application";
 import { detectScanners, scannerOptionsFromEnv } from "@hootifactory/scanning";
 import { processScan, recordScanFailure } from "./pipeline";
 
@@ -23,6 +24,8 @@ interface ClaimedScanIntent {
 const workerBatchSize = intEnv("SCAN_WORKER_BATCH_SIZE", 16, 1);
 const pollingIntervalSeconds = intEnv("SCAN_WORKER_POLL_INTERVAL_SECONDS", 0.5, 0.5);
 const maxAttempts = intEnv("SCAN_WORKER_MAX_ATTEMPTS", 5, 1);
+const uploadReaperIntervalSeconds = intEnv("OCI_UPLOAD_REAPER_INTERVAL_SECONDS", 300, 1);
+const uploadReaperBatchSize = intEnv("OCI_UPLOAD_REAPER_BATCH_SIZE", 100, 1);
 
 const scannerOptions = scannerOptionsFromEnv();
 
@@ -152,12 +155,35 @@ logger.info("scan worker starting", {
   batchSize: workerBatchSize,
   pollingIntervalSeconds,
   maxAttempts,
+  uploadReaperBatchSize,
+  uploadReaperIntervalSeconds,
   workerPort: process.env.WORKER_PORT,
   externalScanners: detectScanners(scannerOptions),
 });
 ready = true;
 
+let nextUploadReapAt = 0;
+
+async function reapExpiredUploadsIfDue(): Promise<void> {
+  const now = Date.now();
+  if (now < nextUploadReapAt) return;
+  nextUploadReapAt = now + uploadReaperIntervalSeconds * 1000;
+  try {
+    const result = await withSpan(
+      "oci.upload_sessions.reap_expired",
+      { "oci.upload_reaper.batch_size": uploadReaperBatchSize },
+      () => reapExpiredOciUploadSessions({ limit: uploadReaperBatchSize }),
+    );
+    if (result.aborted > 0) {
+      logger.info("expired OCI upload sessions reaped", { aborted: result.aborted });
+    }
+  } catch (err) {
+    logger.error("expired OCI upload session reaper failed", { error: err });
+  }
+}
+
 while (!shuttingDown) {
+  await reapExpiredUploadsIfDue();
   const intents = await withSpan(
     "scan.outbox.claim",
     { "worker.batch_size": workerBatchSize },

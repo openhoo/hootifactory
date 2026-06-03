@@ -178,6 +178,7 @@ export interface RegistryRequestContext {
   /** Runtime knobs injected by the application layer. */
   limits: {
     maxUploadBytes: number;
+    maxStagedUploadBytes: number;
     enforcePublicNetwork: boolean;
   };
   /** Absolute public base URL of the registry (no trailing slash). */

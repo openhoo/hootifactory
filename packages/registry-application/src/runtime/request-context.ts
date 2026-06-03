@@ -88,6 +88,7 @@ export function buildRegistryRequestContext(
     baseUrl: env.REGISTRY_PUBLIC_URL,
     limits: {
       maxUploadBytes: env.REGISTRY_MAX_UPLOAD_BYTES,
+      maxStagedUploadBytes: env.REGISTRY_MAX_STAGED_UPLOAD_BYTES,
       enforcePublicNetwork: !env.REGISTRY_ALLOW_PRIVATE_UPSTREAMS,
     },
     log: logger,

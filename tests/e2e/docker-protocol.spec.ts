@@ -145,6 +145,66 @@ function casBlobState(digest: string): { dbRows: number; exists: boolean } {
   return JSON.parse(out);
 }
 
+function uploadSessionState(uuid: string): {
+  chunkExists: boolean[];
+  offsetBytes: number | null;
+  state: string | null;
+  storageExists: boolean | null;
+} {
+  const out = execFileSync(
+    "bun",
+    [
+      "-e",
+      [
+        'import { blobStore } from "@hootifactory/storage";',
+        'import { db, eq, uploadSessions } from "@hootifactory/db";',
+        "const [session] = await db",
+        "  .select()",
+        "  .from(uploadSessions)",
+        "  .where(eq(uploadSessions.id, process.env.UPLOAD_UUID));",
+        "if (!session) {",
+        "  console.log(JSON.stringify({ state: null, offsetBytes: null, storageExists: null, chunkExists: [] }));",
+        "} else {",
+        "  let chunks = [];",
+        "  try { chunks = JSON.parse(session.multipart ?? '{}').chunks ?? []; } catch {}",
+        "  const keys = chunks.flatMap((chunk) => typeof chunk?.key === 'string' ? [chunk.key] : []);",
+        "  console.log(JSON.stringify({",
+        "    state: session.state,",
+        "    offsetBytes: session.offsetBytes,",
+        "    storageExists: await blobStore.existsKey(session.storageKey),",
+        "    chunkExists: await Promise.all(keys.map((key) => blobStore.existsKey(key))),",
+        "  }));",
+        "}",
+      ].join("\n"),
+    ],
+    {
+      env: { ...process.env, DATABASE_URL: TEST_DATABASE_URL, UPLOAD_UUID: uuid },
+      stdio: "pipe",
+      encoding: "utf8",
+    },
+  );
+  return JSON.parse(out);
+}
+
+function reapExpiredUploadSessions(): { aborted: number } {
+  const out = execFileSync(
+    "bun",
+    [
+      "-e",
+      [
+        'import { reapExpiredOciUploadSessions } from "@hootifactory/registry-application";',
+        "console.log(JSON.stringify(await reapExpiredOciUploadSessions({ limit: 10 })));",
+      ].join("\n"),
+    ],
+    {
+      env: { ...process.env, DATABASE_URL: TEST_DATABASE_URL },
+      stdio: "pipe",
+      encoding: "utf8",
+    },
+  );
+  return JSON.parse(out);
+}
+
 async function putManifest(
   ctx: APIRequestContext,
   mountPath: string,
@@ -892,6 +952,74 @@ test.describe("docker registry protocol authorization", () => {
     const expiredStatus = await owner.ctx.get(expired.path);
     expect(expiredStatus.status()).toBe(404);
     expect((await expiredStatus.json()).errors[0].code).toBe("BLOB_UPLOAD_UNKNOWN");
+  });
+
+  test("resumable PATCH bytes count against org quota before staging", async ({ baseURL }) => {
+    const owner = await setupOwner(baseURL!);
+    const repo = (
+      await (
+        await createRepo(owner.ctx, owner.orgId, {
+          name: "quota-patch-containers",
+          format: "docker",
+        })
+      ).json()
+    ).repository as { mountPath: string };
+    await owner.ctx.post(`/api/orgs/${owner.orgId}/quota`, { data: { maxStorageBytes: 4 } });
+
+    const upload = await startUpload(owner.ctx, repo.mountPath, "quota-patch");
+    const rejected = await owner.ctx.patch(upload.path, {
+      headers: { "content-type": "application/octet-stream", "content-range": "0-4" },
+      data: Buffer.from("hello"),
+    });
+    expect(rejected.status()).toBe(403);
+    expect((await rejected.json()).errors[0].code).toBe("DENIED");
+    expect(uploadSessionState(upload.uuid)).toMatchObject({
+      chunkExists: [],
+      offsetBytes: 0,
+      state: "open",
+    });
+  });
+
+  test("expired abandoned OCI upload sessions are reaped without client access", async ({
+    baseURL,
+  }) => {
+    const owner = await setupOwner(baseURL!);
+    const repo = (
+      await (
+        await createRepo(owner.ctx, owner.orgId, {
+          name: "reaped-containers",
+          format: "docker",
+        })
+      ).json()
+    ).repository as { mountPath: string };
+
+    const upload = await startUpload(owner.ctx, repo.mountPath, "abandoned");
+    const chunk = Buffer.from("abandoned bytes");
+    const patch = await owner.ctx.patch(upload.path, {
+      headers: {
+        "content-type": "application/octet-stream",
+        "content-range": `0-${chunk.length - 1}`,
+      },
+      data: chunk,
+    });
+    expect(patch.status()).toBe(202);
+    expect(uploadSessionState(upload.uuid)).toMatchObject({
+      chunkExists: [true],
+      offsetBytes: chunk.length,
+      state: "open",
+    });
+
+    expireUploadSession(upload.uuid);
+    expect(reapExpiredUploadSessions()).toEqual({ aborted: 1 });
+    expect(uploadSessionState(upload.uuid)).toMatchObject({
+      chunkExists: [false],
+      state: "aborted",
+      storageExists: false,
+    });
+
+    const status = await owner.ctx.get(upload.path);
+    expect(status.status()).toBe(404);
+    expect((await status.json()).errors[0].code).toBe("BLOB_UPLOAD_UNKNOWN");
   });
 
   test("quota-rejected resumable upload does not leave orphaned CAS bytes", async ({ baseURL }) => {

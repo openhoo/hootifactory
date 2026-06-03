@@ -157,6 +157,10 @@ export interface RegistryOciMountSourceRow {
 }
 
 export interface RegistryOciUploadSessionMutations {
+  assertStagingBudget(input: {
+    nextOffsetBytes: number;
+    maxStagedUploadBytes: number;
+  }): Promise<void>;
   updateOpen(patch: { offsetBytes: number; multipart: string }): Promise<void>;
   commit(offsetBytes: number): Promise<void>;
   markAborted(): Promise<void>;

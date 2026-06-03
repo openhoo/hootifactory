@@ -23,5 +23,6 @@ export {
   type OciMountSourceRow,
   type OciUploadSessionMutations,
   type OciUploadSessionRow,
+  reapExpiredOciUploadSessions,
   withLockedOciUploadSession,
 } from "./uploads";

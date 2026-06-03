@@ -123,7 +123,11 @@ export function createTestRegistryContext(
     repo: createTestResolvedRepo(overrides.repo),
     principal: { kind: "anonymous" },
     data: createTestDataService(),
-    limits: { maxUploadBytes: 10 * 1024 * 1024, enforcePublicNetwork: false },
+    limits: {
+      maxUploadBytes: 10 * 1024 * 1024,
+      maxStagedUploadBytes: 10 * 1024 * 1024,
+      enforcePublicNetwork: false,
+    },
     baseUrl: "https://registry.example.test",
     authorize: () => Promise.resolve({ allowed: true }),
     enqueueScan: () => Promise.resolve(),

@@ -16,6 +16,7 @@
     "@hootifactory/db": "workspace:*",
     "@hootifactory/observability": "workspace:*",
     "@hootifactory/queue": "workspace:*",
+    "@hootifactory/registry-application": "workspace:*",
     "@hootifactory/scan-core": "workspace:*",
     "@hootifactory/scanning": "workspace:*",
     "@hootifactory/storage": "workspace:*",

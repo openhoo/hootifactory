@@ -26,6 +26,7 @@ describe("environment auth creation defaults", () => {
     expect(devEnv.AUTH_OIDC_LINK_TTL_SECONDS).toBe(15 * 60);
     expect(devEnv.EMAIL_ENABLED).toBe(false);
     expect(devEnv.REGISTRY_MAX_UPLOAD_BYTES).toBe(100 * 1024 * 1024);
+    expect(devEnv.REGISTRY_MAX_STAGED_UPLOAD_BYTES).toBe(100 * 1024 * 1024);
     expect(devEnv.REGISTRY_ALLOW_PRIVATE_UPSTREAMS).toBe(false);
     expect(devEnv.SCAN_MAX_BYTES).toBe(100 * 1024 * 1024);
     expect(devEnv.SCANNER_CLI_RUNTIME).toBe("docker");
@@ -100,8 +101,12 @@ describe("environment auth creation defaults", () => {
     expect(loadEnv({ REGISTRY_MAX_UPLOAD_BYTES: "1048576" }).REGISTRY_MAX_UPLOAD_BYTES).toBe(
       1048576,
     );
+    expect(
+      loadEnv({ REGISTRY_MAX_STAGED_UPLOAD_BYTES: "2097152" }).REGISTRY_MAX_STAGED_UPLOAD_BYTES,
+    ).toBe(2097152);
     expect(() => loadEnv({ REGISTRY_MAX_UPLOAD_BYTES: "0" })).toThrow();
     expect(() => loadEnv({ REGISTRY_MAX_UPLOAD_BYTES: "-1" })).toThrow();
+    expect(() => loadEnv({ REGISTRY_MAX_STAGED_UPLOAD_BYTES: "0" })).toThrow();
   });
 
   test("private registry upstreams require explicit non-production opt-in", () => {

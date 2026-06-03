@@ -112,7 +112,12 @@ export async function patchUpload(
         mutations,
       });
       validateContentRange(req, openSession.offsetBytes, chunk.length);
-      const next = await appendUploadChunk(openSession, chunk, ctx);
+      const next = await appendUploadChunk(openSession, chunk, ctx, (nextOffsetBytes) =>
+        mutations.assertStagingBudget({
+          nextOffsetBytes,
+          maxStagedUploadBytes: ctx.limits.maxStagedUploadBytes,
+        }),
+      );
       await mutations.updateOpen({ offsetBytes: next.offset, multipart: next.multipart });
       return next.offset;
     },
@@ -306,17 +311,20 @@ async function appendUploadChunk(
   session: { storageKey: string; offsetBytes: number; multipart: string | null },
   chunk: Uint8Array,
   ctx: RegistryRequestContext,
+  assertStagingBudget: (nextOffsetBytes: number) => Promise<void>,
 ): Promise<{ offset: number; multipart: string }> {
   const state = uploadMultipartState(session.multipart);
   const existing = state.chunks.reduce((sum, part) => sum + part.size, 0);
   assertUploadOffset(existing, session.offsetBytes);
+  const nextOffset = existing + chunk.length;
+  await assertStagingBudget(nextOffset);
   if (chunk.length > 0) {
     const key = `${session.storageKey}/chunks/${state.chunks.length}`;
     await ctx.data.content.staging.putKey(key, chunk);
     state.chunks.push({ key, size: chunk.length });
   }
   return {
-    offset: state.chunks.reduce((sum, part) => sum + part.size, 0),
+    offset: nextOffset,
     multipart: JSON.stringify(state),
   };
 }

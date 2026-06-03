@@ -164,6 +164,7 @@ const EnvSchema = z
     API_HOST: z.string().default("0.0.0.0"),
     APP_PUBLIC_URL: absoluteUrl.default("http://localhost:3000"),
     REGISTRY_MAX_UPLOAD_BYTES: positiveInt(100 * 1024 * 1024),
+    REGISTRY_MAX_STAGED_UPLOAD_BYTES: positiveInt(100 * 1024 * 1024),
     REGISTRY_PUBLIC_URL: absoluteUrl.default("http://localhost:3000"),
     REGISTRY_ALLOW_PRIVATE_UPSTREAMS: boolish.default(false),
     API_TRUSTED_ORIGINS: originList,
