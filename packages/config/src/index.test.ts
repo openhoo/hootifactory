@@ -72,6 +72,12 @@ describe("environment auth creation defaults", () => {
     expect(env.AUTH_ALLOW_ORG_CREATION).toBe(true);
   });
 
+  test(".env.example does not force production-sensitive self-service flags on", async () => {
+    const example = await Bun.file(new URL("../../../.env.example", import.meta.url)).text();
+    expect(example).not.toMatch(/^AUTH_ALLOW_REGISTRATION\s*=\s*true\s*$/m);
+    expect(example).not.toMatch(/^AUTH_ALLOW_ORG_CREATION\s*=\s*true\s*$/m);
+  });
+
   test("scanner endpoint URLs are validated and normalized", () => {
     const env = loadEnv({
       CLAMAV_REST_URL: "http://clamav:3310/scan/",
