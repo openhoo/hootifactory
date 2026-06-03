@@ -7,10 +7,7 @@ import { errorMessage, validateJsonBody } from "../validation";
 import { clientIp, enqueueEmail, publicUrl } from "./auth-helpers";
 import { createPasswordResetEmail } from "./auth-password-reset";
 import { PasswordResetConfirmBodySchema, PasswordResetRequestBodySchema } from "./auth-schemas";
-import {
-  passwordResetRequestIsThrottled,
-  recordPasswordResetRequestAttempt,
-} from "./auth-throttle";
+import { consumePasswordResetRequest } from "./auth-throttle";
 import { audit } from "./http";
 
 export function registerPasswordResetRoutes(router: Hono<AppEnv>): void {
@@ -23,7 +20,7 @@ export function registerPasswordResetRoutes(router: Hono<AppEnv>): void {
     if (!parsedBody.ok) return parsedBody.response;
     const { email } = parsedBody.data;
     const ip = clientIp(c);
-    const throttle = passwordResetRequestIsThrottled(email, ip);
+    const throttle = await consumePasswordResetRequest(email, ip);
     if (throttle.throttled) {
       addSpanEvent("auth.password_reset_rate_limited", {
         "auth.retry_after_seconds": throttle.retryAfter,
@@ -36,7 +33,6 @@ export function registerPasswordResetRoutes(router: Hono<AppEnv>): void {
         "retry-after": String(throttle.retryAfter),
       });
     }
-    recordPasswordResetRequestAttempt(email, ip);
 
     if (!env.EMAIL_ENABLED) {
       logger.debug("password reset request ignored because email is disabled");

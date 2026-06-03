@@ -2,14 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import {
   authenticateUserPasswordWithThrottle,
+  consumePasswordResetRequest,
   currentThrottleBucket,
   loginIdentityThrottleKey,
-  loginIsThrottled,
   loginThrottleKey,
   passwordResetIdentityThrottleKey,
-  passwordResetRequestIsThrottled,
   pruneThrottleBuckets,
-  recordPasswordResetRequestAttempt,
   retryAfterSeconds,
 } from "./auth-throttle";
 
@@ -78,7 +76,6 @@ describe("auth throttle helpers", () => {
       authenticateUserPasswordWithThrottle(username, "wrong", "203.0.113.10", verify),
     ).resolves.toMatchObject({ kind: "throttled" });
     expect(calls).toBe(5);
-    expect(loginIsThrottled(loginThrottleKey(username, "203.0.113.10")).throttled).toBe(true);
   });
 
   test("throttles password verification across changing client addresses", async () => {
@@ -101,17 +98,19 @@ describe("auth throttle helpers", () => {
     expect(calls).toBe(5);
   });
 
-  test("throttles password reset requests across changing client addresses", () => {
+  test("throttles password reset requests across changing client addresses", async () => {
     const email = `reset-${randomUUID()}@example.test`;
 
     for (let attempts = 1; attempts <= 3; attempts++) {
-      expect(passwordResetRequestIsThrottled(email, `203.0.113.${attempts}`).throttled).toBe(false);
-      expect(recordPasswordResetRequestAttempt(email, `203.0.113.${attempts}`).count).toBe(
-        attempts,
-      );
+      await expect(consumePasswordResetRequest(email, `203.0.113.${attempts}`)).resolves.toEqual({
+        throttled: false,
+        bucket: expect.objectContaining({ count: attempts }),
+      });
     }
 
-    expect(passwordResetRequestIsThrottled(email, "203.0.113.250").throttled).toBe(true);
+    await expect(consumePasswordResetRequest(email, "203.0.113.250")).resolves.toMatchObject({
+      throttled: true,
+    });
   });
 
   test("successful shared password verification clears prior failures", async () => {
@@ -126,6 +125,13 @@ describe("auth throttle helpers", () => {
       })),
     ).resolves.toMatchObject({ kind: "authenticated", principal: { username } });
 
-    expect(loginIsThrottled(loginThrottleKey(username, "203.0.113.11")).throttled).toBe(false);
+    await expect(
+      authenticateUserPasswordWithThrottle(
+        username,
+        "wrong-again",
+        "203.0.113.11",
+        async () => null,
+      ),
+    ).resolves.toMatchObject({ kind: "invalid", failure: { count: 1 } });
   });
 });

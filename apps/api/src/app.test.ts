@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { randomUUID } from "node:crypto";
 import { env } from "@hootifactory/config";
 import { app } from "./app";
 import { securityHeadersForNodeEnv } from "./middleware/security-headers";
@@ -88,7 +89,7 @@ describe("request body guard", () => {
       new Request("http://localhost/api/auth/password-reset/request", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ email: "missing@example.test" }),
+        body: JSON.stringify({ email: `missing-${randomUUID()}@example.test` }),
       }),
     );
 

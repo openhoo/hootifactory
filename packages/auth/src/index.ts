@@ -11,6 +11,7 @@ export * from "./principal";
 export * from "./registry-jwt";
 export * from "./scope";
 export * from "./sessions";
+export * from "./throttle";
 export * from "./token-grants";
 export * from "./tokens";
 export * from "./users";

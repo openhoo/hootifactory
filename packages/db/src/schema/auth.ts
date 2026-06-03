@@ -3,6 +3,7 @@ import {
   boolean,
   check,
   index,
+  integer,
   jsonb,
   pgTable,
   text,
@@ -139,6 +140,21 @@ export const authEmailTokens = pgTable(
     index("auth_email_tokens_user_purpose_idx").on(t.userId, t.purpose),
     index("auth_email_tokens_expires_idx").on(t.expiresAt),
   ],
+);
+
+export const authThrottleBuckets = pgTable(
+  "auth_throttle_buckets",
+  {
+    bucketHash: varchar({ length: 64 }).primaryKey(),
+    scope: varchar({ length: 64 }).notNull(),
+    count: integer().notNull().default(0),
+    resetAt: timestamp({ withTimezone: true }).notNull(),
+    updatedAt: timestamp({ withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [index("auth_throttle_buckets_reset_at_idx").on(t.resetAt)],
 );
 
 /** Durable idempotency ledger for at-least-once queued email delivery. */

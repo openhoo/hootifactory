@@ -1,4 +1,9 @@
-import { authenticateUserPassword, type Principal } from "@hootifactory/auth";
+import {
+  authenticateUserPassword,
+  clearSharedAuthThrottleBucket,
+  consumeSharedAuthThrottleBucket,
+  type Principal,
+} from "@hootifactory/auth";
 import { env } from "@hootifactory/config";
 
 export interface AuthThrottleBucket {
@@ -6,10 +11,10 @@ export interface AuthThrottleBucket {
   resetAt: number;
 }
 
-const loginFailures = new Map<string, AuthThrottleBucket>();
-const loginIdentityFailures = new Map<string, AuthThrottleBucket>();
-const passwordResetRequests = new Map<string, AuthThrottleBucket>();
-const passwordResetIdentityRequests = new Map<string, AuthThrottleBucket>();
+const LOGIN_IDENTITY_SCOPE = "login:identity";
+const LOGIN_CLIENT_SCOPE = "login:client";
+const PASSWORD_RESET_IDENTITY_SCOPE = "password-reset:identity";
+const PASSWORD_RESET_CLIENT_SCOPE = "password-reset:client";
 
 export function loginThrottleKey(username: string, ip: string): string {
   return throttleKey(username, ip);
@@ -73,81 +78,59 @@ export function retryAfterSeconds(bucket: AuthThrottleBucket, now = Date.now()):
   return Math.max(1, Math.ceil((bucket.resetAt - now) / 1000));
 }
 
-export function loginIsThrottled(
-  key: string,
-): { throttled: false } | { throttled: true; retryAfter: number } {
-  return loginBucketIsThrottled(loginFailures, key);
-}
-
-export function loginRequestIsThrottled(
+export async function consumeLoginAttempt(
   username: string,
   ip: string,
-): { throttled: false } | { throttled: true; retryAfter: number } {
-  const identityThrottle = loginBucketIsThrottled(
-    loginIdentityFailures,
-    loginIdentityThrottleKey(username),
-  );
+): Promise<
+  { throttled: false; bucket: AuthThrottleBucket } | { throttled: true; retryAfter: number }
+> {
+  const identityThrottle = await consumeSharedAuthThrottleBucket({
+    scope: LOGIN_IDENTITY_SCOPE,
+    key: loginIdentityThrottleKey(username),
+    windowSeconds: env.AUTH_LOGIN_WINDOW_SECONDS,
+    maxAttempts: env.AUTH_LOGIN_MAX_ATTEMPTS,
+  });
   if (identityThrottle.throttled) return identityThrottle;
-  return loginIsThrottled(loginThrottleKey(username, ip));
+
+  const clientThrottle = await consumeSharedAuthThrottleBucket({
+    scope: LOGIN_CLIENT_SCOPE,
+    key: loginThrottleKey(username, ip),
+    windowSeconds: env.AUTH_LOGIN_WINDOW_SECONDS,
+    maxAttempts: env.AUTH_LOGIN_MAX_ATTEMPTS,
+  });
+  if (clientThrottle.throttled) return clientThrottle;
+  return { throttled: false, bucket: identityThrottle.bucket };
 }
 
-export function recordLoginFailure(key: string): AuthThrottleBucket {
-  const bucket = currentLoginBucket(key);
-  bucket.count += 1;
-  return bucket;
-}
-
-export function recordLoginFailureAttempt(username: string, ip: string): AuthThrottleBucket {
-  const identityBucket = currentLoginBucket(
-    loginIdentityThrottleKey(username),
-    loginIdentityFailures,
-  );
-  identityBucket.count += 1;
-  recordLoginFailure(loginThrottleKey(username, ip));
-  return identityBucket;
-}
-
-export function passwordResetIsThrottled(
-  key: string,
-): { throttled: false } | { throttled: true; retryAfter: number } {
-  return passwordResetBucketIsThrottled(passwordResetRequests, key);
-}
-
-export function passwordResetRequestIsThrottled(
+export async function consumePasswordResetRequest(
   email: string,
   ip: string,
-): { throttled: false } | { throttled: true; retryAfter: number } {
-  const identityThrottle = passwordResetBucketIsThrottled(
-    passwordResetIdentityRequests,
-    passwordResetIdentityThrottleKey(email),
-  );
+): Promise<
+  { throttled: false; bucket: AuthThrottleBucket } | { throttled: true; retryAfter: number }
+> {
+  const identityThrottle = await consumeSharedAuthThrottleBucket({
+    scope: PASSWORD_RESET_IDENTITY_SCOPE,
+    key: passwordResetIdentityThrottleKey(email),
+    windowSeconds: env.AUTH_PASSWORD_RESET_WINDOW_SECONDS,
+    maxAttempts: env.AUTH_PASSWORD_RESET_MAX_ATTEMPTS,
+  });
   if (identityThrottle.throttled) return identityThrottle;
-  return passwordResetIsThrottled(passwordResetThrottleKey(email, ip));
+
+  const clientThrottle = await consumeSharedAuthThrottleBucket({
+    scope: PASSWORD_RESET_CLIENT_SCOPE,
+    key: passwordResetThrottleKey(email, ip),
+    windowSeconds: env.AUTH_PASSWORD_RESET_WINDOW_SECONDS,
+    maxAttempts: env.AUTH_PASSWORD_RESET_MAX_ATTEMPTS,
+  });
+  if (clientThrottle.throttled) return clientThrottle;
+  return { throttled: false, bucket: identityThrottle.bucket };
 }
 
-export function recordPasswordResetRequest(key: string): AuthThrottleBucket {
-  const bucket = currentPasswordResetBucket(key);
-  bucket.count += 1;
-  return bucket;
-}
-
-export function recordPasswordResetRequestAttempt(email: string, ip: string): AuthThrottleBucket {
-  const identityBucket = currentPasswordResetBucket(
-    passwordResetIdentityThrottleKey(email),
-    passwordResetIdentityRequests,
-  );
-  identityBucket.count += 1;
-  recordPasswordResetRequest(passwordResetThrottleKey(email, ip));
-  return identityBucket;
-}
-
-export function clearLoginFailures(key: string): void {
-  loginFailures.delete(key);
-}
-
-export function clearLoginFailureAttempt(username: string, ip: string): void {
-  clearLoginFailures(loginThrottleKey(username, ip));
-  loginIdentityFailures.delete(loginIdentityThrottleKey(username));
+export async function clearLoginFailureAttempt(username: string, ip: string): Promise<void> {
+  await Promise.all([
+    clearSharedAuthThrottleBucket(LOGIN_IDENTITY_SCOPE, loginIdentityThrottleKey(username)),
+    clearSharedAuthThrottleBucket(LOGIN_CLIENT_SCOPE, loginThrottleKey(username, ip)),
+  ]);
 }
 
 type UserPrincipal = Extract<Principal, { kind: "user" }>;
@@ -166,16 +149,16 @@ export async function authenticateUserPasswordWithThrottle(
     password: string,
   ) => Promise<Principal | null> = authenticateUserPassword,
 ): Promise<ThrottledPasswordAuthResult> {
-  const throttle = loginRequestIsThrottled(username, ip);
+  const throttle = await consumeLoginAttempt(username, ip);
   if (throttle.throttled) return { kind: "throttled", retryAfter: throttle.retryAfter };
 
   const principal = await verify(username, password);
   if (principal?.kind === "user") {
-    clearLoginFailureAttempt(username, ip);
+    await clearLoginFailureAttempt(username, ip);
     return { kind: "authenticated", principal };
   }
 
-  return { kind: "invalid", failure: recordLoginFailureAttempt(username, ip) };
+  return { kind: "invalid", failure: throttle.bucket };
 }
 
 function throttleKey(identity: string, ip: string): string {
@@ -184,38 +167,4 @@ function throttleKey(identity: string, ip: string): string {
 
 function identityThrottleKey(identity: string): string {
   return identity.trim().toLowerCase();
-}
-
-function loginBucketIsThrottled(
-  buckets: Map<string, AuthThrottleBucket>,
-  key: string,
-): { throttled: false } | { throttled: true; retryAfter: number } {
-  const bucket = currentLoginBucket(key, buckets);
-  if (bucket.count < env.AUTH_LOGIN_MAX_ATTEMPTS) return { throttled: false };
-  return { throttled: true, retryAfter: retryAfterSeconds(bucket) };
-}
-
-function passwordResetBucketIsThrottled(
-  buckets: Map<string, AuthThrottleBucket>,
-  key: string,
-): { throttled: false } | { throttled: true; retryAfter: number } {
-  const bucket = currentPasswordResetBucket(key, buckets);
-  if (bucket.count < env.AUTH_PASSWORD_RESET_MAX_ATTEMPTS) return { throttled: false };
-  return { throttled: true, retryAfter: retryAfterSeconds(bucket) };
-}
-
-function currentLoginBucket(
-  key: string,
-  buckets = loginFailures,
-  now = Date.now(),
-): AuthThrottleBucket {
-  return currentThrottleBucket(buckets, key, env.AUTH_LOGIN_WINDOW_SECONDS, now);
-}
-
-function currentPasswordResetBucket(
-  key: string,
-  buckets = passwordResetRequests,
-  now = Date.now(),
-): AuthThrottleBucket {
-  return currentThrottleBucket(buckets, key, env.AUTH_PASSWORD_RESET_WINDOW_SECONDS, now);
 }
