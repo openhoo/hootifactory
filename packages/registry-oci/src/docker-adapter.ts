@@ -9,27 +9,21 @@ import {
   type RouteMatch,
 } from "@hootifactory/registry";
 import {
-  deleteOciManifestIfUnassociated,
-  deleteOciTag,
-  deleteOciTagsForManifest,
-  findOrCreatePackage,
   findPackageByName,
   isArtifactBlocked,
-  listExistingOciBlobRefDigests,
-  listLiveOciManifestsForPackage,
   listOciSubjectManifests,
   listOciTags,
-  markOciPackageVersionsDeletedByDigest,
   ociBlobRefExists,
   REGISTRY_TOKEN_SERVICE,
-  releaseBlobRef,
-  resolveOciManifest,
-  upsertOciManifest,
-  upsertOciTag,
-  upsertPackageVersion,
 } from "@hootifactory/registry-application";
 import { buildOciBlobResponse } from "./oci-blobs";
-import { parseOciManifestPutRequest } from "./oci-manifest-put";
+import {
+  deleteOciBlobReference,
+  deleteOciManifestReference,
+  isOciBlobBlocked,
+  putOciManifest,
+  resolveOciManifestForImage,
+} from "./oci-manifest-lifecycle";
 import {
   buildOciReferrerDescriptor,
   buildOciReferrersResponse,
@@ -37,12 +31,7 @@ import {
 } from "./oci-referrers";
 import { buildOciTagsListResponse } from "./oci-tags";
 import { cancelUpload, patchUpload, putUpload, startUpload, uploadStatus } from "./oci-uploads";
-import {
-  assertImageName,
-  manifestBlobDigests,
-  OciDigestSchema,
-  parseReference,
-} from "./oci-validation";
+import { assertImageName, OciDigestSchema, parseReference } from "./oci-validation";
 
 const UPLOAD_CONTROL_HANDLERS = new Set([
   "startUpload",
@@ -154,103 +143,8 @@ export class DockerAdapter implements RegistryPlugin {
     req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
-    const manifestPut = await parseOciManifestPutRequest(reference, req);
-    const {
-      acceptedTags,
-      bytes,
-      configDigest,
-      digest,
-      mediaType,
-      parsed,
-      raw,
-      ref,
-      referencedBlobs,
-      subjectDigest,
-    } = manifestPut;
-
-    // Reject an image manifest that references blobs not yet uploaded to this repo.
-    if (referencedBlobs.length > 0) {
-      const present = await listExistingOciBlobRefDigests(ctx, {
-        scope: image,
-        digests: referencedBlobs,
-      });
-      const have = new Set(present);
-      const missing = referencedBlobs.filter((d) => !have.has(d));
-      if (missing.length > 0) throw Errors.manifestBlobUnknown({ missing });
-    }
-
-    const pkg = await findOrCreatePackage({
-      orgId: ctx.repo.orgId,
-      repositoryId: ctx.repo.id,
-      name: image,
-    });
-
-    const referencedManifests = manifestPut.referencedManifests;
-    if (referencedManifests.length > 0) {
-      const missing: string[] = [];
-      for (const manifestDigest of referencedManifests) {
-        if (!(await this.resolveManifest(image, manifestDigest, ctx))) missing.push(manifestDigest);
-      }
-      if (missing.length > 0) throw Errors.manifestBlobUnknown({ missing });
-    }
-
-    const manifest = await upsertOciManifest(ctx, {
-      digest,
-      mediaType,
-      artifactType: typeof parsed.artifactType === "string" ? parsed.artifactType : null,
-      subjectDigest,
-      raw,
-      sizeBytes: bytes.length,
-      configDigest,
-    });
-
-    // Tag (mutable pointer) + a UI-visible version when reference is not a digest.
-    // Digest-addressed pushes still record the image->digest ownership so a
-    // scoped token for another image cannot later fetch the manifest by digest.
-    if (acceptedTags.length > 0) {
-      for (const tag of acceptedTags) {
-        await upsertOciTag(ctx, { packageId: pkg.id, tag, manifestId: manifest.id });
-        await upsertPackageVersion(ctx, {
-          packageId: pkg.id,
-          version: tag,
-          metadata: { digest, mediaType, manifest: parsed },
-          sizeBytes: bytes.length,
-        });
-      }
-    } else {
-      await upsertPackageVersion(ctx, {
-        packageId: pkg.id,
-        version: ref.value,
-        metadata: { digest, mediaType, manifest: parsed },
-        sizeBytes: bytes.length,
-      });
-    }
-
-    await ctx.enqueueScan({
-      digest,
-      name: image,
-      version: acceptedTags[0],
-      mediaType,
-    });
-
-    const headers: Record<string, string> = {
-      location: `${ctx.baseUrl}/${ctx.repo.mountPath}/${image}/manifests/${digest}`,
-      "docker-content-digest": digest,
-    };
-    if (manifestPut.subjectDigest) headers["oci-subject"] = manifestPut.subjectDigest;
-    if (ref.kind === "digest" && acceptedTags.length > 0) {
-      headers["oci-tag"] = acceptedTags.join(", ");
-    }
-    return new Response(null, {
-      status: 201,
-      headers,
-    });
-  }
-
-  private async resolveManifest(image: string, reference: string, ctx: RegistryRequestContext) {
-    const pkg = await findPackageByName(ctx, image);
-    if (!pkg) return null;
-    return resolveOciManifest(ctx, { packageId: pkg.id, reference });
+    const headers = await putOciManifest(image, reference, req, ctx);
+    return new Response(null, { status: 201, headers });
   }
 
   private async getManifest(
@@ -261,7 +155,7 @@ export class DockerAdapter implements RegistryPlugin {
     headOnly: boolean,
   ): Promise<Response> {
     parseReference(reference);
-    const m = await this.resolveManifest(image, reference, ctx);
+    const m = await resolveOciManifestForImage(ctx, image, reference);
     if (!m) throw Errors.manifestUnknown({ reference });
     if (await isArtifactBlocked(ctx, m.digest))
       throw Errors.denied({ reason: "blocked by scan policy" });
@@ -279,51 +173,8 @@ export class DockerAdapter implements RegistryPlugin {
     reference: string,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
-    const ref = parseReference(reference);
-    if (ref.kind === "digest") {
-      const scoped = await this.resolveManifest(image, reference, ctx);
-      if (!scoped) throw Errors.manifestUnknown({ reference });
-
-      const pkg = await findPackageByName(ctx, image);
-      if (!pkg) throw Errors.manifestUnknown({ reference });
-
-      await deleteOciTagsForManifest({ packageId: pkg.id, manifestId: scoped.id });
-      await markOciPackageVersionsDeletedByDigest({ packageId: pkg.id, digest: reference });
-      await deleteOciManifestIfUnassociated(ctx, { manifestId: scoped.id, digest: reference });
-      await this.releaseManifestBlobs(ctx, image, manifestBlobDigests(scoped.raw));
-    } else {
-      // Tag delete only removes the mutable pointer; the manifest + its blobs remain.
-      const pkg = await findPackageByName(ctx, image);
-      if (!pkg) throw Errors.manifestUnknown({ reference });
-      const deleted = await deleteOciTag({ packageId: pkg.id, tag: reference });
-      if (!deleted) throw Errors.manifestUnknown({ reference });
-    }
+    await deleteOciManifestReference(ctx, { image, reference });
     return new Response(null, { status: 202 });
-  }
-
-  /** Release each blob the deleted manifest referenced that no surviving manifest still uses. */
-  private async releaseManifestBlobs(
-    ctx: RegistryRequestContext,
-    image: string,
-    digests: string[],
-  ): Promise<void> {
-    if (digests.length === 0) return;
-    const remaining = await this.liveManifestRowsForImage(ctx, image);
-    const stillUsed = new Set<string>();
-    for (const r of remaining) for (const d of manifestBlobDigests(r.raw)) stillUsed.add(d);
-    for (const digest of digests) {
-      if (stillUsed.has(digest)) continue;
-      await releaseBlobRef(ctx, { digest, kind: "oci_layer", scope: image });
-    }
-  }
-
-  private async liveManifestRowsForImage(
-    ctx: RegistryRequestContext,
-    image: string,
-  ): Promise<{ digest: string; raw: string }[]> {
-    const pkg = await findPackageByName(ctx, image);
-    if (!pkg) return [];
-    return listLiveOciManifestsForPackage(ctx, pkg.id);
   }
 
   // ── tags ───────────────────────────────────────────────────────────────
@@ -360,7 +211,7 @@ export class DockerAdapter implements RegistryPlugin {
     const rows = await listOciSubjectManifests(ctx, digest);
     const manifests = [];
     for (const m of rows) {
-      if (!(await this.resolveManifest(image, m.digest, ctx))) continue;
+      if (!(await resolveOciManifestForImage(ctx, image, m.digest))) continue;
       const descriptor = buildOciReferrerDescriptor(m);
       if (artifactTypeFilter && descriptor.artifactType !== artifactTypeFilter) continue;
       manifests.push(descriptor);
@@ -383,7 +234,7 @@ export class DockerAdapter implements RegistryPlugin {
     if (!(await ociBlobRefExists(ctx, { scope: image, digest })))
       throw Errors.blobUnknown({ digest });
     // Defense-in-depth: a layer reachable only through blocked manifests is blocked too.
-    if (await this.isBlobBlocked(ctx, image, digest)) {
+    if (await isOciBlobBlocked(ctx, { image, digest })) {
       throw Errors.denied({ reason: "blocked by scan policy" });
     }
     const stat = await ctx.blobs.stat(digest);
@@ -407,32 +258,10 @@ export class DockerAdapter implements RegistryPlugin {
       code: "DIGEST_INVALID",
       message: "invalid blob digest",
     });
-    if (!(await ociBlobRefExists(ctx, { scope: image, digest })))
-      throw Errors.blobUnknown({ digest });
-    await releaseBlobRef(ctx, { digest, kind: "oci_layer", scope: image });
+    await deleteOciBlobReference(ctx, { image, digest });
     return new Response(null, {
       status: 202,
       headers: { "docker-content-digest": digest, "content-length": "0" },
     });
-  }
-
-  /**
-   * True when `digest` is reachable for this image only through manifests that
-   * scan policy would deny. A shared CAS digest can be clean for one image while
-   * still blocked for another image's pending or blocked manifest.
-   */
-  private async isBlobBlocked(
-    ctx: RegistryRequestContext,
-    image: string,
-    digest: string,
-  ): Promise<boolean> {
-    const manifests = await this.liveManifestRowsForImage(ctx, image);
-    let referenced = false;
-    for (const m of manifests) {
-      if (!manifestBlobDigests(m.raw).includes(digest)) continue;
-      referenced = true;
-      if (!(await isArtifactBlocked(ctx, m.digest))) return false;
-    }
-    return referenced;
   }
 }
