@@ -17,7 +17,7 @@ import {
   readSessionCookie,
 } from "./auth-helpers";
 import { LoginBodySchema, RegisterBodySchema } from "./auth-schemas";
-import { authenticateUserPasswordWithThrottle } from "./auth-throttle";
+import { authenticateUserPasswordWithThrottle, consumeRegistrationAttempt } from "./auth-throttle";
 import { audit } from "./http";
 
 export function registerLocalAuthRoutes(router: Hono<AppEnv>): void {
@@ -42,6 +42,16 @@ export function registerLocalAuthRoutes(router: Hono<AppEnv>): void {
     const email = body.email;
     const password = body.password;
     const displayName = body.displayName;
+    const throttle = await consumeRegistrationAttempt(username, email);
+    if (throttle.throttled) {
+      addSpanEvent("auth.registration_rate_limited", {
+        "auth.retry_after_seconds": throttle.retryAfter,
+      });
+      logger.warn("registration rejected by throttle", { retryAfter: throttle.retryAfter });
+      return c.json({ error: "too many registration attempts, try again later" }, 429, {
+        "retry-after": String(throttle.retryAfter),
+      });
+    }
     try {
       const user = await withSpan("auth.register_user", {}, () =>
         createLocalUser({ username, email, password, displayName }),

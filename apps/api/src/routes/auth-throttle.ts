@@ -13,6 +13,8 @@ export interface AuthThrottleBucket {
 
 const LOGIN_IDENTITY_SCOPE = "login:identity";
 const LOGIN_CLIENT_SCOPE = "login:client";
+const REGISTRATION_USERNAME_SCOPE = "registration:username";
+const REGISTRATION_EMAIL_SCOPE = "registration:email";
 const PASSWORD_RESET_IDENTITY_SCOPE = "password-reset:identity";
 const PASSWORD_RESET_CLIENT_SCOPE = "password-reset:client";
 
@@ -29,6 +31,14 @@ export function passwordResetThrottleKey(email: string, ip: string): string {
 }
 
 export function passwordResetIdentityThrottleKey(email: string): string {
+  return identityThrottleKey(email);
+}
+
+export function registrationUsernameThrottleKey(username: string): string {
+  return identityThrottleKey(username);
+}
+
+export function registrationEmailThrottleKey(email: string): string {
   return identityThrottleKey(email);
 }
 
@@ -124,6 +134,30 @@ export async function consumePasswordResetRequest(
   });
   if (clientThrottle.throttled) return clientThrottle;
   return { throttled: false, bucket: identityThrottle.bucket };
+}
+
+export async function consumeRegistrationAttempt(
+  username: string,
+  email: string,
+): Promise<
+  { throttled: false; bucket: AuthThrottleBucket } | { throttled: true; retryAfter: number }
+> {
+  const usernameThrottle = await consumeSharedAuthThrottleBucket({
+    scope: REGISTRATION_USERNAME_SCOPE,
+    key: registrationUsernameThrottleKey(username),
+    windowSeconds: env.AUTH_REGISTRATION_WINDOW_SECONDS,
+    maxAttempts: env.AUTH_REGISTRATION_MAX_ATTEMPTS,
+  });
+  if (usernameThrottle.throttled) return usernameThrottle;
+
+  const emailThrottle = await consumeSharedAuthThrottleBucket({
+    scope: REGISTRATION_EMAIL_SCOPE,
+    key: registrationEmailThrottleKey(email),
+    windowSeconds: env.AUTH_REGISTRATION_WINDOW_SECONDS,
+    maxAttempts: env.AUTH_REGISTRATION_MAX_ATTEMPTS,
+  });
+  if (emailThrottle.throttled) return emailThrottle;
+  return { throttled: false, bucket: emailThrottle.bucket };
 }
 
 export async function clearLoginFailureAttempt(username: string, ip: string): Promise<void> {

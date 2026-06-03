@@ -3,11 +3,14 @@ import { randomUUID } from "node:crypto";
 import {
   authenticateUserPasswordWithThrottle,
   consumePasswordResetRequest,
+  consumeRegistrationAttempt,
   currentThrottleBucket,
   loginIdentityThrottleKey,
   loginThrottleKey,
   passwordResetIdentityThrottleKey,
   pruneThrottleBuckets,
+  registrationEmailThrottleKey,
+  registrationUsernameThrottleKey,
   retryAfterSeconds,
 } from "./auth-throttle";
 
@@ -18,6 +21,8 @@ describe("auth throttle helpers", () => {
     );
     expect(loginIdentityThrottleKey("  Alice@example.test ")).toBe("alice@example.test");
     expect(passwordResetIdentityThrottleKey("  Alice@example.test ")).toBe("alice@example.test");
+    expect(registrationUsernameThrottleKey("  Alice ")).toBe("alice");
+    expect(registrationEmailThrottleKey("  Alice@example.test ")).toBe("alice@example.test");
   });
 
   test("reuses active buckets and resets expired windows", () => {
@@ -111,6 +116,23 @@ describe("auth throttle helpers", () => {
     await expect(consumePasswordResetRequest(email, "203.0.113.250")).resolves.toMatchObject({
       throttled: true,
     });
+  });
+
+  test("throttles registration probes by normalized email", async () => {
+    const email = `register-${randomUUID()}@example.test`;
+
+    for (let attempts = 1; attempts <= 3; attempts++) {
+      await expect(consumeRegistrationAttempt(`probe-${randomUUID()}`, email)).resolves.toEqual({
+        throttled: false,
+        bucket: expect.objectContaining({ count: attempts }),
+      });
+    }
+
+    await expect(consumeRegistrationAttempt(`probe-${randomUUID()}`, email)).resolves.toMatchObject(
+      {
+        throttled: true,
+      },
+    );
   });
 
   test("successful shared password verification clears prior failures", async () => {

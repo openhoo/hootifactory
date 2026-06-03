@@ -38,6 +38,28 @@ test.describe("authentication", () => {
     expect(again.status()).toBe(409);
   });
 
+  test("repeated duplicate-email registration probes are throttled", async ({ baseURL }) => {
+    const ctx = await anonContext(baseURL!);
+    const email = `${uniq("regprobe")}@e2e.test`;
+    const first = await ctx.post("/api/auth/register", {
+      data: { username: uniq("regprobe"), email, password: "password1234" },
+    });
+    expect(first.status()).toBe(201);
+
+    for (let i = 0; i < 2; i++) {
+      const conflict = await ctx.post("/api/auth/register", {
+        data: { username: uniq("regprobe"), email, password: "password1234" },
+      });
+      expect(conflict.status()).toBe(409);
+    }
+
+    const throttled = await ctx.post("/api/auth/register", {
+      data: { username: uniq("regprobe"), email, password: "password1234" },
+    });
+    expect(throttled.status()).toBe(429);
+    expect(throttled.headers()["retry-after"]).toMatch(/^\d+$/);
+  });
+
   test("login with wrong password -> 401", async ({ baseURL }) => {
     const owner = await setupOwner(baseURL!);
     const anon = await anonContext(baseURL!);
