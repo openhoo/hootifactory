@@ -9,6 +9,7 @@ import {
   type RegistryRequestContext,
   type RouteMatch,
   readWritePermission,
+  registryCapabilities,
   registryPlugin,
   serveRegistryBlob,
 } from "@hootifactory/registry";
@@ -44,12 +45,7 @@ function parseCrateVersion(version: string): string {
 /** Cargo sparse registry: config.json, sharded index, publish + download. */
 export class CargoAdapter implements RegistryPlugin {
   readonly format = "cargo" as const;
-  readonly capabilities = {
-    contentAddressable: false,
-    resumableUploads: false,
-    proxyable: false,
-    virtualizable: true,
-  };
+  readonly capabilities = registryCapabilities("virtualizable");
   authChallenge = () => bearerAuthChallenge();
 
   private readonly plugin = registryPlugin(this.format)
@@ -64,24 +60,24 @@ export class CargoAdapter implements RegistryPlugin {
       ),
       route.put("/api/v1/crates/new", "publish", ({ req, ctx }) => this.publish(req, ctx)),
       route.get("/api/v1/crates/:crate/:version/download", "download", ({ params, ctx }) =>
-        this.download(params.crate ?? "", params.version ?? "", ctx),
+        this.download(params.crate, params.version, ctx),
       ),
       route.delete("/api/v1/crates/:crate/:version/yank", "yank", ({ params, ctx }) =>
-        this.setYank(params.crate ?? "", params.version ?? "", true, ctx),
+        this.setYank(params.crate, params.version, true, ctx),
       ),
       route.put("/api/v1/crates/:crate/:version/unyank", "unyank", ({ params, ctx }) =>
-        this.setYank(params.crate ?? "", params.version ?? "", false, ctx),
+        this.setYank(params.crate, params.version, false, ctx),
       ),
       route.get("/api/v1/crates/:crate/owners", "ownersList", ({ params, ctx }) =>
-        this.listOwners(params.crate ?? "", ctx),
+        this.listOwners(params.crate, ctx),
       ),
       route.put("/api/v1/crates/:crate/owners", "ownersAdd", ({ params, req, ctx }) =>
-        this.updateOwners(params.crate ?? "", req, "add", ctx),
+        this.updateOwners(params.crate, req, "add", ctx),
       ),
       route.delete("/api/v1/crates/:crate/owners", "ownersRemove", ({ params, req, ctx }) =>
-        this.updateOwners(params.crate ?? "", req, "remove", ctx),
+        this.updateOwners(params.crate, req, "remove", ctx),
       ),
-      route.get("/:path+", "index", ({ params, ctx }) => this.index(params.path ?? "", ctx)),
+      route.get("/:path+", "index", ({ params, ctx }) => this.index(params.path, ctx)),
     ])
     .build();
   private readonly delegate = delegateRegistryPlugin(this.plugin);

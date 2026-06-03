@@ -9,6 +9,7 @@ import {
   type RegistryRequestContext,
   type RouteMatch,
   readWritePermission,
+  registryCapabilities,
   registryPlugin,
   serveRegistryBlob,
 } from "@hootifactory/registry";
@@ -33,12 +34,7 @@ import {
 
 export class PypiAdapter implements RegistryPlugin {
   readonly format = "pypi" as const;
-  readonly capabilities = {
-    contentAddressable: false,
-    resumableUploads: false,
-    proxyable: false,
-    virtualizable: true,
-  };
+  readonly capabilities = registryCapabilities("virtualizable");
   authChallenge = basicAuthChallenge;
 
   private readonly plugin = registryPlugin(this.format)
@@ -47,10 +43,10 @@ export class PypiAdapter implements RegistryPlugin {
     .routes((route) => [
       route.get("/simple/", "simpleRoot", ({ req, ctx }) => this.simpleRoot(req, ctx)),
       route.get("/simple/:project/", "simpleProject", ({ params, req, ctx }) =>
-        this.simpleProject(params.project ?? "", req, ctx),
+        this.simpleProject(params.project, req, ctx),
       ),
       route.get("/files/:filename", "download", ({ params, ctx }) =>
-        this.download(params.filename ?? "", ctx),
+        this.download(params.filename, ctx),
       ),
       route.post("/", "upload", ({ req, ctx }) => this.upload(req, ctx)),
       route.post("/legacy/", "upload", ({ req, ctx }) => this.upload(req, ctx)),

@@ -4,6 +4,7 @@ import {
   defineRegistryPlugin,
   delegateRegistryPlugin,
   readOnlyPermission,
+  registryCapabilities,
   registryPlugin,
   registryRoute,
   registryRoutes,
@@ -99,21 +100,33 @@ describe("defineRegistryPlugin", () => {
     expect(await res.json()).toEqual({ ok: true });
   });
 
+  test("preserves explicit route parameter generics for dynamic patterns", async () => {
+    const pattern: string = "/:pkg+";
+    const plugin = registryPlugin("npm")
+      .capabilities("virtualizable")
+      .get<{ pkg: string }>(pattern, "packument", ({ params }) =>
+        Response.json({ package: params.pkg }),
+      )
+      .build();
+    const [entry] = plugin.routes();
+    const match = createTestRouteMatch(entry!, { pkg: "@scope/pkg" }, "/@scope/pkg");
+    const res = await plugin.handle(
+      match,
+      new Request("https://registry.example.test/@scope/pkg"),
+      createTestRegistryContext(),
+    );
+
+    expect(await res.json()).toEqual({ package: "@scope/pkg" });
+  });
+
   test("builds plugins with a fluent builder", async () => {
     const plugin = registryPlugin("npm")
-      .capabilities({
-        contentAddressable: false,
-        resumableUploads: false,
-        proxyable: true,
-        virtualizable: true,
-      })
+      .capabilities("proxyable", "virtualizable")
       .defaultPermission(({ params }) =>
         readOnlyPermission({ type: "package", packageName: params.pkg }),
       )
       .authChallenge(() => ({ header: 'Basic realm="test"', status: 401 }))
-      .get<{ pkg: string }>("/:pkg+", "packument", ({ params }) =>
-        Response.json({ package: params.pkg }),
-      )
+      .get("/:pkg+", "packument", ({ params }) => Response.json({ package: params.pkg }))
       .build();
     const [entry] = plugin.routes();
 
@@ -137,18 +150,13 @@ describe("defineRegistryPlugin", () => {
 
   test("builds plugins with fluent route-list factories", () => {
     const plugin = registryPlugin("go")
-      .capabilities({
-        contentAddressable: false,
-        resumableUploads: false,
-        proxyable: false,
-        virtualizable: true,
-      })
+      .capabilities(registryCapabilities("virtualizable"))
       .routes((route) => [
-        route.get<{ module: string }>("/:module+/@latest", "latest", () => new Response("latest")),
-        route.put<{ module: string; version: string }>(
+        route.get("/:module+/@latest", "latest", () => new Response("latest")),
+        route.put(
           "/:module+/@v/:version",
           "upload",
-          () => new Response(null, { status: 201 }),
+          ({ params }) => new Response(`${params.module}@${params.version}`, { status: 201 }),
         ),
       ])
       .build();
@@ -157,6 +165,21 @@ describe("defineRegistryPlugin", () => {
       { method: "GET", pattern: "/:module+/@latest", handlerId: "latest" },
       { method: "PUT", pattern: "/:module+/@v/:version", handlerId: "upload" },
     ]);
+  });
+
+  test("builds capabilities from sparse flags or overrides", () => {
+    expect(registryCapabilities("contentAddressable", "virtualizable")).toEqual({
+      contentAddressable: true,
+      resumableUploads: false,
+      proxyable: false,
+      virtualizable: true,
+    });
+    expect(registryCapabilities({ proxyable: true })).toEqual({
+      contentAddressable: false,
+      resumableUploads: false,
+      proxyable: true,
+      virtualizable: false,
+    });
   });
 
   test("delegates plugin forwarding and optional pre-handle hooks", async () => {

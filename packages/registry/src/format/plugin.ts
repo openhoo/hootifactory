@@ -11,6 +11,49 @@ import {
 } from "./adapter";
 
 type MaybePromise<T> = T | Promise<T>;
+type RegistryCapabilities = RegistryPlugin["capabilities"];
+
+const DEFAULT_REGISTRY_CAPABILITIES: RegistryCapabilities = {
+  contentAddressable: false,
+  resumableUploads: false,
+  proxyable: false,
+  virtualizable: false,
+};
+
+export type RegistryCapabilityFlag = keyof RegistryCapabilities;
+
+export function registryCapabilities(): RegistryCapabilities;
+export function registryCapabilities(
+  overrides: Partial<RegistryCapabilities>,
+): RegistryCapabilities;
+export function registryCapabilities(...flags: RegistryCapabilityFlag[]): RegistryCapabilities;
+export function registryCapabilities(
+  first?: Partial<RegistryCapabilities> | RegistryCapabilityFlag,
+  ...rest: RegistryCapabilityFlag[]
+): RegistryCapabilities {
+  const capabilities = { ...DEFAULT_REGISTRY_CAPABILITIES };
+  if (!first) return capabilities;
+  if (typeof first === "string") {
+    for (const flag of [first, ...rest]) capabilities[flag] = true;
+    return capabilities;
+  }
+  return { ...capabilities, ...first };
+}
+
+type RegistryRouteParamName<Segment extends string> = Segment extends `:${infer Param}`
+  ? Param extends `${infer Name}+`
+    ? Name
+    : Param
+  : never;
+
+type RegistryRouteParamNames<Pattern extends string> =
+  Pattern extends `${infer Segment}/${infer Rest}`
+    ? RegistryRouteParamName<Segment> | RegistryRouteParamNames<Rest>
+    : RegistryRouteParamName<Pattern>;
+
+export type RegistryRouteParams<Pattern extends string> = string extends Pattern
+  ? Record<string, string>
+  : Record<RegistryRouteParamNames<Pattern>, string>;
 
 export interface RegistryRouteInput<
   Params extends Record<string, string> = Record<string, string>,
@@ -49,12 +92,20 @@ type AnyRegistryRouteSpec = RegistryRouteSpec<any>;
 export type RegistryRouteOptions<Params extends Record<string, string> = Record<string, string>> =
   Omit<RegistryRouteSpec<Params>, keyof RouteEntry | "handler">;
 
-export type RegistryRouteFactory = <Params extends Record<string, string> = Record<string, string>>(
-  pattern: string,
-  handlerId: string,
-  handler: RegistryRouteHandler<Params>,
-  options?: RegistryRouteOptions<Params>,
-) => RegistryRouteSpec<Params>;
+export interface RegistryRouteFactory {
+  <Pattern extends string>(
+    pattern: Pattern,
+    handlerId: string,
+    handler: RegistryRouteHandler<RegistryRouteParams<Pattern>>,
+    options?: RegistryRouteOptions<RegistryRouteParams<Pattern>>,
+  ): RegistryRouteSpec<RegistryRouteParams<Pattern>>;
+  <Params extends Record<string, string> = Record<string, string>>(
+    pattern: string,
+    handlerId: string,
+    handler: RegistryRouteHandler<Params>,
+    options?: RegistryRouteOptions<Params>,
+  ): RegistryRouteSpec<Params>;
+}
 
 export interface RegistryRouteDsl {
   get: RegistryRouteFactory;
@@ -167,8 +218,19 @@ export function registryRoute<Params extends Record<string, string> = Record<str
 }
 
 function registryRouteWithMethod(method: HttpMethod): RegistryRouteFactory {
-  return (pattern, handlerId, handler, options) =>
-    registryRoute({ method, pattern, handlerId, ...(options ?? {}), handler });
+  return ((
+    pattern: string,
+    handlerId: string,
+    handler: RegistryRouteHandler<any>,
+    options?: RegistryRouteOptions<any>,
+  ) =>
+    registryRoute({
+      method,
+      pattern,
+      handlerId,
+      ...(options ?? {}),
+      handler,
+    })) as RegistryRouteFactory;
 }
 
 export const registryRoutes: RegistryRouteDsl = {
@@ -189,7 +251,7 @@ export function defineRegistryPlugin(input: DefineRegistryPluginInput): Registry
 }
 
 export class RegistryPluginBuilder {
-  private capabilitiesValue?: RegistryPlugin["capabilities"];
+  private capabilitiesValue?: RegistryCapabilities;
   private defaultPermissionValue?: DefineRegistryPluginInput["defaultPermission"];
   private authChallengeValue?: RegistryPlugin["authChallenge"];
   private generateMetadataValue?: RegistryPlugin["generateMetadata"];
@@ -200,8 +262,16 @@ export class RegistryPluginBuilder {
 
   constructor(private readonly formatValue: RegistryPlugin["format"]) {}
 
-  capabilities(capabilities: RegistryPlugin["capabilities"]): this {
-    this.capabilitiesValue = capabilities;
+  capabilities(capabilities: Partial<RegistryCapabilities>): this;
+  capabilities(...flags: RegistryCapabilityFlag[]): this;
+  capabilities(
+    first: Partial<RegistryCapabilities> | RegistryCapabilityFlag,
+    ...rest: RegistryCapabilityFlag[]
+  ): this {
+    this.capabilitiesValue =
+      typeof first === "string"
+        ? registryCapabilities(first, ...rest)
+        : registryCapabilities(first);
     return this;
   }
 
@@ -256,56 +326,128 @@ export class RegistryPluginBuilder {
     return this;
   }
 
+  get<Pattern extends string>(
+    pattern: Pattern,
+    handlerId: string,
+    handler: RegistryRouteHandler<RegistryRouteParams<Pattern>>,
+    options?: RegistryRouteOptions<RegistryRouteParams<Pattern>>,
+  ): this;
   get<Params extends Record<string, string> = Record<string, string>>(
     pattern: string,
     handlerId: string,
     handler: RegistryRouteHandler<Params>,
     options?: RegistryRouteOptions<Params>,
+  ): this;
+  get(
+    pattern: string,
+    handlerId: string,
+    handler: RegistryRouteHandler<any>,
+    options?: RegistryRouteOptions<any>,
   ): this {
     return this.route(registryRoutes.get(pattern, handlerId, handler, options));
   }
 
+  head<Pattern extends string>(
+    pattern: Pattern,
+    handlerId: string,
+    handler: RegistryRouteHandler<RegistryRouteParams<Pattern>>,
+    options?: RegistryRouteOptions<RegistryRouteParams<Pattern>>,
+  ): this;
   head<Params extends Record<string, string> = Record<string, string>>(
     pattern: string,
     handlerId: string,
     handler: RegistryRouteHandler<Params>,
     options?: RegistryRouteOptions<Params>,
+  ): this;
+  head(
+    pattern: string,
+    handlerId: string,
+    handler: RegistryRouteHandler<any>,
+    options?: RegistryRouteOptions<any>,
   ): this {
     return this.route(registryRoutes.head(pattern, handlerId, handler, options));
   }
 
+  put<Pattern extends string>(
+    pattern: Pattern,
+    handlerId: string,
+    handler: RegistryRouteHandler<RegistryRouteParams<Pattern>>,
+    options?: RegistryRouteOptions<RegistryRouteParams<Pattern>>,
+  ): this;
   put<Params extends Record<string, string> = Record<string, string>>(
     pattern: string,
     handlerId: string,
     handler: RegistryRouteHandler<Params>,
     options?: RegistryRouteOptions<Params>,
+  ): this;
+  put(
+    pattern: string,
+    handlerId: string,
+    handler: RegistryRouteHandler<any>,
+    options?: RegistryRouteOptions<any>,
   ): this {
     return this.route(registryRoutes.put(pattern, handlerId, handler, options));
   }
 
+  post<Pattern extends string>(
+    pattern: Pattern,
+    handlerId: string,
+    handler: RegistryRouteHandler<RegistryRouteParams<Pattern>>,
+    options?: RegistryRouteOptions<RegistryRouteParams<Pattern>>,
+  ): this;
   post<Params extends Record<string, string> = Record<string, string>>(
     pattern: string,
     handlerId: string,
     handler: RegistryRouteHandler<Params>,
     options?: RegistryRouteOptions<Params>,
+  ): this;
+  post(
+    pattern: string,
+    handlerId: string,
+    handler: RegistryRouteHandler<any>,
+    options?: RegistryRouteOptions<any>,
   ): this {
     return this.route(registryRoutes.post(pattern, handlerId, handler, options));
   }
 
+  patch<Pattern extends string>(
+    pattern: Pattern,
+    handlerId: string,
+    handler: RegistryRouteHandler<RegistryRouteParams<Pattern>>,
+    options?: RegistryRouteOptions<RegistryRouteParams<Pattern>>,
+  ): this;
   patch<Params extends Record<string, string> = Record<string, string>>(
     pattern: string,
     handlerId: string,
     handler: RegistryRouteHandler<Params>,
     options?: RegistryRouteOptions<Params>,
+  ): this;
+  patch(
+    pattern: string,
+    handlerId: string,
+    handler: RegistryRouteHandler<any>,
+    options?: RegistryRouteOptions<any>,
   ): this {
     return this.route(registryRoutes.patch(pattern, handlerId, handler, options));
   }
 
+  delete<Pattern extends string>(
+    pattern: Pattern,
+    handlerId: string,
+    handler: RegistryRouteHandler<RegistryRouteParams<Pattern>>,
+    options?: RegistryRouteOptions<RegistryRouteParams<Pattern>>,
+  ): this;
   delete<Params extends Record<string, string> = Record<string, string>>(
     pattern: string,
     handlerId: string,
     handler: RegistryRouteHandler<Params>,
     options?: RegistryRouteOptions<Params>,
+  ): this;
+  delete(
+    pattern: string,
+    handlerId: string,
+    handler: RegistryRouteHandler<any>,
+    options?: RegistryRouteOptions<any>,
   ): this {
     return this.route(registryRoutes.delete(pattern, handlerId, handler, options));
   }

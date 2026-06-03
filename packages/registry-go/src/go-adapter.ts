@@ -9,6 +9,7 @@ import {
   type RegistryRequestContext,
   type RouteMatch,
   readWritePermission,
+  registryCapabilities,
   registryPlugin,
   serveRegistryBlob,
 } from "@hootifactory/registry";
@@ -26,12 +27,7 @@ import {
 /** Go module proxy (GOPROXY protocol) + a custom upload endpoint for hosted modules. */
 export class GoAdapter implements RegistryPlugin {
   readonly format = "go" as const;
-  readonly capabilities = {
-    contentAddressable: false,
-    resumableUploads: false,
-    proxyable: false,
-    virtualizable: true,
-  };
+  readonly capabilities = registryCapabilities("virtualizable");
   authChallenge = basicAuthChallenge;
 
   private readonly plugin = registryPlugin(this.format)
@@ -39,16 +35,16 @@ export class GoAdapter implements RegistryPlugin {
     .authChallenge(this.authChallenge)
     .routes((route) => [
       route.get("/:module+/@v/list", "list", ({ params, ctx }) =>
-        this.list(this.parseModule(params.module ?? ""), ctx),
+        this.list(this.parseModule(params.module), ctx),
       ),
       route.get("/:module+/@latest", "latest", ({ params, ctx }) =>
-        this.latest(this.parseModule(params.module ?? ""), ctx),
+        this.latest(this.parseModule(params.module), ctx),
       ),
       route.get("/:module+/@v/:file", "file", ({ params, ctx }) =>
-        this.file(this.parseModule(params.module ?? ""), params.file ?? "", ctx),
+        this.file(this.parseModule(params.module), params.file, ctx),
       ),
       route.put("/:module+/@v/:version", "upload", ({ params, req, ctx }) =>
-        this.upload(this.parseModule(params.module ?? ""), params.version ?? "", req, ctx),
+        this.upload(this.parseModule(params.module), params.version, req, ctx),
       ),
     ])
     .build();

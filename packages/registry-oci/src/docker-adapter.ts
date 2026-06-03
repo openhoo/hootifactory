@@ -8,6 +8,7 @@ import {
   type RegistryRequestContext,
   type RouteMatch,
   registryBearerAuthChallenge,
+  registryCapabilities,
   registryPlugin,
 } from "@hootifactory/registry";
 import { buildOciBlobResponse } from "./oci-blobs";
@@ -38,12 +39,11 @@ const REGISTRY_TOKEN_SERVICE = "hootifactory";
 
 export class DockerAdapter implements RegistryPlugin {
   readonly format = "docker" as const;
-  readonly capabilities = {
-    contentAddressable: true,
-    resumableUploads: true,
-    proxyable: false,
-    virtualizable: true,
-  };
+  readonly capabilities = registryCapabilities(
+    "contentAddressable",
+    "resumableUploads",
+    "virtualizable",
+  );
   authChallenge = (perm: Permission, ctx: RegistryRequestContext) =>
     registryBearerAuthChallenge({ ctx, permission: perm, service: REGISTRY_TOKEN_SERVICE });
 
@@ -53,46 +53,46 @@ export class DockerAdapter implements RegistryPlugin {
     .defaultPermission(({ method, match, ctx }) => this.routePermission(method, match, ctx))
     .routes((route) => [
       route.get("/:name+/tags/list", "tagsList", ({ params, req, ctx }) =>
-        this.tagsList(params.name ?? "", req, ctx),
+        this.tagsList(params.name, req, ctx),
       ),
       route.get("/:name+/referrers/:digest", "referrers", ({ params, req, ctx }) =>
-        this.referrers(params.name ?? "", params.digest ?? "", req, ctx),
+        this.referrers(params.name, params.digest, req, ctx),
       ),
       route.head("/:name+/manifests/:reference", "headManifest", ({ params, req, ctx }) =>
-        this.getManifest(params.name ?? "", params.reference ?? "", req, ctx, true),
+        this.getManifest(params.name, params.reference, req, ctx, true),
       ),
       route.get("/:name+/manifests/:reference", "getManifest", ({ params, req, ctx }) =>
-        this.getManifest(params.name ?? "", params.reference ?? "", req, ctx, false),
+        this.getManifest(params.name, params.reference, req, ctx, false),
       ),
       route.put("/:name+/manifests/:reference", "putManifest", ({ params, req, ctx }) =>
-        this.putManifest(params.name ?? "", params.reference ?? "", req, ctx),
+        this.putManifest(params.name, params.reference, req, ctx),
       ),
       route.delete("/:name+/manifests/:reference", "deleteManifest", ({ params, ctx }) =>
-        this.deleteManifest(params.name ?? "", params.reference ?? "", ctx),
+        this.deleteManifest(params.name, params.reference, ctx),
       ),
       route.post("/:name+/blobs/uploads", "startUpload", ({ params, req, ctx }) =>
-        startUpload(params.name ?? "", req, ctx),
+        startUpload(params.name, req, ctx),
       ),
       route.get("/:name+/blobs/uploads/:uuid", "uploadStatus", ({ params, ctx }) =>
-        uploadStatus(params.name ?? "", params.uuid ?? "", ctx),
+        uploadStatus(params.name, params.uuid, ctx),
       ),
       route.patch("/:name+/blobs/uploads/:uuid", "patchUpload", ({ params, req, ctx }) =>
-        patchUpload(params.name ?? "", params.uuid ?? "", req, ctx),
+        patchUpload(params.name, params.uuid, req, ctx),
       ),
       route.put("/:name+/blobs/uploads/:uuid", "putUpload", ({ params, req, ctx }) =>
-        putUpload(params.name ?? "", params.uuid ?? "", req, ctx),
+        putUpload(params.name, params.uuid, req, ctx),
       ),
       route.delete("/:name+/blobs/uploads/:uuid", "cancelUpload", ({ params, ctx }) =>
-        cancelUpload(params.name ?? "", params.uuid ?? "", ctx),
+        cancelUpload(params.name, params.uuid, ctx),
       ),
       route.head("/:name+/blobs/:digest", "headBlob", ({ params, req, ctx }) =>
-        this.getBlob(params.name ?? "", params.digest ?? "", req, ctx, true),
+        this.getBlob(params.name, params.digest, req, ctx, true),
       ),
       route.get("/:name+/blobs/:digest", "getBlob", ({ params, req, ctx }) =>
-        this.getBlob(params.name ?? "", params.digest ?? "", req, ctx, false),
+        this.getBlob(params.name, params.digest, req, ctx, false),
       ),
       route.delete("/:name+/blobs/:digest", "deleteBlob", ({ params, ctx }) =>
-        this.deleteBlob(params.name ?? "", params.digest ?? "", ctx),
+        this.deleteBlob(params.name, params.digest, ctx),
       ),
     ])
     .build();

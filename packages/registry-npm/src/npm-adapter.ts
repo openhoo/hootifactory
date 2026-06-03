@@ -10,6 +10,7 @@ import {
   type RegistryPlugin,
   type RegistryRequestContext,
   type RouteMatch,
+  registryCapabilities,
   registryPlugin,
   type SearchQuery,
   type SearchResult,
@@ -42,12 +43,7 @@ function parseNpmName(name: string): string {
 
 export class NpmAdapter implements RegistryPlugin {
   readonly format = "npm" as const;
-  readonly capabilities = {
-    contentAddressable: false,
-    resumableUploads: false,
-    proxyable: true,
-    virtualizable: true,
-  };
+  readonly capabilities = registryCapabilities("proxyable", "virtualizable");
   authChallenge = basicAuthChallenge;
 
   private readonly plugin = registryPlugin(this.format)
@@ -69,22 +65,20 @@ export class NpmAdapter implements RegistryPlugin {
         Response.json({ advisories: {}, vulnerabilities: {}, metadata: {} }),
       ),
       route.get("/-/package/:pkg+/dist-tags", "distTagsList", ({ params, ctx }) =>
-        this.distTagsList(params.pkg ?? "", ctx),
+        this.distTagsList(params.pkg, ctx),
       ),
       route.put("/-/package/:pkg+/dist-tags/:tag", "distTagSet", ({ params, req, ctx }) =>
-        this.distTagSet(params.pkg ?? "", params.tag ?? "", req, ctx),
+        this.distTagSet(params.pkg, params.tag, req, ctx),
       ),
       route.delete("/-/package/:pkg+/dist-tags/:tag", "distTagDelete", ({ params, ctx }) =>
-        this.distTagDelete(params.pkg ?? "", params.tag ?? "", ctx),
+        this.distTagDelete(params.pkg, params.tag, ctx),
       ),
       route.get("/:pkg+/-/:filename", "tarball", ({ params, req, ctx }) =>
-        this.tarball(params.pkg ?? "", params.filename ?? "", req, ctx),
+        this.tarball(params.pkg, params.filename, req, ctx),
       ),
-      route.put("/:pkg+", "publish", ({ params, req, ctx }) =>
-        this.publish(params.pkg ?? "", req, ctx),
-      ),
+      route.put("/:pkg+", "publish", ({ params, req, ctx }) => this.publish(params.pkg, req, ctx)),
       route.get("/:pkg+", "packument", ({ params, req, ctx }) =>
-        this.packument(params.pkg ?? "", req, ctx),
+        this.packument(params.pkg, req, ctx),
       ),
     ])
     .build();

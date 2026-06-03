@@ -11,6 +11,7 @@ import {
   type RegistryRequestContext,
   type RouteMatch,
   readWritePermission,
+  registryCapabilities,
   registryPlugin,
   serveRegistryBlob,
 } from "@hootifactory/registry";
@@ -59,12 +60,7 @@ function parseNugetVersionInput(version: string): string {
  */
 export class NugetAdapter implements RegistryPlugin {
   readonly format = "nuget" as const;
-  readonly capabilities = {
-    contentAddressable: false,
-    resumableUploads: false,
-    proxyable: false,
-    virtualizable: true,
-  };
+  readonly capabilities = registryCapabilities("virtualizable");
   authChallenge = basicAuthChallenge;
 
   private readonly plugin = registryPlugin(this.format)
@@ -77,22 +73,22 @@ export class NugetAdapter implements RegistryPlugin {
       ),
       route.put("/v3/package", "publish", ({ req, ctx }) => this.publish(req, ctx)),
       route.delete("/v3/package/:id/:version", "delete", ({ params, ctx }) =>
-        this.setListed(params.id ?? "", params.version ?? "", false, ctx),
+        this.setListed(params.id, params.version, false, ctx),
       ),
       route.post("/v3/package/:id/:version", "relist", ({ params, ctx }) =>
-        this.setListed(params.id ?? "", params.version ?? "", true, ctx),
+        this.setListed(params.id, params.version, true, ctx),
       ),
       route.get("/v3-flatcontainer/:id/index.json", "versions", ({ params, ctx }) =>
-        this.versions(params.id ?? "", ctx),
+        this.versions(params.id, ctx),
       ),
       route.get("/v3-flatcontainer/:id/:version/:file", "download", ({ params, ctx }) =>
-        this.download(params.id ?? "", params.version ?? "", params.file ?? "", ctx),
+        this.download(params.id, params.version, params.file, ctx),
       ),
       route.get("/v3/registrations/:id/index.json", "registration", ({ params, ctx }) =>
-        this.registration(params.id ?? "", this.base(ctx), ctx),
+        this.registration(params.id, this.base(ctx), ctx),
       ),
       route.get("/v3/registrations/:id/:file", "registrationLeaf", ({ params, ctx }) =>
-        this.registrationLeaf(params.id ?? "", params.file ?? "", this.base(ctx), ctx),
+        this.registrationLeaf(params.id, params.file, this.base(ctx), ctx),
       ),
     ])
     .build();
