@@ -121,6 +121,13 @@ function shouldUseDocker(options: ScannerRuntimeOptions): boolean {
   return false;
 }
 
+function dockerScannerUser(): string {
+  const uid = process.getuid?.();
+  const gid = process.getgid?.();
+  if (uid !== undefined && uid > 0) return `${uid}:${gid ?? uid}`;
+  return "65534:65534";
+}
+
 export function dockerScannerRunArgs(input: {
   args: string[];
   cidFile?: string;
@@ -151,6 +158,19 @@ export function dockerScannerRunArgs(input: {
     `nproc=${pidsLimit}:${pidsLimit}`,
     "--ulimit",
     "nofile=1024:1024",
+    "--cap-drop",
+    "ALL",
+    "--security-opt",
+    "no-new-privileges",
+    "--read-only",
+    "--tmpfs",
+    "/tmp:rw,noexec,nosuid,size=64m,mode=1777",
+    "--tmpfs",
+    "/var/tmp:rw,noexec,nosuid,size=64m,mode=1777",
+    "--user",
+    dockerScannerUser(),
+    "--network",
+    "none",
     "--mount",
     `type=bind,source=${targetDir},target=${targetDir},readonly`,
     "--workdir",
@@ -160,11 +180,6 @@ export function dockerScannerRunArgs(input: {
     args.push("--storage-opt", `size=${input.options.dockerStorageSize}`);
   }
   if (input.cidFile) args.push("--cidfile", input.cidFile);
-  if (process.platform === "linux") {
-    args.push("--network", "host");
-  } else {
-    args.push("--add-host", "host.docker.internal:host-gateway");
-  }
   if (input.entrypoint) args.push("--entrypoint", input.entrypoint);
   args.push(input.image, ...input.args);
   return args;

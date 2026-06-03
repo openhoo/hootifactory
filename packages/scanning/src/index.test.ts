@@ -170,6 +170,23 @@ describe("heuristic scanning", () => {
     expect(args).toContain("128");
     expect(args).toContain("--ulimit");
     expect(args).toContain("nproc=128:128");
+    expect(args).toContain("--cap-drop");
+    expect(args).toContain("ALL");
+    expect(args).toContain("--security-opt");
+    expect(args).toContain("no-new-privileges");
+    expect(args).toContain("--read-only");
+    expect(args).toContain("--tmpfs");
+    expect(args).toContain("/tmp:rw,noexec,nosuid,size=64m,mode=1777");
+    expect(args).toContain("/var/tmp:rw,noexec,nosuid,size=64m,mode=1777");
+    const userIndex = args.indexOf("--user");
+    expect(userIndex).toBeGreaterThanOrEqual(0);
+    expect(args[userIndex + 1]).toMatch(/^\d+:\d+$/);
+    expect(args.slice(args.indexOf("--network"), args.indexOf("--network") + 2)).toEqual([
+      "--network",
+      "none",
+    ]);
+    expect(args).not.toContain("host");
+    expect(args).not.toContain("--add-host");
     expect(args).toContain("--storage-opt");
     expect(args).toContain("size=2g");
     expect(args).toContain("--cidfile");
