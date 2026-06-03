@@ -11,21 +11,16 @@ import {
   readWritePermission,
 } from "@hootifactory/registry";
 import {
-  commitVersionOrReleaseBlob,
   findLiveVersion,
-  findOrCreatePackage,
   findPackageByName,
   isArtifactBlocked,
   listLivePackageVersions,
-  packageVersionExists,
-  storeBlobWithRef,
 } from "@hootifactory/registry-application";
-import { parseGoUploadRequest, validateGoUploadPlan } from "./go-upload";
+import { handleGoUpload } from "./go-upload-lifecycle";
 import {
   decodeBang,
   GoModuleSchema,
   GoVersionFileSchema,
-  type GoVersionMeta,
   GoVersionSchema,
   isPseudoVersion,
   parseGoVersionMeta,
@@ -167,47 +162,6 @@ export class GoAdapter implements RegistryPlugin {
     req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
-    const upload = await parseGoUploadRequest(moduleName, versionRaw, req);
-    const { metadata, scope, version, zipBytes } = upload;
-    const existingPkg = await findPackageByName(ctx, moduleName);
-    if (existingPkg) {
-      if (await packageVersionExists(existingPkg.id, version)) {
-        return Response.json({ error: "version already exists" }, { status: 409 });
-      }
-    }
-    const uploadError = validateGoUploadPlan(moduleName, upload);
-    if (uploadError) return Response.json(uploadError.body, { status: uploadError.status });
-    const pkg =
-      existingPkg ??
-      (await findOrCreatePackage({
-        orgId: ctx.repo.orgId,
-        repositoryId: ctx.repo.id,
-        name: moduleName,
-      }));
-
-    const stored = await storeBlobWithRef(ctx, {
-      data: zipBytes,
-      kind: "generic_file",
-      scope,
-      mediaType: "application/zip",
-    });
-    const meta: GoVersionMeta = {
-      ...metadata,
-      zipDigest: stored.digest,
-    };
-    const result = await commitVersionOrReleaseBlob(ctx, {
-      stored,
-      kind: "generic_file",
-      scope,
-      packageId: pkg.id,
-      version,
-      metadata: meta,
-      sizeBytes: zipBytes.length,
-      scan: { name: moduleName, version, mediaType: "application/zip" },
-    });
-    if ("conflict" in result) {
-      return Response.json({ error: "version already exists" }, { status: 409 });
-    }
-    return Response.json({ ok: true, module: moduleName, version });
+    return handleGoUpload(moduleName, versionRaw, req, ctx);
   }
 }
