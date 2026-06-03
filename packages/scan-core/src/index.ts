@@ -3,10 +3,23 @@ import { z } from "zod";
 
 export const JsonRecordSchema = z.record(z.string(), z.unknown());
 export type JsonRecord = z.output<typeof JsonRecordSchema>;
+export const StringRecordSchema = z.record(z.string(), z.string());
+export type StringRecord = z.output<typeof StringRecordSchema>;
+const StringValueSchema = z.string();
 
 export function asRecord(value: unknown): JsonRecord | null {
   const parsed = JsonRecordSchema.safeParse(value);
   return parsed.success ? parsed.data : null;
+}
+
+export function asStringRecord(value: unknown): StringRecord {
+  const parsed = JsonRecordSchema.safeParse(value);
+  if (!parsed.success) return {};
+  const entries = Object.entries(parsed.data).flatMap(([key, item]) => {
+    const value = StringValueSchema.safeParse(item);
+    return value.success ? ([[key, value.data]] as const) : [];
+  });
+  return Object.fromEntries(entries);
 }
 
 export function asString(value: unknown): string | undefined {

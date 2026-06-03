@@ -10,8 +10,19 @@ import {
   repositories,
   versionTags,
 } from "@hootifactory/db";
+import { z } from "@hootifactory/registry";
 import { blobStore } from "@hootifactory/storage";
 import { deleteUnreferencedCasBlob, releaseRepoDigestTx } from "../content";
+
+const DigestRefSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
+const DigestObjectSchema = z.looseObject({ blobDigest: DigestRefSchema });
+const VersionDigestFieldsSchema = z.looseObject({
+  dist: z.unknown().optional(),
+  crateDigest: z.unknown().optional(),
+  zipDigest: z.unknown().optional(),
+  nupkgDigest: z.unknown().optional(),
+  files: z.unknown().optional(),
+});
 
 /**
  * Extract the CAS blob digests a stored version references, across formats
@@ -19,17 +30,28 @@ import { deleteUnreferencedCasBlob, releaseRepoDigestTx } from "../content";
  * are scoped to the image (not the version) and are reclaimed via the adapter's
  * delete path, so they are intentionally not covered here.
  */
-function versionBlobDigests(metadata: unknown): string[] {
+export function versionBlobDigests(metadata: unknown): string[] {
   const out = new Set<string>();
-  const m = (metadata ?? {}) as Record<string, unknown>;
+  const parsed = VersionDigestFieldsSchema.safeParse(metadata ?? {});
+  if (!parsed.success) return [];
+  const m = parsed.data;
   const add = (v: unknown) => {
-    if (typeof v === "string" && v.startsWith("sha256:")) out.add(v);
+    const digest = DigestRefSchema.safeParse(v);
+    if (digest.success) out.add(digest.data);
   };
-  add((m.dist as { blobDigest?: unknown } | undefined)?.blobDigest); // npm
+
+  const dist = DigestObjectSchema.safeParse(m.dist);
+  if (dist.success) add(dist.data.blobDigest); // npm
   add(m.crateDigest); // cargo
   add(m.zipDigest); // go
   add(m.nupkgDigest); // nuget
-  for (const f of (m.files as { blobDigest?: unknown }[] | undefined) ?? []) add(f?.blobDigest); // pypi
+  const files = z.array(z.unknown()).safeParse(m.files);
+  if (files.success) {
+    for (const file of files.data) {
+      const parsedFile = DigestObjectSchema.safeParse(file);
+      if (parsedFile.success) add(parsedFile.data.blobDigest); // pypi
+    }
+  }
   return [...out];
 }
 

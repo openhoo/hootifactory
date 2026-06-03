@@ -7,6 +7,7 @@ import {
   mergeNugetSearchBodies,
   npmSearchWindow,
   nugetSearchWindow,
+  parseNpmSearchBody,
   parseNugetSearchBody,
 } from "./registry-virtual-search";
 
@@ -93,8 +94,22 @@ describe("virtual registry search helpers", () => {
     });
   });
 
+  test("validates npm search bodies from members", () => {
+    expect(
+      parseNpmSearchBody({
+        total: 1,
+        objects: [{ package: { name: "alpha" }, score: 1 }],
+      }),
+    ).toEqual({
+      total: 1,
+      objects: [{ package: { name: "alpha" }, score: 1 }],
+    });
+    expect(parseNpmSearchBody({ objects: null })).toBeNull();
+    expect(parseNpmSearchBody({ total: "1", objects: [] })).toBeNull();
+  });
+
   test("rewrites and merges NuGet search bodies case-insensitively", () => {
-    const body = parseNugetSearchBody(
+    const parsedBody = parseNugetSearchBody(
       JSON.stringify({
         totalHits: 2,
         data: [
@@ -105,6 +120,8 @@ describe("virtual registry search helpers", () => {
       "hosted",
       "virtual",
     );
+    expect(parsedBody).not.toBeNull();
+    const body = parsedBody!;
 
     expect(body.data?.[0]?.registration).toBe("/virtual/registration/package.one/index.json");
     expect(
@@ -128,5 +145,13 @@ describe("virtual registry search helpers", () => {
         { id: "package.three" },
       ],
     });
+  });
+
+  test("validates NuGet search bodies from members", () => {
+    expect(parseNugetSearchBody("{", "hosted", "virtual")).toBeNull();
+    expect(parseNugetSearchBody(JSON.stringify({ data: null }), "hosted", "virtual")).toBeNull();
+    expect(
+      parseNugetSearchBody(JSON.stringify({ totalHits: "1", data: [] }), "hosted", "virtual"),
+    ).toBeNull();
   });
 });

@@ -64,6 +64,11 @@ describe("OCI manifest PUT helpers", () => {
     ).rejects.toThrow();
   });
 
+  test("rejects non-object manifest JSON before property validation", async () => {
+    await expect(parseOciManifestPutRequest("latest", manifestRequest("null"))).rejects.toThrow();
+    await expect(parseOciManifestPutRequest("latest", manifestRequest("[]"))).rejects.toThrow();
+  });
+
   test("validates subject descriptors and exposes the subject digest", async () => {
     const subjectDigest = "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
     const raw = manifest({

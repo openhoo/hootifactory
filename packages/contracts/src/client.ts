@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type {
   ApiTokenDto,
   AuthMethodsDto,
@@ -9,6 +10,9 @@ import type {
 } from "./index";
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
+const ApiErrorBodySchema = z.looseObject({
+  error: z.string().min(1).optional(),
+});
 
 export class ApiError extends Error {
   constructor(
@@ -44,7 +48,8 @@ async function req<T = unknown>(
     data = text;
   }
   if (!res.ok) {
-    const msg = (data as { error?: string })?.error ?? res.statusText;
+    const errorBody = ApiErrorBodySchema.safeParse(data);
+    const msg = errorBody.success ? (errorBody.data.error ?? res.statusText) : res.statusText;
     throw new ApiError(res.status, msg, data);
   }
   return data as T;

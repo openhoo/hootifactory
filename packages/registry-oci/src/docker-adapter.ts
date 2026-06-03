@@ -158,6 +158,7 @@ export class DockerAdapter implements RegistryPlugin {
     const {
       acceptedTags,
       bytes,
+      configDigest,
       digest,
       mediaType,
       parsed,
@@ -166,7 +167,6 @@ export class DockerAdapter implements RegistryPlugin {
       referencedBlobs,
       subjectDigest,
     } = manifestPut;
-    const config = parsed.config;
 
     // Reject an image manifest that references blobs not yet uploaded to this repo.
     if (referencedBlobs.length > 0) {
@@ -201,7 +201,7 @@ export class DockerAdapter implements RegistryPlugin {
       subjectDigest,
       raw,
       sizeBytes: bytes.length,
-      configDigest: config?.digest ?? null,
+      configDigest,
     });
 
     // Tag (mutable pointer) + a UI-visible version when reference is not a digest.

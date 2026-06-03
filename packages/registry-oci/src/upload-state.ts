@@ -1,34 +1,36 @@
-import { Errors, type RegistryRequestContext } from "@hootifactory/registry";
+import { Errors, type RegistryRequestContext, z } from "@hootifactory/registry";
 
-export interface UploadChunk {
-  key: string;
-  size: number;
-}
+const UploadChunkSchema = z.strictObject({
+  key: z.string().min(1),
+  size: z.number().int().safe().min(0),
+});
+
+const UploadMultipartStateSchema = z.looseObject({
+  chunks: z.array(z.unknown()).optional(),
+});
+
+export type UploadChunk = z.output<typeof UploadChunkSchema>;
 
 export interface UploadMultipartState {
   chunks: UploadChunk[];
 }
 
-function isUploadChunk(value: unknown): value is UploadChunk {
-  if (!value || typeof value !== "object") return false;
-  const chunk = value as Partial<UploadChunk>;
-  return (
-    typeof chunk.key === "string" &&
-    chunk.key.length > 0 &&
-    typeof chunk.size === "number" &&
-    Number.isSafeInteger(chunk.size) &&
-    chunk.size >= 0
-  );
-}
-
 export function uploadMultipartState(raw: string | null): UploadMultipartState {
   if (!raw) return { chunks: [] };
+  let decoded: unknown;
   try {
-    const parsed = JSON.parse(raw) as { chunks?: unknown };
-    return { chunks: Array.isArray(parsed.chunks) ? parsed.chunks.filter(isUploadChunk) : [] };
+    decoded = JSON.parse(raw);
   } catch {
     return { chunks: [] };
   }
+  const parsed = UploadMultipartStateSchema.safeParse(decoded);
+  if (!parsed.success) return { chunks: [] };
+  return {
+    chunks: (parsed.data.chunks ?? []).flatMap((chunk) => {
+      const parsedChunk = UploadChunkSchema.safeParse(chunk);
+      return parsedChunk.success ? [parsedChunk.data] : [];
+    }),
+  };
 }
 
 export function uploadChunkStream(

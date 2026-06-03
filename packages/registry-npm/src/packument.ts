@@ -1,4 +1,4 @@
-import type { FormatMetadata } from "@hootifactory/registry";
+import { asJsonRecord, type FormatMetadata, jsonRecordOrEmpty } from "@hootifactory/registry";
 import { parseNpmStoredVersionMetadata } from "./npm-validation";
 
 export interface VersionRow {
@@ -33,9 +33,10 @@ export function buildPackument(
   if (modified) time.modified = modified.toISOString();
 
   const latest = distTags.latest;
-  const latestManifest = latest
-    ? (versionsObj[latest] as { readme?: string; description?: string } | undefined)
-    : undefined;
+  const latestManifest = latest ? asJsonRecord(versionsObj[latest]) : null;
+  const description =
+    typeof latestManifest?.description === "string" ? latestManifest.description : undefined;
+  const readme = typeof latestManifest?.readme === "string" ? latestManifest.readme : undefined;
 
   return {
     _id: name,
@@ -43,8 +44,8 @@ export function buildPackument(
     "dist-tags": distTags,
     versions: versionsObj,
     time,
-    ...(latestManifest?.description ? { description: latestManifest.description } : {}),
-    ...(latestManifest?.readme ? { readme: latestManifest.readme } : {}),
+    ...(description ? { description } : {}),
+    ...(readme ? { readme } : {}),
   };
 }
 
@@ -54,7 +55,7 @@ export function mergePackuments(parts: FormatMetadata[]): FormatMetadata {
     .map((part) => {
       const body = typeof part.body === "string" ? part.body : decoder.decode(part.body);
       try {
-        return JSON.parse(body) as Record<string, unknown>;
+        return asJsonRecord(JSON.parse(body));
       } catch {
         return null;
       }
@@ -65,19 +66,13 @@ export function mergePackuments(parts: FormatMetadata[]): FormatMetadata {
   const distTags: Record<string, unknown> = {};
   const time: Record<string, unknown> = {};
   for (const doc of docs) {
-    for (const [version, manifest] of Object.entries(
-      (doc.versions as Record<string, unknown> | undefined) ?? {},
-    )) {
+    for (const [version, manifest] of Object.entries(jsonRecordOrEmpty(doc.versions))) {
       if (!Object.hasOwn(versions, version)) versions[version] = manifest;
     }
-    for (const [tag, version] of Object.entries(
-      (doc["dist-tags"] as Record<string, unknown> | undefined) ?? {},
-    )) {
+    for (const [tag, version] of Object.entries(jsonRecordOrEmpty(doc["dist-tags"]))) {
       if (!Object.hasOwn(distTags, tag)) distTags[tag] = version;
     }
-    for (const [key, value] of Object.entries(
-      (doc.time as Record<string, unknown> | undefined) ?? {},
-    )) {
+    for (const [key, value] of Object.entries(jsonRecordOrEmpty(doc.time))) {
       if (!Object.hasOwn(time, key)) time[key] = value;
     }
   }

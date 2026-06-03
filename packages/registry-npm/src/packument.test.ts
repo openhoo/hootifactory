@@ -107,6 +107,7 @@ describe("npm packument builder", () => {
   test("skips invalid packument bodies while merging", () => {
     const merged = mergePackuments([
       { contentType: "application/json", body: "not json" },
+      { contentType: "application/json", body: JSON.stringify(["not", "a", "packument"]) },
       {
         contentType: "application/json",
         body: new TextEncoder().encode(

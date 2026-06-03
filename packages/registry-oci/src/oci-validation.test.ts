@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { OCI_MEDIA_TYPES, type OciManifest } from "@hootifactory/types";
+import { OCI_MEDIA_TYPES } from "@hootifactory/types";
 import {
   acceptsMediaType,
   manifestMediaType,
   parseBlobRange,
+  parseManifestRaw,
   parseReference,
   validateContentRange,
   validateManifest,
@@ -58,7 +59,7 @@ describe("OCI validation helpers", () => {
   });
 
   test("checks image manifest media type and required descriptors", () => {
-    const manifest: OciManifest = {
+    const manifest: Record<string, unknown> = {
       schemaVersion: 2,
       mediaType: OCI_MEDIA_TYPES.manifestV1,
       config: {
@@ -76,5 +77,14 @@ describe("OCI validation helpers", () => {
     expect(mediaType).toBe(OCI_MEDIA_TYPES.manifestV1);
     expect(() => validateManifest(manifest, mediaType)).not.toThrow();
     expect(() => validateManifest({ ...manifest, layers: undefined }, mediaType)).toThrow();
+  });
+
+  test("parses stored manifest JSON as an object or falls back for referrer metadata", () => {
+    expect(parseManifestRaw(JSON.stringify({ schemaVersion: 2, artifactType: "test" }))).toEqual({
+      schemaVersion: 2,
+      artifactType: "test",
+    });
+    expect(parseManifestRaw("not json")).toEqual({ schemaVersion: 2 });
+    expect(parseManifestRaw("[]")).toEqual({ schemaVersion: 2 });
   });
 });

@@ -6,7 +6,7 @@ describe("scan dependency extraction", () => {
     expect(
       dependenciesFromMetadata("npm", {
         manifest: {
-          dependencies: { react: "^19.0.0" },
+          dependencies: { react: "^19.0.0", ignored: 19 },
           devDependencies: { typescript: "^5.0.0" },
         },
       }),

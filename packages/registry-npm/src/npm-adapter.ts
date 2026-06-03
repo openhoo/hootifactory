@@ -3,6 +3,7 @@ import {
   Errors,
   type FormatMetadata,
   type HttpMethod,
+  jsonRecordOrEmpty,
   type Permission,
   parseRegistryInput,
   type RegistryPlugin,
@@ -48,10 +49,10 @@ import { buildNpmMetadataOnlyVersionPatch } from "./npm-metadata-only";
 import {
   buildNpmMirroredDist,
   isNpmTarballUrlOnUpstreamHost,
-  type NpmUpstreamPackument,
   normalizeNpmProxyManifest,
   npmUpstreamHost,
   npmUpstreamPackumentUrl,
+  parseNpmUpstreamPackument,
   rewriteNpmProxyManifestForExistingDist,
 } from "./npm-proxy";
 import { parseNpmPublishRequest, resolveNpmPublishDistTags } from "./npm-publish";
@@ -310,7 +311,7 @@ export class NpmAdapter implements RegistryPlugin {
       });
       const tarballUrl = `${ctx.baseUrl}/${ctx.repo.mountPath}/${packagePath(name)}/-/${filename}`;
       manifest.dist = {
-        ...((manifest.dist as Record<string, unknown>) ?? {}),
+        ...jsonRecordOrEmpty(manifest.dist),
         tarball: tarballUrl,
         shasum,
         integrity,
@@ -480,9 +481,8 @@ export class NpmAdapter implements RegistryPlugin {
       headers: { accept: "application/json" },
     }).catch(() => null);
     if (!res?.ok) return false;
-    const packument = await responseJson<NpmUpstreamPackument>(
-      res,
-      Math.min(ctx.limits.maxUploadBytes, 10 * 1024 * 1024),
+    const packument = parseNpmUpstreamPackument(
+      await responseJson(res, Math.min(ctx.limits.maxUploadBytes, 10 * 1024 * 1024)),
     );
     if (!packument) return false;
     const scope = pkgName.startsWith("@") ? (pkgName.split("/")[0] ?? null) : null;

@@ -46,8 +46,12 @@ export async function responseBytes(res: Response, maxBytes: number): Promise<Ui
   return out;
 }
 
-export async function responseJson<T>(res: Response, maxBytes: number): Promise<T | null> {
+export async function responseJson(res: Response, maxBytes: number): Promise<unknown | null> {
   const bytes = await responseBytes(res, maxBytes);
   if (!bytes) return null;
-  return JSON.parse(new TextDecoder().decode(bytes)) as T;
+  try {
+    return JSON.parse(new TextDecoder().decode(bytes));
+  } catch {
+    return null;
+  }
 }

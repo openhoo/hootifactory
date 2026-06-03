@@ -85,5 +85,17 @@ describe("OIDC group -> role mapping", () => {
     expect(verifyOidcState(`${signed}.extra`, "test-secret")).toBeNull();
     expect(verifyOidcState("not-json.signature", "test-secret")).toBeNull();
     expect(verifyOidcState(signed, "test-secret", payload.expiresAt + 1)).toBeNull();
+    expect(
+      verifyOidcState(
+        signOidcState({ ...payload, returnTo: "https://evil.test" }, "test-secret"),
+        "test-secret",
+      ),
+    ).toBeNull();
+    expect(
+      verifyOidcState(
+        signOidcState({ ...payload, extra: true } as typeof payload, "test-secret"),
+        "test-secret",
+      ),
+    ).toBeNull();
   });
 });

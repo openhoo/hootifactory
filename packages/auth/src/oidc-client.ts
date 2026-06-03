@@ -1,8 +1,16 @@
 import * as client from "openid-client";
+import { z } from "zod";
 import { extractGroups, extractStringClaim } from "./oidc-claim-path";
 import { mapGroupsToOrgRoles } from "./oidc-claims";
 import { safeOidcReturnTo } from "./oidc-state";
 import type { OidcCallbackClaims, OidcProviderConfig, SignedOidcState } from "./oidc-types";
+
+const OidcClaimsRecordSchema = z.record(z.string(), z.unknown());
+
+function claimsRecord(value: unknown): Record<string, unknown> {
+  const parsed = OidcClaimsRecordSchema.safeParse(value);
+  return parsed.success ? parsed.data : {};
+}
 
 function oidcDiscoveryOptions(issuer: string): client.DiscoveryRequestOptions | undefined {
   if (!issuer.startsWith("http://")) return undefined;
@@ -73,11 +81,11 @@ export async function resolveOidcCallbackClaims(
   const idClaims = tokens.claims();
   if (!idClaims?.sub) throw new Error("oidc: missing id_token subject");
 
-  let claims: Record<string, unknown> = idClaims as Record<string, unknown>;
+  let claims = claimsRecord(idClaims);
   if (tokens.access_token) {
     try {
       const userInfo = await client.fetchUserInfo(oidcConfig, tokens.access_token, idClaims.sub);
-      claims = { ...(userInfo as Record<string, unknown>), ...claims };
+      claims = { ...claimsRecord(userInfo), ...claims };
     } catch {
       // UserInfo is useful for group/email claims, but an ID-token-only provider is valid.
     }

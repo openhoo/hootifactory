@@ -14,6 +14,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@hootifactory/types": "workspace:*"
+    "@hootifactory/types": "workspace:*",
+    "zod": "^4.4.3"
   }
 }

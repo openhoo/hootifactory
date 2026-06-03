@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   asRecord,
   asString,
+  asStringRecord,
   findingKey,
   isValidRepositoryPattern,
   maxSeverity,
@@ -18,6 +19,8 @@ describe("scan-core severity helpers", () => {
     expect(asString("CVE-1")).toBe("CVE-1");
     expect(asString("")).toBeUndefined();
     expect(asString(123)).toBeUndefined();
+    expect(asStringRecord({ react: "^19.0.0" })).toEqual({ react: "^19.0.0" });
+    expect(asStringRecord({ react: 19, zod: "^4.4.3" })).toEqual({ zod: "^4.4.3" });
   });
 
   test("normalizes scanner severity labels to the canonical scale", () => {

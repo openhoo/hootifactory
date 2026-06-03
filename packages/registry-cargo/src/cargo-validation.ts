@@ -74,30 +74,42 @@ export const CargoOwnersBodySchema = z.strictObject({
 
 export type CargoPublishMetadata = z.output<typeof CargoPublishMetadataSchema>;
 
-export interface CargoIndexDependency {
-  name: string;
-  req: string;
-  features: string[];
-  optional: boolean;
-  default_features: boolean;
-  target: string | null;
-  kind: string;
-  registry: string | null;
-  package: string | null;
-}
+const Sha256HexSchema = z.string().regex(/^[a-f0-9]{64}$/);
+const Sha256DigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 
-export interface CargoIndexEntry {
-  name: string;
-  vers: string;
-  deps: CargoIndexDependency[];
-  cksum: string;
-  features: Record<string, string[]>;
-  yanked: boolean;
-  links?: string;
-  rust_version?: string;
-}
+export const CargoIndexDependencySchema = z.strictObject({
+  name: CargoCrateNameSchema,
+  req: z.string().min(1).max(256),
+  features: z.array(z.string().min(1).max(128)).max(256),
+  optional: z.boolean(),
+  default_features: z.boolean(),
+  target: z.string().min(1).max(256).nullable(),
+  kind: z.string().min(1).max(32),
+  registry: z.string().min(1).max(2048).nullable(),
+  package: CargoCrateNameSchema.nullable(),
+});
 
-export interface CargoVersionMeta {
-  index: CargoIndexEntry;
-  crateDigest: string;
+export const CargoIndexEntrySchema = z.strictObject({
+  name: CargoCrateNameSchema,
+  vers: CargoVersionSchema,
+  deps: z.array(CargoIndexDependencySchema).max(512),
+  cksum: Sha256HexSchema,
+  features: z.record(z.string(), z.array(z.string().min(1).max(128)).max(256)),
+  yanked: z.boolean(),
+  links: z.string().min(1).max(128).optional(),
+  rust_version: z.string().min(1).max(128).optional(),
+});
+
+export const CargoVersionMetaSchema = z.strictObject({
+  index: CargoIndexEntrySchema,
+  crateDigest: Sha256DigestSchema,
+});
+
+export type CargoIndexDependency = z.output<typeof CargoIndexDependencySchema>;
+export type CargoIndexEntry = z.output<typeof CargoIndexEntrySchema>;
+export type CargoVersionMeta = z.output<typeof CargoVersionMetaSchema>;
+
+export function parseCargoVersionMeta(value: unknown): CargoVersionMeta | null {
+  const parsed = CargoVersionMetaSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
 }

@@ -1,1 +1,1 @@
-export { asRecord, asString } from "@hootifactory/scan-core";
+export { asRecord, asString, asStringRecord } from "@hootifactory/scan-core";

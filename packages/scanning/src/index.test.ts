@@ -52,7 +52,7 @@ describe("heuristic scanning", () => {
         return Response.json({ database_specific: { severity: "critical" } });
       }
       return Response.json({
-        results: [{ vulns: [{ id: "GHSA-123" }] }, { vulns: [] }],
+        results: [{ vulns: [{ id: "GHSA-123" }, { id: 123 }, null] }, { vulns: [] }],
       });
     }) as unknown as typeof fetch;
 

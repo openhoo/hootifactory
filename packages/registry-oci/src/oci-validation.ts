@@ -1,10 +1,5 @@
 import { Errors, isValidDigest, parseRegistryInput, z } from "@hootifactory/registry";
-import {
-  OCI_MEDIA_TYPES,
-  type OciDescriptor,
-  type OciManifest,
-  ociManifestReferences,
-} from "@hootifactory/types";
+import { OCI_MEDIA_TYPES, type OciDescriptor, ociManifestReferences } from "@hootifactory/types";
 
 const OCI_ARTIFACT_MANIFEST_MEDIA_TYPE = "application/vnd.oci.artifact.manifest.v1+json";
 const SUPPORTED_MANIFEST_MEDIA_TYPES = new Set<string>([
@@ -62,6 +57,7 @@ const BlobRangeHeaderSchema = z
   .trim()
   .regex(/^bytes=\d*-\d*$/i)
   .refine((value) => !value.includes(","), "multiple ranges are not supported");
+const OciManifestObjectSchema = z.record(z.string(), z.unknown());
 const OciDescriptorSchema = z.looseObject({
   mediaType: z.string().min(1).max(255),
   digest: OciDigestSchema,
@@ -79,6 +75,7 @@ const OciDescriptorSchema = z.looseObject({
 });
 
 export type ManifestReference = { kind: "digest" | "tag"; value: string };
+export type OciManifestDocument = z.output<typeof OciManifestObjectSchema>;
 
 export function assertImageName(name: string): void {
   parseRegistryInput(OciImageNameSchema, name, {
@@ -131,13 +128,9 @@ export function acceptsMediaType(acceptHeader: string | null, mediaType: string)
   return false;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
 export function validateDescriptor(value: unknown, field: string): OciDescriptor {
   const parsed = OciDescriptorSchema.safeParse(value);
-  if (parsed.success) return parsed.data as unknown as OciDescriptor;
+  if (parsed.success) return parsed.data;
   const invalidDigest = parsed.error.issues.some((issue) => issue.path.join(".") === "digest");
   const invalidSize = parsed.error.issues.some((issue) => issue.path.join(".") === "size");
   if (invalidDigest) throw Errors.digestInvalid({ reason: `${field}.digest is invalid` });
@@ -151,7 +144,7 @@ function validateDescriptorArray(value: unknown, field: string): OciDescriptor[]
   return value.map((descriptor, i) => validateDescriptor(descriptor, `${field}[${i}]`));
 }
 
-export function manifestMediaType(req: Request, parsed: OciManifest): string {
+export function manifestMediaType(req: Request, parsed: OciManifestDocument): string {
   const contentType = normalizeMediaType(req.headers.get("content-type"));
   const bodyMediaType =
     typeof parsed.mediaType === "string" ? normalizeMediaType(parsed.mediaType) : null;
@@ -170,7 +163,7 @@ export function manifestMediaType(req: Request, parsed: OciManifest): string {
   return mediaType;
 }
 
-export function validateManifest(parsed: OciManifest, mediaType: string): void {
+export function validateManifest(parsed: OciManifestDocument, mediaType: string): void {
   if (parsed.schemaVersion !== 2) {
     throw Errors.manifestInvalid({ reason: "schemaVersion must be 2" });
   }
@@ -198,34 +191,52 @@ export function validateManifest(parsed: OciManifest, mediaType: string): void {
   }
 }
 
-export function parseManifestRaw(raw: string): OciManifest {
+function parseManifestJson(raw: string): OciManifestDocument | null {
+  let value: unknown;
   try {
-    return JSON.parse(raw) as OciManifest;
+    value = JSON.parse(raw);
   } catch {
-    return { schemaVersion: 2 };
+    return null;
   }
+  const parsed = OciManifestObjectSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
 }
 
-export function referrerArtifactType(manifest: OciManifest, mediaType: string): string | undefined {
+export function parseManifestRequestRaw(raw: string): OciManifestDocument {
+  const parsed = parseManifestJson(raw);
+  if (!parsed) throw Errors.manifestInvalid({ reason: "manifest must be a JSON object" });
+  return parsed;
+}
+
+export function parseManifestRaw(raw: string): OciManifestDocument {
+  return parseManifestJson(raw) ?? { schemaVersion: 2 };
+}
+
+export function referrerArtifactType(
+  manifest: OciManifestDocument,
+  mediaType: string,
+): string | undefined {
   if (typeof manifest.artifactType === "string" && manifest.artifactType.length > 0) {
     return manifest.artifactType;
   }
+  const config = OciManifestObjectSchema.safeParse(manifest.config);
   if (
     IMAGE_MANIFEST_MEDIA_TYPES.has(mediaType) &&
-    typeof manifest.config?.mediaType === "string" &&
-    manifest.config.mediaType.length > 0
+    config.success &&
+    typeof config.data.mediaType === "string" &&
+    config.data.mediaType.length > 0
   ) {
-    return manifest.config.mediaType;
+    return config.data.mediaType;
   }
   return undefined;
 }
 
-export function manifestAnnotations(manifest: OciManifest): Record<string, string> | undefined {
-  if (!isRecord(manifest.annotations)) return undefined;
-  const annotations: Record<string, string> = {};
-  for (const [key, value] of Object.entries(manifest.annotations)) {
-    if (typeof value === "string") annotations[key] = value;
-  }
+export function manifestAnnotations(
+  manifest: OciManifestDocument,
+): Record<string, string> | undefined {
+  const parsed = z.record(z.string(), z.string()).safeParse(manifest.annotations);
+  if (!parsed.success) return undefined;
+  const annotations = parsed.data;
   return Object.keys(annotations).length > 0 ? annotations : undefined;
 }
 

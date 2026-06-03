@@ -1,6 +1,6 @@
 import { and, db, eq, packages, packageVersions } from "@hootifactory/db";
 import { withSpan } from "@hootifactory/observability";
-import { asRecord } from "@hootifactory/scanning";
+import { asRecord, asString, asStringRecord } from "@hootifactory/scanning";
 
 export interface DependencyTarget {
   repositoryId: string;
@@ -115,8 +115,8 @@ function defaultOsvEcosystem(_format: string): string {
 function npmDependencies(metadata: Record<string, unknown>): Record<string, string> {
   const manifest = asRecord(metadata.manifest);
   return {
-    ...stringRecord(manifest?.dependencies),
-    ...stringRecord(manifest?.devDependencies),
+    ...asStringRecord(manifest?.dependencies),
+    ...asStringRecord(manifest?.devDependencies),
   };
 }
 
@@ -126,9 +126,9 @@ function cargoDependencies(metadata: Record<string, unknown>): Record<string, st
   const entries: [string, string][] = [];
   for (const dep of deps) {
     const item = asRecord(dep);
-    if (typeof item?.name === "string" && typeof item.req === "string") {
-      entries.push([item.name, item.req]);
-    }
+    const name = asString(item?.name);
+    const req = asString(item?.req);
+    if (name && req) entries.push([name, req]);
   }
   return Object.fromEntries(entries);
 }
@@ -141,33 +141,20 @@ function nugetDependencies(metadata: Record<string, unknown>): Record<string, st
     if (!Array.isArray(dependencies)) continue;
     for (const dependency of dependencies) {
       const item = asRecord(dependency);
-      if (typeof item?.id === "string" && typeof item.range === "string") {
-        entries.push([item.id, item.range]);
-      }
+      const id = asString(item?.id);
+      const range = asString(item?.range);
+      if (id && range) entries.push([id, range]);
     }
   }
   return Object.fromEntries(entries);
 }
 
 function goDependencies(metadata: Record<string, unknown>): Record<string, string> {
-  const mod = typeof metadata.mod === "string" ? metadata.mod : "";
+  const mod = asString(metadata.mod) ?? "";
   const entries: [string, string][] = [];
   for (const match of mod.matchAll(/^\s*require\s+([^\s]+)\s+([^\s]+)\s*$/gm)) {
     const [, name, version] = match;
     if (name && version) entries.push([name, version]);
   }
   return Object.fromEntries(entries);
-}
-
-function stringRecord(value: unknown): Record<string, string> {
-  if (!isRecord(value)) return {};
-  const entries: [string, string][] = [];
-  for (const [key, item] of Object.entries(value)) {
-    if (typeof item === "string") entries.push([key, item]);
-  }
-  return Object.fromEntries(entries);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value != null && typeof value === "object" && !Array.isArray(value);
 }

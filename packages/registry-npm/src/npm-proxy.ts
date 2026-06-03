@@ -1,11 +1,22 @@
-import { computeDigest } from "@hootifactory/registry";
+import { asJsonRecord, computeDigest, jsonRecordOrEmpty, z } from "@hootifactory/registry";
 import type { NpmDist } from "./npm-integrity";
 import { sha1hex, sha512b64 } from "./npm-integrity";
 import { basename, packagePath } from "./npm-validation";
 
+const NpmUpstreamDistSchema = z.looseObject({
+  integrity: z.string().min(1).max(4096).optional(),
+  shasum: z.string().min(1).max(256).optional(),
+  tarball: z.string().min(1).max(4096),
+});
+
+const NpmUpstreamPackumentSchema = z.looseObject({
+  versions: z.unknown().optional(),
+  "dist-tags": z.unknown().optional(),
+});
+
 export interface NpmUpstreamPackument {
-  versions?: Record<string, Record<string, unknown>>;
-  "dist-tags"?: Record<string, string>;
+  versions: Record<string, Record<string, unknown>>;
+  "dist-tags": Record<string, string>;
 }
 
 export interface NpmUpstreamDist {
@@ -18,6 +29,21 @@ export interface NpmProxyManifest {
   manifest: Record<string, unknown>;
   upstreamDist: NpmUpstreamDist;
   tarballUrl: string;
+}
+
+export function parseNpmUpstreamPackument(value: unknown): NpmUpstreamPackument | null {
+  const parsed = NpmUpstreamPackumentSchema.safeParse(value);
+  if (!parsed.success) return null;
+  const versions: Record<string, Record<string, unknown>> = {};
+  for (const [version, manifest] of Object.entries(jsonRecordOrEmpty(parsed.data.versions))) {
+    const manifestRecord = asJsonRecord(manifest);
+    if (manifestRecord) versions[version] = manifestRecord;
+  }
+  const distTags: Record<string, string> = {};
+  for (const [tag, version] of Object.entries(jsonRecordOrEmpty(parsed.data["dist-tags"]))) {
+    if (typeof version === "string") distTags[tag] = version;
+  }
+  return { versions, "dist-tags": distTags };
 }
 
 export function npmUpstreamHost(upstreamBase: string): string | null {
@@ -124,7 +150,6 @@ export function buildNpmMirroredDist(input: {
 }
 
 function normalizeUpstreamDist(value: unknown): NpmUpstreamDist | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const dist = value as NpmUpstreamDist;
-  return typeof dist.tarball === "string" ? dist : null;
+  const dist = NpmUpstreamDistSchema.safeParse(value);
+  return dist.success ? dist.data : null;
 }

@@ -1,11 +1,12 @@
 import { computeDigest, Errors, isValidDigest } from "@hootifactory/registry";
-import type { OciManifest } from "@hootifactory/types";
 import {
   assertTag,
   type ManifestReference,
   manifestBlobDigests,
   manifestManifestDigests,
   manifestMediaType,
+  type OciManifestDocument,
+  parseManifestRequestRaw,
   parseReference,
   validateDescriptor,
   validateManifest,
@@ -17,9 +18,10 @@ export interface OciManifestPutRequest {
   bytes: Uint8Array;
   raw: string;
   digest: string;
-  parsed: OciManifest;
+  parsed: OciManifestDocument;
   mediaType: string;
   subjectDigest: string | null;
+  configDigest: string | null;
   referencedBlobs: string[];
   referencedManifests: string[];
   acceptedTags: string[];
@@ -37,15 +39,12 @@ export async function parseOciManifestPutRequest(
   }
 
   const raw = new TextDecoder().decode(bytes);
-  let parsed: OciManifest;
-  try {
-    parsed = JSON.parse(raw) as OciManifest;
-  } catch {
-    throw Errors.manifestInvalid();
-  }
+  const parsed = parseManifestRequestRaw(raw);
   const mediaType = manifestMediaType(req, parsed);
   validateManifest(parsed, mediaType);
-  if (parsed.subject) validateDescriptor(parsed.subject, "subject");
+  const subject =
+    parsed.subject === undefined ? null : validateDescriptor(parsed.subject, "subject");
+  const config = parsed.config === undefined ? null : validateDescriptor(parsed.config, "config");
 
   const referencedManifests = manifestManifestDigests(raw);
   for (const manifestDigest of referencedManifests) {
@@ -65,7 +64,8 @@ export async function parseOciManifestPutRequest(
     digest,
     parsed,
     mediaType,
-    subjectDigest: typeof parsed.subject?.digest === "string" ? parsed.subject.digest : null,
+    subjectDigest: subject?.digest ?? null,
+    configDigest: config?.digest ?? null,
     referencedBlobs: manifestBlobDigests(raw),
     referencedManifests,
     acceptedTags,

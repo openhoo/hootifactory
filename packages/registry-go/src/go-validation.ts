@@ -1,10 +1,19 @@
 import { z } from "@hootifactory/registry";
 
-export interface GoVersionMeta {
-  mod: string;
-  zipDigest: string;
-  zipSize: number;
-  time: string;
+const Sha256DigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
+
+export const GoVersionMetaSchema = z.strictObject({
+  mod: z.string().min(1).max(1_000_000),
+  zipDigest: Sha256DigestSchema,
+  zipSize: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  time: z.iso.datetime(),
+});
+
+export type GoVersionMeta = z.output<typeof GoVersionMetaSchema>;
+
+export function parseGoVersionMeta(value: unknown): GoVersionMeta | null {
+  const parsed = GoVersionMetaSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
 }
 
 /** Decode Go module "!"-escaping (an uppercase letter is encoded as `!` + lowercase). */

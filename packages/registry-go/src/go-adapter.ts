@@ -28,6 +28,7 @@ import {
   type GoVersionMeta,
   GoVersionSchema,
   isPseudoVersion,
+  parseGoVersionMeta,
   pickLatest,
 } from "./go-validation";
 
@@ -79,12 +80,20 @@ export class GoAdapter implements RegistryPlugin {
     return listLivePackageVersions(packageId, { orderByCreated: "asc" });
   }
 
+  private async storedVersions(packageId: string) {
+    const rows = await this.versions(packageId);
+    return rows.flatMap((row) => {
+      const metadata = parseGoVersionMeta(row.metadata);
+      return metadata ? [{ ...row, metadata }] : [];
+    });
+  }
+
   private async list(moduleName: string, ctx: RegistryRequestContext): Promise<Response> {
     // Unknown module → 404 so the client falls through the proxy chain. An empty
     // 200 would falsely assert "known module, no versions".
     const pkg = await findPackageByName(ctx, moduleName);
     if (!pkg) throw Errors.notFound();
-    const rows = await this.versions(pkg.id);
+    const rows = await this.storedVersions(pkg.id);
     return new Response(
       `${rows
         .map((r) => r.version)
@@ -99,14 +108,13 @@ export class GoAdapter implements RegistryPlugin {
   private async latest(moduleName: string, ctx: RegistryRequestContext): Promise<Response> {
     const pkg = await findPackageByName(ctx, moduleName);
     if (!pkg) throw Errors.notFound();
-    const rows = await this.versions(pkg.id);
+    const rows = await this.storedVersions(pkg.id);
     const latestVer = pickLatest(rows.map((r) => r.version));
     const row = rows.find((r) => r.version === latestVer);
     if (!row) throw Errors.notFound();
-    const meta = row.metadata as unknown as GoVersionMeta;
     return Response.json({
       Version: row.version,
-      Time: meta.time ?? row.createdAt.toISOString(),
+      Time: row.metadata.time ?? row.createdAt.toISOString(),
     });
   }
 
@@ -130,7 +138,8 @@ export class GoAdapter implements RegistryPlugin {
     const ext = file.slice(dot + 1);
     const row = await findLiveVersion(pkg.id, version);
     if (!row) throw Errors.notFound();
-    const meta = row.metadata as unknown as GoVersionMeta;
+    const meta = parseGoVersionMeta(row.metadata);
+    if (!meta) throw Errors.notFound();
 
     if (ext === "info") {
       return Response.json({ Version: version, Time: meta.time ?? row.createdAt.toISOString() });
@@ -192,7 +201,7 @@ export class GoAdapter implements RegistryPlugin {
       scope,
       packageId: pkg.id,
       version,
-      metadata: meta as unknown as Record<string, unknown>,
+      metadata: meta,
       sizeBytes: zipBytes.length,
       scan: { name: moduleName, version, mediaType: "application/zip" },
     });

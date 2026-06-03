@@ -20,15 +20,23 @@ export interface NugetSearchWindow {
   take: number;
 }
 
-export interface NpmSearchBody {
-  objects?: Array<{ package?: { name?: unknown } }>;
-  total?: number;
-}
+const NpmSearchPackageSchema = z.looseObject({ name: z.unknown().optional() });
+const NpmSearchObjectSchema = z.looseObject({
+  package: NpmSearchPackageSchema.optional(),
+});
+const NpmSearchBodySchema = z.looseObject({
+  objects: z.array(NpmSearchObjectSchema).optional(),
+  total: z.number().int().nonnegative().optional(),
+});
 
-export interface NugetSearchBody {
-  data?: Array<Record<string, unknown> & { id?: unknown }>;
-  totalHits?: number;
-}
+const NugetSearchItemSchema = z.looseObject({ id: z.unknown().optional() });
+const NugetSearchBodySchema = z.looseObject({
+  data: z.array(NugetSearchItemSchema).optional(),
+  totalHits: z.number().int().nonnegative().optional(),
+});
+
+export type NpmSearchBody = z.output<typeof NpmSearchBodySchema>;
+export type NugetSearchBody = z.output<typeof NugetSearchBodySchema>;
 
 export function npmSearchWindow(req: Request): NpmSearchWindow {
   const url = new URL(req.url);
@@ -88,12 +96,23 @@ export function mergeNpmSearchBodies(
   };
 }
 
+export function parseNpmSearchBody(value: unknown): NpmSearchBody | null {
+  const parsed = NpmSearchBodySchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
 export function parseNugetSearchBody(
   text: string,
   memberMountPath: string,
   virtualMountPath: string,
-): NugetSearchBody {
-  return JSON.parse(text.split(`/${memberMountPath}/`).join(`/${virtualMountPath}/`));
+): NugetSearchBody | null {
+  try {
+    const rewritten = text.split(`/${memberMountPath}/`).join(`/${virtualMountPath}/`);
+    const parsed = NugetSearchBodySchema.safeParse(JSON.parse(rewritten));
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
 }
 
 export function mergeNugetSearchBodies(

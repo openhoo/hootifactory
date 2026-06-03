@@ -35,10 +35,10 @@ import {
 import {
   CargoCrateNameSchema,
   CargoIndexPathSchema,
-  type CargoVersionMeta,
   CargoVersionSchema,
   cargoIndexPath,
   cargoVersionIdentity,
+  parseCargoVersionMeta,
 } from "./cargo-validation";
 
 function cargoError(detail: string, status: number): Response {
@@ -135,7 +135,10 @@ export class CargoAdapter implements RegistryPlugin {
     if (!pkg) return new Response("", { status: 404 });
     const vers = await listLivePackageVersions(pkg.id, { orderByCreated: "asc" });
     const lines = vers
-      .map((v) => JSON.stringify((v.metadata as unknown as CargoVersionMeta).index))
+      .flatMap((v) => {
+        const metadata = parseCargoVersionMeta(v.metadata);
+        return metadata ? [JSON.stringify(metadata.index)] : [];
+      })
       .join("\n");
     return new Response(`${lines}\n`, { headers: { "content-type": "text/plain" } });
   }
@@ -150,7 +153,7 @@ export class CargoAdapter implements RegistryPlugin {
     const pkg = await this.findCrate(ctx, crate);
     if (!pkg) throw Errors.notFound();
     const v = await findLiveVersion(pkg.id, version);
-    const digest = (v?.metadata as unknown as CargoVersionMeta | undefined)?.crateDigest;
+    const digest = parseCargoVersionMeta(v?.metadata)?.crateDigest;
     if (!digest || !(await ctx.blobs.exists(digest))) throw Errors.notFound();
     return serveBlobIfClean(ctx, {
       digest,
@@ -172,10 +175,11 @@ export class CargoAdapter implements RegistryPlugin {
     if (!pkg) throw Errors.notFound();
     const v = await findLiveVersion(pkg.id, version);
     if (!v) throw Errors.notFound();
-    const meta = (v.metadata ?? {}) as { index?: Record<string, unknown> };
+    const meta = parseCargoVersionMeta(v.metadata);
+    if (!meta) throw Errors.notFound();
     await updatePackageVersionMetadata(v.id, {
       ...meta,
-      index: { ...(meta.index ?? {}), yanked },
+      index: { ...meta.index, yanked },
     });
     return Response.json({ ok: true });
   }

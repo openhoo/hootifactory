@@ -3,7 +3,7 @@ export { runExternalScanners } from "./external";
 export { runGrypeIfAvailable } from "./grype";
 export { ADVISORIES, type Advisory, scanDependencies, scanForMalware } from "./heuristic";
 export { osvScanDependencies } from "./osv";
-export { asRecord } from "./scanner-json";
+export { asRecord, asString, asStringRecord } from "./scanner-json";
 export {
   type AvailableScanners,
   detectScanners,

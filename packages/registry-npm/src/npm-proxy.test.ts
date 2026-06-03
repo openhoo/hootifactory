@@ -7,6 +7,7 @@ import {
   normalizeNpmProxyManifest,
   npmUpstreamHost,
   npmUpstreamPackumentUrl,
+  parseNpmUpstreamPackument,
   rewriteNpmProxyManifestForExistingDist,
 } from "./npm-proxy";
 
@@ -56,6 +57,26 @@ describe("npm proxy helpers", () => {
       }),
     ).toBeNull();
     expect(normalizeNpmProxyManifest("pkg", "1.0.0", { dist: {} })).toBeNull();
+  });
+
+  test("parses upstream packuments defensively", () => {
+    expect(
+      parseNpmUpstreamPackument({
+        name: "pkg",
+        versions: {
+          "1.0.0": { version: "1.0.0" },
+          "2.0.0": "not a manifest",
+        },
+        "dist-tags": {
+          latest: "1.0.0",
+          broken: 2,
+        },
+      }),
+    ).toEqual({
+      versions: { "1.0.0": { version: "1.0.0" } },
+      "dist-tags": { latest: "1.0.0" },
+    });
+    expect(parseNpmUpstreamPackument(["not", "a", "packument"])).toBeNull();
   });
 
   test("rewrites local tarball URLs for existing and newly mirrored dists", () => {

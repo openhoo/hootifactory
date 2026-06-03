@@ -1,4 +1,5 @@
 import { timingSafeEqual } from "node:crypto";
+import { z } from "zod";
 import type { SignedOidcState } from "./oidc-types";
 
 function hmacHex(secret: string, body: string): string {
@@ -18,6 +19,18 @@ export function safeOidcReturnTo(value: string | null | undefined): string {
     return "/";
   }
 }
+
+const SignedOidcStateSchema = z.strictObject({
+  state: z.string().min(1).max(512),
+  nonce: z.string().min(1).max(512),
+  codeVerifier: z.string().min(1).max(512),
+  returnTo: z
+    .string()
+    .min(1)
+    .max(2048)
+    .refine((value) => safeOidcReturnTo(value) === value, "unsafe return path"),
+  expiresAt: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+});
 
 export function signOidcState(payload: SignedOidcState, secret: string): string {
   const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
@@ -41,18 +54,7 @@ export function verifyOidcState(
   } catch {
     return null;
   }
-  if (!isSignedOidcState(parsed) || parsed.expiresAt < now) return null;
-  return parsed;
-}
-
-function isSignedOidcState(value: unknown): value is SignedOidcState {
-  if (typeof value !== "object" || value === null) return false;
-  const v = value as Record<string, unknown>;
-  return (
-    typeof v.state === "string" &&
-    typeof v.nonce === "string" &&
-    typeof v.codeVerifier === "string" &&
-    typeof v.returnTo === "string" &&
-    typeof v.expiresAt === "number"
-  );
+  const state = SignedOidcStateSchema.safeParse(parsed);
+  if (!state.success || state.data.expiresAt < now) return null;
+  return state.data;
 }

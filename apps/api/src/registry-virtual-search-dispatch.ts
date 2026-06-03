@@ -19,6 +19,7 @@ import {
   type NugetSearchBody,
   npmSearchWindow,
   nugetSearchWindow,
+  parseNpmSearchBody,
   parseNugetSearchBody,
 } from "./registry-virtual-search";
 
@@ -62,7 +63,7 @@ async function dispatchVirtualNpmSearch(
             );
             memberSpan.setAttribute("http.response.status_code", res.status);
             if (res.status >= 400) return;
-            const body = (await res.json().catch(() => null)) as NpmSearchBody | null;
+            const body = parseNpmSearchBody(await res.json().catch(() => null));
             memberSpan.setAttribute("registry.virtual.member_total", body?.total ?? 0);
             if (body) bodies.push(body);
           },
@@ -123,8 +124,8 @@ async function dispatchVirtualNugetSearch(
               member.mountPath,
               ctx.repo.mountPath,
             );
-            memberSpan.setAttribute("registry.virtual.member_total", body.totalHits ?? 0);
-            bodies.push(body);
+            memberSpan.setAttribute("registry.virtual.member_total", body?.totalHits ?? 0);
+            if (body) bodies.push(body);
           },
         );
       }

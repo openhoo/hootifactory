@@ -1,8 +1,10 @@
 import { createRemoteJWKSet, jwtVerify } from "jose";
+import { z } from "zod";
 import { memoizeByKey } from "./memo";
 import type { VerifyIdTokenOptions } from "./oidc-types";
 
 const jwks = memoizeByKey((uri: string) => createRemoteJWKSet(new URL(uri)));
+const OidcClaimsRecordSchema = z.record(z.string(), z.unknown());
 
 /**
  * Securely verify an OIDC id_token: RS256/ES256 signature against the provider
@@ -20,5 +22,7 @@ export async function verifyIdToken(
   if (opts.nonce !== undefined && payload.nonce !== opts.nonce) {
     throw new Error("oidc: id_token nonce mismatch");
   }
-  return payload as Record<string, unknown>;
+  const claims = OidcClaimsRecordSchema.safeParse(payload);
+  if (!claims.success) throw new Error("oidc: invalid id_token payload");
+  return claims.data;
 }

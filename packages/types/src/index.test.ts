@@ -55,4 +55,20 @@ describe("shared type constants", () => {
     expect(refs.blobs).toEqual(["sha256:config", "sha256:layer", "sha256:artifact-blob"]);
     expect(refs.manifests).toEqual(["sha256:child-manifest"]);
   });
+
+  test("ignores non-object manifests and malformed descriptor entries", () => {
+    expect(ociManifestReferences("[]")).toEqual({ blobs: [], manifests: [] });
+    expect(
+      ociManifestReferences(
+        JSON.stringify({
+          config: { digest: "sha256:config" },
+          layers: [{ digest: 123 }, null, { digest: "sha256:layer" }],
+          manifests: [{ digest: "sha256:child" }, { mediaType: "missing digest" }],
+        }),
+      ),
+    ).toEqual({
+      blobs: ["sha256:config", "sha256:layer"],
+      manifests: ["sha256:child"],
+    });
+  });
 });

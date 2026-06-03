@@ -115,6 +115,7 @@
         "@hootifactory/db": "workspace:*",
         "jose": "^6.2.3",
         "openid-client": "^6.8.4",
+        "zod": "^4.4.3",
       },
     },
     "packages/config": {
@@ -129,6 +130,7 @@
       "version": "0.0.0",
       "dependencies": {
         "@hootifactory/types": "workspace:*",
+        "zod": "^4.4.3",
       },
     },
     "packages/core": {
@@ -175,6 +177,7 @@
         "@opentelemetry/sdk-trace-base": "^2.7.1",
         "@opentelemetry/sdk-trace-node": "^2.7.1",
         "@opentelemetry/semantic-conventions": "^1.41.1",
+        "zod": "^4.4.3",
       },
     },
     "packages/queue": {

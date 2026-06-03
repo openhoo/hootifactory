@@ -3,6 +3,7 @@ import {
   compareSemver,
   decodeBang,
   isPseudoVersion,
+  parseGoVersionMeta,
   parseSemver,
   pickLatest,
 } from "./go-validation";
@@ -35,5 +36,38 @@ describe("Go validation helpers", () => {
     expect(isPseudoVersion("v1.2.3-pre.0.20260101123456-abcdef1234567890")).toBe(true);
     expect(isPseudoVersion("v1.2.4-0.20260101123456-ABCDEF123456+incompatible")).toBe(true);
     expect(isPseudoVersion("v1.2.3")).toBe(false);
+  });
+
+  test("parses stored Go version metadata through a strict schema", () => {
+    expect(
+      parseGoVersionMeta({
+        mod: "module example.com/hoot\n",
+        zipDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        zipSize: 123,
+        time: "2026-01-02T03:04:05.000Z",
+      }),
+    ).toMatchObject({
+      zipDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      zipSize: 123,
+    });
+
+    expect(
+      parseGoVersionMeta({
+        mod: "module example.com/hoot\n",
+        zipDigest: "not-a-digest",
+        zipSize: 123,
+        time: "2026-01-02T03:04:05.000Z",
+      }),
+    ).toBeNull();
+
+    expect(
+      parseGoVersionMeta({
+        mod: "module example.com/hoot\n",
+        zipDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        zipSize: 123,
+        time: "2026-01-02T03:04:05.000Z",
+        extra: true,
+      }),
+    ).toBeNull();
   });
 });

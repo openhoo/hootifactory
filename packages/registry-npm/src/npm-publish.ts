@@ -1,4 +1,4 @@
-import { parseRegistryInput } from "@hootifactory/registry";
+import { jsonRecordOrEmpty, parseRegistryInput } from "@hootifactory/registry";
 import { parseNpmDistTagAssignment } from "./npm-dist-tags";
 import { decodeBase64 } from "./npm-http";
 import type { PublishVersion } from "./npm-integrity";
@@ -61,7 +61,7 @@ export function parseNpmPublishRequest(nameInput: string, rawBody: unknown): Npm
       code: "MANIFEST_INVALID",
       message: "invalid package version",
     });
-    const manifest = { ...(manifestRaw as Record<string, unknown>) };
+    const manifest = { ...jsonRecordOrEmpty(manifestRaw) };
     if (manifest.name !== undefined && manifest.name !== name) {
       return {
         ok: false,

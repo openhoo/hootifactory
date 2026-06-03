@@ -41,8 +41,9 @@ describe("npm HTTP helpers", () => {
     await expect(
       responseBytes(new Response("hello", { headers: { "content-length": "6" } }), 5),
     ).resolves.toBeNull();
-    await expect(
-      responseJson<{ ok: boolean }>(new Response(JSON.stringify({ ok: true })), 64),
-    ).resolves.toEqual({ ok: true });
+    await expect(responseJson(new Response(JSON.stringify({ ok: true })), 64)).resolves.toEqual({
+      ok: true,
+    });
+    await expect(responseJson(new Response("not json"), 64)).resolves.toBeNull();
   });
 });

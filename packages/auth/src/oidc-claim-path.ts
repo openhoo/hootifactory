@@ -4,13 +4,21 @@
  * trimmed string claims).
  */
 
+import { z } from "zod";
+
+const ClaimRecordSchema = z.record(z.string(), z.unknown());
+
+function claimRecord(value: unknown): Record<string, unknown> | null {
+  const parsed = ClaimRecordSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
 function claimValue(payload: Record<string, unknown>, claimPath: string): unknown {
   let current: unknown = payload;
   for (const part of claimPath.split(".")) {
-    if (!part || typeof current !== "object" || current === null || !(part in current)) {
-      return undefined;
-    }
-    current = (current as Record<string, unknown>)[part];
+    const record = claimRecord(current);
+    if (!part || !record || !(part in record)) return undefined;
+    current = record[part];
   }
   return current;
 }
