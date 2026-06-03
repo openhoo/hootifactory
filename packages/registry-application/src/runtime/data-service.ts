@@ -94,6 +94,30 @@ function assetRoleForBlobKind(kind: string): string | undefined {
   return undefined;
 }
 
+export function replacedAssetRef(input: {
+  previousDigest?: string | null;
+  currentDigest: string;
+  kind: string;
+  scope: string;
+  asset?: RegistryAssetWriteInput;
+}): { digest: string; scope: string; role?: string } | null {
+  if (!input.previousDigest || input.previousDigest === input.currentDigest) return null;
+  return {
+    digest: input.previousDigest,
+    scope: input.asset?.scope ?? input.scope,
+    role: input.asset?.role ?? assetRoleForBlobKind(input.kind),
+  };
+}
+
+async function deleteReplacedAssetRef(
+  ctx: RegistryRequestContext,
+  input: Parameters<typeof replacedAssetRef>[0],
+): Promise<void> {
+  const ref = replacedAssetRef(input);
+  if (!ref) return;
+  await deleteRegistryAssetRef(ctx, ref);
+}
+
 export function createRegistryDataService(ctx: RegistryRequestContext): RegistryDataService {
   return {
     packages: {
@@ -126,6 +150,13 @@ export function createRegistryDataService(ctx: RegistryRequestContext): Registry
           mediaType: input.blob.mediaType,
         });
         if (asset) {
+          await deleteReplacedAssetRef(ctx, {
+            previousDigest: input.blob.previousDigest,
+            currentDigest: result.stored.digest,
+            kind: input.blob.kind,
+            scope: input.blob.scope,
+            asset,
+          });
           await upsertRegistryAsset(ctx, {
             ...asset,
             packageId: input.packageId,

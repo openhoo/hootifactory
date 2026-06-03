@@ -12,8 +12,13 @@ import type {
 } from "./index";
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
-const ApiErrorBodySchema = z.looseObject({
+const LegacyApiErrorBodySchema = z.looseObject({
   error: z.string().min(1).optional(),
+});
+const ApiV1ErrorBodySchema = z.looseObject({
+  error: z.looseObject({
+    message: z.string().min(1),
+  }),
 });
 
 export class ApiError extends Error {
@@ -50,8 +55,13 @@ async function req<T = unknown>(
     data = text;
   }
   if (!res.ok) {
-    const errorBody = ApiErrorBodySchema.safeParse(data);
-    const msg = errorBody.success ? (errorBody.data.error ?? res.statusText) : res.statusText;
+    const legacyError = LegacyApiErrorBodySchema.safeParse(data);
+    const v1Error = ApiV1ErrorBodySchema.safeParse(data);
+    const msg = legacyError.success
+      ? (legacyError.data.error ?? res.statusText)
+      : v1Error.success
+        ? v1Error.data.error.message
+        : res.statusText;
     throw new ApiError(res.status, msg, data);
   }
   return data as T;

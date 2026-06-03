@@ -34,6 +34,35 @@ describe("Hootifactory API client", () => {
     });
   });
 
+  test("uses API v1 nested error messages", async () => {
+    const client = createHootifactoryClient(async () =>
+      Response.json(
+        { error: { code: "BAD_REQUEST", message: "invalid token request", issues: {} } },
+        { status: 400 },
+      ),
+    );
+
+    await expect(client.assets("repo-1")).rejects.toMatchObject({
+      status: 400,
+      message: "invalid token request",
+      data: { error: { code: "BAD_REQUEST", message: "invalid token request", issues: {} } },
+    });
+  });
+
+  test("falls back for malformed API v1 error bodies", async () => {
+    const client = createHootifactoryClient(async () =>
+      Response.json(
+        { error: { code: "BAD_REQUEST", message: "" } },
+        { status: 400, statusText: "Bad Request" },
+      ),
+    );
+
+    await expect(client.assets("repo-1")).rejects.toMatchObject({
+      status: 400,
+      message: "Bad Request",
+    });
+  });
+
   test("uses API v1 paths for registry version and asset contracts", async () => {
     const requests: Array<{ path: string; method?: string }> = [];
     const client = createHootifactoryClient(async (path, init) => {
