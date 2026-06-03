@@ -14,6 +14,10 @@ type BlobResponseOptions = {
   notModified?: () => Response | null;
 };
 
+function attachmentFilename(digest: string): string {
+  return digest.replace(/[^A-Za-z0-9._-]/g, "_");
+}
+
 export async function isArtifactBlocked(
   ctx: RegistryRequestContext,
   digest: string,
@@ -71,6 +75,11 @@ export async function serveBlobWithScanGate(
       ? (ctx as { getBlob?: (digest: string) => ConstructorParameters<typeof Response>[0] }).getBlob
       : undefined;
   return new Response(read?.(opts.digest) ?? blobStore.get(opts.digest), {
-    headers: { "content-type": opts.contentType, ...opts.extraHeaders },
+    headers: {
+      "content-disposition": `attachment; filename="${attachmentFilename(opts.digest)}"`,
+      "content-type": opts.contentType,
+      "x-content-type-options": "nosniff",
+      ...opts.extraHeaders,
+    },
   });
 }

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { env } from "@hootifactory/config";
 import { app } from "./app";
+import { securityHeadersForNodeEnv } from "./middleware/security-headers";
 
 describe("request body guard", () => {
   test("echoes request and correlation identifiers on responses", async () => {
@@ -13,6 +14,23 @@ describe("request body guard", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("x-request-id")).toBe("req-test");
     expect(response.headers.get("x-correlation-id")).toBe("corr-test");
+  });
+
+  test("adds browser security headers to responses", async () => {
+    const response = await app.fetch(new Request("http://localhost/healthz"));
+
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(response.headers.get("x-frame-options")).toBe("DENY");
+    expect(response.headers.get("referrer-policy")).toBe("strict-origin-when-cross-origin");
+    expect(response.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
+    expect(response.headers.get("content-security-policy")).toContain("object-src 'none'");
+  });
+
+  test("enables HSTS only for production", () => {
+    expect(securityHeadersForNodeEnv("development")["strict-transport-security"]).toBeUndefined();
+    expect(securityHeadersForNodeEnv("production")["strict-transport-security"]).toBe(
+      "max-age=63072000; includeSubDomains",
+    );
   });
 
   test("rejects requests whose declared body exceeds the configured buffered upload ceiling", async () => {

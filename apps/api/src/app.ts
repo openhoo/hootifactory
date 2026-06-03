@@ -13,6 +13,7 @@ import {
   enforceRequestBodyLimits,
   rejectCrossOriginSessionWrites,
 } from "./middleware/request-safety";
+import { securityHeaders } from "./middleware/security-headers";
 import { handleRegistryRequest } from "./registry";
 import { apiV1Router } from "./routes/api-v1";
 import { authRouter } from "./routes/auth";
@@ -25,6 +26,8 @@ import type { AppEnv } from "./types";
 initializeObservability({ serviceRole: "api" });
 
 export const app = new Hono<AppEnv>();
+
+app.use("*", securityHeaders);
 
 app.use("*", async (c, next) => {
   await instrumentHttpRequest(c.req.raw, async (telemetry) => {
