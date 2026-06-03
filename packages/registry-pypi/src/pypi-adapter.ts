@@ -1,4 +1,3 @@
-import { and, eq, isNull, packages, packageVersions } from "@hootifactory/db";
 import {
   basicAuthChallenge,
   digestHex,
@@ -17,6 +16,10 @@ import {
   findOrCreatePackage,
   findPackageByName,
   findVersion,
+  listLivePackageVersions,
+  listRepositoryPackageNames,
+  listRepositoryVersionMetadata,
+  patchPackageVersion,
   releaseBlobRef,
   serveBlobIfClean,
   storeBlobWithRef,
@@ -92,10 +95,7 @@ export class PypiAdapter implements RegistryPlugin {
     const redirect = this.redirectToSlash(req);
     if (redirect) return redirect;
 
-    const rows = (await ctx.db
-      .select({ name: packages.name })
-      .from(packages)
-      .where(eq(packages.repositoryId, ctx.repo.id))) as Array<{ name: string }>;
+    const rows = await listRepositoryPackageNames(ctx);
     const projects = rows.map((r) => r.name).sort();
     if (preferredSimpleResponse(req.headers.get("accept")) === "json") {
       return Response.json(buildSimpleRootJson(projects), {
@@ -112,27 +112,12 @@ export class PypiAdapter implements RegistryPlugin {
     ctx: RegistryRequestContext,
     packageId?: string,
   ): Promise<PypiFileMeta[]> {
-    const rows = (await ctx.db
-      .select({ metadata: packageVersions.metadata })
-      .from(packageVersions)
-      .innerJoin(packages, eq(packageVersions.packageId, packages.id))
-      .where(
-        and(
-          packageId
-            ? eq(packageVersions.packageId, packageId)
-            : eq(packages.repositoryId, ctx.repo.id),
-          isNull(packageVersions.deletedAt),
-        ),
-      )) as Array<{ metadata: unknown }>;
+    const rows = await listRepositoryVersionMetadata(ctx, { packageId, liveOnly: true });
     return rows.flatMap((r) => (r.metadata as { files?: PypiFileMeta[] })?.files ?? []);
   }
 
   private async allFiles(ctx: RegistryRequestContext): Promise<PypiFileMeta[]> {
-    const rows = (await ctx.db
-      .select({ metadata: packageVersions.metadata })
-      .from(packageVersions)
-      .innerJoin(packages, eq(packageVersions.packageId, packages.id))
-      .where(eq(packages.repositoryId, ctx.repo.id))) as Array<{ metadata: unknown }>;
+    const rows = await listRepositoryVersionMetadata(ctx, { liveOnly: false });
     return rows.flatMap((r) => (r.metadata as { files?: PypiFileMeta[] })?.files ?? []);
   }
 
@@ -152,14 +137,7 @@ export class PypiAdapter implements RegistryPlugin {
     const pkg = await findPackageByName(ctx, name);
     if (!pkg) return new Response("Not Found", { status: 404 });
     // Live versions only — pruned releases must drop out of the PEP 503 index.
-    const versions = await ctx.db
-      .select({
-        version: packageVersions.version,
-        metadata: packageVersions.metadata,
-        createdAt: packageVersions.createdAt,
-      })
-      .from(packageVersions)
-      .where(and(eq(packageVersions.packageId, pkg.id), isNull(packageVersions.deletedAt)));
+    const versions = await listLivePackageVersions(ctx, pkg.id);
     const files = buildSimpleProjectFiles(versions, {
       baseUrl: ctx.baseUrl,
       mountPath: ctx.repo.mountPath,
@@ -283,43 +261,33 @@ export class PypiAdapter implements RegistryPlugin {
     });
     if (created) return { ok: true, versionId: created };
 
-    return ctx.db.transaction(async (tx) => {
-      const [row] = await tx
-        .select({
-          id: packageVersions.id,
-          metadata: packageVersions.metadata,
-          deletedAt: packageVersions.deletedAt,
-        })
-        .from(packageVersions)
-        .where(
-          and(
-            eq(packageVersions.packageId, opts.packageId),
-            eq(packageVersions.version, opts.version),
-          ),
-        )
-        .for("update")
-        .limit(1);
-      if (!row?.id || row.deletedAt) return { ok: false, reason: "version_exists" as const };
+    return patchPackageVersion<AddPypiFileResult>(ctx, {
+      packageId: opts.packageId,
+      version: opts.version,
+      patch: (row) => {
+        if (!row?.id || row.deletedAt) {
+          return { result: { ok: false, reason: "version_exists" as const } };
+        }
 
-      const metadata = normalizePypiVersionMetadata(row.metadata);
-      if ((metadata.files ?? []).some((f) => f.filename === opts.fileMeta.filename)) {
-        return { ok: false, reason: "file_exists" as const };
-      }
+        const metadata = normalizePypiVersionMetadata(row.metadata);
+        if ((metadata.files ?? []).some((f) => f.filename === opts.fileMeta.filename)) {
+          return { result: { ok: false, reason: "file_exists" as const } };
+        }
 
-      const files = [...(metadata.files ?? []), opts.fileMeta];
-      await tx
-        .update(packageVersions)
-        .set({
-          metadata: {
-            ...metadata,
-            name: metadata.name ?? opts.rawName,
-            requiresPython: metadata.requiresPython ?? opts.requiresPython,
-            files,
+        const files = [...(metadata.files ?? []), opts.fileMeta];
+        return {
+          update: {
+            metadata: {
+              ...metadata,
+              name: metadata.name ?? opts.rawName,
+              requiresPython: metadata.requiresPython ?? opts.requiresPython,
+              files,
+            },
+            sizeBytes: files.reduce((sum, file) => sum + file.size, 0),
           },
-          sizeBytes: files.reduce((sum, file) => sum + file.size, 0),
-        })
-        .where(eq(packageVersions.id, row.id));
-      return { ok: true, versionId: row.id };
+          result: { ok: true, versionId: row.id },
+        };
+      },
     });
   }
 }

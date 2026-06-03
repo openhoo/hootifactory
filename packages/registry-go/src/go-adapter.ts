@@ -1,4 +1,3 @@
-import { and, asc, eq, isNull, packageVersions } from "@hootifactory/db";
 import {
   basicAuthChallenge,
   Errors,
@@ -17,6 +16,8 @@ import {
   findOrCreatePackage,
   findPackageByName,
   isArtifactBlocked,
+  listLivePackageVersions,
+  packageVersionExists,
   storeBlobWithRef,
 } from "@hootifactory/registry-application";
 import { parseGoUploadRequest, validateGoUploadPlan } from "./go-upload";
@@ -29,12 +30,6 @@ import {
   isPseudoVersion,
   pickLatest,
 } from "./go-validation";
-
-type GoVersionRow = {
-  version: string;
-  metadata: unknown;
-  createdAt: Date;
-};
 
 /** Go module proxy (GOPROXY protocol) + a custom upload endpoint for hosted modules. */
 export class GoAdapter implements RegistryPlugin {
@@ -80,16 +75,8 @@ export class GoAdapter implements RegistryPlugin {
     }
   }
 
-  private async versions(ctx: RegistryRequestContext, packageId: string): Promise<GoVersionRow[]> {
-    return ctx.db
-      .select({
-        version: packageVersions.version,
-        metadata: packageVersions.metadata,
-        createdAt: packageVersions.createdAt,
-      })
-      .from(packageVersions)
-      .where(and(eq(packageVersions.packageId, packageId), isNull(packageVersions.deletedAt)))
-      .orderBy(asc(packageVersions.createdAt));
+  private versions(ctx: RegistryRequestContext, packageId: string) {
+    return listLivePackageVersions(ctx, packageId, { orderByCreated: "asc" });
   }
 
   private async list(moduleName: string, ctx: RegistryRequestContext): Promise<Response> {
@@ -175,14 +162,9 @@ export class GoAdapter implements RegistryPlugin {
     const { metadata, scope, version, zipBytes } = upload;
     const existingPkg = await findPackageByName(ctx, moduleName);
     if (existingPkg) {
-      const [existing] = await ctx.db
-        .select({ id: packageVersions.id })
-        .from(packageVersions)
-        .where(
-          and(eq(packageVersions.packageId, existingPkg.id), eq(packageVersions.version, version)),
-        )
-        .limit(1);
-      if (existing) return Response.json({ error: "version already exists" }, { status: 409 });
+      if (await packageVersionExists(ctx, existingPkg.id, version)) {
+        return Response.json({ error: "version already exists" }, { status: 409 });
+      }
     }
     const uploadError = validateGoUploadPlan(moduleName, upload);
     if (uploadError) return Response.json(uploadError.body, { status: uploadError.status });

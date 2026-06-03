@@ -92,6 +92,22 @@ const rules: BoundaryRule[] = [
     ],
   },
   {
+    name: "registry package/version adapters stay DB-free",
+    roots: [
+      "packages/registry-cargo/src",
+      "packages/registry-cargo/package.json",
+      "packages/registry-go/src",
+      "packages/registry-go/package.json",
+      "packages/registry-npm/src",
+      "packages/registry-npm/package.json",
+      "packages/registry-nuget/src",
+      "packages/registry-nuget/package.json",
+      "packages/registry-pypi/src",
+      "packages/registry-pypi/package.json",
+    ],
+    forbidden: [/@hootifactory\/db\b/, /\bctx\.db\b/],
+  },
+  {
     name: "registry protocol plugins avoid delivery and platform infrastructure",
     roots: [
       "packages/registry-cargo/src",

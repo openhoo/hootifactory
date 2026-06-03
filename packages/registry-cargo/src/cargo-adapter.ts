@@ -1,4 +1,3 @@
-import { and, asc, eq, isNull, packageVersions, users } from "@hootifactory/db";
 import {
   Errors,
   type HttpMethod,
@@ -15,13 +14,16 @@ import {
   findLiveVersion,
   findOrCreatePackage,
   findPackageByName,
+  listLivePackageVersions,
+  listLiveVersionPublishers,
+  listPackageVersionNames,
   serveBlobIfClean,
   storeBlobWithRef,
+  updatePackageVersionMetadata,
 } from "@hootifactory/registry-application";
 import {
   buildCargoOwnersBody,
   buildCargoOwnersUpdateBody,
-  type CargoOwnerRow,
   parseCargoOwnersRequest,
 } from "./cargo-owners";
 import {
@@ -56,9 +58,6 @@ function parseCrateVersion(version: string): string {
     message: "invalid crate version",
   });
 }
-
-type CargoIndexRow = { metadata: unknown };
-type CargoExistingVersionRow = { version: string };
 
 /** Cargo sparse registry: config.json, sharded index, publish + download. */
 export class CargoAdapter implements RegistryPlugin {
@@ -134,11 +133,7 @@ export class CargoAdapter implements RegistryPlugin {
     if (path !== cargoIndexPath(name)) return new Response("", { status: 404 });
     const pkg = await this.findCrate(ctx, name);
     if (!pkg) return new Response("", { status: 404 });
-    const vers = (await ctx.db
-      .select({ metadata: packageVersions.metadata })
-      .from(packageVersions)
-      .where(and(eq(packageVersions.packageId, pkg.id), isNull(packageVersions.deletedAt)))
-      .orderBy(asc(packageVersions.createdAt))) as CargoIndexRow[];
+    const vers = await listLivePackageVersions(ctx, pkg.id, { orderByCreated: "asc" });
     const lines = vers
       .map((v) => JSON.stringify((v.metadata as unknown as CargoVersionMeta).index))
       .join("\n");
@@ -178,10 +173,10 @@ export class CargoAdapter implements RegistryPlugin {
     const v = await findLiveVersion(ctx, pkg.id, version);
     if (!v) throw Errors.notFound();
     const meta = (v.metadata ?? {}) as { index?: Record<string, unknown> };
-    await ctx.db
-      .update(packageVersions)
-      .set({ metadata: { ...meta, index: { ...(meta.index ?? {}), yanked } } })
-      .where(eq(packageVersions.id, v.id));
+    await updatePackageVersionMetadata(ctx, v.id, {
+      ...meta,
+      index: { ...(meta.index ?? {}), yanked },
+    });
     return Response.json({ ok: true });
   }
 
@@ -189,16 +184,7 @@ export class CargoAdapter implements RegistryPlugin {
     crate = parseCrateName(crate).toLowerCase();
     const pkg = await this.findCrate(ctx, crate);
     if (!pkg) throw Errors.notFound();
-    const rows = (await ctx.db
-      .select({
-        id: users.id,
-        login: users.username,
-        name: users.displayName,
-      })
-      .from(packageVersions)
-      .innerJoin(users, eq(packageVersions.publishedByUserId, users.id))
-      .where(and(eq(packageVersions.packageId, pkg.id), isNull(packageVersions.deletedAt)))
-      .orderBy(asc(packageVersions.createdAt))) as CargoOwnerRow[];
+    const rows = await listLiveVersionPublishers(ctx, pkg.id);
     return Response.json(buildCargoOwnersBody(rows));
   }
 
@@ -228,10 +214,7 @@ export class CargoAdapter implements RegistryPlugin {
       repositoryId: ctx.repo.id,
       name,
     });
-    const existingVersions = (await ctx.db
-      .select({ version: packageVersions.version })
-      .from(packageVersions)
-      .where(eq(packageVersions.packageId, pkg.id))) as CargoExistingVersionRow[];
+    const existingVersions = await listPackageVersionNames(ctx, pkg.id);
     if (
       existingVersions.some(
         (version) => cargoVersionIdentity(version.version) === cargoVersionIdentity(meta.vers),
