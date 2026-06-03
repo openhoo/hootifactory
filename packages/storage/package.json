@@ -13,7 +13,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@hootifactory/config": "workspace:*",
-    "@hootifactory/types": "workspace:*"
+    "@hootifactory/core": "workspace:*",
+    "@hootifactory/config": "workspace:*"
   }
 }

@@ -1,11 +1,8 @@
 import { and, eq, isNull, packages, packageVersions } from "@hootifactory/db";
 import {
   basicAuthChallenge,
-  createPackageVersion,
+  digestHex,
   Errors,
-  findOrCreatePackage,
-  findPackageByName,
-  findVersion,
   type HttpMethod,
   type Permission,
   parseRegistryInput,
@@ -14,11 +11,16 @@ import {
   type RouteEntry,
   type RouteMatch,
   readWritePermission,
+} from "@hootifactory/registry";
+import {
+  createPackageVersion,
+  findOrCreatePackage,
+  findPackageByName,
+  findVersion,
   releaseBlobRef,
   serveBlobIfClean,
   storeBlobWithRef,
-} from "@hootifactory/registry";
-import { digestHex } from "@hootifactory/storage";
+} from "@hootifactory/registry-application";
 import { parsePypiUploadRequest } from "./pypi-upload";
 import {
   type AddPypiFileResult,
@@ -90,10 +92,10 @@ export class PypiAdapter implements RegistryPlugin {
     const redirect = this.redirectToSlash(req);
     if (redirect) return redirect;
 
-    const rows = await ctx.db
+    const rows = (await ctx.db
       .select({ name: packages.name })
       .from(packages)
-      .where(eq(packages.repositoryId, ctx.repo.id));
+      .where(eq(packages.repositoryId, ctx.repo.id))) as Array<{ name: string }>;
     const projects = rows.map((r) => r.name).sort();
     if (preferredSimpleResponse(req.headers.get("accept")) === "json") {
       return Response.json(buildSimpleRootJson(projects), {
@@ -110,7 +112,7 @@ export class PypiAdapter implements RegistryPlugin {
     ctx: RegistryRequestContext,
     packageId?: string,
   ): Promise<PypiFileMeta[]> {
-    const rows = await ctx.db
+    const rows = (await ctx.db
       .select({ metadata: packageVersions.metadata })
       .from(packageVersions)
       .innerJoin(packages, eq(packageVersions.packageId, packages.id))
@@ -121,16 +123,16 @@ export class PypiAdapter implements RegistryPlugin {
             : eq(packages.repositoryId, ctx.repo.id),
           isNull(packageVersions.deletedAt),
         ),
-      );
+      )) as Array<{ metadata: unknown }>;
     return rows.flatMap((r) => (r.metadata as { files?: PypiFileMeta[] })?.files ?? []);
   }
 
   private async allFiles(ctx: RegistryRequestContext): Promise<PypiFileMeta[]> {
-    const rows = await ctx.db
+    const rows = (await ctx.db
       .select({ metadata: packageVersions.metadata })
       .from(packageVersions)
       .innerJoin(packages, eq(packageVersions.packageId, packages.id))
-      .where(eq(packages.repositoryId, ctx.repo.id));
+      .where(eq(packages.repositoryId, ctx.repo.id))) as Array<{ metadata: unknown }>;
     return rows.flatMap((r) => (r.metadata as { files?: PypiFileMeta[] })?.files ?? []);
   }
 

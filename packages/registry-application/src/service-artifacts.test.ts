@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { artifacts, scanPolicies } from "@hootifactory/db";
-import type { RegistryRequestContext } from "./format/adapter";
+import type { RegistryRequestContext } from "@hootifactory/registry";
 import { serveBlobIfClean } from "./service-artifacts";
 
 /**

@@ -24,7 +24,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Loading, useOrg, useRepos } from "@/layout/app-shell";
+import { useOrg, useRepos } from "@/features/orgs/context";
+import { Loading } from "@/layout/app-shell";
 import { api, apiErrorMessage } from "@/lib/api";
 import { snippetsFor } from "@/lib/format";
 

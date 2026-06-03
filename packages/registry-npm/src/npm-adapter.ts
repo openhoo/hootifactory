@@ -1,4 +1,3 @@
-import { env } from "@hootifactory/config";
 import {
   and,
   count,
@@ -13,12 +12,8 @@ import {
 } from "@hootifactory/db";
 import {
   basicAuthChallenge,
-  commitVersionOrReleaseBlob,
   Errors,
   type FormatMetadata,
-  findLiveVersion,
-  findOrCreatePackage,
-  findPackageByName,
   type HttpMethod,
   type Permission,
   parseRegistryInput,
@@ -27,12 +22,18 @@ import {
   type RouteEntry,
   type RouteMatch,
   safeFetch,
+} from "@hootifactory/registry";
+import {
+  commitVersionOrReleaseBlob,
+  findLiveVersion,
+  findOrCreatePackage,
+  findPackageByName,
   serveBlobIfClean,
   setDistTag,
   storeBlobWithRef,
   upsertPackageVersion,
   upsertPackageVersionWithBlobRef,
-} from "@hootifactory/registry";
+} from "@hootifactory/registry-application";
 import {
   parseNpmDistTag,
   parseNpmDistTagAssignment,
@@ -62,6 +63,7 @@ import {
   buildNpmSearchObject,
   buildNpmSearchResponse,
   type NpmSearchObject,
+  type NpmSearchVersionInput,
   parseNpmSearchQuery,
 } from "./npm-search";
 import {
@@ -81,6 +83,21 @@ function parseNpmName(name: string): string {
     message: "invalid package name",
   });
 }
+
+type NpmVersionRow = NpmSearchVersionInput & {
+  id: string;
+  sizeBytes: number;
+};
+
+type NpmDistTagRow = {
+  tag: string;
+  version: string;
+};
+
+type NpmPackageRow = {
+  id: string;
+  name: string;
+};
 
 export class NpmAdapter implements RegistryPlugin {
   readonly format = "npm" as const;
@@ -153,7 +170,10 @@ export class NpmAdapter implements RegistryPlugin {
     return findPackageByName(ctx, name);
   }
 
-  private async liveVersions(ctx: RegistryRequestContext, packageId: string) {
+  private async liveVersions(
+    ctx: RegistryRequestContext,
+    packageId: string,
+  ): Promise<NpmVersionRow[]> {
     return ctx.db
       .select()
       .from(packageVersions)
@@ -164,11 +184,13 @@ export class NpmAdapter implements RegistryPlugin {
     ctx: RegistryRequestContext,
     packageId: string,
   ): Promise<Record<string, string>> {
-    const rows = await ctx.db
+    const rows = (await ctx.db
       .select({ tag: versionTags.tag, version: packageVersions.version })
       .from(versionTags)
       .innerJoin(packageVersions, eq(versionTags.versionId, packageVersions.id))
-      .where(and(eq(versionTags.packageId, packageId), isNull(packageVersions.deletedAt)));
+      .where(
+        and(eq(versionTags.packageId, packageId), isNull(packageVersions.deletedAt)),
+      )) as NpmDistTagRow[];
     const out: Record<string, string> = {};
     for (const r of rows) out[r.tag] = r.version;
     return out;
@@ -301,10 +323,10 @@ export class NpmAdapter implements RegistryPlugin {
     // Any version row, including a retention tombstone, reserves the npm version.
     // Retention hides bytes from readers; it must not make immutable versions
     // publishable again.
-    const used = await ctx.db
+    const used = (await ctx.db
       .select({ version: packageVersions.version })
       .from(packageVersions)
-      .where(eq(packageVersions.packageId, pkg.id));
+      .where(eq(packageVersions.packageId, pkg.id))) as Array<{ version: string }>;
     const usedSet = new Set(used.map((v) => v.version));
 
     for (const { version: ver, manifest, tarball } of publishVersions) {
@@ -498,11 +520,14 @@ export class NpmAdapter implements RegistryPlugin {
     if (!upstreamHost) return false;
     const url = npmUpstreamPackumentUrl(upstreamBase, pkgName);
     // safeFetch rejects private/loopback/metadata hosts and re-validates redirects.
-    const res = await safeFetch(url, { headers: { accept: "application/json" } }).catch(() => null);
+    const res = await safeFetch(url, {
+      enforcePublicNetwork: ctx.limits.enforcePublicNetwork,
+      headers: { accept: "application/json" },
+    }).catch(() => null);
     if (!res?.ok) return false;
     const packument = await responseJson<NpmUpstreamPackument>(
       res,
-      Math.min(env.REGISTRY_MAX_UPLOAD_BYTES, 10 * 1024 * 1024),
+      Math.min(ctx.limits.maxUploadBytes, 10 * 1024 * 1024),
     );
     if (!packument) return false;
     const scope = pkgName.startsWith("@") ? (pkgName.split("/")[0] ?? null) : null;
@@ -550,12 +575,15 @@ export class NpmAdapter implements RegistryPlugin {
       let tRes: Response | null = null;
       try {
         if (!isNpmTarballUrlOnUpstreamHost(tarballUrl, upstreamHost)) continue;
-        tRes = await safeFetch(tarballUrl, { allowedHosts: [upstreamHost] });
+        tRes = await safeFetch(tarballUrl, {
+          allowedHosts: [upstreamHost],
+          enforcePublicNetwork: ctx.limits.enforcePublicNetwork,
+        });
       } catch {
         continue;
       }
       if (!tRes?.ok) continue;
-      const tarball = await responseBytes(tRes, env.REGISTRY_MAX_UPLOAD_BYTES);
+      const tarball = await responseBytes(tRes, ctx.limits.maxUploadBytes);
       if (!tarball) continue;
       if (!upstreamDistMatchesBytes(upstreamDist, tarball)) continue;
       pkg ??= await findOrCreatePackage({
@@ -628,16 +656,24 @@ export class NpmAdapter implements RegistryPlugin {
       eq(packages.repositoryId, ctx.repo.id),
       text ? like(packages.name, `%${text}%`) : sql`true`,
     );
-    const totalRows = await ctx.db.select({ value: count() }).from(packages).where(where);
-    const rows = await ctx.db.select().from(packages).where(where).limit(size).offset(from);
+    const totalRows = (await ctx.db
+      .select({ value: count() })
+      .from(packages)
+      .where(where)) as Array<{ value: number }>;
+    const rows = (await ctx.db
+      .select()
+      .from(packages)
+      .where(where)
+      .limit(size)
+      .offset(from)) as NpmPackageRow[];
 
     const objects: NpmSearchObject[] = [];
     for (const p of rows) {
-      const versions = await ctx.db
+      const versions = (await ctx.db
         .select()
         .from(packageVersions)
         .where(and(eq(packageVersions.packageId, p.id), isNull(packageVersions.deletedAt)))
-        .orderBy(desc(packageVersions.createdAt), desc(packageVersions.id));
+        .orderBy(desc(packageVersions.createdAt), desc(packageVersions.id))) as NpmVersionRow[];
       if (versions.length === 0) continue;
 
       const tags = await this.distTags(ctx, p.id);

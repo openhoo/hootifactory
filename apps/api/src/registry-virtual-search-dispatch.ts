@@ -2,11 +2,11 @@ import { withSpan } from "@hootifactory/observability";
 import {
   Errors,
   type HttpMethod,
-  loadVirtualMembers,
   type RegistryPlugin,
   type RegistryRequestContext,
   type RouteMatch,
 } from "@hootifactory/registry";
+import { loadVirtualMembers } from "@hootifactory/registry-application";
 import { adapterResponseOrRegistryError } from "./registry-adapter";
 import { repoSpanAttributes } from "./registry-utils";
 import { authorizeVirtualMember } from "./registry-virtual-member";

@@ -1,13 +1,16 @@
 import { and, blobRefs, eq, repositories, uploadSessions } from "@hootifactory/db";
 import {
+  computeDigest,
   Errors,
-  ensureBlobRef,
   parseRegistryInput,
   type RegistryRequestContext,
+  stagingKey,
+} from "@hootifactory/registry";
+import {
+  ensureBlobRef,
   storeBlobStreamWithRef,
   storeBlobWithRef,
-} from "@hootifactory/registry";
-import { computeDigest, stagingKey } from "@hootifactory/storage";
+} from "@hootifactory/registry-application";
 import {
   buildOciBlobCreatedResponse,
   buildOciUploadAcceptedResponse,
@@ -30,6 +33,14 @@ import {
 const UPLOAD_TTL_MS = 24 * 60 * 60 * 1000;
 
 type Tx = Parameters<Parameters<RegistryRequestContext["db"]["transaction"]>[0]>[0];
+
+type MountSourceRow = {
+  orgId: string;
+  id: string;
+  mountPath: string;
+  visibility: "private" | "public";
+  scope: string;
+};
 
 export async function startUpload(
   image: string,
@@ -174,7 +185,7 @@ async function tryCrossRepositoryMount(input: {
   ctx: RegistryRequestContext;
 }): Promise<Response | null> {
   const sources = (
-    await input.ctx.db
+    (await input.ctx.db
       .select({
         orgId: repositories.orgId,
         id: repositories.id,
@@ -184,7 +195,7 @@ async function tryCrossRepositoryMount(input: {
       })
       .from(blobRefs)
       .innerJoin(repositories, eq(blobRefs.repositoryId, repositories.id))
-      .where(eq(blobRefs.digest, input.mount))
+      .where(eq(blobRefs.digest, input.mount))) as MountSourceRow[]
   ).map((source) => ({
     ...source,
     full: `${source.mountPath.replace(/^v2\//, "")}/${source.scope}`,

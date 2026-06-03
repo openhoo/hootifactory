@@ -1,7 +1,6 @@
 import { Errors } from "@hootifactory/core";
 import { and, blobRefs, blobs, eq, repositories, sql } from "@hootifactory/db";
-import { type BlobStore, computeDigest } from "@hootifactory/storage";
-import type { RegistryRequestContext } from "./format/adapter";
+import { type BlobStore, computeDigest, type RegistryRequestContext } from "@hootifactory/registry";
 import {
   adjustStorageUsedTx,
   assertStorageQuota,

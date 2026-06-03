@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { computeDigest } from "@hootifactory/storage";
+import { computeDigest } from "@hootifactory/registry";
 import {
   buildNpmLocalTarballUrl,
   buildNpmMirroredDist,

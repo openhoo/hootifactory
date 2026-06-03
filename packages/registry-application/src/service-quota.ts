@@ -1,6 +1,6 @@
 import { Errors } from "@hootifactory/core";
 import { and, blobRefs, eq, isNull, quotas, repositories, sql } from "@hootifactory/db";
-import type { RegistryRequestContext } from "./format/adapter";
+import type { RegistryRequestContext } from "@hootifactory/registry";
 
 export type Tx = Parameters<Parameters<RegistryRequestContext["db"]["transaction"]>[0]>[0];
 

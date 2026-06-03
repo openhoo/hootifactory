@@ -1,5 +1,4 @@
-import { parseRegistryInput } from "@hootifactory/registry";
-import { computeDigest, digestHex } from "@hootifactory/storage";
+import { computeDigest, digestHex, parseRegistryInput } from "@hootifactory/registry";
 import {
   filenameVersionMatches,
   PypiFilenameSchema,

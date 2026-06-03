@@ -1,9 +1,133 @@
-import type { Action, Decision, Principal, ResourceRef } from "@hootifactory/auth";
-import type { Database, repositories } from "@hootifactory/db";
-import type { BlobStore } from "@hootifactory/storage";
-import type { PackageFormat } from "@hootifactory/types";
+import type { PackageFormat, RepoKind, Visibility } from "@hootifactory/types";
 
-export type ResolvedRepo = typeof repositories.$inferSelect;
+export type Action = "read" | "write" | "delete" | "admin";
+export type TokenAction = Action;
+export type RoleName = "viewer" | "developer" | "admin" | "owner";
+export type PolicyName = "scan" | "quota" | "retention" | "*";
+export type TokenTarget = "self" | "org";
+export type DenialCode =
+  | "unauthenticated"
+  | "cross_org"
+  | "not_member"
+  | "insufficient_scope"
+  | "insufficient_role"
+  | "forbidden";
+
+export type TokenGrant =
+  | { resource: "org"; actions: TokenAction[] }
+  | { resource: "repository"; repository: string; actions: TokenAction[] }
+  | { resource: "package"; repository: string; package: string; actions: TokenAction[] }
+  | { resource: "artifact"; repository: string; artifact: string; actions: TokenAction[] }
+  | { resource: "policy"; policy: PolicyName; repository?: string; actions: TokenAction[] }
+  | { resource: "token"; target: TokenTarget; actions: TokenAction[] };
+
+export interface TokenScope {
+  repository: string;
+  actions: TokenAction[];
+}
+
+export interface RegistryAccess {
+  type: string;
+  name: string;
+  actions: string[];
+}
+
+export type RegistryPrincipal =
+  | { kind: "anonymous" }
+  | { kind: "user"; userId: string; username: string }
+  | {
+      kind: "token";
+      tokenId: string;
+      orgId: string;
+      ownerUserId: string | null;
+      ownerUsername?: string | null;
+      tokenName?: string;
+      grants: TokenGrant[];
+      scopes: TokenScope[];
+      role: RoleName | null;
+      isRobot: boolean;
+    }
+  | { kind: "registryToken"; subject: string; access: RegistryAccess[] };
+
+export interface ResourceRef {
+  type: "org" | "repository" | "package" | "artifact" | "policy" | "token" | "system";
+  orgId?: string;
+  repositoryId?: string;
+  repositoryName?: string;
+  packageName?: string;
+  artifactRef?: string;
+  policy?: PolicyName;
+  tokenTarget?: TokenTarget;
+  tokenId?: string;
+  visibility?: Visibility;
+}
+
+export interface Decision {
+  allowed: boolean;
+  code?: DenialCode;
+  reason?: string;
+}
+
+export interface ResolvedRepo {
+  id: string;
+  orgId: string;
+  name: string;
+  format: PackageFormat;
+  kind: RepoKind;
+  visibility: Visibility;
+  mountPath: string;
+  storagePrefix: string;
+  description: string | null;
+  config: Record<string, unknown>;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface BlobStat {
+  size: number;
+  etag?: string;
+}
+
+export type BlobData = Uint8Array | ArrayBuffer | Blob | string | ReadableStream<Uint8Array>;
+
+export interface PutResult {
+  digest: string;
+  size: number;
+  deduped: boolean;
+}
+
+/** Backend-agnostic content-addressable blob store port. */
+export interface BlobStore {
+  blobKey(digest: string): string;
+  exists(digest: string): Promise<boolean>;
+  stat(digest: string): Promise<BlobStat | null>;
+  get(digest: string): ReadableStream<Uint8Array>;
+  getRange(digest: string, start: number, end?: number): ReadableStream<Uint8Array>;
+  getBytes(digest: string): Promise<Uint8Array>;
+  put(data: Exclude<BlobData, ReadableStream<Uint8Array>>): Promise<PutResult>;
+  putStream(data: ReadableStream<Uint8Array>, expectedDigest?: string): Promise<PutResult>;
+  delete(digest: string): Promise<void>;
+  presignGet(digest: string, expiresIn?: number): string;
+  putAtKey(key: string, data: Exclude<BlobData, ReadableStream<Uint8Array>>): Promise<void>;
+  readKey(key: string): ReadableStream<Uint8Array>;
+  bytesAtKey(key: string): Promise<Uint8Array>;
+  existsKey(key: string): Promise<boolean>;
+  statKey(key: string): Promise<BlobStat | null>;
+  deleteKey(key: string): Promise<void>;
+  promoteToBlob(stagingKey: string, digest: string): Promise<void>;
+  presignPutKey(key: string, expiresIn?: number): string;
+}
+
+export interface RegistryDatabase {
+  transaction<T>(fn: (tx: any) => Promise<T> | T): Promise<T>;
+  // Opaque Drizzle port. Protocol packages should move query-heavy behavior
+  // behind application services before this can be narrowed.
+  select(...args: any[]): any;
+  insert(...args: any[]): any;
+  update(...args: any[]): any;
+  delete(...args: any[]): any;
+  execute(...args: any[]): Promise<unknown> | unknown;
+}
 
 export type HttpMethod = "GET" | "HEAD" | "PUT" | "POST" | "PATCH" | "DELETE";
 
@@ -57,9 +181,14 @@ export interface UpstreamClient {
  */
 export interface RegistryRequestContext {
   repo: ResolvedRepo;
-  principal: Principal;
+  principal: RegistryPrincipal;
   blobs: BlobStore;
-  db: Database;
+  db: RegistryDatabase;
+  /** Runtime knobs injected by the application layer. */
+  limits: {
+    maxUploadBytes: number;
+    enforcePublicNetwork: boolean;
+  };
   /** Absolute public base URL of the registry (no trailing slash). */
   baseUrl: string;
   /** Authorize an action against this repo (org boundary + RBAC + scopes). */

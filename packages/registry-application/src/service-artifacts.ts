@@ -1,17 +1,19 @@
 import { and, artifacts, eq, scanPolicies } from "@hootifactory/db";
-import { resolveScanPolicy } from "@hootifactory/scan-core";
-import type { RegistryRequestContext } from "./format/adapter";
+import type { RegistryRequestContext } from "@hootifactory/registry";
+import { resolveScanPolicy, type ScanPolicyPattern } from "@hootifactory/scan-core";
 
 export const REGISTRY_TOKEN_SERVICE = "hootifactory";
+
+type ScanPolicyRow = ScanPolicyPattern & { mode: "audit" | "enforce" };
 
 export async function isArtifactBlocked(
   ctx: RegistryRequestContext,
   digest: string,
 ): Promise<boolean> {
-  const policies = await ctx.db
+  const policies = (await ctx.db
     .select()
     .from(scanPolicies)
-    .where(eq(scanPolicies.orgId, ctx.repo.orgId));
+    .where(eq(scanPolicies.orgId, ctx.repo.orgId))) as ScanPolicyRow[];
   const policy = resolveScanPolicy(policies, ctx.repo.name);
   const [row] = await ctx.db
     .select({ state: artifacts.state })

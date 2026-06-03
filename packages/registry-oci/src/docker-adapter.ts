@@ -12,20 +12,22 @@ import {
 } from "@hootifactory/db";
 import {
   Errors,
-  findOrCreatePackage,
-  findPackageByName,
   type HttpMethod,
-  isArtifactBlocked,
   type Permission,
   parseRegistryInput,
-  REGISTRY_TOKEN_SERVICE,
   type RegistryPlugin,
   type RegistryRequestContext,
   type RouteEntry,
   type RouteMatch,
+} from "@hootifactory/registry";
+import {
+  findOrCreatePackage,
+  findPackageByName,
+  isArtifactBlocked,
+  REGISTRY_TOKEN_SERVICE,
   releaseBlobRef,
   upsertPackageVersion,
-} from "@hootifactory/registry";
+} from "@hootifactory/registry-application";
 import { buildOciBlobResponse } from "./oci-blobs";
 import { parseOciManifestPutRequest } from "./oci-manifest-put";
 import {
@@ -53,6 +55,11 @@ const UPLOAD_CONTROL_HANDLERS = new Set([
 function packageVersionDigestEquals(digest: string) {
   return sql`jsonb_extract_path_text((${packageVersions.metadata} #>> '{}')::jsonb, ${"digest"}) = ${digest}`;
 }
+
+type OciDigestRow = { digest: string };
+type OciManifestMetadataRow = { metadata: unknown };
+type OciManifestRow = { digest: string; raw: string };
+type OciTagRow = { tag: string };
 
 export class DockerAdapter implements RegistryPlugin {
   readonly format = "docker" as const;
@@ -172,7 +179,7 @@ export class DockerAdapter implements RegistryPlugin {
 
     // Reject an image manifest that references blobs not yet uploaded to this repo.
     if (referencedBlobs.length > 0) {
-      const present = await ctx.db
+      const present = (await ctx.db
         .select({ digest: blobRefs.digest })
         .from(blobRefs)
         .where(
@@ -181,7 +188,7 @@ export class DockerAdapter implements RegistryPlugin {
             eq(blobRefs.scope, image),
             inArray(blobRefs.digest, referencedBlobs),
           ),
-        );
+        )) as OciDigestRow[];
       const have = new Set(present.map((r) => r.digest));
       const missing = referencedBlobs.filter((d) => !have.has(d));
       if (missing.length > 0) throw Errors.manifestBlobUnknown({ missing });
@@ -420,15 +427,17 @@ export class DockerAdapter implements RegistryPlugin {
     const pkg = await findPackageByName(ctx, image);
     if (!pkg) return [];
 
-    const tagRows = await ctx.db
+    const tagRows = (await ctx.db
       .select({ digest: ociManifests.digest })
       .from(ociTags)
       .innerJoin(ociManifests, eq(ociTags.manifestId, ociManifests.id))
-      .where(eq(ociTags.packageId, pkg.id));
-    const versionRows = await ctx.db
+      .where(eq(ociTags.packageId, pkg.id))) as OciDigestRow[];
+    const versionRows = (await ctx.db
       .select({ metadata: packageVersions.metadata })
       .from(packageVersions)
-      .where(and(eq(packageVersions.packageId, pkg.id), isNull(packageVersions.deletedAt)));
+      .where(
+        and(eq(packageVersions.packageId, pkg.id), isNull(packageVersions.deletedAt)),
+      )) as OciManifestMetadataRow[];
     const digests = new Set(tagRows.map((r) => r.digest));
     for (const row of versionRows) {
       const digest = (row.metadata as { digest?: unknown }).digest;
@@ -440,7 +449,7 @@ export class DockerAdapter implements RegistryPlugin {
       .from(ociManifests)
       .where(
         and(eq(ociManifests.repositoryId, ctx.repo.id), inArray(ociManifests.digest, [...digests])),
-      );
+      ) as Promise<OciManifestRow[]>;
   }
 
   private async manifestHasLiveAssociations(
@@ -477,10 +486,10 @@ export class DockerAdapter implements RegistryPlugin {
   ): Promise<Response> {
     const pkg = await findPackageByName(ctx, image);
     if (!pkg) throw Errors.nameUnknown({ image });
-    const rows = await ctx.db
+    const rows = (await ctx.db
       .select({ tag: ociTags.tag })
       .from(ociTags)
-      .where(eq(ociTags.packageId, pkg.id));
+      .where(eq(ociTags.packageId, pkg.id))) as OciTagRow[];
     return buildOciTagsListResponse({
       baseUrl: ctx.baseUrl,
       mountPath: ctx.repo.mountPath,

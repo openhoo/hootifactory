@@ -23,6 +23,10 @@ export function buildRegistryRequestContext(
     db,
     blobs: blobStore,
     baseUrl: env.REGISTRY_PUBLIC_URL,
+    limits: {
+      maxUploadBytes: env.REGISTRY_MAX_UPLOAD_BYTES,
+      enforcePublicNetwork: env.NODE_ENV === "production",
+    },
     log: logger,
     authorize: (action: Action, resource?: Partial<ResourceRef>) =>
       authorize(principal, action, {

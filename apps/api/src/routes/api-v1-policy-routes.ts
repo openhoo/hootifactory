@@ -1,5 +1,5 @@
 import { and, db, eq, isNull, quotas, scanPolicies } from "@hootifactory/db";
-import { applyRetention } from "@hootifactory/registry";
+import { applyRetention } from "@hootifactory/registry-application";
 import type { Hono } from "hono";
 import type { AppEnv } from "../types";
 import {

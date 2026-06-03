@@ -13,9 +13,9 @@ import {
   versionTags,
   virtualRepoMembers,
 } from "@hootifactory/db";
+import type { RegistryRequestContext, ResolvedRepo } from "@hootifactory/registry";
 import { blobStore } from "@hootifactory/storage";
 import type { PackageFormat, Visibility } from "@hootifactory/types";
-import type { RegistryRequestContext, ResolvedRepo } from "./format/adapter";
 import { deleteUnreferencedCasBlob, releaseRepoDigestTx } from "./service";
 
 const V2_FORMATS = new Set<PackageFormat>(["docker", "oci", "helm"]);

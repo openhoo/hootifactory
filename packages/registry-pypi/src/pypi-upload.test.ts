@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { computeDigest, digestHex } from "@hootifactory/storage";
+import { computeDigest, digestHex } from "@hootifactory/registry";
 import { parsePypiUploadRequest } from "./pypi-upload";
 
 function uploadRequest(input: {

@@ -13,11 +13,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@hootifactory/auth": "workspace:*",
     "@hootifactory/core": "workspace:*",
-    "@hootifactory/db": "workspace:*",
-    "@hootifactory/scan-core": "workspace:*",
-    "@hootifactory/storage": "workspace:*",
     "@hootifactory/types": "workspace:*"
   }
 }

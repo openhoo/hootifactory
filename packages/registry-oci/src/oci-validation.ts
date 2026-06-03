@@ -1,5 +1,4 @@
-import { Errors, parseRegistryInput, z } from "@hootifactory/registry";
-import { isValidDigest } from "@hootifactory/storage";
+import { Errors, isValidDigest, parseRegistryInput, z } from "@hootifactory/registry";
 import {
   OCI_MEDIA_TYPES,
   type OciDescriptor,

@@ -1,5 +1,4 @@
-import { Errors } from "@hootifactory/registry";
-import { computeDigest, isValidDigest } from "@hootifactory/storage";
+import { computeDigest, Errors, isValidDigest } from "@hootifactory/registry";
 import type { OciManifest } from "@hootifactory/types";
 import {
   assertTag,

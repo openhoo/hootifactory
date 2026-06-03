@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { computeDigest } from "@hootifactory/storage";
+import { computeDigest } from "@hootifactory/registry";
 import { OCI_MEDIA_TYPES, type OciManifest } from "@hootifactory/types";
 import { parseOciManifestPutRequest } from "./oci-manifest-put";
 

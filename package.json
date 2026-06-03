@@ -41,6 +41,7 @@
     "@hootifactory/db": "workspace:*",
     "@hootifactory/queue": "workspace:*",
     "@hootifactory/registry": "workspace:*",
+    "@hootifactory/registry-application": "workspace:*",
     "@hootifactory/storage": "workspace:*",
     "@hootifactory/types": "workspace:*",
     "@playwright/test": "^1.60.0",

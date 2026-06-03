@@ -1,12 +1,7 @@
 import { and, eq, isNull, packages, packageVersions } from "@hootifactory/db";
 import {
   basicAuthChallenge,
-  commitVersionOrReleaseBlob,
   Errors,
-  findLiveVersion,
-  findOrCreatePackage,
-  findPackageByName,
-  findVersion,
   type HttpMethod,
   type Permission,
   parseRegistryInput,
@@ -15,9 +10,16 @@ import {
   type RouteEntry,
   type RouteMatch,
   readWritePermission,
+} from "@hootifactory/registry";
+import {
+  commitVersionOrReleaseBlob,
+  findLiveVersion,
+  findOrCreatePackage,
+  findPackageByName,
+  findVersion,
   serveBlobIfClean,
   storeBlobWithRef,
-} from "@hootifactory/registry";
+} from "@hootifactory/registry-application";
 import { parseNugetPublishRequest } from "./nuget-publish";
 import { buildNugetRegistrationIndex, buildNugetRegistrationItem } from "./nuget-registration";
 import {
@@ -50,6 +52,16 @@ function parseNugetVersionInput(version: string): string {
     status: 404,
   });
 }
+
+type NugetVersionRow = {
+  version: string;
+  metadata: unknown;
+};
+
+type NugetPackageRow = {
+  id: string;
+  name: string;
+};
 
 /**
  * NuGet v3. The consumption surface (service index + flat container) is
@@ -133,11 +145,13 @@ export class NugetAdapter implements RegistryPlugin {
     packageId: string,
     opts: { includeUnlisted?: boolean } = {},
   ) {
-    const rows = await ctx.db
+    const rows = (await ctx.db
       .select({ version: packageVersions.version, metadata: packageVersions.metadata })
       .from(packageVersions)
       // Live versions only; sorted by SemVer so flat-container + registration bounds are correct.
-      .where(and(eq(packageVersions.packageId, packageId), isNull(packageVersions.deletedAt)));
+      .where(
+        and(eq(packageVersions.packageId, packageId), isNull(packageVersions.deletedAt)),
+      )) as NugetVersionRow[];
     return rows
       .filter(
         (r) => opts.includeUnlisted || (r.metadata as unknown as NugetVersionMeta).listed !== false,
@@ -207,10 +221,10 @@ export class NugetAdapter implements RegistryPlugin {
     ctx: RegistryRequestContext,
   ): Promise<Response> {
     const query = parseNugetSearchQuery(req.url);
-    const rows = await ctx.db
+    const rows = (await ctx.db
       .select({ id: packages.id, name: packages.name })
       .from(packages)
-      .where(eq(packages.repositoryId, ctx.repo.id));
+      .where(eq(packages.repositoryId, ctx.repo.id))) as NugetPackageRow[];
     const data = [];
     for (const pkg of rows) {
       if (query.q && !pkg.name.toLowerCase().includes(query.q)) continue;

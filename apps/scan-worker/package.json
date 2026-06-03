@@ -18,6 +18,7 @@
     "@hootifactory/queue": "workspace:*",
     "@hootifactory/scan-core": "workspace:*",
     "@hootifactory/scanning": "workspace:*",
-    "@hootifactory/storage": "workspace:*"
+    "@hootifactory/storage": "workspace:*",
+    "@hootifactory/types": "workspace:*"
   }
 }

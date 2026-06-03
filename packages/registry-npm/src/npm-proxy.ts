@@ -1,4 +1,4 @@
-import { computeDigest } from "@hootifactory/storage";
+import { computeDigest } from "@hootifactory/registry";
 import type { NpmDist } from "./npm-integrity";
 import { sha1hex, sha512b64 } from "./npm-integrity";
 import { basename, packagePath } from "./npm-validation";

@@ -1,9 +1,18 @@
 export {
+  assertDigest,
+  blobKey,
+  computeDigest,
+  DIGEST_RE,
+  digestHex,
   Errors,
+  InvalidDigestError,
+  isValidDigest,
   type OciErrorCode,
   parseRegistryInput,
   RegistryError,
+  SHA256_PREFIX,
   safeFetch,
+  stagingKey,
   type ZodError,
   type ZodType,
   z,
@@ -11,7 +20,4 @@ export {
 } from "@hootifactory/core";
 export * from "./format/adapter";
 export * from "./format/registry";
-export * from "./repo";
-export * from "./routing/resolve-repository";
 export * from "./routing/route-matcher";
-export * from "./service";

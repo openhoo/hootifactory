@@ -14,8 +14,8 @@
   },
   "dependencies": {
     "@hootifactory/registry": "workspace:*",
+    "@hootifactory/registry-application": "workspace:*",
     "@hootifactory/db": "workspace:*",
-    "@hootifactory/storage": "workspace:*",
     "@hootifactory/types": "workspace:*"
   }
 }

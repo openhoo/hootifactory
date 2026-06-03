@@ -1,10 +1,6 @@
 import { and, asc, eq, isNull, packageVersions, users } from "@hootifactory/db";
 import {
-  commitVersionOrReleaseBlob,
   Errors,
-  findLiveVersion,
-  findOrCreatePackage,
-  findPackageByName,
   type HttpMethod,
   type Permission,
   parseRegistryInput,
@@ -13,12 +9,19 @@ import {
   type RouteEntry,
   type RouteMatch,
   readWritePermission,
+} from "@hootifactory/registry";
+import {
+  commitVersionOrReleaseBlob,
+  findLiveVersion,
+  findOrCreatePackage,
+  findPackageByName,
   serveBlobIfClean,
   storeBlobWithRef,
-} from "@hootifactory/registry";
+} from "@hootifactory/registry-application";
 import {
   buildCargoOwnersBody,
   buildCargoOwnersUpdateBody,
+  type CargoOwnerRow,
   parseCargoOwnersRequest,
 } from "./cargo-owners";
 import {
@@ -53,6 +56,9 @@ function parseCrateVersion(version: string): string {
     message: "invalid crate version",
   });
 }
+
+type CargoIndexRow = { metadata: unknown };
+type CargoExistingVersionRow = { version: string };
 
 /** Cargo sparse registry: config.json, sharded index, publish + download. */
 export class CargoAdapter implements RegistryPlugin {
@@ -128,11 +134,11 @@ export class CargoAdapter implements RegistryPlugin {
     if (path !== cargoIndexPath(name)) return new Response("", { status: 404 });
     const pkg = await this.findCrate(ctx, name);
     if (!pkg) return new Response("", { status: 404 });
-    const vers = await ctx.db
+    const vers = (await ctx.db
       .select({ metadata: packageVersions.metadata })
       .from(packageVersions)
       .where(and(eq(packageVersions.packageId, pkg.id), isNull(packageVersions.deletedAt)))
-      .orderBy(asc(packageVersions.createdAt));
+      .orderBy(asc(packageVersions.createdAt))) as CargoIndexRow[];
     const lines = vers
       .map((v) => JSON.stringify((v.metadata as unknown as CargoVersionMeta).index))
       .join("\n");
@@ -183,7 +189,7 @@ export class CargoAdapter implements RegistryPlugin {
     crate = parseCrateName(crate).toLowerCase();
     const pkg = await this.findCrate(ctx, crate);
     if (!pkg) throw Errors.notFound();
-    const rows = await ctx.db
+    const rows = (await ctx.db
       .select({
         id: users.id,
         login: users.username,
@@ -192,7 +198,7 @@ export class CargoAdapter implements RegistryPlugin {
       .from(packageVersions)
       .innerJoin(users, eq(packageVersions.publishedByUserId, users.id))
       .where(and(eq(packageVersions.packageId, pkg.id), isNull(packageVersions.deletedAt)))
-      .orderBy(asc(packageVersions.createdAt));
+      .orderBy(asc(packageVersions.createdAt))) as CargoOwnerRow[];
     return Response.json(buildCargoOwnersBody(rows));
   }
 
@@ -222,10 +228,10 @@ export class CargoAdapter implements RegistryPlugin {
       repositoryId: ctx.repo.id,
       name,
     });
-    const existingVersions = await ctx.db
+    const existingVersions = (await ctx.db
       .select({ version: packageVersions.version })
       .from(packageVersions)
-      .where(eq(packageVersions.packageId, pkg.id));
+      .where(eq(packageVersions.packageId, pkg.id))) as CargoExistingVersionRow[];
     if (
       existingVersions.some(
         (version) => cargoVersionIdentity(version.version) === cargoVersionIdentity(meta.vers),

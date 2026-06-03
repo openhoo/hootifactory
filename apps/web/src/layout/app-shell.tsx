@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, Outlet, useNavigate } from "@tanstack/react-router";
 import { Boxes, Building2, KeyRound, LayoutDashboard, LogOut, Menu } from "lucide-react";
-import { createContext, useContext, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { BrandWordmark, HexPattern } from "@/components/brand";
 import { ThemeToggle } from "@/components/theme";
 import { Button } from "@/components/ui/button";
@@ -10,26 +10,8 @@ import { Separator } from "@/components/ui/separator";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
 import { CreateFirstOrg } from "@/features/auth/pages";
-import { api, type Org } from "@/lib/api";
-
-interface OrgCtx {
-  orgs: Org[];
-  selected: Org | null;
-  setOrgId: (id: string) => void;
-}
-
-const OrgContext = createContext<OrgCtx>({ orgs: [], selected: null, setOrgId: () => {} });
-
-export const useOrg = () => useContext(OrgContext);
-
-export function useRepos() {
-  const { selected } = useOrg();
-  return useQuery({
-    queryKey: ["repos", selected?.id],
-    queryFn: () => api.repos(selected!.id),
-    enabled: !!selected,
-  });
-}
+import { OrgContext } from "@/features/orgs/context";
+import { api } from "@/lib/api";
 
 export function Loading() {
   return (

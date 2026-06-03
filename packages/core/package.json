@@ -13,7 +13,6 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@hootifactory/config": "workspace:*",
     "zod": "^4.4.3"
   }
 }

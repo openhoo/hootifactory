@@ -4,7 +4,8 @@ import { useMemo } from "react";
 import { EmptyState, FormatBadge, PageTitle, StatCard, VisibilityPill } from "@/components/common";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Loading, useOrg, useRepos } from "@/layout/app-shell";
+import { useOrg, useRepos } from "@/features/orgs/context";
+import { Loading } from "@/layout/app-shell";
 
 export function DashboardPage() {
   const { selected } = useOrg();

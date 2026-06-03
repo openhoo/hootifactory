@@ -1,5 +1,5 @@
 import { db, inArray, repositories } from "@hootifactory/db";
-import type { ResolvedRepo } from "../format/adapter";
+import type { ResolvedRepo } from "@hootifactory/registry";
 
 export interface RepoResolution {
   repo: ResolvedRepo;

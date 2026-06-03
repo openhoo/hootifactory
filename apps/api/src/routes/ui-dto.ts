@@ -1,8 +1,17 @@
+import type { ApiTokenDto, RepositoryDto, WireTimestamp } from "@hootifactory/contracts";
 import type { apiTokens, repositories } from "@hootifactory/db";
 
 type RepositoryRow = typeof repositories.$inferSelect;
 
-export function repositoryDto(repo: RepositoryRow) {
+function wireTimestamp(value: Date | string): WireTimestamp {
+  return value instanceof Date ? value.toISOString() : value;
+}
+
+function nullableWireTimestamp(value: Date | string | null): WireTimestamp | null {
+  return value ? wireTimestamp(value) : null;
+}
+
+export function repositoryDto(repo: RepositoryRow): RepositoryDto {
   return {
     id: repo.id,
     orgId: repo.orgId,
@@ -12,14 +21,14 @@ export function repositoryDto(repo: RepositoryRow) {
     visibility: repo.visibility,
     mountPath: repo.mountPath,
     description: repo.description,
-    createdAt: repo.createdAt,
-    updatedAt: repo.updatedAt,
+    createdAt: wireTimestamp(repo.createdAt),
+    updatedAt: wireTimestamp(repo.updatedAt),
   };
 }
 
 type ApiTokenRow = typeof apiTokens.$inferSelect;
 
-export function tokenDto(token: ApiTokenRow, ownerUsername?: string | null) {
+export function tokenDto(token: ApiTokenRow, ownerUsername?: string | null): ApiTokenDto {
   return {
     id: token.id,
     ownerUserId: token.ownerUserId,
@@ -32,15 +41,15 @@ export function tokenDto(token: ApiTokenRow, ownerUsername?: string | null) {
       .filter((grant) => grant.resource === "repository")
       .map((grant) => ({ repository: grant.repository, actions: grant.actions })),
     role: token.role,
-    expiresAt: token.expiresAt,
-    revokedAt: token.revokedAt,
+    expiresAt: nullableWireTimestamp(token.expiresAt),
+    revokedAt: nullableWireTimestamp(token.revokedAt),
     revokedByUserId: token.revokedByUserId,
     revokedByTokenId: token.revokedByTokenId,
     revocationReason: token.revocationReason,
-    rotatedAt: token.rotatedAt,
+    rotatedAt: nullableWireTimestamp(token.rotatedAt),
     rotatedByUserId: token.rotatedByUserId,
     rotatedByTokenId: token.rotatedByTokenId,
-    lastUsedAt: token.lastUsedAt,
-    createdAt: token.createdAt,
+    lastUsedAt: nullableWireTimestamp(token.lastUsedAt),
+    createdAt: wireTimestamp(token.createdAt),
   };
 }

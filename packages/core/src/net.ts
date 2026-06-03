@@ -9,7 +9,6 @@ import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
 import { Readable } from "node:stream";
-import { isProduction } from "@hootifactory/config";
 
 export type HostLookup = (hostname: string) => Promise<{ address: string }[]>;
 
@@ -128,8 +127,13 @@ export function isPrivateHost(hostname: string): boolean {
   return false;
 }
 
+export interface PublicUrlOptions {
+  /** Enforce public-host SSRF blocking. Defaults to true. */
+  enforcePublicNetwork?: boolean;
+}
+
 /** Parse + validate a URL is an http(s) URL to a non-private host, or throw. */
-export function assertPublicHttpUrl(raw: string): URL {
+export function assertPublicHttpUrl(raw: string, opts: PublicUrlOptions = {}): URL {
   let url: URL;
   try {
     url = new URL(raw);
@@ -139,10 +143,7 @@ export function assertPublicHttpUrl(raw: string): URL {
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     throw new Error(`unsupported URL scheme: ${url.protocol}`);
   }
-  // The private-host block is enforced in production (the multi-tenant SSRF
-  // threat). In dev/test, proxying to a local/internal registry is a normal,
-  // intended workflow, so it is allowed.
-  if (isProduction && isPrivateHost(url.hostname)) {
+  if ((opts.enforcePublicNetwork ?? true) && isPrivateHost(url.hostname)) {
     throw new Error(`refusing to fetch a private/loopback/metadata host: ${url.hostname}`);
   }
   return url;
@@ -175,13 +176,17 @@ export async function assertPublicResolvedUrl(
   url: URL,
   opts: { enforce?: boolean; lookupHost?: HostLookup } = {},
 ): Promise<void> {
-  if (!(opts.enforce ?? isProduction)) return;
+  if (!(opts.enforce ?? true)) return;
   await resolvePublicAddress(url, opts.lookupHost);
 }
 
-async function publicResolvedAddress(url: URL, lookupHost?: HostLookup): Promise<string | null> {
-  if (!isProduction && !lookupHost) return null;
-  return resolvePublicAddress(url, lookupHost);
+async function publicResolvedAddress(
+  url: URL,
+  opts: { enforcePublicNetwork: boolean; lookupHost?: HostLookup },
+): Promise<string | null> {
+  if (!opts.enforcePublicNetwork && !opts.lookupHost) return null;
+  if (!opts.enforcePublicNetwork) return null;
+  return resolvePublicAddress(url, opts.lookupHost);
 }
 
 function headersInit(init?: RequestInit["headers"]): Record<string, string> {
@@ -257,6 +262,8 @@ export interface SafeFetchOptions extends RequestInit {
   timeoutMs?: number;
   /** Test hook for DNS-resolution SSRF checks. */
   lookupHost?: HostLookup;
+  /** Enforce public-host SSRF blocking. Defaults to true. */
+  enforcePublicNetwork?: boolean;
 }
 
 /**
@@ -265,14 +272,21 @@ export interface SafeFetchOptions extends RequestInit {
  * server into an internal/metadata address. Applies a timeout on each hop.
  */
 export async function safeFetch(raw: string, opts: SafeFetchOptions = {}): Promise<Response> {
-  const { allowedHosts, maxHops = 3, timeoutMs = 30_000, lookupHost, ...init } = opts;
+  const {
+    allowedHosts,
+    enforcePublicNetwork = true,
+    maxHops = 3,
+    timeoutMs = 30_000,
+    lookupHost,
+    ...init
+  } = opts;
   const allowedHostSet = allowedHosts ? new Set(allowedHosts) : null;
-  let url = assertPublicHttpUrl(raw);
+  let url = assertPublicHttpUrl(raw, { enforcePublicNetwork });
   for (let hop = 0; hop <= maxHops; hop++) {
     if (allowedHostSet && !allowedHostSet.has(url.host)) {
       throw new Error(`redirected to disallowed host: ${url.host}`);
     }
-    const address = await publicResolvedAddress(url, lookupHost);
+    const address = await publicResolvedAddress(url, { enforcePublicNetwork, lookupHost });
     const requestInit = {
       ...init,
       redirect: "manual" as const,
@@ -284,7 +298,7 @@ export async function safeFetch(raw: string, opts: SafeFetchOptions = {}): Promi
     if (res.status >= 300 && res.status < 400) {
       const loc = res.headers.get("location");
       if (!loc) return res;
-      url = assertPublicHttpUrl(new URL(loc, url).toString());
+      url = assertPublicHttpUrl(new URL(loc, url).toString(), { enforcePublicNetwork });
       continue;
     }
     return res;

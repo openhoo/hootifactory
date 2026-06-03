@@ -1,6 +1,5 @@
 import { and, blobRefs, blobs, eq, packageVersions, versionTags } from "@hootifactory/db";
-import { computeDigest } from "@hootifactory/storage";
-import type { RegistryRequestContext } from "./format/adapter";
+import { computeDigest, type RegistryRequestContext } from "@hootifactory/registry";
 import {
   type BlobRefKind,
   deleteUnreferencedCasBlob,

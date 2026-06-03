@@ -13,7 +13,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { useOrg } from "@/layout/app-shell";
+import { useOrg } from "@/features/orgs/context";
 import { api } from "@/lib/api";
 
 export function TokensPage() {

@@ -1,11 +1,11 @@
 import { logger, withSpan } from "@hootifactory/observability";
 import {
   Errors,
-  loadUpstream,
   type RegistryPlugin,
   type RegistryRequestContext,
   type RouteMatch,
 } from "@hootifactory/registry";
+import { loadUpstream } from "@hootifactory/registry-application";
 import { adapterResponse } from "./registry-adapter";
 import { isReadMethod } from "./registry-utils";
 

@@ -3,12 +3,12 @@ import {
   Errors,
   type FormatMetadata,
   type HttpMethod,
-  loadVirtualMembers,
   RegistryError,
   type RegistryPlugin,
   type RegistryRequestContext,
   type RouteMatch,
 } from "@hootifactory/registry";
+import { loadVirtualMembers } from "@hootifactory/registry-application";
 import { registryErrorToFormatResponse } from "./registry-error-format";
 import { repoSpanAttributes } from "./registry-utils";
 import { authorizeVirtualMember } from "./registry-virtual-member";

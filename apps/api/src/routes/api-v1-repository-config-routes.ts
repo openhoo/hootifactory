@@ -1,5 +1,5 @@
 import { db, eq, repositories } from "@hootifactory/db";
-import { addUpstream, addVirtualMember } from "@hootifactory/registry";
+import { addUpstream, addVirtualMember } from "@hootifactory/registry-application";
 import type { Hono } from "hono";
 import type { AppEnv } from "../types";
 import {

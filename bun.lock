@@ -13,6 +13,7 @@
         "@hootifactory/db": "workspace:*",
         "@hootifactory/queue": "workspace:*",
         "@hootifactory/registry": "workspace:*",
+        "@hootifactory/registry-application": "workspace:*",
         "@hootifactory/storage": "workspace:*",
         "@hootifactory/types": "workspace:*",
         "@playwright/test": "^1.60.0",
@@ -28,12 +29,14 @@
         "@hono/standard-validator": "^0.2.2",
         "@hootifactory/auth": "workspace:*",
         "@hootifactory/config": "workspace:*",
+        "@hootifactory/contracts": "workspace:*",
         "@hootifactory/core": "workspace:*",
         "@hootifactory/db": "workspace:*",
         "@hootifactory/email": "workspace:*",
         "@hootifactory/observability": "workspace:*",
         "@hootifactory/queue": "workspace:*",
         "@hootifactory/registry": "workspace:*",
+        "@hootifactory/registry-application": "workspace:*",
         "@hootifactory/registry-builtins": "workspace:*",
         "@hootifactory/scan-core": "workspace:*",
         "@hootifactory/storage": "workspace:*",
@@ -46,7 +49,7 @@
       "name": "@hootifactory/mail-worker",
       "version": "0.0.0",
       "dependencies": {
-        "@hootifactory/config": "workspace:*",
+        "@hootifactory/db": "workspace:*",
         "@hootifactory/email": "workspace:*",
         "@hootifactory/observability": "workspace:*",
         "@hootifactory/queue": "workspace:*",
@@ -63,6 +66,7 @@
         "@hootifactory/scan-core": "workspace:*",
         "@hootifactory/scanning": "workspace:*",
         "@hootifactory/storage": "workspace:*",
+        "@hootifactory/types": "workspace:*",
       },
     },
     "apps/web": {
@@ -111,7 +115,6 @@
       "dependencies": {
         "@hootifactory/config": "workspace:*",
         "@hootifactory/db": "workspace:*",
-        "@hootifactory/types": "workspace:*",
         "jose": "^6.2.3",
         "openid-client": "^6.8.4",
       },
@@ -134,7 +137,6 @@
       "name": "@hootifactory/core",
       "version": "0.0.0",
       "dependencies": {
-        "@hootifactory/config": "workspace:*",
         "zod": "^4.4.3",
       },
     },
@@ -190,9 +192,17 @@
       "name": "@hootifactory/registry",
       "version": "0.0.0",
       "dependencies": {
-        "@hootifactory/auth": "workspace:*",
+        "@hootifactory/core": "workspace:*",
+        "@hootifactory/types": "workspace:*",
+      },
+    },
+    "packages/registry-application": {
+      "name": "@hootifactory/registry-application",
+      "version": "0.0.0",
+      "dependencies": {
         "@hootifactory/core": "workspace:*",
         "@hootifactory/db": "workspace:*",
+        "@hootifactory/registry": "workspace:*",
         "@hootifactory/scan-core": "workspace:*",
         "@hootifactory/storage": "workspace:*",
         "@hootifactory/types": "workspace:*",
@@ -217,8 +227,7 @@
       "dependencies": {
         "@hootifactory/db": "workspace:*",
         "@hootifactory/registry": "workspace:*",
-        "@hootifactory/storage": "workspace:*",
-        "@hootifactory/types": "workspace:*",
+        "@hootifactory/registry-application": "workspace:*",
       },
     },
     "packages/registry-go": {
@@ -227,8 +236,7 @@
       "dependencies": {
         "@hootifactory/db": "workspace:*",
         "@hootifactory/registry": "workspace:*",
-        "@hootifactory/storage": "workspace:*",
-        "@hootifactory/types": "workspace:*",
+        "@hootifactory/registry-application": "workspace:*",
       },
     },
     "packages/registry-npm": {
@@ -237,8 +245,7 @@
       "dependencies": {
         "@hootifactory/db": "workspace:*",
         "@hootifactory/registry": "workspace:*",
-        "@hootifactory/storage": "workspace:*",
-        "@hootifactory/types": "workspace:*",
+        "@hootifactory/registry-application": "workspace:*",
       },
     },
     "packages/registry-nuget": {
@@ -247,8 +254,7 @@
       "dependencies": {
         "@hootifactory/db": "workspace:*",
         "@hootifactory/registry": "workspace:*",
-        "@hootifactory/storage": "workspace:*",
-        "@hootifactory/types": "workspace:*",
+        "@hootifactory/registry-application": "workspace:*",
       },
     },
     "packages/registry-oci": {
@@ -257,7 +263,7 @@
       "dependencies": {
         "@hootifactory/db": "workspace:*",
         "@hootifactory/registry": "workspace:*",
-        "@hootifactory/storage": "workspace:*",
+        "@hootifactory/registry-application": "workspace:*",
         "@hootifactory/types": "workspace:*",
       },
     },
@@ -267,15 +273,13 @@
       "dependencies": {
         "@hootifactory/db": "workspace:*",
         "@hootifactory/registry": "workspace:*",
-        "@hootifactory/storage": "workspace:*",
-        "@hootifactory/types": "workspace:*",
+        "@hootifactory/registry-application": "workspace:*",
       },
     },
     "packages/scan-core": {
       "name": "@hootifactory/scan-core",
       "version": "0.0.0",
       "dependencies": {
-        "@hootifactory/types": "workspace:*",
         "zod": "^4.4.3",
       },
     },
@@ -292,7 +296,7 @@
       "version": "0.0.0",
       "dependencies": {
         "@hootifactory/config": "workspace:*",
-        "@hootifactory/types": "workspace:*",
+        "@hootifactory/core": "workspace:*",
       },
     },
     "packages/types": {
@@ -493,6 +497,8 @@
     "@hootifactory/queue": ["@hootifactory/queue@workspace:packages/queue"],
 
     "@hootifactory/registry": ["@hootifactory/registry@workspace:packages/registry"],
+
+    "@hootifactory/registry-application": ["@hootifactory/registry-application@workspace:packages/registry-application"],
 
     "@hootifactory/registry-builtins": ["@hootifactory/registry-builtins@workspace:packages/registry-builtins"],
 

@@ -1,8 +1,8 @@
+import { registryPlugins } from "@hootifactory/registry";
 import {
   isValidRepositoryName,
   isValidRepositoryNameForFormat,
-  registryPlugins,
-} from "@hootifactory/registry";
+} from "@hootifactory/registry-application";
 import type { PackageFormat, RepoKind, Visibility } from "@hootifactory/types";
 import { type CreateRepositoryBody, RepoKindSchema, VisibilitySchema } from "./ui-schemas";
 

@@ -5,12 +5,8 @@ import {
   withLogAttributes,
   withSpan,
 } from "@hootifactory/observability";
-import {
-  Errors,
-  type HttpMethod,
-  registryPlugins,
-  resolveRepository,
-} from "@hootifactory/registry";
+import { Errors, type HttpMethod, registryPlugins } from "@hootifactory/registry";
+import { resolveRepository } from "@hootifactory/registry-application";
 import type { Context } from "hono";
 import { buildRegistryRequestContext } from "./context";
 import { authorizeRoute, registryAuthorizationDeniedResponse } from "./registry-auth";

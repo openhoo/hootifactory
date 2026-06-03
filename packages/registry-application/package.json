@@ -1,5 +1,5 @@
 {
-  "name": "@hootifactory/registry-npm",
+  "name": "@hootifactory/registry-application",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -7,14 +7,17 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "test": "bun run test:unit",
+    "test": "bun run ../../scripts/package-tests.ts unit",
     "test:unit": "bun run ../../scripts/package-tests.ts unit",
     "test:integration": "bun run ../../scripts/package-tests.ts integration",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@hootifactory/core": "workspace:*",
+    "@hootifactory/db": "workspace:*",
     "@hootifactory/registry": "workspace:*",
-    "@hootifactory/registry-application": "workspace:*",
-    "@hootifactory/db": "workspace:*"
+    "@hootifactory/scan-core": "workspace:*",
+    "@hootifactory/storage": "workspace:*",
+    "@hootifactory/types": "workspace:*"
   }
 }

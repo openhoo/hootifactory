@@ -1,13 +1,8 @@
 import { and, asc, eq, isNull, packageVersions } from "@hootifactory/db";
 import {
   basicAuthChallenge,
-  commitVersionOrReleaseBlob,
   Errors,
-  findLiveVersion,
-  findOrCreatePackage,
-  findPackageByName,
   type HttpMethod,
-  isArtifactBlocked,
   type Permission,
   parseRegistryInput,
   type RegistryPlugin,
@@ -15,8 +10,15 @@ import {
   type RouteEntry,
   type RouteMatch,
   readWritePermission,
-  storeBlobWithRef,
 } from "@hootifactory/registry";
+import {
+  commitVersionOrReleaseBlob,
+  findLiveVersion,
+  findOrCreatePackage,
+  findPackageByName,
+  isArtifactBlocked,
+  storeBlobWithRef,
+} from "@hootifactory/registry-application";
 import { parseGoUploadRequest, validateGoUploadPlan } from "./go-upload";
 import {
   decodeBang,
@@ -27,6 +29,12 @@ import {
   isPseudoVersion,
   pickLatest,
 } from "./go-validation";
+
+type GoVersionRow = {
+  version: string;
+  metadata: unknown;
+  createdAt: Date;
+};
 
 /** Go module proxy (GOPROXY protocol) + a custom upload endpoint for hosted modules. */
 export class GoAdapter implements RegistryPlugin {
@@ -72,7 +80,7 @@ export class GoAdapter implements RegistryPlugin {
     }
   }
 
-  private async versions(ctx: RegistryRequestContext, packageId: string) {
+  private async versions(ctx: RegistryRequestContext, packageId: string): Promise<GoVersionRow[]> {
     return ctx.db
       .select({
         version: packageVersions.version,
