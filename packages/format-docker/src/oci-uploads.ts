@@ -9,6 +9,12 @@ import {
 import { and, blobRefs, eq, repositories, uploadSessions } from "@hootifactory/db";
 import { computeDigest, stagingKey } from "@hootifactory/storage";
 import {
+  buildOciBlobCreatedResponse,
+  buildOciUploadAcceptedResponse,
+  buildOciUploadCommittedResponse,
+  buildOciUploadStatusResponse,
+} from "./oci-upload-responses";
+import {
   OciCommitUploadQuerySchema,
   OciStartUploadQuerySchema,
   UploadUuidSchema,
@@ -50,14 +56,7 @@ export async function startUpload(
     const bytes = await bodyBytes(req);
     if (computeDigest(bytes) !== digest) throw Errors.digestInvalid();
     await storeBlobWithRef(ctx, { data: bytes, kind: "oci_layer", scope: image });
-    return new Response(null, {
-      status: 201,
-      headers: {
-        location: blobLocation(ctx, image, digest),
-        "docker-content-digest": digest,
-        "content-length": "0",
-      },
-    });
+    return buildOciBlobCreatedResponse({ ctx, image, digest });
   }
 
   const uuid = crypto.randomUUID();
@@ -71,15 +70,7 @@ export async function startUpload(
     state: "open",
     expiresAt: new Date(Date.now() + UPLOAD_TTL_MS),
   });
-  return new Response(null, {
-    status: 202,
-    headers: {
-      location: uploadLocation(ctx, image, uuid),
-      range: "0-0",
-      "docker-upload-uuid": uuid,
-      "content-length": "0",
-    },
-  });
+  return buildOciUploadAcceptedResponse({ ctx, image, uuid, offset: 0 });
 }
 
 export async function uploadStatus(
@@ -88,14 +79,7 @@ export async function uploadStatus(
   ctx: RepoContext,
 ): Promise<Response> {
   const session = await loadOpenSession(image, uuid, ctx);
-  return new Response(null, {
-    status: 204,
-    headers: {
-      range: uploadRange(session.offsetBytes),
-      "docker-upload-uuid": uuid,
-      location: uploadLocation(ctx, image, uuid),
-    },
-  });
+  return buildOciUploadStatusResponse({ ctx, image, uuid, offset: session.offsetBytes });
 }
 
 export async function patchUpload(
@@ -115,15 +99,7 @@ export async function patchUpload(
       .where(openSessionWhere(ctx, image, uuid));
     return next.offset;
   });
-  return new Response(null, {
-    status: 202,
-    headers: {
-      range: uploadRange(offset),
-      "docker-upload-uuid": uuid,
-      location: uploadLocation(ctx, image, uuid),
-      "content-length": "0",
-    },
-  });
+  return buildOciUploadAcceptedResponse({ ctx, image, uuid, offset });
 }
 
 export async function putUpload(
@@ -166,16 +142,7 @@ export async function putUpload(
   await ctx.blobs.deleteKey(committed.storageKey).catch(() => {});
   await deleteUploadChunks(ctx, committed.chunks);
 
-  return new Response(null, {
-    status: 201,
-    headers: {
-      location: blobLocation(ctx, image, digest),
-      "docker-content-digest": digest,
-      "content-length": "0",
-      "content-range": uploadRange(committed.size),
-      range: uploadRange(committed.size),
-    },
-  });
+  return buildOciUploadCommittedResponse({ ctx, image, digest, size: committed.size });
 }
 
 export async function cancelUpload(
@@ -236,13 +203,10 @@ async function tryCrossRepositoryMount(input: {
         kind: "oci_layer",
         scope: input.image,
       });
-      return new Response(null, {
-        status: 201,
-        headers: {
-          location: blobLocation(input.ctx, input.image, input.mount),
-          "docker-content-digest": input.mount,
-          "content-length": "0",
-        },
+      return buildOciBlobCreatedResponse({
+        ctx: input.ctx,
+        image: input.image,
+        digest: input.mount,
       });
     }
   }
@@ -365,16 +329,4 @@ function openSessionWhere(ctx: RepoContext, image: string, uuid: string) {
     eq(uploadSessions.scope, image),
     eq(uploadSessions.state, "open"),
   );
-}
-
-function uploadLocation(ctx: RepoContext, image: string, uuid: string): string {
-  return `${ctx.baseUrl}/${ctx.repo.mountPath}/${image}/blobs/uploads/${uuid}`;
-}
-
-function blobLocation(ctx: RepoContext, image: string, digest: string): string {
-  return `${ctx.baseUrl}/${ctx.repo.mountPath}/${image}/blobs/${digest}`;
-}
-
-function uploadRange(offset: number): string {
-  return `0-${Math.max(0, offset - 1)}`;
 }
