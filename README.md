@@ -81,10 +81,13 @@ bun install
 cp .env.example .env
 docker compose up -d        # postgres + minio
 bun run db:migrate
-bun run db:seed             # creates a demo org + admin user + token
+bun run db:seed             # creates a demo org + owner user; prints generated dev credentials
 bun run dev                 # api on :3000
 bun run dev:web             # web on :5173 (proxies /v2 + /api -> api)
 bun run dev:mail            # queued email worker; Mailpit UI is on :8025
 ```
+
+For production bootstrap, set `SEED_USER` and `SEED_PASS` explicitly before `bun run db:seed`.
+Production seed runs do not mint or print an owner token unless `SEED_PRINT_TOKEN=true` is set.
 
 See `docs/` and the architecture plan for details.
