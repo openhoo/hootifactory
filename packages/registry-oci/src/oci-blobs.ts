@@ -21,6 +21,25 @@ export function buildOciBlobHeaders(input: {
   };
 }
 
+type ResponseBody = ConstructorParameters<typeof Response>[0];
+
+function streamResponseBody(stream: ReadableStream<Uint8Array>): ResponseBody {
+  return {
+    async *[Symbol.asyncIterator]() {
+      const reader = stream.getReader();
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          yield value;
+        }
+      } finally {
+        reader.releaseLock();
+      }
+    },
+  } as ResponseBody;
+}
+
 export async function buildOciBlobResponse(input: OciBlobResponseInput): Promise<Response> {
   const headers = buildOciBlobHeaders({ digest: input.digest, size: input.size });
   if (input.headOnly) return new Response(null, { status: 200, headers });
@@ -37,8 +56,10 @@ export async function buildOciBlobResponse(input: OciBlobResponseInput): Promise
 
   headers["content-range"] = `bytes ${range.start}-${range.end}/${input.size}`;
   headers["content-length"] = String(range.end - range.start + 1);
-  const body = await new Response(input.getRange(range.start, range.end + 1)).arrayBuffer();
-  return new Response(body, { status: 206, headers });
+  return new Response(streamResponseBody(input.getRange(range.start, range.end + 1)), {
+    status: 206,
+    headers,
+  });
 }
 
 export function buildOciRangeNotSatisfiableResponse(size: number): Response {

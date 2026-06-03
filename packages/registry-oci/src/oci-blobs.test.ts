@@ -57,6 +57,35 @@ describe("OCI blob response helpers", () => {
     expect(await response.text()).toBe("2345");
   });
 
+  test("streams ranged blob responses without pre-buffering", async () => {
+    let controller: ReadableStreamDefaultController<Uint8Array>;
+    const rangeBody = new ReadableStream<Uint8Array>({
+      start(c) {
+        controller = c;
+      },
+    });
+    const responsePromise = buildOciBlobResponse({
+      digest: "sha256:abc",
+      size: 10,
+      rangeHeader: "bytes=2-5",
+      headOnly: false,
+      get: () => stream("0123456789"),
+      getRange: (start, end) => {
+        expect(start).toBe(2);
+        expect(end).toBe(6);
+        return rangeBody;
+      },
+    });
+    const response = await Promise.race([responsePromise, Bun.sleep(20).then(() => null)]);
+
+    expect(response).toBeInstanceOf(Response);
+    if (!(response instanceof Response)) throw new Error("expected ranged blob response");
+    expect(response.status).toBe(206);
+    controller!.enqueue(new TextEncoder().encode("2345"));
+    controller!.close();
+    expect(await response.text()).toBe("2345");
+  });
+
   test("returns 416 responses for invalid ranges", async () => {
     const response = await blobResponse({ rangeHeader: "bytes=20-30" });
 
