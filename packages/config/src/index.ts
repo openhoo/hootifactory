@@ -119,6 +119,7 @@ const DEV_DEFAULT_SECRETS = {
   S3_ACCESS_KEY_ID: "hootifactory",
   S3_SECRET_ACCESS_KEY: "hootifactory",
 } as const;
+const DEV_DEFAULT_DATABASE_CREDENTIAL = "hootifactory";
 
 /**
  * Environment schema. Dev defaults mirror docker-compose so the stack boots and
@@ -229,6 +230,14 @@ const EnvSchema = z
           });
         }
       }
+      if (databaseUrlUsesDevDefaultCredentials(v.DATABASE_URL)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["DATABASE_URL"],
+          message:
+            "DATABASE_URL must not use the dev-default database username or password in production",
+        });
+      }
     }
     // The registry JWT keypair must be set together (both or neither), and is
     // mandatory in production — otherwise each instance signs OCI Bearer tokens
@@ -313,6 +322,19 @@ function loadEnv(source: Record<string, string | undefined> = process.env): Env 
     throw new Error(`Invalid environment configuration:\n${issues}`);
   }
   return Object.freeze(parsed.data);
+}
+
+function databaseUrlUsesDevDefaultCredentials(value: string): boolean {
+  try {
+    const url = new URL(value);
+    if (!/^postgres(ql)?:$/.test(url.protocol)) return false;
+    return (
+      decodeURIComponent(url.username) === DEV_DEFAULT_DATABASE_CREDENTIAL ||
+      decodeURIComponent(url.password) === DEV_DEFAULT_DATABASE_CREDENTIAL
+    );
+  } catch {
+    return false;
+  }
 }
 
 /** The validated, frozen runtime environment. */

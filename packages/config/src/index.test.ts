@@ -1,13 +1,17 @@
 import { describe, expect, test } from "bun:test";
 import { loadEnv } from "./index";
 
-const prodSource = {
+const prodSourceBase = {
   NODE_ENV: "production",
   SESSION_SECRET: "prod-session-secret-with-enough-entropy",
   S3_ACCESS_KEY_ID: "prod-access-key",
   S3_SECRET_ACCESS_KEY: "prod-secret-key",
   REGISTRY_JWT_PRIVATE_KEY: "-----BEGIN PRIVATE KEY-----\nplaceholder\n-----END PRIVATE KEY-----",
   REGISTRY_JWT_PUBLIC_KEY: "-----BEGIN PUBLIC KEY-----\nplaceholder\n-----END PUBLIC KEY-----",
+};
+const prodSource = {
+  ...prodSourceBase,
+  DATABASE_URL: "postgres://prod_user:prod_password@localhost:5432/hootifactory",
 };
 
 describe("environment auth creation defaults", () => {
@@ -35,6 +39,24 @@ describe("environment auth creation defaults", () => {
     const env = loadEnv(prodSource);
     expect(env.AUTH_ALLOW_REGISTRATION).toBe(false);
     expect(env.AUTH_ALLOW_ORG_CREATION).toBe(false);
+  });
+
+  test("production rejects default database credentials", () => {
+    expect(() => loadEnv(prodSourceBase)).toThrow(
+      /DATABASE_URL must not use the dev-default database username or password in production/,
+    );
+    expect(() =>
+      loadEnv({
+        ...prodSource,
+        DATABASE_URL: "postgres://hootifactory:prod_password@db:5432/hootifactory",
+      }),
+    ).toThrow(/DATABASE_URL must not use the dev-default database username or password/);
+    expect(() =>
+      loadEnv({
+        ...prodSource,
+        DATABASE_URL: "postgres://prod_user:hootifactory@db:5432/hootifactory",
+      }),
+    ).toThrow(/DATABASE_URL must not use the dev-default database username or password/);
   });
 
   test("production can explicitly opt into self-service creation", () => {
