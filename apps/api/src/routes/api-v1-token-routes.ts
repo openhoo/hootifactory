@@ -1,4 +1,5 @@
 import {
+  type ApiTokenRow,
   authorize,
   createApiToken,
   getApiTokenById,
@@ -15,7 +16,7 @@ import {
   V1TokenResponseSchema,
   V1TokenSecretResponseSchema,
 } from "@hootifactory/contracts";
-import type { Hono } from "hono";
+import type { Context, Hono } from "hono";
 import type { AppEnv } from "../types";
 import {
   authorizationDenied,
@@ -37,6 +38,31 @@ import { audit } from "./http";
 import { tokenDto } from "./ui-dto";
 import { requireUserPrincipal } from "./ui-repository-access";
 import { resolveCreateTokenRequest } from "./ui-token-create";
+
+async function authorizeTokenRotation(c: Context<AppEnv>, token: ApiTokenRow) {
+  const principal = c.get("principal");
+  if (principal.kind === "token" && principal.tokenId === token.id) {
+    return tokenResource(c, token, "write");
+  }
+  if (principal.kind === "user" && token.ownerUserId === principal.userId) {
+    const decision = await authorize(principal, "write", {
+      type: "token",
+      orgId: token.orgId,
+      tokenId: token.id,
+      tokenTarget: "self",
+    });
+    if (decision.allowed) return undefined;
+    return authorizationDenied(c, decision);
+  }
+  const decision = await authorize(principal, "admin", {
+    type: "token",
+    orgId: token.orgId,
+    tokenId: token.id,
+    tokenTarget: "org",
+  });
+  if (decision.allowed) return undefined;
+  return authorizationDenied(c, decision);
+}
 
 export function registerApiV1TokenRoutes(apiV1Router: Hono<AppEnv>) {
   apiV1Router.get(
@@ -178,7 +204,7 @@ export function registerApiV1TokenRoutes(apiV1Router: Hono<AppEnv>) {
       if (!params.ok) return params.response;
       const token = await getApiTokenById(params.data.tokenId);
       if (!token) return errorResponse(c, 404, "NOT_FOUND", "token not found");
-      const response = await tokenResource(c, token, "write");
+      const response = await authorizeTokenRotation(c, token);
       if (response) return response;
       const rotated = await rotateToken(token.id, principalActor(c.get("principal")));
       if (!rotated) return errorResponse(c, 404, "NOT_FOUND", "token not found");

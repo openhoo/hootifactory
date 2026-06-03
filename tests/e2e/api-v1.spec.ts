@@ -1,5 +1,42 @@
+import { execFileSync } from "node:child_process";
 import { type APIRequestContext, expect, test } from "@playwright/test";
 import { anonContext, createRepo, setupOwner, uniq } from "./helpers";
+
+const TEST_DATABASE_URL =
+  process.env.E2E_DATABASE_URL ??
+  "postgres://hootifactory:hootifactory@localhost:5432/hootifactory_test";
+
+function insertOrgRoleBinding(input: {
+  orgId: string;
+  userId: string;
+  role: "viewer" | "developer" | "admin" | "owner";
+}): void {
+  execFileSync(
+    "bun",
+    [
+      "-e",
+      [
+        'import { db, roleBindings } from "@hootifactory/db";',
+        "await db.insert(roleBindings).values({",
+        "  orgId: process.env.ORG_ID,",
+        "  userId: process.env.USER_ID,",
+        "  role: process.env.ROLE,",
+        "});",
+      ].join("\n"),
+    ],
+    {
+      env: {
+        ...process.env,
+        DATABASE_URL: TEST_DATABASE_URL,
+        ORG_ID: input.orgId,
+        USER_ID: input.userId,
+        ROLE: input.role,
+      },
+      stdio: "pipe",
+      encoding: "utf8",
+    },
+  );
+}
 
 async function publishRawNpm(ctx: APIRequestContext, mountPath: string, pkgName: string) {
   const filename = `${pkgName}-1.0.0.tgz`;
@@ -143,5 +180,42 @@ test.describe("external api v1", () => {
       headers: { authorization: `Bearer ${rotatedBody.data.secret}` },
     });
     expect(newMe.status()).toBe(200);
+  });
+
+  test("developers cannot rotate and capture another org token", async ({ baseURL }) => {
+    const owner = await setupOwner(baseURL!);
+    const developer = await setupOwner(baseURL!);
+    const admin = await setupOwner(baseURL!);
+    const developerMe = (await (await developer.ctx.get("/api/v1/me")).json()) as {
+      data: { principal: { userId: string } };
+    };
+    const adminMe = (await (await admin.ctx.get("/api/v1/me")).json()) as {
+      data: { principal: { userId: string } };
+    };
+    insertOrgRoleBinding({
+      orgId: owner.orgId,
+      userId: developerMe.data.principal.userId,
+      role: "developer",
+    });
+    insertOrgRoleBinding({
+      orgId: owner.orgId,
+      userId: adminMe.data.principal.userId,
+      role: "admin",
+    });
+
+    const created = await createV1Token(owner.ctx, owner.orgId, {
+      name: "owner-robot",
+      type: "robot",
+      role: "owner",
+      grants: [{ resource: "token", target: "org", actions: ["admin"] }],
+    });
+
+    const denied = await developer.ctx.post(`/api/v1/tokens/${created.data.token.id}/rotate`);
+    expect(denied.status()).toBe(403);
+
+    const rotated = await admin.ctx.post(`/api/v1/tokens/${created.data.token.id}/rotate`);
+    expect(rotated.status()).toBe(200);
+    const body = await rotated.json();
+    expect(body.data.secret).toMatch(/^hoot_/);
   });
 });
