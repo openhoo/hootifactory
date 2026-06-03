@@ -57,11 +57,24 @@ export async function handleRegistryRequest(c: Context<AppEnv>): Promise<Respons
     },
     async () => {
       setActiveSpanAttributes(repoFormatSpanAttributes(repo, repo));
+      const adapter = registryPlugins.lookup(repo.format);
+      if (!adapter) throw Errors.unsupported({ format: repo.format });
+
+      const { match, fellBackToGet, httpRoute, spanAttributes } = resolveRegistryRouteMatch(
+        repo,
+        registryPlugins.routesFor(repo.format),
+        method,
+        rest,
+      );
+      c.get("httpTelemetry").setRoute(httpRoute);
+      setActiveSpanAttributes(spanAttributes);
       const recordOutcome = (statusCode: number, outcome: "ok" | "denied" | "error") =>
         recordRegistryRequest({
           method,
           format: repo.format,
           repoKind: repo.kind,
+          handler: match.entry.handlerId,
+          route: match.entry.pattern,
           statusCode,
           outcome,
         });
@@ -70,73 +83,71 @@ export async function handleRegistryRequest(c: Context<AppEnv>): Promise<Respons
         recordOutcome(response.status, "denied");
         return response;
       };
-      const adapter = registryPlugins.lookup(repo.format);
-      if (!adapter) throw Errors.unsupported({ format: repo.format });
 
-      const { match, fellBackToGet, spanAttributes } = resolveRegistryRouteMatch(
-        repo,
-        registryPlugins.routesFor(repo.format),
-        method,
-        rest,
-      );
-      setActiveSpanAttributes(spanAttributes);
-
-      const principal = c.get("principal");
-      if (principal.kind === "registryToken" && !OCI_BEARER_FORMATS.has(repo.format)) {
-        logger.debug("registry token rejected for non-OCI format", {
-          repo: repo.name,
-          format: repo.format,
-        });
-        return deny({
-          status: 403,
-          code: "DENIED",
-          message: "OCI registry bearer tokens are only valid for OCI repositories",
-        });
-      }
-      const ctx = buildRegistryRequestContext(repo, principal);
-
-      const authorization = await withSpan(
-        "registry.authorize",
+      return await withLogAttributes(
         {
-          "auth.principal.kind": principal.kind,
-          "registry.repository.name": repo.name,
+          "registry.handler": match.entry.handlerId,
+          "registry.route": match.entry.pattern,
         },
-        async (span) => {
-          const result = await authorizeRoute(adapter, method, match, ctx);
-          span.setAttributes({
-            "auth.action": result.permission.action,
-            "auth.decision": result.decision.allowed ? "allowed" : "denied",
-            "auth.decision.code": result.decision.code,
-            "registry.permission.repository": result.repositoryName,
+        async () => {
+          const principal = c.get("principal");
+          if (principal.kind === "registryToken" && !OCI_BEARER_FORMATS.has(repo.format)) {
+            logger.debug("registry token rejected for non-OCI format", {
+              repo: repo.name,
+              format: repo.format,
+            });
+            return deny({
+              status: 403,
+              code: "DENIED",
+              message: "OCI registry bearer tokens are only valid for OCI repositories",
+            });
+          }
+          const ctx = buildRegistryRequestContext(repo, principal);
+
+          const authorization = await withSpan(
+            "registry.authorize",
+            {
+              "auth.principal.kind": principal.kind,
+              "registry.repository.name": repo.name,
+            },
+            async (span) => {
+              const result = await authorizeRoute(adapter, method, match, ctx);
+              span.setAttributes({
+                "auth.action": result.permission.action,
+                "auth.decision": result.decision.allowed ? "allowed" : "denied",
+                "auth.decision.code": result.decision.code,
+                "registry.permission.repository": result.repositoryName,
+              });
+              return result;
+            },
+          );
+          const { decision, permission: perm } = authorization;
+          setActiveSpanAttributes({ "auth.action": perm.action });
+
+          if (!decision.allowed) {
+            return registryAuthorizationDeniedResponse({
+              repo,
+              adapter,
+              ctx,
+              principal,
+              decision,
+              permission: perm,
+              registryAuthFailure: c.get("registryAuthFailure"),
+              deny,
+            });
+          }
+
+          const res = await dispatchByRepoKind(repo.kind, adapter, match, c.req.raw, ctx);
+          recordOutcome(res.status, res.status < 400 ? "ok" : "error");
+          logger.debug("registry request completed", {
+            repo: repo.name,
+            format: repo.format,
+            handler: match.entry.handlerId,
+            status: res.status,
           });
-          return result;
+          return stripBodyForFallbackHead(fellBackToGet, res);
         },
       );
-      const { decision, permission: perm } = authorization;
-      setActiveSpanAttributes({ "auth.action": perm.action });
-
-      if (!decision.allowed) {
-        return registryAuthorizationDeniedResponse({
-          repo,
-          adapter,
-          ctx,
-          principal,
-          decision,
-          permission: perm,
-          registryAuthFailure: c.get("registryAuthFailure"),
-          deny,
-        });
-      }
-
-      const res = await dispatchByRepoKind(repo.kind, adapter, match, c.req.raw, ctx);
-      recordOutcome(res.status, res.status < 400 ? "ok" : "error");
-      logger.debug("registry request completed", {
-        repo: repo.name,
-        format: repo.format,
-        handler: match.entry.handlerId,
-        status: res.status,
-      });
-      return stripBodyForFallbackHead(fellBackToGet, res);
     },
   );
 }

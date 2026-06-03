@@ -7,11 +7,17 @@ import {
   type ResolvedRepo,
   type RouteMatch,
 } from "@hootifactory/registry";
+import { mountSegment } from "@hootifactory/registry-application";
 
 export interface RegistryRouteMatchResolution {
   match: RouteMatch;
   fellBackToGet: boolean;
+  httpRoute: string;
   spanAttributes: Record<string, string>;
+}
+
+export function registryHttpRouteTemplate(repo: ResolvedRepo, match: RouteMatch): string {
+  return `/${mountSegment(repo.format)}/:org/:repository${match.entry.pattern}`;
 }
 
 export function registryRouteSpanAttributes(
@@ -45,6 +51,7 @@ export function resolveRegistryRouteMatch(
   return {
     match,
     fellBackToGet,
+    httpRoute: registryHttpRouteTemplate(repo, match),
     spanAttributes: registryRouteSpanAttributes(match, rest),
   };
 }

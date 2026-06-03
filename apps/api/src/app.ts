@@ -27,6 +27,7 @@ export const app = new Hono<AppEnv>();
 
 app.use("*", async (c, next) => {
   await instrumentHttpRequest(c.req.raw, async (telemetry) => {
+    c.set("httpTelemetry", telemetry);
     c.set("requestId", telemetry.requestId);
     c.set("correlationId", telemetry.correlationId);
     c.header("x-request-id", telemetry.requestId);

@@ -31,6 +31,7 @@ describe("registry route match resolution", () => {
     expect(resolved.fellBackToGet).toBe(false);
     expect(resolved.match.entry.handlerId).toBe("packument");
     expect(resolved.match.params.pkg).toBe("@scope/pkg");
+    expect(resolved.httpRoute).toBe("/npm/:org/:repository/:pkg+");
     expect(resolved.spanAttributes).toEqual({
       "registry.handler": "packument",
       "registry.route": "/:pkg+",
@@ -44,6 +45,21 @@ describe("registry route match resolution", () => {
     expect(resolved.fellBackToGet).toBe(true);
     expect(resolved.match.entry.method).toBe("GET");
     expect(resolved.match.entry.handlerId).toBe("packument");
+    expect(resolved.httpRoute).toBe("/npm/:org/:repository/:pkg+");
+  });
+
+  test("uses the OCI mount segment for OCI-family plugin routes", () => {
+    const ociRoutes = compileRoutes([
+      { method: "GET", pattern: "/:name+/manifests/:reference", handlerId: "getManifest" },
+    ] satisfies RouteEntry[]);
+    const resolved = resolveRegistryRouteMatch(
+      dockerRepo,
+      ociRoutes,
+      "GET",
+      "/team/api/manifests/latest",
+    );
+
+    expect(resolved.httpRoute).toBe("/v2/:org/:repository/:name+/manifests/:reference");
   });
 
   test("uses generic not-found errors for non-OCI route misses", () => {

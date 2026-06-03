@@ -66,6 +66,8 @@ export function recordRegistryRequest(attributes: {
   method: string;
   format: string;
   repoKind: string;
+  handler?: string;
+  route?: string;
   statusCode: number;
   outcome: "ok" | "denied" | "error";
 }): void {
@@ -74,6 +76,8 @@ export function recordRegistryRequest(attributes: {
     [ATTR_HTTP_RESPONSE_STATUS_CODE]: attributes.statusCode,
     "registry.format": attributes.format,
     "registry.repository.kind": attributes.repoKind,
+    ...(attributes.handler ? { "registry.handler": attributes.handler } : {}),
+    ...(attributes.route ? { "registry.route": attributes.route } : {}),
     "registry.outcome": attributes.outcome,
   });
 }
