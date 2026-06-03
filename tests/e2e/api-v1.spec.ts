@@ -168,6 +168,41 @@ test.describe("external api v1", () => {
     expect(denied.status()).toBe(403);
   });
 
+  test("scan policy upserts require admin access", async ({ baseURL }) => {
+    const owner = await setupOwner(baseURL!);
+    const developer = await setupOwner(baseURL!);
+    const developerMe = (await (await developer.ctx.get("/api/v1/me")).json()) as {
+      data: { principal: { userId: string } };
+    };
+    insertOrgRoleBinding({
+      orgId: owner.orgId,
+      userId: developerMe.data.principal.userId,
+      role: "developer",
+    });
+
+    const policy = { repositoryPattern: "*", mode: "audit" };
+    const denied = await developer.ctx.post(`/api/v1/orgs/${owner.orgId}/scan-policies`, {
+      data: policy,
+    });
+    expect(denied.status()).toBe(403);
+
+    const scoped = await createV1Token(developer.ctx, owner.orgId, {
+      name: "policy-writer",
+      grants: [{ resource: "policy", policy: "scan", actions: ["write"] }],
+    });
+    const anon = await anonContext(baseURL!);
+    const tokenDenied = await anon.post(`/api/v1/orgs/${owner.orgId}/scan-policies`, {
+      headers: { authorization: `Bearer ${scoped.data.secret}` },
+      data: policy,
+    });
+    expect(tokenDenied.status()).toBe(403);
+
+    const created = await owner.ctx.post(`/api/v1/orgs/${owner.orgId}/scan-policies`, {
+      data: policy,
+    });
+    expect(created.status()).toBe(201);
+  });
+
   test("token self grant can rotate itself", async ({ baseURL }) => {
     const owner = await setupOwner(baseURL!);
     const created = await createV1Token(owner.ctx, owner.orgId, {

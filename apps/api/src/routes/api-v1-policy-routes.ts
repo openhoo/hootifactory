@@ -54,7 +54,7 @@ export function registerApiV1PolicyRoutes(apiV1Router: Hono<AppEnv>) {
       const policyResponse = await authorizePolicy(c, {
         orgId: params.data.orgId,
         policy: "scan",
-        action: "write",
+        action: "admin",
       });
       if (policyResponse) return policyResponse;
       const parsedBody = await validateJsonV1(
