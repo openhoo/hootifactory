@@ -121,7 +121,7 @@ export async function upsertPackageVersionWithBlobRef(
       ? opts.blob.previousDigest
       : null;
   const publisher = publisherOf(ctx);
-  let putForCleanup: StoredBlob | null = null;
+  let putForCleanup: { digest: string; deduped: boolean } | null = null;
   let deleteCasAfterCommit: string | null = null;
 
   try {
@@ -131,7 +131,7 @@ export async function upsertPackageVersionWithBlobRef(
         [digest, previousDigestInput].filter((d): d is string => !!d),
       );
       const rawPut = await blobStore.put(opts.blob.data, digest);
-      const put = { ...rawPut, refCreated: false };
+      const put = rawPut;
       putForCleanup = put;
       const quota = await lockOrgQuotaTx(tx, ctx.repo.orgId);
       const [existingVersion] = await tx
@@ -179,16 +179,16 @@ export async function upsertPackageVersionWithBlobRef(
       const chargeOrg = !(await orgAlreadyReferencesDigestTx(tx, ctx.repo.orgId, put.digest));
 
       await ensureActiveBlobTx(tx, ctx, put, opts.blob.mediaType);
-      const refCreated = await insertBlobRefTx(tx, ctx, {
+      const blobRef = await insertBlobRefTx(tx, ctx, {
         digest: put.digest,
         kind: opts.blob.kind,
         scope: opts.blob.scope,
       });
 
-      const netDelta = (refCreated && chargeOrg ? put.size : 0) - oldRefundBytes;
+      const netDelta = (blobRef.created && chargeOrg ? put.size : 0) - oldRefundBytes;
       if (netDelta > 0) assertStorageQuotaRowAllows(quota, netDelta);
 
-      if (refCreated) await incrementBlobRefCountTx(tx, put.digest);
+      if (blobRef.created) await incrementBlobRefCountTx(tx, put.digest);
       if (netDelta !== 0) await adjustStorageUsedTx(tx, ctx.repo.orgId, netDelta);
 
       const [versionRow] = await tx
@@ -205,7 +205,8 @@ export async function upsertPackageVersionWithBlobRef(
           digest: put.digest,
           size: put.size,
           deduped: put.deduped,
-          refCreated,
+          refCreated: blobRef.created,
+          blobRefId: blobRef.id,
         },
         versionId: versionRow.id,
       };

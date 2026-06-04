@@ -69,7 +69,8 @@ function createTestDataService(): RegistryDataService {
       getBlobRef: () => Promise.resolve(null),
       storeBlobWithRef: () => unimplemented("data.content.storeBlobWithRef"),
       storeBlobStreamWithRef: () => unimplemented("data.content.storeBlobStreamWithRef"),
-      ensureBlobRef: () => Promise.resolve(),
+      ensureBlobRef: (input) =>
+        Promise.resolve({ digest: input.digest, size: 0, refCreated: false, blobRefId: "ref_1" }),
       releaseBlobRef: () => Promise.resolve(),
       staging: {
         putKey: () => Promise.resolve(),

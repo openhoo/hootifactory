@@ -66,4 +66,60 @@ describe("PyPI upload lifecycle helpers", () => {
       message: "sha256_digest does not match uploaded content",
     });
   });
+
+  test("writes uploaded file assets with the stored blob ref", async () => {
+    const ctx = createTestRegistryContext();
+    const digest = `sha256:${"a".repeat(64)}`;
+    const pkg = {
+      id: "pkg_1",
+      orgId: ctx.repo.orgId,
+      repositoryId: ctx.repo.id,
+      name: "hoot-lib",
+      namespace: null,
+      metadata: {},
+      latestVersion: null,
+      createdAt: new Date("2026-01-01T00:00:00.000Z"),
+      updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+    };
+    let assetBlobRefId: string | null | undefined;
+
+    ctx.data.assets.findByScope = () => Promise.resolve(null);
+    ctx.data.packages.findByName = () => Promise.resolve(null);
+    ctx.data.packages.findOrCreate = async () => pkg;
+    ctx.data.content.storeBlobStreamWithRef = async () => ({
+      digest,
+      size: 11,
+      deduped: false,
+      refCreated: true,
+      blobRefId: "blob_ref_1",
+    });
+    ctx.data.versions.create = async () => "version_1";
+    ctx.data.assets.upsert = async (input) => {
+      assetBlobRefId = input.blobRefId;
+      return {
+        id: "asset_1",
+        orgId: ctx.repo.orgId,
+        repositoryId: ctx.repo.id,
+        packageId: input.package?.id ?? null,
+        packageVersionId: input.packageVersion?.id ?? null,
+        ociManifestId: input.ociManifest?.id ?? null,
+        blobRefId: input.blobRefId ?? null,
+        digest: input.digest,
+        role: input.role,
+        scope: input.scope ?? "",
+        path: input.path ?? null,
+        mediaType: input.mediaType ?? null,
+        sizeBytes: input.sizeBytes ?? 0,
+        metadata: input.metadata ?? {},
+        deletedAt: null,
+        createdAt: new Date("2026-01-01T00:00:00.000Z"),
+        updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+      };
+    };
+
+    const res = await handlePypiUpload(uploadRequest({ sha256: "a".repeat(64) }), ctx);
+
+    expect(res.status).toBe(200);
+    expect(assetBlobRefId).toBe("blob_ref_1");
+  });
 });

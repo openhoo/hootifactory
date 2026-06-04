@@ -293,7 +293,7 @@ describe("Docker adapter contract", () => {
             scope: pkg.name,
             mediaType: "application/octet-stream",
           });
-          return { ...input.blob, refCreated: true };
+          return { ...input.blob, refCreated: true, blobRefId: "blob_ref_1" };
         },
         commit: async (offsetBytes) => {
           calls.push("commit");
@@ -323,6 +323,7 @@ describe("Docker adapter contract", () => {
     ctx.data.assets.upsert = async (input) => {
       calls.push("asset");
       expect(input.digest).toBe(UPLOAD_DIGEST);
+      expect(input.blobRefId).toBe("blob_ref_1");
       expect(input.sizeBytes).toBe(5);
       expect(input.scope).toBe(pkg.name);
       return {
@@ -332,7 +333,7 @@ describe("Docker adapter contract", () => {
         packageId: null,
         packageVersionId: null,
         ociManifestId: null,
-        blobRefId: null,
+        blobRefId: input.blobRefId ?? null,
         digest: input.digest,
         role: input.role,
         scope: pkg.name,
@@ -482,7 +483,13 @@ describe("Docker adapter contract", () => {
         mediaType: "application/octet-stream",
       });
       await expect(readStreamText(input.data)).resolves.toBe("layer");
-      return { digest: UPLOAD_DIGEST, size: 5, deduped: false, refCreated: true };
+      return {
+        digest: UPLOAD_DIGEST,
+        size: 5,
+        deduped: false,
+        refCreated: true,
+        blobRefId: "blob_ref_1",
+      };
     };
 
     const response = await new DockerAdapter().handle(

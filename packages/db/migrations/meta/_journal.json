@@ -120,6 +120,13 @@
       "when": 1780568706433,
       "tag": "0016_fearless_naoko",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1780582566016,
+      "tag": "0017_registry_asset_blob_refs",
+      "breakpoints": true
     }
   ]
 }

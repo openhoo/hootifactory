@@ -234,7 +234,12 @@ export async function putUpload(
           mediaType: "application/octet-stream",
         });
         await mutations.commit(stored.size);
-        return { size: stored.size, storageKey: openSession.storageKey, chunks: state.chunks };
+        return {
+          size: stored.size,
+          blobRefId: stored.blobRefId,
+          storageKey: openSession.storageKey,
+          chunks: state.chunks,
+        };
       },
     });
     uploaded = null;
@@ -242,6 +247,7 @@ export async function putUpload(
       digest,
       role: "oci_layer",
       scope: image,
+      blobRefId: committed.blobRefId,
       path: `${image}/blobs/${digest}`,
       mediaType: "application/octet-stream",
       sizeBytes: committed.size,

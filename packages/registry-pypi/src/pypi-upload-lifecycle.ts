@@ -84,7 +84,7 @@ export async function handlePypiUpload(
     rawName,
     requiresPython,
     fileMeta,
-    storedDigest: stored.digest,
+    stored,
   });
   if (!added.ok) {
     if (stored.refCreated) {
@@ -123,7 +123,7 @@ async function addFileToVersion(
     rawName: string;
     requiresPython?: string;
     fileMeta: PypiFileMeta;
-    storedDigest: string;
+    stored: Awaited<ReturnType<typeof storeRegistryBlobStreamWithRef>>;
   },
 ): Promise<AddPypiFileResult> {
   const created = await ctx.data.versions.create({
@@ -138,7 +138,8 @@ async function addFileToVersion(
   });
   if (created) {
     await ctx.data.assets.upsert({
-      digest: opts.storedDigest,
+      digest: opts.stored.digest,
+      blobRefId: opts.stored.blobRefId,
       role: "pypi_file",
       package: opts.package,
       packageVersion: { id: created, packageId: opts.package.id, version: opts.version },
@@ -181,7 +182,8 @@ async function addFileToVersion(
   });
   if (result.ok) {
     await ctx.data.assets.upsert({
-      digest: opts.storedDigest,
+      digest: opts.stored.digest,
+      blobRefId: opts.stored.blobRefId,
       role: "pypi_file",
       package: opts.package,
       packageVersion: { id: result.versionId, packageId: opts.package.id, version: opts.version },

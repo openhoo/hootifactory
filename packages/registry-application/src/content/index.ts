@@ -11,6 +11,7 @@ export {
   commitUploadedBlobRefTx,
   deleteUnreferencedCasBlob,
   discardUncommittedBlobPut,
+  type EnsuredBlobRef,
   ensureBlobRef,
   getBlobRef,
   releaseBlobRef,

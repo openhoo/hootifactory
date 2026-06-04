@@ -106,12 +106,20 @@ export interface RegistryStoredBlob {
   size: number;
   deduped: boolean;
   refCreated: boolean;
+  blobRefId: string;
 }
 
 export interface RegistryUploadedBlob {
   digest: string;
   size: number;
   deduped: boolean;
+}
+
+export interface RegistryEnsuredBlobRef {
+  digest: string;
+  size: number;
+  refCreated: boolean;
+  blobRefId: string;
 }
 
 export interface RegistryAssetRow {
@@ -386,7 +394,9 @@ export interface RegistryDataService {
     getBlobRef(input: RegistryBlobRefInput): Promise<RegistryReferencedBlob | null>;
     storeBlobWithRef(input: StoreBlobWithRefInput): Promise<RegistryStoredBlob>;
     storeBlobStreamWithRef(input: StoreBlobStreamWithRefInput): Promise<RegistryStoredBlob>;
-    ensureBlobRef(input: RegistryBlobRefInput & { asset?: RegistryAssetWriteInput }): Promise<void>;
+    ensureBlobRef(
+      input: RegistryBlobRefInput & { asset?: RegistryAssetWriteInput },
+    ): Promise<RegistryEnsuredBlobRef>;
     releaseBlobRef(input: RegistryBlobRefInput): Promise<void>;
     staging: {
       putKey(key: string, data: Uint8Array): Promise<void>;

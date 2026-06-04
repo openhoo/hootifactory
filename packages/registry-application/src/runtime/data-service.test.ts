@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { replacedAssetRef } from "./data-service";
+import { createTestRegistryContext } from "@hootifactory/registry/testing";
+import { assetWithDefaults, replacedAssetRef } from "./data-service";
 
 const OLD_DIGEST = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const NEW_DIGEST = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
@@ -54,6 +55,37 @@ describe("registry data service asset replacement helpers", () => {
       digest: OLD_DIGEST,
       role: "oci_layer",
       scope: "team/api",
+    });
+  });
+
+  test("defaults ref-backed asset writes from the stored blob", () => {
+    const ctx = createTestRegistryContext();
+
+    expect(
+      assetWithDefaults(
+        ctx,
+        {
+          role: "pypi_file",
+          path: "hoot_lib-1.2.3.tar.gz",
+        },
+        {
+          digest: NEW_DIGEST,
+          size: 42,
+          blobRefId: "blob_ref_1",
+        },
+        {
+          scope: "hoot_lib-1.2.3.tar.gz",
+          mediaType: "application/octet-stream",
+        },
+      ),
+    ).toEqual({
+      role: "pypi_file",
+      path: "hoot_lib-1.2.3.tar.gz",
+      scope: "hoot_lib-1.2.3.tar.gz",
+      digest: NEW_DIGEST,
+      blobRefId: "blob_ref_1",
+      mediaType: "application/octet-stream",
+      sizeBytes: 42,
     });
   });
 });

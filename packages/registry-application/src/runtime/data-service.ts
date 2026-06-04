@@ -132,10 +132,10 @@ function assetForWrite<T extends RegistryAssetWriteInput>(
   return input;
 }
 
-function assetWithDefaults(
+export function assetWithDefaults(
   ctx: RegistryRequestContext,
   asset: RegistryAssetWriteInput | undefined,
-  stored: RegistryStoredBlob,
+  stored: Pick<RegistryStoredBlob, "digest" | "size" | "blobRefId">,
   fallback: {
     role?: string;
     scope?: string;
@@ -148,6 +148,7 @@ function assetWithDefaults(
     role: asset.role ?? fallback.role ?? "generic_file",
     scope: asset.scope ?? fallback.scope ?? "",
     digest: asset.digest ?? stored.digest,
+    blobRefId: asset.blobRefId ?? stored.blobRefId,
     mediaType: asset.mediaType ?? fallback.mediaType ?? null,
     sizeBytes: asset.sizeBytes ?? stored.size,
   });
@@ -347,15 +348,18 @@ export function createRegistryDataService(ctx: RegistryRequestContext): Registry
         return stored;
       },
       ensureBlobRef: async (input) => {
-        await ensureBlobRef(ctx, input);
+        const ref = await ensureBlobRef(ctx, input);
         if (input.asset) {
           await upsertRegistryAsset(ctx, {
             ...assetForWrite(ctx, input.asset),
             digest: input.digest,
+            blobRefId: input.asset.blobRefId ?? ref.blobRefId,
             role: input.asset.role ?? input.kind,
             scope: input.asset.scope ?? input.scope,
+            sizeBytes: input.asset.sizeBytes ?? ref.size,
           });
         }
+        return ref;
       },
       releaseBlobRef: async (input) => {
         await releaseBlobRef(ctx, input);

@@ -28,6 +28,14 @@ export interface StoredBlob {
   size: number;
   deduped: boolean;
   refCreated: boolean;
+  blobRefId: string;
+}
+
+export interface EnsuredBlobRef {
+  digest: string;
+  size: number;
+  refCreated: boolean;
+  blobRefId: string;
 }
 
 interface BlobPut {
@@ -192,7 +200,7 @@ export async function insertBlobRefTx(
   tx: Tx,
   ctx: RegistryRequestContext,
   ref: { digest: string; kind: BlobRefKind; scope: string },
-): Promise<boolean> {
+): Promise<{ id: string; created: boolean }> {
   const refRows = await tx
     .insert(blobRefs)
     .values({
@@ -203,7 +211,23 @@ export async function insertBlobRefTx(
     })
     .onConflictDoNothing()
     .returning({ id: blobRefs.id });
-  return refRows.length > 0;
+  const createdId = refRows[0]?.id;
+  if (createdId) return { id: createdId, created: true };
+
+  const [existing] = await tx
+    .select({ id: blobRefs.id })
+    .from(blobRefs)
+    .where(
+      and(
+        eq(blobRefs.repositoryId, ctx.repo.id),
+        eq(blobRefs.digest, ref.digest),
+        eq(blobRefs.kind, ref.kind),
+        eq(blobRefs.scope, ref.scope),
+      ),
+    )
+    .limit(1);
+  if (!existing) throw new Error("failed to resolve blob ref after insert conflict");
+  return { id: existing.id, created: false };
 }
 
 export async function incrementBlobRefCountTx(tx: Tx, digest: string): Promise<void> {
@@ -230,12 +254,12 @@ async function commitBlobPutTx(
   if (chargeOrg) assertStorageQuotaRowAllows(quota, put.size);
 
   await ensureActiveBlobTx(tx, ctx, put, opts.mediaType);
-  const refCreated = await insertBlobRefTx(tx, ctx, {
+  const blobRef = await insertBlobRefTx(tx, ctx, {
     digest: put.digest,
     kind: opts.kind,
     scope: opts.scope,
   });
-  if (refCreated) {
+  if (blobRef.created) {
     await incrementBlobRefCountTx(tx, put.digest);
     if (chargeOrg) await adjustStorageUsedTx(tx, ctx.repo.orgId, put.size);
   }
@@ -243,7 +267,8 @@ async function commitBlobPutTx(
     digest: put.digest,
     size: put.size,
     deduped: put.deduped,
-    refCreated,
+    refCreated: blobRef.created,
+    blobRefId: blobRef.id,
   };
 }
 
@@ -316,8 +341,8 @@ export async function storeBlobStreamWithRef(
 export async function ensureBlobRef(
   ctx: RegistryRequestContext,
   ref: { digest: string; kind: BlobRefKind; scope: string },
-): Promise<void> {
-  await db.transaction(async (tx) => {
+): Promise<EnsuredBlobRef> {
+  return db.transaction(async (tx) => {
     await lockDigestTx(tx, ref.digest);
     const [b] = await tx
       .select({ size: blobs.sizeBytes })
@@ -330,8 +355,15 @@ export async function ensureBlobRef(
     const chargeOrg = !(await orgAlreadyReferencesDigestTx(tx, ctx.repo.orgId, ref.digest));
     if (chargeOrg) assertStorageQuotaRowAllows(quota, b.size);
 
-    const refCreated = await insertBlobRefTx(tx, ctx, ref);
-    if (!refCreated) return;
+    const blobRef = await insertBlobRefTx(tx, ctx, ref);
+    if (!blobRef.created) {
+      return {
+        digest: ref.digest,
+        size: b.size,
+        refCreated: false,
+        blobRefId: blobRef.id,
+      };
+    }
 
     await tx
       .update(blobs)
@@ -342,6 +374,12 @@ export async function ensureBlobRef(
       })
       .where(eq(blobs.digest, ref.digest));
     if (chargeOrg) await adjustStorageUsedTx(tx, ctx.repo.orgId, b.size);
+    return {
+      digest: ref.digest,
+      size: b.size,
+      refCreated: true,
+      blobRefId: blobRef.id,
+    };
   });
 }
 
