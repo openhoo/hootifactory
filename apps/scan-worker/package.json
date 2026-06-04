@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@hootifactory/config": "workspace:*",
+    "@hootifactory/core": "workspace:*",
     "@hootifactory/db": "workspace:*",
     "@hootifactory/observability": "workspace:*",
     "@hootifactory/queue": "workspace:*",

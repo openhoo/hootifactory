@@ -1,3 +1,4 @@
+import { BoundedLruCache, InFlightDeduper } from "@hootifactory/core";
 import { logger, withSpan } from "@hootifactory/observability";
 import {
   Errors,
@@ -9,8 +10,11 @@ import { loadUpstream } from "@hootifactory/registry-application";
 import { adapterResponse } from "./registry-adapter";
 import { isReadMethod } from "./registry-utils";
 
-const proxyRefreshFreshUntil = new Map<string, number>();
-const proxyRefreshInFlight = new Map<string, Promise<boolean>>();
+const PROXY_REFRESH_FRESHNESS_CACHE_LIMIT = 2048;
+const proxyRefreshFreshUntil = new BoundedLruCache<string, number>(
+  PROXY_REFRESH_FRESHNESS_CACHE_LIMIT,
+);
+const proxyRefreshInFlight = new InFlightDeduper<string, boolean>();
 
 async function proxyError(response: Response): Promise<Response> {
   return new Response(await response.text(), {
@@ -34,25 +38,17 @@ async function refreshProxyPackage(
   ctx: RegistryRequestContext,
 ): Promise<boolean> {
   const key = proxyRefreshKey(ctx, packageName);
-  const inFlight = proxyRefreshInFlight.get(key);
-  if (inFlight) return inFlight;
-
-  const refresh = adapter
-    .proxyIngest?.(packageName, upstream.url, ctx)
-    .then(Boolean)
-    .catch(() => false);
-  if (!refresh) return false;
-
-  proxyRefreshInFlight.set(key, refresh);
-  try {
-    const ok = await refresh;
+  const proxyIngest = adapter.proxyIngest;
+  if (!proxyIngest) return false;
+  return proxyRefreshInFlight.run(key, async () => {
+    const ok = await proxyIngest(packageName, upstream.url, ctx)
+      .then(Boolean)
+      .catch(() => false);
     if (ok) {
       proxyRefreshFreshUntil.set(key, Date.now() + Math.max(0, upstream.cacheTtlSeconds) * 1000);
     }
-    return ok;
-  } finally {
-    if (proxyRefreshInFlight.get(key) === refresh) proxyRefreshInFlight.delete(key);
-  }
+    return Boolean(ok);
+  });
 }
 
 /** Proxy repo: serve locally; on a read miss, mirror from the upstream and retry. */

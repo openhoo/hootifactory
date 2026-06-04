@@ -1,5 +1,6 @@
 import { promisify } from "node:util";
 import { gzip } from "node:zlib";
+import { BoundedLruCache, createAsyncLimiter } from "@hootifactory/core";
 
 const COMPRESSED_RESPONSE_CACHE_MAX_ENTRIES = 512;
 const COMPRESSED_RESPONSE_MAX_BYTES = 8 * 1024 * 1024;
@@ -21,23 +22,10 @@ const COMPRESSIBLE_REGISTRY_HANDLERS: Record<string, Set<string>> = {
   pypi: new Set(["simpleRoot", "simpleProject"]),
 };
 
-const compressedResponseCache = new Map<string, Uint8Array>();
-let activeCompressions = 0;
-const compressionWaiters: Array<() => void> = [];
-
-async function acquireCompressionSlot(): Promise<() => void> {
-  while (activeCompressions >= COMPRESSED_RESPONSE_CONCURRENCY) {
-    await new Promise<void>((resolve) => compressionWaiters.push(resolve));
-  }
-  activeCompressions += 1;
-  let released = false;
-  return () => {
-    if (released) return;
-    released = true;
-    activeCompressions = Math.max(0, activeCompressions - 1);
-    compressionWaiters.shift()?.();
-  };
-}
+const compressedResponseCache = new BoundedLruCache<string, Uint8Array>(
+  COMPRESSED_RESPONSE_CACHE_MAX_ENTRIES,
+);
+const limitCompression = createAsyncLimiter(COMPRESSED_RESPONSE_CONCURRENCY);
 
 export function clearCompressedResponseCacheForTest(): void {
   compressedResponseCache.clear();
@@ -48,12 +36,7 @@ export function compressedResponseCacheSizeForTest(): number {
 }
 
 function cacheCompressedResponse(key: string, bytes: Uint8Array): Uint8Array {
-  compressedResponseCache.set(key, bytes);
-  if (compressedResponseCache.size > COMPRESSED_RESPONSE_CACHE_MAX_ENTRIES) {
-    const oldest = compressedResponseCache.keys().next().value;
-    if (oldest) compressedResponseCache.delete(oldest);
-  }
-  return bytes;
+  return compressedResponseCache.set(key, bytes);
 }
 
 function gzipPreference(acceptEncoding: string | null): number {
@@ -110,35 +93,38 @@ export async function compressRegistryResponse(
 
   const cacheKey = `gzip:${res.headers.get("content-type") ?? ""}:${etag}`;
   let compressed = compressedResponseCache.get(cacheKey);
-  let rawBytes: ArrayBuffer | null = null;
   if (!compressed) {
-    const release = await acquireCompressionSlot();
-    try {
-      compressed = compressedResponseCache.get(cacheKey);
-      if (!compressed) {
-        rawBytes = await res.arrayBuffer();
+    const outcome = await limitCompression(
+      async (): Promise<{ compressed: Uint8Array } | { response: Response }> => {
+        const cached = compressedResponseCache.get(cacheKey);
+        if (cached) return { compressed: cached };
+        const rawBytes = await res.arrayBuffer();
         if (rawBytes.byteLength > COMPRESSED_RESPONSE_MAX_BYTES) {
-          return new Response(rawBytes, {
-            status: res.status,
-            statusText: res.statusText,
-            headers: res.headers,
-          });
+          return {
+            response: new Response(rawBytes, {
+              status: res.status,
+              statusText: res.statusText,
+              headers: res.headers,
+            }),
+          };
         }
-        compressed = new Uint8Array(await gzipAsync(Buffer.from(rawBytes)));
-        if (compressed.byteLength >= rawBytes.byteLength) {
+        const nextCompressed = new Uint8Array(await gzipAsync(Buffer.from(rawBytes)));
+        if (nextCompressed.byteLength >= rawBytes.byteLength) {
           const headers = new Headers(res.headers);
           headers.set("content-length", String(rawBytes.byteLength));
-          return new Response(rawBytes, {
-            status: res.status,
-            statusText: res.statusText,
-            headers,
-          });
+          return {
+            response: new Response(rawBytes, {
+              status: res.status,
+              statusText: res.statusText,
+              headers,
+            }),
+          };
         }
-        cacheCompressedResponse(cacheKey, compressed);
-      }
-    } finally {
-      release();
-    }
+        return { compressed: cacheCompressedResponse(cacheKey, nextCompressed) };
+      },
+    );
+    if ("response" in outcome) return outcome.response;
+    compressed = outcome.compressed;
   }
 
   const headers = new Headers(res.headers);

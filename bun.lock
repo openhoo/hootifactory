@@ -58,9 +58,11 @@
       "version": "0.0.0",
       "dependencies": {
         "@hootifactory/config": "workspace:*",
+        "@hootifactory/core": "workspace:*",
         "@hootifactory/db": "workspace:*",
         "@hootifactory/observability": "workspace:*",
         "@hootifactory/queue": "workspace:*",
+        "@hootifactory/registry-application": "workspace:*",
         "@hootifactory/scan-core": "workspace:*",
         "@hootifactory/scanning": "workspace:*",
         "@hootifactory/storage": "workspace:*",
@@ -112,6 +114,7 @@
       "version": "0.0.0",
       "dependencies": {
         "@hootifactory/config": "workspace:*",
+        "@hootifactory/core": "workspace:*",
         "@hootifactory/db": "workspace:*",
         "jose": "^6.2.3",
         "openid-client": "^6.8.4",
@@ -281,6 +284,7 @@
       "version": "0.0.0",
       "dependencies": {
         "@hootifactory/config": "workspace:*",
+        "@hootifactory/core": "workspace:*",
         "@hootifactory/scan-core": "workspace:*",
       },
     },

@@ -1,3 +1,4 @@
+import { BoundedLruCache } from "@hootifactory/core";
 import {
   and,
   apiTokens,
@@ -51,7 +52,8 @@ export type ApiTokenWithOwner = {
 };
 
 const TOKEN_LAST_USED_WRITE_INTERVAL_MS = 60_000;
-const tokenLastUsedWrites = new Map<string, number>();
+const TOKEN_LAST_USED_CACHE_LIMIT = 10_000;
+const tokenLastUsedWrites = new BoundedLruCache<string, number>(TOKEN_LAST_USED_CACHE_LIMIT);
 
 export async function createApiToken(
   input: CreateTokenInput,

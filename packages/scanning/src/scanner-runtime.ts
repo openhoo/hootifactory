@@ -3,6 +3,7 @@ import { readFile, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { env } from "@hootifactory/config";
+import { BoundedLruCache } from "@hootifactory/core";
 
 export interface AvailableScanners {
   syft: boolean;
@@ -72,7 +73,8 @@ export function coerceScannerOptions(
   return typeof arg === "string" ? { [stringKey]: arg } : (arg ?? {});
 }
 
-let dockerAvailableCache: Map<string, boolean> | null = null;
+const DOCKER_AVAILABLE_CACHE_LIMIT = 16;
+let dockerAvailableCache: BoundedLruCache<string, boolean> | null = null;
 
 function hostBinAvailable(bin: string): boolean {
   try {
@@ -83,7 +85,7 @@ function hostBinAvailable(bin: string): boolean {
 }
 
 function dockerAvailable(command = "docker"): boolean {
-  dockerAvailableCache ??= new Map();
+  dockerAvailableCache ??= new BoundedLruCache(DOCKER_AVAILABLE_CACHE_LIMIT);
   const cached = dockerAvailableCache.get(command);
   if (cached !== undefined) return cached;
   if (!hostBinAvailable(command)) {

@@ -1,8 +1,10 @@
 import {
+  BoundedLruCache,
   basicAuthChallenge,
   delegateRegistryPlugin,
   Errors,
   type HttpMethod,
+  ifNoneMatch,
   type Permission,
   parseRegistryInput,
   type RegistryPackageHandle,
@@ -15,6 +17,7 @@ import {
   registryCapabilities,
   registryPlugin,
   serveRegistryBlob,
+  textEtag,
   textResponseWithEtag,
 } from "@hootifactory/registry";
 import { handleNugetPublish } from "./nuget-publish-lifecycle";
@@ -61,21 +64,6 @@ function parseNugetVersionInput(version: string): string {
     message: "invalid package version",
     status: 404,
   });
-}
-
-function sha1hexText(data: string): string {
-  const h = new Bun.CryptoHasher("sha1");
-  h.update(data);
-  return h.digest("hex");
-}
-
-function ifNoneMatch(req: Request, etag: string): boolean {
-  const header = req.headers.get("if-none-match");
-  if (!header) return false;
-  return header
-    .split(",")
-    .map((value) => value.trim())
-    .some((value) => value === "*" || value === etag || value === `W/${etag}`);
 }
 
 function registrationFingerprint(rows: RegistryPackageVersionFingerprintRow[]): string {
@@ -137,7 +125,9 @@ export class NugetAdapter implements RegistryPlugin {
     ])
     .build();
   private readonly delegate = delegateRegistryPlugin(this.plugin);
-  private readonly registrationCache = new Map<string, NugetRegistrationCacheEntry>();
+  private readonly registrationCache = new BoundedLruCache<string, NugetRegistrationCacheEntry>(
+    NUGET_REGISTRATION_CACHE_LIMIT,
+  );
 
   routes = this.delegate.routes;
 
@@ -238,7 +228,7 @@ export class NugetAdapter implements RegistryPlugin {
         })),
       }),
     );
-    const entry = { fingerprint, body, etag: `"${sha1hexText(body)}"` };
+    const entry = { fingerprint, body, etag: textEtag(body) };
     this.putRegistrationCache(cacheKey, entry);
     return registrationResponse(req, entry);
   }
@@ -391,20 +381,12 @@ export class NugetAdapter implements RegistryPlugin {
   }
 
   private putRegistrationCache(cacheKey: string, entry: NugetRegistrationCacheEntry): void {
-    if (this.registrationCache.has(cacheKey)) this.registrationCache.delete(cacheKey);
-    while (this.registrationCache.size >= NUGET_REGISTRATION_CACHE_LIMIT) {
-      const oldest = this.registrationCache.keys().next().value;
-      if (!oldest) break;
-      this.registrationCache.delete(oldest);
-    }
     this.registrationCache.set(cacheKey, entry);
   }
 
   private clearRegistrationCacheForPackage(packageId: string): void {
     const prefix = `${packageId}\0`;
-    for (const key of this.registrationCache.keys()) {
-      if (key.startsWith(prefix)) this.registrationCache.delete(key);
-    }
+    this.registrationCache.deleteWhere((key) => key.startsWith(prefix));
   }
 }
 

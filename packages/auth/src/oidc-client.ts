@@ -1,3 +1,4 @@
+import { BoundedLruCache } from "@hootifactory/core";
 import * as client from "openid-client";
 import { z } from "zod";
 import { extractGroups, extractStringClaim } from "./oidc-claim-path";
@@ -17,7 +18,10 @@ function oidcDiscoveryOptions(issuer: string): client.DiscoveryRequestOptions | 
   return { execute: [client.allowInsecureRequests] };
 }
 
-const configCache = new Map<string, Promise<client.Configuration>>();
+const OIDC_CONFIG_CACHE_LIMIT = 32;
+const configCache = new BoundedLruCache<string, Promise<client.Configuration>>(
+  OIDC_CONFIG_CACHE_LIMIT,
+);
 
 export async function oidcClientConfig(config: OidcProviderConfig): Promise<client.Configuration> {
   if (!config.clientSecret) throw new Error("oidc: client secret is required");

@@ -2,6 +2,7 @@ import { createWriteStream } from "node:fs";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { env } from "@hootifactory/config";
+import { createAsyncLimiter, mapWithBoundedConcurrency } from "@hootifactory/core";
 import {
   and,
   artifacts,
@@ -38,54 +39,10 @@ import { applyPolicyDecision, markSkippedClean, persistScanResult } from "./scan
 
 export { dedupeFindings } from "./scan-policy";
 export { recordScanFailure } from "./scan-results";
+export { mapWithBoundedConcurrency };
 
 const OCI_FORMATS = new Set(["docker", "oci", "helm"]);
 const OCI_REFERENCE_SCAN_CONCURRENCY = 3;
-
-export async function mapWithBoundedConcurrency<T, R>(
-  items: T[],
-  concurrency: number,
-  worker: (item: T) => Promise<R>,
-): Promise<R[]> {
-  if (!Number.isInteger(concurrency) || concurrency < 1) {
-    throw new Error("concurrency must be a positive integer");
-  }
-  const results = new Array<R>(items.length);
-  let next = 0;
-  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
-    while (next < items.length) {
-      const index = next++;
-      results[index] = await worker(items[index] as T);
-    }
-  });
-  await Promise.all(workers);
-  return results;
-}
-
-function createAsyncLimiter(concurrency: number): <T>(fn: () => Promise<T>) => Promise<T> {
-  if (!Number.isInteger(concurrency) || concurrency < 1) {
-    throw new Error("concurrency must be a positive integer");
-  }
-  let active = 0;
-  const waiting: Array<() => void> = [];
-  async function acquire(): Promise<void> {
-    if (active < concurrency) {
-      active += 1;
-      return;
-    }
-    await new Promise<void>((resolve) => waiting.push(resolve));
-    await acquire();
-  }
-  return async (fn) => {
-    await acquire();
-    try {
-      return await fn();
-    } finally {
-      active -= 1;
-      waiting.shift()?.();
-    }
-  };
-}
 
 export function externalContentScannerRequired(options: ScannerRuntimeOptions): boolean {
   return (
