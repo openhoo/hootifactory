@@ -351,6 +351,7 @@ export interface RegistryDataService {
   };
   content: {
     isArtifactBlocked(digest: string): Promise<boolean>;
+    areAllArtifactsBlocked(digests: string[]): Promise<boolean>;
     serveBlobIfClean(opts: RegistryBlobResponseOptions): Promise<Response>;
     blobRefExists(input: RegistryBlobRefInput): Promise<boolean>;
     getBlobRef(input: RegistryBlobRefInput): Promise<RegistryReferencedBlob | null>;
@@ -424,6 +425,15 @@ export interface RegistryDataService {
       tag: string;
       manifest: RegistryOciManifestHandle;
     }): Promise<void>;
+    replaceManifestBlobRefs(input: {
+      package: RegistryPackageHandle;
+      manifest: RegistryOciManifestHandle;
+      digests: string[];
+    }): Promise<void>;
+    listManifestDigestsReferencingBlob(input: {
+      package: RegistryPackageHandle;
+      digest: string;
+    }): Promise<string[]>;
     resolveManifest(input: {
       package: RegistryPackageHandle;
       reference: string;

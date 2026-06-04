@@ -57,6 +57,7 @@ function createTestDataService(): RegistryDataService {
     },
     content: {
       isArtifactBlocked: () => Promise.resolve(false),
+      areAllArtifactsBlocked: () => Promise.resolve(false),
       serveBlobIfClean: ({ digest, contentType }) =>
         Promise.resolve(
           new Response(`blob:${digest}`, { headers: { "content-type": contentType } }),
@@ -92,6 +93,8 @@ function createTestDataService(): RegistryDataService {
       blobRefExists: () => Promise.resolve(false),
       upsertManifest: () => unimplemented("data.oci.upsertManifest"),
       upsertTag: () => Promise.resolve(),
+      replaceManifestBlobRefs: () => Promise.resolve(),
+      listManifestDigestsReferencingBlob: () => Promise.resolve([]),
       resolveManifest: () => Promise.resolve(null),
       deleteTagsForManifest: () => Promise.resolve(),
       markPackageVersionsDeletedByDigest: () => Promise.resolve(0),

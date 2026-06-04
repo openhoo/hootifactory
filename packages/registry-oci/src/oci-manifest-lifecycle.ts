@@ -54,6 +54,11 @@ export async function putOciManifest(
     configDigest: manifestPut.configDigest,
   });
   const versionId = await recordOciManifestVersion(ctx, pkg, manifest, manifestPut);
+  await ctx.data.oci.replaceManifestBlobRefs({
+    package: pkg,
+    manifest,
+    digests: manifestPut.referencedBlobs,
+  });
   await ctx.data.assets.upsert({
     digest: manifestPut.digest,
     role: "oci_manifest",
@@ -240,12 +245,11 @@ export async function isOciBlobBlocked(
   ctx: RegistryRequestContext,
   opts: { image: string; digest: string },
 ): Promise<boolean> {
-  const manifests = await liveOciManifestRowsForImage(ctx, opts.image);
-  let referenced = false;
-  for (const manifest of manifests) {
-    if (!manifestBlobDigests(manifest.raw).includes(opts.digest)) continue;
-    referenced = true;
-    if (!(await ctx.data.content.isArtifactBlocked(manifest.digest))) return false;
-  }
-  return referenced;
+  const pkg = await ctx.data.packages.findByName(opts.image);
+  if (!pkg) return false;
+  const manifestDigests = await ctx.data.oci.listManifestDigestsReferencingBlob({
+    package: pkg,
+    digest: opts.digest,
+  });
+  return ctx.data.content.areAllArtifactsBlocked(manifestDigests);
 }

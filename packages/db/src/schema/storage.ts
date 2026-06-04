@@ -163,6 +163,35 @@ export const ociTags = pgTable(
   ],
 );
 
+/** Manifest-to-layer references used for OCI blob policy checks. */
+export const ociManifestBlobRefs = pgTable(
+  "oci_manifest_blob_refs",
+  {
+    id: primaryId(),
+    repositoryId: uuid()
+      .notNull()
+      .references(() => repositories.id, { onDelete: "cascade" }),
+    packageId: uuid()
+      .notNull()
+      .references(() => packages.id, { onDelete: "cascade" }),
+    manifestId: uuid()
+      .notNull()
+      .references(() => ociManifests.id, { onDelete: "cascade" }),
+    blobDigest: varchar({ length: 80 }).notNull(),
+    ...timestamps(),
+  },
+  (t) => [
+    uniqueIndex("oci_manifest_blob_refs_pkg_manifest_blob_uq").on(
+      t.packageId,
+      t.manifestId,
+      t.blobDigest,
+    ),
+    index("oci_manifest_blob_refs_pkg_blob_idx").on(t.packageId, t.blobDigest),
+    index("oci_manifest_blob_refs_repo_blob_idx").on(t.repositoryId, t.blobDigest),
+    index("oci_manifest_blob_refs_manifest_idx").on(t.manifestId),
+  ],
+);
+
 /** Resumable upload sessions. The id IS the Docker-Upload-UUID. */
 export const uploadSessions = pgTable(
   "upload_sessions",

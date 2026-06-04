@@ -7,6 +7,7 @@ import {
   gt,
   inArray,
   isNull,
+  ociManifestBlobRefs,
   ociManifests,
   ociTags,
   packages,
@@ -102,6 +103,83 @@ export async function listExistingOciManifestDigests(
         eq(packageVersions.packageId, opts.packageId),
         isNull(packageVersions.deletedAt),
         inArray(packageVersions.version, opts.digests),
+      ),
+    )) as OciDigestRow[];
+  return [...new Set([...taggedRows, ...versionRows].map((row) => row.digest))];
+}
+
+export async function replaceOciManifestBlobRefs(
+  ctx: RegistryRequestContext,
+  opts: { packageId: string; manifestId: string; digests: string[] },
+): Promise<void> {
+  const digests = [...new Set(opts.digests)];
+  await db.transaction(async (tx) => {
+    await tx
+      .delete(ociManifestBlobRefs)
+      .where(
+        and(
+          eq(ociManifestBlobRefs.repositoryId, ctx.repo.id),
+          eq(ociManifestBlobRefs.packageId, opts.packageId),
+          eq(ociManifestBlobRefs.manifestId, opts.manifestId),
+        ),
+      );
+    if (digests.length === 0) return;
+    await tx
+      .insert(ociManifestBlobRefs)
+      .values(
+        digests.map((digest) => ({
+          repositoryId: ctx.repo.id,
+          packageId: opts.packageId,
+          manifestId: opts.manifestId,
+          blobDigest: digest,
+        })),
+      )
+      .onConflictDoNothing();
+  });
+}
+
+export async function listOciManifestDigestsReferencingBlob(
+  ctx: RegistryRequestContext,
+  opts: { packageId: string; digest: string },
+): Promise<string[]> {
+  const taggedRows = (await db
+    .select({ digest: ociManifests.digest })
+    .from(ociManifestBlobRefs)
+    .innerJoin(ociManifests, eq(ociManifestBlobRefs.manifestId, ociManifests.id))
+    .innerJoin(
+      ociTags,
+      and(
+        eq(ociTags.packageId, ociManifestBlobRefs.packageId),
+        eq(ociTags.manifestId, ociManifestBlobRefs.manifestId),
+      ),
+    )
+    .where(
+      and(
+        eq(ociManifestBlobRefs.repositoryId, ctx.repo.id),
+        eq(ociManifestBlobRefs.packageId, opts.packageId),
+        eq(ociManifestBlobRefs.blobDigest, opts.digest),
+      ),
+    )) as OciDigestRow[];
+  const versionRows = (await db
+    .select({ digest: ociManifests.digest })
+    .from(ociManifestBlobRefs)
+    .innerJoin(ociManifests, eq(ociManifestBlobRefs.manifestId, ociManifests.id))
+    .innerJoin(
+      packageVersions,
+      and(
+        eq(packageVersions.packageId, ociManifestBlobRefs.packageId),
+        eq(
+          ociManifests.digest,
+          sql`jsonb_extract_path_text((${packageVersions.metadata} #>> '{}')::jsonb, ${"digest"})`,
+        ),
+        isNull(packageVersions.deletedAt),
+      ),
+    )
+    .where(
+      and(
+        eq(ociManifestBlobRefs.repositoryId, ctx.repo.id),
+        eq(ociManifestBlobRefs.packageId, opts.packageId),
+        eq(ociManifestBlobRefs.blobDigest, opts.digest),
       ),
     )) as OciDigestRow[];
   return [...new Set([...taggedRows, ...versionRows].map((row) => row.digest))];

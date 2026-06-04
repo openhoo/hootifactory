@@ -16,6 +16,7 @@ import {
   upsertRegistryAsset,
 } from "../assets";
 import {
+  areAllArtifactsBlocked,
   blobRefExists,
   ensureBlobRef,
   getBlobRef,
@@ -32,10 +33,12 @@ import {
   listExistingOciBlobRefDigests,
   listExistingOciManifestDigests,
   listLiveOciManifestsForPackage,
+  listOciManifestDigestsReferencingBlob,
   listOciSubjectManifests,
   listOciTags,
   markOciPackageVersionsDeletedByDigest,
   ociBlobRefExists,
+  replaceOciManifestBlobRefs,
   resolveOciManifest,
   upsertOciManifest,
   upsertOciTag,
@@ -309,6 +312,7 @@ export function createRegistryDataService(ctx: RegistryRequestContext): Registry
     },
     content: {
       isArtifactBlocked: (digest) => isArtifactBlocked(ctx, digest),
+      areAllArtifactsBlocked: (digests) => areAllArtifactsBlocked(ctx, digests),
       serveBlobIfClean: (opts) => serveBlobIfClean(ctx, opts),
       blobRefExists: (input: RegistryBlobRefInput) => blobRefExists(ctx, input),
       getBlobRef: (input: RegistryBlobRefInput) => getBlobRef(ctx, input),
@@ -395,6 +399,20 @@ export function createRegistryDataService(ctx: RegistryRequestContext): Registry
           manifestId: input.manifest.id,
         });
       },
+      replaceManifestBlobRefs: (input) => {
+        assertPackageInRepo(ctx, input.package);
+        assertManifestInRepo(ctx, input.manifest);
+        return replaceOciManifestBlobRefs(ctx, {
+          packageId: input.package.id,
+          manifestId: input.manifest.id,
+          digests: input.digests,
+        });
+      },
+      listManifestDigestsReferencingBlob: (input) =>
+        listOciManifestDigestsReferencingBlob(ctx, {
+          packageId: packageId(ctx, input.package),
+          digest: input.digest,
+        }),
       resolveManifest: (input) =>
         resolveOciManifest(ctx, {
           packageId: packageId(ctx, input.package),

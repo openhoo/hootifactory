@@ -1,4 +1,4 @@
-import { and, artifacts, db, eq, scanPolicies } from "@hootifactory/db";
+import { and, artifacts, db, eq, inArray, scanPolicies } from "@hootifactory/db";
 import type { RegistryRequestContext } from "@hootifactory/registry";
 import { resolveScanPolicy, type ScanPolicyPattern } from "@hootifactory/scan-core";
 import { blobStore } from "@hootifactory/storage";
@@ -22,27 +22,36 @@ export async function isArtifactBlocked(
   ctx: RegistryRequestContext,
   digest: string,
 ): Promise<boolean> {
-  const policies = (await db
-    .select()
-    .from(scanPolicies)
-    .where(eq(scanPolicies.orgId, ctx.repo.orgId))) as ScanPolicyRow[];
-  const policy = resolveScanPolicy(policies, ctx.repo.name);
-  const [row] = await db
-    .select({ state: artifacts.state })
-    .from(artifacts)
-    .where(
-      and(
-        eq(artifacts.orgId, ctx.repo.orgId),
-        eq(artifacts.repositoryId, ctx.repo.id),
-        eq(artifacts.digest, digest),
+  return areAllArtifactsBlocked(ctx, [digest]);
+}
+
+export async function areAllArtifactsBlocked(
+  ctx: RegistryRequestContext,
+  digests: string[],
+): Promise<boolean> {
+  const uniqueDigests = [...new Set(digests)];
+  if (uniqueDigests.length === 0) return false;
+  const [policies, rows] = await Promise.all([
+    db.select().from(scanPolicies).where(eq(scanPolicies.orgId, ctx.repo.orgId)),
+    db
+      .select({ digest: artifacts.digest, state: artifacts.state })
+      .from(artifacts)
+      .where(
+        and(
+          eq(artifacts.orgId, ctx.repo.orgId),
+          eq(artifacts.repositoryId, ctx.repo.id),
+          inArray(artifacts.digest, uniqueDigests),
+        ),
       ),
-    )
-    .limit(1);
-  if (row?.state === "blocked") return true;
-  // Enforce mode is fail-closed: bytes are unavailable until a scanner has
-  // positively marked the artifact clean.
-  if (policy?.mode === "enforce") return row?.state !== "clean";
-  return false;
+  ]);
+  const policy = resolveScanPolicy(policies as ScanPolicyRow[], ctx.repo.name);
+  const stateByDigest = new Map(rows.map((row) => [row.digest, row.state]));
+  if (policy?.mode === "enforce") {
+    // Enforce mode is fail-closed: bytes are unavailable until a scanner has
+    // positively marked the artifact clean.
+    return uniqueDigests.every((digest) => stateByDigest.get(digest) !== "clean");
+  }
+  return uniqueDigests.every((digest) => stateByDigest.get(digest) === "blocked");
 }
 
 /**

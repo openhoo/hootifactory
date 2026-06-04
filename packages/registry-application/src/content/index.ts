@@ -1,4 +1,5 @@
 export {
+  areAllArtifactsBlocked,
   isArtifactBlocked,
   REGISTRY_TOKEN_SERVICE,
   serveBlobIfClean,
