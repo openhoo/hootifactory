@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildOciTagsListResponse } from "./oci-tags";
+import { buildOciTagsListResponse, parseOciTagsListQuery } from "./oci-tags";
 
 async function readTagsResponse(response: Response): Promise<{
   body: { name: string; tags: string[] };
@@ -11,19 +11,20 @@ async function readTagsResponse(response: Response): Promise<{
   };
 }
 
-function responseFor(url: string, tags: string[]): Response {
+function responseFor(url: string, tags: string[], truncated = false): Response {
   return buildOciTagsListResponse({
     baseUrl: "https://registry.test",
     mountPath: "v2/acme/containers",
     image: "team/api",
     name: "acme/containers/team/api",
     tags,
-    url,
+    truncated,
+    query: parseOciTagsListQuery(url),
   });
 }
 
 describe("OCI tags list response", () => {
-  test("returns sorted tags when no cursor or page size is requested", async () => {
+  test("returns the provided tag page without reordering", async () => {
     const result = await readTagsResponse(
       responseFor("https://registry.test/v2/acme/containers/team/api/tags/list", [
         "v2",
@@ -33,18 +34,18 @@ describe("OCI tags list response", () => {
     );
 
     expect(result).toEqual({
-      body: { name: "acme/containers/team/api", tags: ["latest", "v1", "v2"] },
+      body: { name: "acme/containers/team/api", tags: ["v2", "latest", "v1"] },
       link: null,
     });
   });
 
-  test("applies the last cursor and emits a next link for truncated pages", async () => {
+  test("emits a next link for truncated cursor pages", async () => {
     const result = await readTagsResponse(
-      responseFor("https://registry.test/v2/acme/containers/team/api/tags/list?n=1&last=latest", [
-        "latest",
-        "v1",
-        "v2",
-      ]),
+      responseFor(
+        "https://registry.test/v2/acme/containers/team/api/tags/list?n=1&last=latest",
+        ["v1"],
+        true,
+      ),
     );
 
     expect(result).toEqual({
@@ -57,7 +58,8 @@ describe("OCI tags list response", () => {
     const result = await readTagsResponse(
       responseFor(
         "https://registry.test/v2/acme/containers/team/api/tags/list?n=1%0D%0A&last=latest",
-        ["latest", "v1", "v2"],
+        ["v1"],
+        true,
       ),
     );
 
@@ -69,10 +71,7 @@ describe("OCI tags list response", () => {
 
   test("supports zero-length pages without emitting an unusable next link", async () => {
     const result = await readTagsResponse(
-      responseFor("https://registry.test/v2/acme/containers/team/api/tags/list?n=0", [
-        "latest",
-        "v1",
-      ]),
+      responseFor("https://registry.test/v2/acme/containers/team/api/tags/list?n=0", [], true),
     );
 
     expect(result).toEqual({

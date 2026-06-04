@@ -161,6 +161,16 @@ export interface RegistryOciMountSourceRow {
   scope: string;
 }
 
+export interface RegistryOciTagListOptions {
+  last?: string;
+  pageSize?: number;
+}
+
+export interface RegistryOciTagListPage {
+  tags: string[];
+  truncated: boolean;
+}
+
 export interface RegistryOciUploadSessionMutations {
   assertStagingBudget(input: {
     nextOffsetBytes: number;
@@ -432,7 +442,10 @@ export interface RegistryDataService {
     }): Promise<boolean>;
     deleteTag(input: { package: RegistryPackageHandle; tag: string }): Promise<boolean>;
     listLiveManifestsForPackage(pkg: RegistryPackageHandle): Promise<RegistryOciManifestRawRow[]>;
-    listTags(pkg: RegistryPackageHandle): Promise<string[]>;
+    listTags(
+      pkg: RegistryPackageHandle,
+      opts?: RegistryOciTagListOptions,
+    ): Promise<RegistryOciTagListPage>;
     listSubjectManifests(subjectDigest: string): Promise<RegistryOciManifestRow[]>;
   };
 }

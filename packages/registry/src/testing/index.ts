@@ -98,7 +98,7 @@ function createTestDataService(): RegistryDataService {
       deleteManifestIfUnassociated: () => Promise.resolve(false),
       deleteTag: () => Promise.resolve(false),
       listLiveManifestsForPackage: () => Promise.resolve([]),
-      listTags: () => Promise.resolve([]),
+      listTags: () => Promise.resolve({ tags: [], truncated: false }),
       listSubjectManifests: () => Promise.resolve([]),
     },
   };

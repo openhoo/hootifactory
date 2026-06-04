@@ -1,4 +1,4 @@
-import { parseRegistryInput } from "@hootifactory/registry";
+import { parseRegistryInput, type RegistryOciTagListOptions } from "@hootifactory/registry";
 import { OciTagPageSizeSchema, OciTagSchema } from "./oci-validation";
 
 interface OciTagsListResponseInput {
@@ -7,15 +7,11 @@ interface OciTagsListResponseInput {
   image: string;
   name: string;
   tags: string[];
-  url: string;
+  truncated: boolean;
+  query: RegistryOciTagListOptions;
 }
 
-interface OciTagsListQuery {
-  last?: string;
-  pageSize?: number;
-}
-
-function parseOciTagsListQuery(url: string): OciTagsListQuery {
+export function parseOciTagsListQuery(url: string): RegistryOciTagListOptions {
   const searchParams = new URL(url).searchParams;
   const lastRaw = searchParams.get("last");
   const last =
@@ -37,21 +33,10 @@ function parseOciTagsListQuery(url: string): OciTagsListQuery {
 }
 
 export function buildOciTagsListResponse(input: OciTagsListResponseInput): Response {
-  const { baseUrl, image, mountPath, name, url } = input;
-  const query = parseOciTagsListQuery(url);
-  let tags = [...input.tags].sort();
-  if (query.last) {
-    tags = tags.filter((tag) => tag > query.last!);
-  }
-
-  let truncated = false;
-  if (query.pageSize !== undefined) {
-    truncated = tags.length > query.pageSize;
-    tags = tags.slice(0, query.pageSize);
-  }
+  const { baseUrl, image, mountPath, name, query, tags, truncated } = input;
 
   const headers: Record<string, string> = { "content-type": "application/json" };
-  if (truncated && tags.length > 0) {
+  if (truncated && query.pageSize !== undefined && tags.length > 0) {
     const next = encodeURIComponent(tags[tags.length - 1] ?? "");
     headers.link = `<${baseUrl}/${mountPath}/${image}/tags/list?n=${query.pageSize}&last=${next}>; rel="next"`;
   }

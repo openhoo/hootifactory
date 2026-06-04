@@ -425,7 +425,7 @@ export function createRegistryDataService(ctx: RegistryRequestContext): Registry
         deleteOciTag({ packageId: packageId(ctx, input.package), tag: input.tag }),
       listLiveManifestsForPackage: (pkg) =>
         listLiveOciManifestsForPackage(ctx, packageId(ctx, pkg)),
-      listTags: (pkg) => listOciTags(packageId(ctx, pkg)),
+      listTags: (pkg, opts) => listOciTags(packageId(ctx, pkg), opts),
       listSubjectManifests: (subjectDigest) => listOciSubjectManifests(ctx, subjectDigest),
     },
   };

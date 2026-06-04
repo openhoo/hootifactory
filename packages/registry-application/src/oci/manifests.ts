@@ -1,8 +1,10 @@
 import {
   and,
+  asc,
   blobRefs,
   db,
   eq,
+  gt,
   inArray,
   isNull,
   ociManifests,
@@ -11,7 +13,11 @@ import {
   packageVersions,
   sql,
 } from "@hootifactory/db";
-import type { RegistryRequestContext } from "@hootifactory/registry";
+import type {
+  RegistryOciTagListOptions,
+  RegistryOciTagListPage,
+  RegistryRequestContext,
+} from "@hootifactory/registry";
 import { adjustArtifactsUsedTx } from "../governance/quota";
 
 export type OciManifestRow = typeof ociManifests.$inferSelect;
@@ -328,12 +334,28 @@ export async function listLiveOciManifestsForPackage(
     );
 }
 
-export async function listOciTags(packageId: string): Promise<string[]> {
-  const rows = (await db
+export async function listOciTags(
+  packageId: string,
+  opts: RegistryOciTagListOptions = {},
+): Promise<RegistryOciTagListPage> {
+  const where =
+    opts.last === undefined
+      ? eq(ociTags.packageId, packageId)
+      : and(eq(ociTags.packageId, packageId), gt(ociTags.tag, opts.last));
+  const query = db
     .select({ tag: ociTags.tag })
     .from(ociTags)
-    .where(eq(ociTags.packageId, packageId))) as OciTagRow[];
-  return rows.map((row) => row.tag);
+    .where(where)
+    .orderBy(asc(ociTags.tag));
+  const rows = (await (opts.pageSize === undefined
+    ? query
+    : query.limit(opts.pageSize + 1))) as OciTagRow[];
+  const truncated = opts.pageSize !== undefined && rows.length > opts.pageSize;
+  const pageRows = opts.pageSize === undefined ? rows : rows.slice(0, opts.pageSize);
+  return {
+    tags: pageRows.map((row) => row.tag),
+    truncated,
+  };
 }
 
 export async function listOciSubjectManifests(

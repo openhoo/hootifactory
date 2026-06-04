@@ -25,7 +25,7 @@ import {
   buildOciReferrersResponse,
   parseOciReferrersQuery,
 } from "./oci-referrers";
-import { buildOciTagsListResponse } from "./oci-tags";
+import { buildOciTagsListResponse, parseOciTagsListQuery } from "./oci-tags";
 import { cancelUpload, patchUpload, putUpload, startUpload, uploadStatus } from "./oci-uploads";
 import { assertImageName, OciDigestSchema, parseReference } from "./oci-validation";
 
@@ -206,14 +206,16 @@ export class DockerAdapter implements RegistryPlugin {
   ): Promise<Response> {
     const pkg = await ctx.data.packages.findByName(image);
     if (!pkg) throw Errors.nameUnknown({ image });
-    const tags = await ctx.data.oci.listTags(pkg);
+    const query = parseOciTagsListQuery(req.url);
+    const tags = await ctx.data.oci.listTags(pkg, query);
     return buildOciTagsListResponse({
       baseUrl: ctx.baseUrl,
       mountPath: ctx.repo.mountPath,
       image,
       name: this.fullName(ctx, image),
-      tags,
-      url: req.url,
+      tags: tags.tags,
+      truncated: tags.truncated,
+      query,
     });
   }
 

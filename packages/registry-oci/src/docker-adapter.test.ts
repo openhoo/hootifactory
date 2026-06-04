@@ -118,6 +118,38 @@ describe("Docker adapter contract", () => {
     ).rejects.toMatchObject({ status: 400, code: "DIGEST_INVALID" });
   });
 
+  test("passes tag cursor pagination to the data service", async () => {
+    const ctx = createTestRegistryContext({ baseUrl: "https://registry.test" });
+    ctx.repo = { ...ctx.repo, format: "docker", mountPath: "v2/acme/containers" };
+    ctx.data.packages.findByName = async (name) => {
+      expect(name).toBe(pkg.name);
+      return pkg;
+    };
+    ctx.data.oci.listTags = async (inputPkg, opts) => {
+      expect(inputPkg.id).toBe(pkg.id);
+      expect(opts).toEqual({ last: "latest", pageSize: 1 });
+      return { tags: ["v1"], truncated: true };
+    };
+
+    const response = await new DockerAdapter().handle(
+      {
+        entry: { method: "GET", pattern: "/:name+/tags/list", handlerId: "tagsList" },
+        params: { name: pkg.name },
+        path: "/team/api/tags/list",
+      },
+      new Request("https://registry.test/v2/acme/containers/team/api/tags/list?n=1&last=latest"),
+      ctx,
+    );
+
+    expect(response.headers.get("link")).toBe(
+      '<https://registry.test/v2/acme/containers/team/api/tags/list?n=1&last=v1>; rel="next"',
+    );
+    await expect(response.json()).resolves.toEqual({
+      name: "acme/containers/team/api",
+      tags: ["v1"],
+    });
+  });
+
   test("digest-pinned manifests emit immutable validators and honor If-None-Match", async () => {
     const ctx = createTestRegistryContext();
     ctx.repo = { ...ctx.repo, format: "docker", mountPath: "v2/acme/containers" };
