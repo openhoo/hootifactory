@@ -16,6 +16,13 @@ type BlobResponseOptions = {
   blocked: () => Response;
   notModified?: () => Response | null;
 };
+type ScanPolicyCacheEntry = {
+  expiresAt: number;
+  promise: Promise<ScanPolicyRow[]>;
+};
+
+const SCAN_POLICY_CACHE_TTL_MS = 5_000;
+const scanPolicyCache = new Map<string, ScanPolicyCacheEntry>();
 
 function attachmentFilename(digest: string): string {
   return digest.replace(/[^A-Za-z0-9._-]/g, "_");
@@ -35,7 +42,7 @@ export async function areAllArtifactsBlocked(
   const uniqueDigests = [...new Set(digests)];
   if (uniqueDigests.length === 0) return false;
   const [policies, rows] = await Promise.all([
-    db.select().from(scanPolicies).where(eq(scanPolicies.orgId, ctx.repo.orgId)),
+    scanPolicyRowsForOrg(ctx.repo.orgId),
     db
       .select({ digest: artifacts.digest, state: artifacts.state })
       .from(artifacts)
@@ -55,6 +62,25 @@ export async function areAllArtifactsBlocked(
     return uniqueDigests.every((digest) => stateByDigest.get(digest) !== "clean");
   }
   return uniqueDigests.every((digest) => stateByDigest.get(digest) === "blocked");
+}
+
+export function invalidateScanPolicyCache(orgId: string): void {
+  scanPolicyCache.delete(orgId);
+}
+
+function scanPolicyRowsForOrg(orgId: string): Promise<ScanPolicyRow[]> {
+  const now = Date.now();
+  const cached = scanPolicyCache.get(orgId);
+  if (cached && cached.expiresAt > now) return cached.promise;
+
+  const promise = db.select().from(scanPolicies).where(eq(scanPolicies.orgId, orgId)) as Promise<
+    ScanPolicyRow[]
+  >;
+  scanPolicyCache.set(orgId, { expiresAt: now + SCAN_POLICY_CACHE_TTL_MS, promise });
+  promise.catch(() => {
+    if (scanPolicyCache.get(orgId)?.promise === promise) scanPolicyCache.delete(orgId);
+  });
+  return promise;
 }
 
 /**

@@ -13,6 +13,7 @@ import {
   sql,
 } from "@hootifactory/db";
 import type { Severity } from "@hootifactory/scan-core";
+import { invalidateScanPolicyCache } from "../content/artifacts";
 
 export type ScanPolicyRow = typeof scanPolicies.$inferSelect;
 
@@ -54,6 +55,7 @@ export async function upsertScanPolicy(input: UpsertScanPolicyInput): Promise<Sc
     })
     .returning();
   if (!row) throw new Error("scan policy upsert did not return a row");
+  invalidateScanPolicyCache(input.orgId);
   return row;
 }
 

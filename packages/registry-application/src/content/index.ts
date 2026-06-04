@@ -1,5 +1,6 @@
 export {
   areAllArtifactsBlocked,
+  invalidateScanPolicyCache,
   isArtifactBlocked,
   REGISTRY_TOKEN_SERVICE,
   serveBlobIfClean,
