@@ -11,7 +11,7 @@ import {
 import { loadVirtualMembers } from "@hootifactory/registry-application";
 import { registryErrorToFormatResponse } from "./registry-error-format";
 import { repoSpanAttributes } from "./registry-utils";
-import { authorizeVirtualMember } from "./registry-virtual-member";
+import { authorizeVirtualMembers } from "./registry-virtual-member";
 import { virtualNotFound } from "./registry-virtual-response";
 import { metadataResponse, rewriteVirtualMetadata } from "./registry-virtual-rewrite";
 
@@ -36,39 +36,55 @@ export async function dispatchVirtualMetadata(
     async (span) => {
       const members = await loadVirtualMembers(ctx.repo.id);
       span.setAttribute("registry.virtual.member_count", members.length);
-      const parts: FormatMetadata[] = [];
+      const memberRoute: RouteMatch = {
+        entry: { method: "GET", pattern: "/:pkg+", handlerId: "packument" },
+        params: { pkg: name },
+        path: name,
+      };
+      const authorizations = await authorizeVirtualMembers(
+        adapter,
+        req.method as HttpMethod,
+        memberRoute,
+        members,
+        ctx,
+        "registry.virtual.metadata_member",
+      );
+      const results = await Promise.all(
+        authorizations.map(({ member, authorization }) => {
+          if (!authorization.decision.allowed) return Promise.resolve({ part: null, last: null });
+          return withSpan(
+            "registry.virtual.metadata_member_response",
+            repoSpanAttributes(member),
+            async (memberSpan) => {
+              try {
+                const part = await adapter.generateMetadata?.(name, authorization.memberCtx);
+                memberSpan.setAttribute("registry.virtual.member_found", part ? 1 : 0);
+                return {
+                  part: part
+                    ? rewriteVirtualMetadata(part, member.mountPath, ctx.repo.mountPath)
+                    : null,
+                  last: null,
+                };
+              } catch (err) {
+                if (!(err instanceof RegistryError)) throw err;
+                const res = registryErrorToFormatResponse(adapter.format, err);
+                memberSpan.setAttribute("http.response.status_code", res.status);
+                return { part: null, last: res };
+              }
+            },
+          );
+        }),
+      );
+      const parts: FormatMetadata[] = results.flatMap((result) =>
+        result.part ? [result.part] : [],
+      );
       let last: Response | null = null;
-      for (const member of members) {
-        await withSpan(
-          "registry.virtual.metadata_member",
-          repoSpanAttributes(member),
-          async (memberSpan) => {
-            const authorization = await authorizeVirtualMember(
-              adapter,
-              req.method as HttpMethod,
-              {
-                entry: { method: "GET", pattern: "/:pkg+", handlerId: "packument" },
-                params: { pkg: name },
-                path: name,
-              },
-              member,
-              ctx,
-              memberSpan,
-            );
-            if (!authorization.decision.allowed) return;
-            try {
-              const part = await adapter.generateMetadata?.(name, authorization.memberCtx);
-              if (part)
-                parts.push(rewriteVirtualMetadata(part, member.mountPath, ctx.repo.mountPath));
-              memberSpan.setAttribute("registry.virtual.member_found", part ? 1 : 0);
-            } catch (err) {
-              if (!(err instanceof RegistryError)) throw err;
-              const res = registryErrorToFormatResponse(adapter.format, err);
-              memberSpan.setAttribute("http.response.status_code", res.status);
-              last = res;
-            }
-          },
-        );
+      for (let index = results.length - 1; index >= 0; index -= 1) {
+        const result = results[index];
+        if (result?.last) {
+          last = result.last;
+          break;
+        }
       }
       if (parts.length === 0) {
         return last ?? virtualNotFound(adapter);

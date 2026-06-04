@@ -9,6 +9,7 @@ import {
   type AuthAttributeSpan,
   authorizeVirtualMember,
   virtualMemberSkipReason,
+  withVirtualMemberSpans,
 } from "./registry-virtual-member";
 
 const route: RouteMatch = {
@@ -63,6 +64,27 @@ function parentContext(): RegistryRequestContext {
 }
 
 describe("virtual member authorization", () => {
+  test("runs member span handlers concurrently while preserving member order", async () => {
+    const members = [
+      { ...publicMember, id: "repo_1", name: "one" },
+      { ...publicMember, id: "repo_2", name: "two" },
+      { ...publicMember, id: "repo_3", name: "three" },
+    ];
+    let inFlight = 0;
+    let maxInFlight = 0;
+
+    const names = await withVirtualMemberSpans(members, "test.virtual.member", async (member) => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      inFlight -= 1;
+      return member.name;
+    });
+
+    expect(names).toEqual(["one", "two", "three"]);
+    expect(maxInFlight).toBeGreaterThan(1);
+  });
+
   test("builds member context and records allowed auth attributes", async () => {
     const { calls, span } = fakeSpan();
 

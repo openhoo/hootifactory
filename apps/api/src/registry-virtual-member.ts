@@ -1,4 +1,4 @@
-import { addSpanEvent } from "@hootifactory/observability";
+import { addSpanEvent, withSpan } from "@hootifactory/observability";
 import type {
   HttpMethod,
   RegistryPlugin,
@@ -8,6 +8,7 @@ import type {
 } from "@hootifactory/registry";
 import { buildRegistryRequestContext } from "@hootifactory/registry-application";
 import { authorizeRoute, type RouteAuthorization } from "./registry-auth";
+import { repoSpanAttributes } from "./registry-utils";
 
 export interface AuthAttributeSpan {
   setAttributes(attributes: Record<string, string>): void;
@@ -15,6 +16,23 @@ export interface AuthAttributeSpan {
 
 export interface VirtualMemberAuthorization extends RouteAuthorization {
   memberCtx: RegistryRequestContext;
+}
+
+export interface AuthorizedVirtualMember {
+  member: ResolvedRepo;
+  authorization: VirtualMemberAuthorization;
+}
+
+export function withVirtualMemberSpans<T>(
+  members: ResolvedRepo[],
+  spanName: string,
+  handler: (member: ResolvedRepo, span: AuthAttributeSpan) => Promise<T>,
+): Promise<T[]> {
+  return Promise.all(
+    members.map((member) =>
+      withSpan(spanName, repoSpanAttributes(member), (span) => handler(member, span)),
+    ),
+  );
 }
 
 export function virtualMemberSkipReason(authorization: VirtualMemberAuthorization): string {
@@ -41,4 +59,18 @@ export async function authorizeVirtualMember(
     });
   }
   return { ...authorization, memberCtx };
+}
+
+export function authorizeVirtualMembers(
+  adapter: RegistryPlugin,
+  method: HttpMethod,
+  match: RouteMatch,
+  members: ResolvedRepo[],
+  parentCtx: RegistryRequestContext,
+  spanName: string,
+): Promise<AuthorizedVirtualMember[]> {
+  return withVirtualMemberSpans(members, spanName, async (member, span) => ({
+    member,
+    authorization: await authorizeVirtualMember(adapter, method, match, member, parentCtx, span),
+  }));
 }

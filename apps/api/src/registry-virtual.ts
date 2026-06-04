@@ -9,7 +9,7 @@ import {
 import { loadVirtualMembers } from "@hootifactory/registry-application";
 import { adapterResponseOrRegistryError } from "./registry-adapter";
 import { isReadMethod, repoSpanAttributes } from "./registry-utils";
-import { authorizeVirtualMember, virtualMemberSkipReason } from "./registry-virtual-member";
+import { authorizeVirtualMembers, virtualMemberSkipReason } from "./registry-virtual-member";
 import { dispatchVirtualMetadata, virtualMetadataPackageName } from "./registry-virtual-metadata";
 import { virtualNotFound } from "./registry-virtual-response";
 import { rewriteVirtualBody, shouldRewriteVirtualBody } from "./registry-virtual-rewrite";
@@ -41,31 +41,31 @@ export async function dispatchVirtual(
       }
       const members = await loadVirtualMembers(ctx.repo.id);
       span.setAttribute("registry.virtual.member_count", members.length);
+      const authorizations = await authorizeVirtualMembers(
+        adapter,
+        req.method as HttpMethod,
+        match,
+        members,
+        ctx,
+        "registry.virtual.member",
+      );
       let last: Response | null = null;
-      for (const member of members) {
+      for (const { member, authorization } of authorizations) {
+        // Authorize against EACH member with its own org/visibility/name because
+        // the request was only authorized against the virtual repo.
+        if (!authorization.decision.allowed) {
+          logger.debug("virtual member skipped by authorization", {
+            virtualRepo: ctx.repo.name,
+            member: member.name,
+            action: authorization.permission.action,
+            reason: virtualMemberSkipReason(authorization),
+          });
+          continue;
+        }
         const res = await withSpan(
-          "registry.virtual.member",
+          "registry.virtual.member_response",
           repoSpanAttributes(member),
           async (memberSpan) => {
-            // Authorize against EACH member with its own org/visibility/name because
-            // the request was only authorized against the virtual repo.
-            const authorization = await authorizeVirtualMember(
-              adapter,
-              req.method as HttpMethod,
-              match,
-              member,
-              ctx,
-              memberSpan,
-            );
-            if (!authorization.decision.allowed) {
-              logger.debug("virtual member skipped by authorization", {
-                virtualRepo: ctx.repo.name,
-                member: member.name,
-                action: authorization.permission.action,
-                reason: virtualMemberSkipReason(authorization),
-              });
-              return null;
-            }
             const response = await adapterResponseOrRegistryError(
               adapter,
               match,
@@ -76,7 +76,6 @@ export async function dispatchVirtual(
             return response;
           },
         );
-        if (!res) continue;
         if (res.status < 400) {
           // Rewrite member mount -> virtual mount so clients route follow-ups through the virtual repo.
           const contentType = res.headers.get("content-type") ?? "";

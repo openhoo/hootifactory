@@ -9,7 +9,7 @@ import {
 import { loadVirtualMembers } from "@hootifactory/registry-application";
 import { adapterResponseOrRegistryError } from "./registry-adapter";
 import { repoSpanAttributes } from "./registry-utils";
-import { authorizeVirtualMember } from "./registry-virtual-member";
+import { authorizeVirtualMembers } from "./registry-virtual-member";
 import {
   allNpmSearchResultsRequest,
   allNugetSearchResultsRequest,
@@ -39,36 +39,38 @@ async function dispatchVirtualNpmSearch(
     async (span) => {
       const members = await loadVirtualMembers(ctx.repo.id);
       span.setAttribute("registry.virtual.member_count", members.length);
-      const bodies: NpmSearchBody[] = [];
-      for (const member of members) {
-        await withSpan(
-          "registry.virtual.search_member",
-          repoSpanAttributes(member),
-          async (memberSpan) => {
-            const authorization = await authorizeVirtualMember(
-              adapter,
-              req.method as HttpMethod,
-              match,
-              member,
-              ctx,
-              memberSpan,
+      const authorizations = await authorizeVirtualMembers(
+        adapter,
+        req.method as HttpMethod,
+        match,
+        members,
+        ctx,
+        "registry.virtual.search_member",
+      );
+      const bodies: NpmSearchBody[] = (
+        await Promise.all(
+          authorizations.map(({ member, authorization }) => {
+            if (!authorization.decision.allowed) return Promise.resolve(null);
+            return withSpan(
+              "registry.virtual.search_member_response",
+              repoSpanAttributes(member),
+              async (memberSpan) => {
+                const res = await adapterResponseOrRegistryError(
+                  adapter,
+                  match,
+                  allNpmSearchResultsRequest(req),
+                  authorization.memberCtx,
+                );
+                memberSpan.setAttribute("http.response.status_code", res.status);
+                if (res.status >= 400) return null;
+                const body = parseNpmSearchBody(await res.json().catch(() => null));
+                memberSpan.setAttribute("registry.virtual.member_total", body?.total ?? 0);
+                return body;
+              },
             );
-            if (!authorization.decision.allowed) return;
-
-            const res = await adapterResponseOrRegistryError(
-              adapter,
-              match,
-              allNpmSearchResultsRequest(req),
-              authorization.memberCtx,
-            );
-            memberSpan.setAttribute("http.response.status_code", res.status);
-            if (res.status >= 400) return;
-            const body = parseNpmSearchBody(await res.json().catch(() => null));
-            memberSpan.setAttribute("registry.virtual.member_total", body?.total ?? 0);
-            if (body) bodies.push(body);
-          },
-        );
-      }
+          }),
+        )
+      ).flatMap((body) => (body ? [body] : []));
       const result = mergeNpmSearchBodies(bodies, npmSearchWindow(req));
       span.setAttribute("registry.virtual.result_count", result.total);
       return Response.json({
@@ -95,40 +97,42 @@ async function dispatchVirtualNugetSearch(
     async (span) => {
       const members = await loadVirtualMembers(ctx.repo.id);
       span.setAttribute("registry.virtual.member_count", members.length);
-      const bodies: NugetSearchBody[] = [];
-      for (const member of members) {
-        await withSpan(
-          "registry.virtual.search_member",
-          repoSpanAttributes(member),
-          async (memberSpan) => {
-            const authorization = await authorizeVirtualMember(
-              adapter,
-              req.method as HttpMethod,
-              match,
-              member,
-              ctx,
-              memberSpan,
+      const authorizations = await authorizeVirtualMembers(
+        adapter,
+        req.method as HttpMethod,
+        match,
+        members,
+        ctx,
+        "registry.virtual.search_member",
+      );
+      const bodies: NugetSearchBody[] = (
+        await Promise.all(
+          authorizations.map(({ member, authorization }) => {
+            if (!authorization.decision.allowed) return Promise.resolve(null);
+            return withSpan(
+              "registry.virtual.search_member_response",
+              repoSpanAttributes(member),
+              async (memberSpan) => {
+                const res = await adapterResponseOrRegistryError(
+                  adapter,
+                  match,
+                  allNugetSearchResultsRequest(req),
+                  authorization.memberCtx,
+                );
+                memberSpan.setAttribute("http.response.status_code", res.status);
+                if (res.status >= 400) return null;
+                const body = parseNugetSearchBody(
+                  await res.text(),
+                  member.mountPath,
+                  ctx.repo.mountPath,
+                );
+                memberSpan.setAttribute("registry.virtual.member_total", body?.totalHits ?? 0);
+                return body;
+              },
             );
-            if (!authorization.decision.allowed) return;
-
-            const res = await adapterResponseOrRegistryError(
-              adapter,
-              match,
-              allNugetSearchResultsRequest(req),
-              authorization.memberCtx,
-            );
-            memberSpan.setAttribute("http.response.status_code", res.status);
-            if (res.status >= 400) return;
-            const body = parseNugetSearchBody(
-              await res.text(),
-              member.mountPath,
-              ctx.repo.mountPath,
-            );
-            memberSpan.setAttribute("registry.virtual.member_total", body?.totalHits ?? 0);
-            if (body) bodies.push(body);
-          },
-        );
-      }
+          }),
+        )
+      ).flatMap((body) => (body ? [body] : []));
       const result = mergeNugetSearchBodies(bodies, nugetSearchWindow(req));
       span.setAttribute("registry.virtual.result_count", result.totalHits);
       return Response.json(result);
