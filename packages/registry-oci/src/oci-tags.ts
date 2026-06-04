@@ -13,7 +13,6 @@ interface OciTagsListResponseInput {
 interface OciTagsListQuery {
   last?: string;
   pageSize?: number;
-  pageSizeRaw: string | null;
 }
 
 function parseOciTagsListQuery(url: string): OciTagsListQuery {
@@ -34,7 +33,7 @@ function parseOciTagsListQuery(url: string): OciTagsListQuery {
           code: "PAGINATION_NUMBER_INVALID",
           message: "invalid tag page size",
         });
-  return { last, pageSize, pageSizeRaw };
+  return { last, pageSize };
 }
 
 export function buildOciTagsListResponse(input: OciTagsListResponseInput): Response {
@@ -54,7 +53,7 @@ export function buildOciTagsListResponse(input: OciTagsListResponseInput): Respo
   const headers: Record<string, string> = { "content-type": "application/json" };
   if (truncated && tags.length > 0) {
     const next = encodeURIComponent(tags[tags.length - 1] ?? "");
-    headers.link = `<${baseUrl}/${mountPath}/${image}/tags/list?n=${query.pageSizeRaw}&last=${next}>; rel="next"`;
+    headers.link = `<${baseUrl}/${mountPath}/${image}/tags/list?n=${query.pageSize}&last=${next}>; rel="next"`;
   }
   return new Response(JSON.stringify({ name, tags }), { headers });
 }

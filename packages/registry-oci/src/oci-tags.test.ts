@@ -53,6 +53,20 @@ describe("OCI tags list response", () => {
     });
   });
 
+  test("normalizes the page size before serializing next links", async () => {
+    const result = await readTagsResponse(
+      responseFor(
+        "https://registry.test/v2/acme/containers/team/api/tags/list?n=1%0D%0A&last=latest",
+        ["latest", "v1", "v2"],
+      ),
+    );
+
+    expect(result).toEqual({
+      body: { name: "acme/containers/team/api", tags: ["v1"] },
+      link: '<https://registry.test/v2/acme/containers/team/api/tags/list?n=1&last=v1>; rel="next"',
+    });
+  });
+
   test("supports zero-length pages without emitting an unusable next link", async () => {
     const result = await readTagsResponse(
       responseFor("https://registry.test/v2/acme/containers/team/api/tags/list?n=0", [
