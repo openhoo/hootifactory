@@ -312,11 +312,9 @@ export async function getBlobRef(
     )
     .limit(1);
   if (!row) return null;
-  const stat = await blobStore.stat(ref.digest);
   return {
     digest: ref.digest,
-    size: stat?.size ?? row.size,
-    ...(stat?.etag ? { etag: stat.etag } : {}),
+    size: row.size,
     get: () => blobStore.get(ref.digest),
     getRange: (start, end) => blobStore.getRange(ref.digest, start, end),
   };

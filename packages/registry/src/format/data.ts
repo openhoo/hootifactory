@@ -211,7 +211,6 @@ export interface RegistryBlobRefInput {
 export interface RegistryReferencedBlob {
   digest: string;
   size: number;
-  etag?: string;
   get(): ReadableStream<Uint8Array>;
   getRange(start: number, end?: number): ReadableStream<Uint8Array>;
 }
