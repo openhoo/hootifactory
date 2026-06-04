@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createTestRegistryContext } from "@hootifactory/registry/testing";
-import { assetWithDefaults, replacedAssetRef } from "./data-service";
+import { assetWithDefaults, replacedAssetRef } from "./data-service-helpers";
 
 const OLD_DIGEST = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const NEW_DIGEST = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
