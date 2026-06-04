@@ -5,6 +5,8 @@ import { parseOciManifestPutRequest } from "./oci-manifest-put";
 
 const CONFIG_DIGEST = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 const LAYER_DIGEST = "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+const CHILD_MANIFEST_DIGEST =
+  "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
 
 function manifest(overrides: Partial<OciManifest> = {}): string {
   return JSON.stringify({
@@ -18,10 +20,14 @@ function manifest(overrides: Partial<OciManifest> = {}): string {
   });
 }
 
-function manifestRequest(raw: string, url = "https://registry.test/v2/app/manifests/latest") {
+function manifestRequest(
+  raw: string,
+  url = "https://registry.test/v2/app/manifests/latest",
+  mediaType: string = OCI_MEDIA_TYPES.manifestV1,
+) {
   return new Request(url, {
     method: "PUT",
-    headers: { "content-type": OCI_MEDIA_TYPES.manifestV1 },
+    headers: { "content-type": mediaType },
     body: raw,
   });
 }
@@ -53,6 +59,27 @@ describe("OCI manifest PUT helpers", () => {
 
     expect(parsed.ref).toEqual({ kind: "digest", value: digest });
     expect(parsed.acceptedTags).toEqual(["latest", "beta"]);
+  });
+
+  test("extracts child manifest references from parsed index requests", async () => {
+    const raw = JSON.stringify({
+      schemaVersion: 2,
+      mediaType: OCI_MEDIA_TYPES.imageIndexV1,
+      manifests: [
+        {
+          mediaType: OCI_MEDIA_TYPES.manifestV1,
+          digest: CHILD_MANIFEST_DIGEST,
+          size: 256,
+        },
+      ],
+    });
+    const parsed = await parseOciManifestPutRequest(
+      "latest",
+      manifestRequest(raw, undefined, OCI_MEDIA_TYPES.imageIndexV1),
+    );
+
+    expect(parsed.referencedBlobs).toEqual([]);
+    expect(parsed.referencedManifests).toEqual([CHILD_MANIFEST_DIGEST]);
   });
 
   test("rejects digest-addressed pushes when the body digest differs", async () => {

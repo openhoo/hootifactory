@@ -2,9 +2,8 @@ import { computeDigest, Errors, isValidDigest } from "@hootifactory/registry";
 import {
   assertTag,
   type ManifestReference,
-  manifestBlobDigests,
-  manifestManifestDigests,
   manifestMediaType,
+  manifestReferences,
   type OciManifestDocument,
   parseManifestRequestRaw,
   parseReference,
@@ -46,7 +45,8 @@ export async function parseOciManifestPutRequest(
     parsed.subject === undefined ? null : validateDescriptor(parsed.subject, "subject");
   const config = parsed.config === undefined ? null : validateDescriptor(parsed.config, "config");
 
-  const referencedManifests = manifestManifestDigests(raw);
+  const references = manifestReferences(parsed);
+  const referencedManifests = references.manifests;
   for (const manifestDigest of referencedManifests) {
     if (!isValidDigest(manifestDigest)) {
       throw Errors.digestInvalid({ reason: "manifest descriptor digest is invalid" });
@@ -66,7 +66,7 @@ export async function parseOciManifestPutRequest(
     mediaType,
     subjectDigest: subject?.digest ?? null,
     configDigest: config?.digest ?? null,
-    referencedBlobs: manifestBlobDigests(raw),
+    referencedBlobs: references.blobs,
     referencedManifests,
     acceptedTags,
   };

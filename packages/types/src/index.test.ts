@@ -3,6 +3,7 @@ import {
   OCI_MEDIA_TYPES,
   type OciManifest,
   ociManifestReferences,
+  ociManifestReferencesFromValue,
   type PackageFormat,
 } from "./index";
 
@@ -54,6 +55,30 @@ describe("shared type constants", () => {
 
     expect(refs.blobs).toEqual(["sha256:config", "sha256:layer", "sha256:artifact-blob"]);
     expect(refs.manifests).toEqual(["sha256:child-manifest"]);
+  });
+
+  test("extracts OCI references from an already parsed manifest value", () => {
+    const manifestValue = {
+      schemaVersion: 2,
+      config: { mediaType: OCI_MEDIA_TYPES.configV1, digest: "sha256:config", size: 2 },
+      layers: [{ mediaType: OCI_MEDIA_TYPES.layerTarGzip, digest: "sha256:layer", size: 10 }],
+      manifests: [
+        {
+          mediaType: OCI_MEDIA_TYPES.manifestV1,
+          digest: "sha256:child-manifest",
+          size: 123,
+        },
+      ],
+    };
+
+    expect(ociManifestReferencesFromValue(manifestValue)).toEqual({
+      blobs: ["sha256:config", "sha256:layer"],
+      manifests: ["sha256:child-manifest"],
+    });
+    expect(ociManifestReferencesFromValue(JSON.stringify(manifestValue))).toEqual({
+      blobs: [],
+      manifests: [],
+    });
   });
 
   test("ignores non-object manifests and malformed descriptor entries", () => {

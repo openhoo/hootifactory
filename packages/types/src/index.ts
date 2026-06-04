@@ -65,13 +65,12 @@ function addDescriptorDigest(out: Set<string>, descriptor: unknown): void {
   if (parsed.success) out.add(parsed.data.digest);
 }
 
-export function ociManifestReferences(raw: string): { blobs: string[]; manifests: string[] } {
-  let value: unknown;
-  try {
-    value = JSON.parse(raw);
-  } catch {
-    return { blobs: [], manifests: [] };
-  }
+export interface OciManifestReferenceLists {
+  blobs: string[];
+  manifests: string[];
+}
+
+export function ociManifestReferencesFromValue(value: unknown): OciManifestReferenceLists {
   const parsed = OciReferenceManifestSchema.safeParse(value);
   if (!parsed.success) return { blobs: [], manifests: [] };
   const blobs = new Set<string>();
@@ -81,4 +80,14 @@ export function ociManifestReferences(raw: string): { blobs: string[]; manifests
   for (const blob of parsed.data.blobs ?? []) addDescriptorDigest(blobs, blob);
   for (const manifest of parsed.data.manifests ?? []) addDescriptorDigest(manifests, manifest);
   return { blobs: [...blobs], manifests: [...manifests] };
+}
+
+export function ociManifestReferences(raw: string): OciManifestReferenceLists {
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    return { blobs: [], manifests: [] };
+  }
+  return ociManifestReferencesFromValue(value);
 }

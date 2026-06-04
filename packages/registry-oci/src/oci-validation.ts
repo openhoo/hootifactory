@@ -1,5 +1,11 @@
 import { Errors, isValidDigest, parseRegistryInput, z } from "@hootifactory/registry";
-import { OCI_MEDIA_TYPES, type OciDescriptor, ociManifestReferences } from "@hootifactory/types";
+import {
+  OCI_MEDIA_TYPES,
+  type OciDescriptor,
+  type OciManifestReferenceLists,
+  ociManifestReferences,
+  ociManifestReferencesFromValue,
+} from "@hootifactory/types";
 
 const OCI_ARTIFACT_MANIFEST_MEDIA_TYPE = "application/vnd.oci.artifact.manifest.v1+json";
 const SUPPORTED_MANIFEST_MEDIA_TYPES = new Set<string>([
@@ -334,4 +340,8 @@ export function manifestBlobDigests(raw: string): string[] {
 
 export function manifestManifestDigests(raw: string): string[] {
   return ociManifestReferences(raw).manifests;
+}
+
+export function manifestReferences(manifest: unknown): OciManifestReferenceLists {
+  return ociManifestReferencesFromValue(manifest);
 }
