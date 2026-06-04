@@ -280,10 +280,11 @@ export async function runScannerAndParse<T>(
     options: ScannerRuntimeOptions;
     parse: (text: string) => T[];
     requireOutput?: boolean;
+    scanners?: AvailableScanners;
     target: string;
   },
 ): Promise<T[]> {
-  if (!detectScanners(input.options)[scanner]) return [];
+  if (!(input.scanners ?? detectScanners(input.options))[scanner]) return [];
   const resolvedTarget = resolve(input.target);
   const text = await runScannerCli({
     args: input.args,

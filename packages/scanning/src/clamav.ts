@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import type { NormalizedFinding } from "@hootifactory/scan-core";
 import { asRecord, asString } from "./scanner-json";
 import {
+  type AvailableScanners,
   coerceScannerOptions,
   DEFAULT_SCANNER_IMAGES,
   runScannerAndParse,
@@ -53,6 +54,7 @@ export async function runClamAvIfAvailable(
   target: string,
   bytes: Uint8Array,
   restUrlOrOptions?: string | ScannerRuntimeOptions,
+  scanners?: AvailableScanners,
 ): Promise<NormalizedFinding[]> {
   const options = coerceScannerOptions(restUrlOrOptions, "clamavRestUrl");
   if (options.clamavRestUrl) {
@@ -74,6 +76,7 @@ export async function runClamAvIfAvailable(
     image: options.clamavImage ?? DEFAULT_SCANNER_IMAGES.clamav,
     options,
     parse: parseClamAvCliFindings,
+    scanners,
     target: resolvedTarget,
   });
 }

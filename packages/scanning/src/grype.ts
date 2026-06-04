@@ -3,6 +3,7 @@ import type { NormalizedFinding } from "@hootifactory/scan-core";
 import { normalizeSeverity } from "@hootifactory/scan-core";
 import { asRecord, asString } from "./scanner-json";
 import {
+  type AvailableScanners,
   DEFAULT_SCANNER_IMAGES,
   runScannerAndParse,
   type ScannerRuntimeOptions,
@@ -35,6 +36,7 @@ function parseGrypeMatches(text: string): NormalizedFinding[] {
 export async function runGrypeIfAvailable(
   target: string,
   options: ScannerRuntimeOptions = {},
+  scanners?: AvailableScanners,
 ): Promise<NormalizedFinding[]> {
   const resolvedTarget = resolve(target);
   return runScannerAndParse("grype", {
@@ -44,6 +46,7 @@ export async function runGrypeIfAvailable(
     options,
     parse: parseGrypeMatches,
     requireOutput: true,
+    scanners,
     target: resolvedTarget,
   });
 }

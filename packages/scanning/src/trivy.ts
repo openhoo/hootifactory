@@ -3,6 +3,7 @@ import type { NormalizedFinding } from "@hootifactory/scan-core";
 import { normalizeSeverity } from "@hootifactory/scan-core";
 import { asRecord, asString } from "./scanner-json";
 import {
+  type AvailableScanners,
   coerceScannerOptions,
   DEFAULT_SCANNER_IMAGES,
   runScannerAndParse,
@@ -49,6 +50,7 @@ export function trivyFsArgs(target: string, serverUrl?: string): string[] {
 export async function runTrivyIfAvailable(
   target: string,
   serverUrlOrOptions?: string | ScannerRuntimeOptions,
+  scanners?: AvailableScanners,
 ): Promise<NormalizedFinding[]> {
   const options = coerceScannerOptions(serverUrlOrOptions, "trivyServerUrl");
   const resolvedTarget = resolve(target);
@@ -59,6 +61,7 @@ export async function runTrivyIfAvailable(
     options,
     parse: (text) => parseTrivyFindings(JSON.parse(text)),
     requireOutput: true,
+    scanners,
     target: resolvedTarget,
   });
 }

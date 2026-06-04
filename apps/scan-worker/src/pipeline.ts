@@ -59,6 +59,16 @@ export function shouldFailForMissingExternalScanner(
   return externalContentScannerRequired(options) && !externalContentScannerAvailable(scanners);
 }
 
+export interface ScannerRuntime {
+  scannerOptions: ScannerRuntimeOptions;
+  scanners: AvailableScanners;
+}
+
+export function scannerRuntimeFromEnv(): ScannerRuntime {
+  const scannerOptions = scannerOptionsFromEnv();
+  return { scannerOptions, scanners: detectScanners(scannerOptions) };
+}
+
 function unavailableExternalScannerMessage(options: ScannerRuntimeOptions): string {
   return [
     "external scanner runtime is configured but no content scanner is available",
@@ -68,10 +78,13 @@ function unavailableExternalScannerMessage(options: ScannerRuntimeOptions): stri
 }
 
 /** Run the scan pipeline for one artifact and apply the policy decision. */
-export async function processScan(artifactId: string): Promise<void> {
+export async function processScan(
+  artifactId: string,
+  scannerRuntime: ScannerRuntime = scannerRuntimeFromEnv(),
+): Promise<void> {
   await withLogAttributes({ "artifact.id": artifactId }, async () => {
     await withSpan("scan.process_artifact", { "artifact.id": artifactId }, async () => {
-      await processScanInner(artifactId);
+      await processScanInner(artifactId, scannerRuntime);
     });
   });
 }
@@ -120,7 +133,7 @@ async function loadScanContext(artifactId: string): Promise<ScanContext | null> 
   return { art, repo };
 }
 
-async function processScanInner(artifactId: string): Promise<void> {
+async function processScanInner(artifactId: string, scannerRuntime: ScannerRuntime): Promise<void> {
   const context = await loadScanContext(artifactId);
   if (!context) return;
   const { art, repo } = context;
@@ -184,25 +197,29 @@ async function processScanInner(artifactId: string): Promise<void> {
       const malwareFindings = scanForMalware(bytes);
       found.push(...malwareFindings);
       span.setAttribute("scan.malware.findings", malwareFindings.length);
-      const scannerOptions = scannerOptionsFromEnv();
-      const scanners = detectScanners(scannerOptions);
       span.setAttributes({
-        "scan.external.grype": Boolean(scanners.grype),
-        "scan.external.trivy": Boolean(scanners.trivy),
-        "scan.external.clamav": Boolean(scanners.clamav),
+        "scan.external.grype": Boolean(scannerRuntime.scanners.grype),
+        "scan.external.trivy": Boolean(scannerRuntime.scanners.trivy),
+        "scan.external.clamav": Boolean(scannerRuntime.scanners.clamav),
       });
-      if (shouldFailForMissingExternalScanner(scannerOptions, scanners)) {
-        const message = unavailableExternalScannerMessage(scannerOptions);
+      if (
+        shouldFailForMissingExternalScanner(scannerRuntime.scannerOptions, scannerRuntime.scanners)
+      ) {
+        const message = unavailableExternalScannerMessage(scannerRuntime.scannerOptions);
         addSpanEvent("scan.external_unavailable", {
-          "scan.cli_runtime": scannerOptions.cliRuntime ?? "docker",
+          "scan.cli_runtime": scannerRuntime.scannerOptions.cliRuntime ?? "docker",
         });
         logger.warn("external scanner runtime unavailable", {
-          cliRuntime: scannerOptions.cliRuntime ?? "docker",
-          scanners,
+          cliRuntime: scannerRuntime.scannerOptions.cliRuntime ?? "docker",
+          scanners: scannerRuntime.scanners,
         });
         throw new Error(message);
       }
-      if (scanners.grype || scanners.trivy || scanners.clamav) {
+      if (
+        scannerRuntime.scanners.grype ||
+        scannerRuntime.scanners.trivy ||
+        scannerRuntime.scanners.clamav
+      ) {
         let dir: string | null = null;
         try {
           const base = env.SCAN_SCRATCH_DIR.replace(/\/+$/, "");
@@ -210,7 +227,12 @@ async function processScanInner(artifactId: string): Promise<void> {
           dir = await mkdtemp(join(base, "scan-"));
           const path = join(dir, digest.replace(/[^a-z0-9]/gi, "_"));
           await Bun.write(path, bytes);
-          const externalFindings = await runExternalScanners(path, bytes, scannerOptions);
+          const externalFindings = await runExternalScanners(
+            path,
+            bytes,
+            scannerRuntime.scannerOptions,
+            scannerRuntime.scanners,
+          );
           found.push(...externalFindings);
           span.setAttribute("scan.external.findings", externalFindings.length);
         } catch (err) {
@@ -315,6 +337,6 @@ async function processScanInner(artifactId: string): Promise<void> {
   const results = dedupeFindings(found);
   setActiveSpanAttributes({ "scan.findings.count": results.length });
 
-  await persistScanResult(art, results);
+  await persistScanResult(art, results, scannerRuntime.scanners);
   await applyPolicyDecision(art, repo, results);
 }

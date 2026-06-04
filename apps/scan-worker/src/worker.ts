@@ -8,8 +8,7 @@ import {
 } from "@hootifactory/observability";
 import { intEnv } from "@hootifactory/queue";
 import { reapExpiredOciUploadSessions } from "@hootifactory/registry-application";
-import { detectScanners, scannerOptionsFromEnv } from "@hootifactory/scanning";
-import { processScan, recordScanFailure } from "./pipeline";
+import { processScan, recordScanFailure, scannerRuntimeFromEnv } from "./pipeline";
 
 const workerRole = "scan-worker";
 
@@ -27,7 +26,7 @@ const maxAttempts = intEnv("SCAN_WORKER_MAX_ATTEMPTS", 5, 1);
 const uploadReaperIntervalSeconds = intEnv("OCI_UPLOAD_REAPER_INTERVAL_SECONDS", 300, 1);
 const uploadReaperBatchSize = intEnv("OCI_UPLOAD_REAPER_BATCH_SIZE", 100, 1);
 
-const scannerOptions = scannerOptionsFromEnv();
+const scannerRuntime = scannerRuntimeFromEnv();
 
 function rowsFromExecute(result: unknown): unknown[] {
   if (Array.isArray(result)) return result;
@@ -158,7 +157,7 @@ logger.info("scan worker starting", {
   uploadReaperBatchSize,
   uploadReaperIntervalSeconds,
   workerPort: process.env.WORKER_PORT,
-  externalScanners: detectScanners(scannerOptions),
+  externalScanners: scannerRuntime.scanners,
 });
 ready = true;
 
@@ -203,7 +202,7 @@ while (!shuttingDown) {
       },
       async () => {
         try {
-          await processScan(intent.artifactId);
+          await processScan(intent.artifactId, scannerRuntime);
           await markSucceeded(intent.id);
         } catch (err) {
           logger.error("scan job failed", {

@@ -13,7 +13,7 @@ import {
   withSpan,
 } from "@hootifactory/observability";
 import type { NormalizedFinding } from "@hootifactory/scan-core";
-import { detectScanners, scannerOptionsFromEnv } from "@hootifactory/scanning";
+import type { AvailableScanners } from "@hootifactory/scanning";
 import { evaluateScanPolicy, loadPolicy } from "./scan-policy";
 
 // Shared pg unique-key for the scans table so the success upsert and the
@@ -37,6 +37,7 @@ const SCAN_DEDUP_FIELDS = {
 export async function persistScanResult(
   art: typeof artifacts.$inferSelect,
   results: NormalizedFinding[],
+  scanners: AvailableScanners,
 ): Promise<void> {
   const dedupKey = {
     artifactId: art.id,
@@ -62,7 +63,7 @@ export async function persistScanResult(
           startedAt: new Date(),
           finishedAt: new Date(),
           sbomNativeJson: {
-            scanners: detectScanners(scannerOptionsFromEnv()),
+            scanners,
           },
         })
         .onConflictDoUpdate({
