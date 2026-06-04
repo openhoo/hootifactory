@@ -42,15 +42,24 @@ export function uploadChunkStream(
     async start(controller) {
       try {
         for (const chunk of chunks) {
-          const bytes = await ctx.data.content.staging.bytesAtKey(chunk.key);
-          if (bytes.byteLength !== chunk.size) {
+          const stat = await ctx.data.content.staging.statKey(chunk.key);
+          if (!stat || stat.size !== chunk.size) {
             throw Errors.blobUploadInvalid({
               reason: "staging chunk size mismatch",
               expected: chunk.size,
-              actual: bytes.byteLength,
+              actual: stat?.size ?? 0,
             });
           }
-          controller.enqueue(bytes);
+          const reader = ctx.data.content.staging.readKey(chunk.key).getReader();
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              if (value.byteLength > 0) controller.enqueue(value);
+            }
+          } finally {
+            reader.releaseLock();
+          }
         }
         if (extra?.byteLength) controller.enqueue(extra);
         controller.close();
