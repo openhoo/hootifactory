@@ -14,6 +14,7 @@ import { registryErrorResponseForFormat } from "./registry-error-format";
 import { resolveRegistryRouteMatch } from "./registry-route-match";
 import { repoFormatSpanAttributes, stripBodyForFallbackHead } from "./registry-utils";
 import { serveWebFallback } from "./registry-web";
+import { compressRegistryResponse } from "./response-compression";
 import type { AppEnv } from "./types";
 
 const OCI_BEARER_FORMATS = new Set(["docker", "oci", "helm"]);
@@ -145,7 +146,10 @@ export async function handleRegistryRequest(c: Context<AppEnv>): Promise<Respons
             handler: match.entry.handlerId,
             status: res.status,
           });
-          return stripBodyForFallbackHead(fellBackToGet, res);
+          return compressRegistryResponse(c.req.raw, stripBodyForFallbackHead(fellBackToGet, res), {
+            format: repo.format,
+            handlerId: match.entry.handlerId,
+          });
         },
       );
     },

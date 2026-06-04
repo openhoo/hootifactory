@@ -15,6 +15,7 @@ import {
   registryCapabilities,
   registryPlugin,
   serveRegistryBlob,
+  textResponseWithEtag,
 } from "@hootifactory/registry";
 import { handleNugetPublish } from "./nuget-publish-lifecycle";
 import { buildNugetRegistrationIndex, buildNugetRegistrationItem } from "./nuget-registration";
@@ -110,7 +111,7 @@ export class NugetAdapter implements RegistryPlugin {
     .capabilities(this.capabilities)
     .authChallenge(this.authChallenge)
     .routes((route) => [
-      route.get("/v3/index.json", "serviceIndex", ({ ctx }) => this.serviceIndex(ctx)),
+      route.get("/v3/index.json", "serviceIndex", ({ req, ctx }) => this.serviceIndex(req, ctx)),
       route.get("/v3/query", "search", ({ req, ctx }) =>
         this.nugetSearch(req, this.base(ctx), ctx),
       ),
@@ -121,8 +122,8 @@ export class NugetAdapter implements RegistryPlugin {
       route.post("/v3/package/:id/:version", "relist", ({ params, ctx }) =>
         this.setListed(params.id, params.version, true, ctx),
       ),
-      route.get("/v3-flatcontainer/:id/index.json", "versions", ({ params, ctx }) =>
-        this.versions(params.id, ctx),
+      route.get("/v3-flatcontainer/:id/index.json", "versions", ({ params, req, ctx }) =>
+        this.versions(params.id, req, ctx),
       ),
       route.get("/v3-flatcontainer/:id/:version/:file", "download", ({ params, ctx }) =>
         this.download(params.id, params.version, params.file, ctx),
@@ -130,8 +131,8 @@ export class NugetAdapter implements RegistryPlugin {
       route.get("/v3/registrations/:id/index.json", "registration", ({ params, req, ctx }) =>
         this.registration(params.id, req, this.base(ctx), ctx),
       ),
-      route.get("/v3/registrations/:id/:file", "registrationLeaf", ({ params, ctx }) =>
-        this.registrationLeaf(params.id, params.file, this.base(ctx), ctx),
+      route.get("/v3/registrations/:id/:file", "registrationLeaf", ({ params, req, ctx }) =>
+        this.registrationLeaf(params.id, params.file, req, this.base(ctx), ctx),
       ),
     ])
     .build();
@@ -161,17 +162,21 @@ export class NugetAdapter implements RegistryPlugin {
     return `${ctx.baseUrl}/${ctx.repo.mountPath}`;
   }
 
-  private serviceIndex(ctx: RegistryRequestContext): Response {
+  private serviceIndex(req: Request, ctx: RegistryRequestContext): Response {
     const base = this.base(ctx);
-    return Response.json({
-      version: "3.0.0",
-      resources: [
-        { "@id": `${base}/v3-flatcontainer/`, "@type": "PackageBaseAddress/3.0.0" },
-        { "@id": `${base}/v3/package`, "@type": "PackagePublish/2.0.0" },
-        { "@id": `${base}/v3/registrations/`, "@type": "RegistrationsBaseUrl/3.6.0" },
-        { "@id": `${base}/v3/query`, "@type": "SearchQueryService/3.5.0" },
-      ],
-    });
+    return textResponseWithEtag(
+      req,
+      JSON.stringify({
+        version: "3.0.0",
+        resources: [
+          { "@id": `${base}/v3-flatcontainer/`, "@type": "PackageBaseAddress/3.0.0" },
+          { "@id": `${base}/v3/package`, "@type": "PackagePublish/2.0.0" },
+          { "@id": `${base}/v3/registrations/`, "@type": "RegistrationsBaseUrl/3.6.0" },
+          { "@id": `${base}/v3/query`, "@type": "SearchQueryService/3.5.0" },
+        ],
+      }),
+      { "content-type": "application/json; charset=utf-8" },
+    );
   }
 
   private async findPkg(ctx: RegistryRequestContext, id: string) {
@@ -195,7 +200,7 @@ export class NugetAdapter implements RegistryPlugin {
       .sort((a, b) => compareNugetVersions(a.version, b.version));
   }
 
-  private async versions(id: string, ctx: RegistryRequestContext): Promise<Response> {
+  private async versions(id: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     id = parseNugetId(id);
     const pkg = await this.findPkg(ctx, id);
     if (!pkg) return new Response("Not Found", { status: 404 });
@@ -203,7 +208,9 @@ export class NugetAdapter implements RegistryPlugin {
       .map((row) => row.version)
       .sort(compareNugetVersions);
     if (versions.length === 0) return new Response("Not Found", { status: 404 });
-    return Response.json({ versions });
+    return textResponseWithEtag(req, JSON.stringify({ versions }), {
+      "content-type": "application/json; charset=utf-8",
+    });
   }
 
   private async registration(
@@ -239,6 +246,7 @@ export class NugetAdapter implements RegistryPlugin {
   private async registrationLeaf(
     id: string,
     file: string,
+    req: Request,
     base: string,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
@@ -254,13 +262,19 @@ export class NugetAdapter implements RegistryPlugin {
     if (!row) throw Errors.notFound();
     const metadata = parseNugetVersionMeta(row.metadata);
     if (!metadata) throw Errors.notFound();
-    return Response.json(
-      buildNugetRegistrationItem({
-        id,
-        version: row.version,
-        metadata,
-        base,
-      }),
+    return textResponseWithEtag(
+      req,
+      JSON.stringify(
+        buildNugetRegistrationItem({
+          id,
+          version: row.version,
+          metadata,
+          base,
+        }),
+      ),
+      {
+        "content-type": "application/json; charset=utf-8",
+      },
     );
   }
 
@@ -302,7 +316,9 @@ export class NugetAdapter implements RegistryPlugin {
         totalHits += 1;
       }
     } while (offset < totalPackages);
-    return Response.json({ totalHits, data });
+    return textResponseWithEtag(req, JSON.stringify({ totalHits, data }), {
+      "content-type": "application/json; charset=utf-8",
+    });
   }
 
   private async download(

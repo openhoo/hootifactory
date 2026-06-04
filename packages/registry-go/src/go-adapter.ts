@@ -12,6 +12,7 @@ import {
   registryCapabilities,
   registryPlugin,
   serveRegistryBlob,
+  textResponseWithEtag,
 } from "@hootifactory/registry";
 import { handleGoUpload } from "./go-upload-lifecycle";
 import {
@@ -34,14 +35,14 @@ export class GoAdapter implements RegistryPlugin {
     .capabilities(this.capabilities)
     .authChallenge(this.authChallenge)
     .routes((route) => [
-      route.get("/:module+/@v/list", "list", ({ params, ctx }) =>
-        this.list(this.parseModule(params.module), ctx),
+      route.get("/:module+/@v/list", "list", ({ params, req, ctx }) =>
+        this.list(this.parseModule(params.module), req, ctx),
       ),
-      route.get("/:module+/@latest", "latest", ({ params, ctx }) =>
-        this.latest(this.parseModule(params.module), ctx),
+      route.get("/:module+/@latest", "latest", ({ params, req, ctx }) =>
+        this.latest(this.parseModule(params.module), req, ctx),
       ),
-      route.get("/:module+/@v/:file", "file", ({ params, ctx }) =>
-        this.file(this.parseModule(params.module), params.file, ctx),
+      route.get("/:module+/@v/:file", "file", ({ params, req, ctx }) =>
+        this.file(this.parseModule(params.module), params.file, req, ctx),
       ),
       route.put("/:module+/@v/:version", "upload", ({ params, req, ctx }) =>
         this.upload(this.parseModule(params.module), params.version, req, ctx),
@@ -92,39 +93,51 @@ export class GoAdapter implements RegistryPlugin {
     });
   }
 
-  private async list(moduleName: string, ctx: RegistryRequestContext): Promise<Response> {
+  private async list(
+    moduleName: string,
+    req: Request,
+    ctx: RegistryRequestContext,
+  ): Promise<Response> {
     // Unknown module → 404 so the client falls through the proxy chain. An empty
     // 200 would falsely assert "known module, no versions".
     const pkg = await ctx.data.packages.findByName(moduleName);
     if (!pkg) throw Errors.notFound();
     const rows = await ctx.data.versions.listLiveNames(pkg, { orderByCreated: "asc" });
-    return new Response(
+    return textResponseWithEtag(
+      req,
       `${rows
         .map((r) => r.version)
         .filter((v) => !isPseudoVersion(v))
         .join("\n")}\n`,
-      {
-        headers: { "content-type": "text/plain" },
-      },
+      { "content-type": "text/plain" },
     );
   }
 
-  private async latest(moduleName: string, ctx: RegistryRequestContext): Promise<Response> {
+  private async latest(
+    moduleName: string,
+    req: Request,
+    ctx: RegistryRequestContext,
+  ): Promise<Response> {
     const pkg = await ctx.data.packages.findByName(moduleName);
     if (!pkg) throw Errors.notFound();
     const rows = await this.storedVersions(ctx, pkg);
     const latestVer = pickLatest(rows.map((r) => r.version));
     const row = rows.find((r) => r.version === latestVer);
     if (!row) throw Errors.notFound();
-    return Response.json({
-      Version: row.version,
-      Time: row.metadata.time ?? row.createdAt.toISOString(),
-    });
+    return textResponseWithEtag(
+      req,
+      JSON.stringify({
+        Version: row.version,
+        Time: row.metadata.time ?? row.createdAt.toISOString(),
+      }),
+      { "content-type": "application/json; charset=utf-8" },
+    );
   }
 
   private async file(
     moduleName: string,
     file: string,
+    req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
     file = parseRegistryInput(GoVersionFileSchema, file, {
@@ -146,11 +159,15 @@ export class GoAdapter implements RegistryPlugin {
     if (!meta) throw Errors.notFound();
 
     if (ext === "info") {
-      return Response.json({ Version: version, Time: meta.time ?? row.createdAt.toISOString() });
+      return textResponseWithEtag(
+        req,
+        JSON.stringify({ Version: version, Time: meta.time ?? row.createdAt.toISOString() }),
+        { "content-type": "application/json; charset=utf-8" },
+      );
     }
     if (ext === "mod") {
-      return new Response(meta.mod ?? `module ${moduleName}\n`, {
-        headers: { "content-type": "text/plain" },
+      return textResponseWithEtag(req, meta.mod ?? `module ${moduleName}\n`, {
+        "content-type": "text/plain",
       });
     }
     if (ext === "zip") {
