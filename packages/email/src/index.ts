@@ -28,6 +28,32 @@ export interface RenderedEmail {
 
 let transporter: Transporter | null = null;
 
+export interface SmtpTransportConfig {
+  host: string;
+  port: number;
+  secure: boolean;
+  requireTLS: boolean;
+  user?: string;
+  password?: string;
+}
+
+export function buildSmtpTransportOptions(config: SmtpTransportConfig) {
+  const auth =
+    config.user || config.password
+      ? { user: config.user ?? "", pass: config.password ?? "" }
+      : undefined;
+  return {
+    host: config.host,
+    port: config.port,
+    secure: config.secure,
+    requireTLS: config.requireTLS,
+    pool: true,
+    maxConnections: 5,
+    maxMessages: 100,
+    auth,
+  };
+}
+
 function escapeHtml(value: string): string {
   return value
     .replaceAll("&", "&amp;")
@@ -90,18 +116,16 @@ export function renderEmail(job: EmailJob): RenderedEmail {
 function smtpTransport(): Transporter {
   if (transporter) return transporter;
   if (!env.EMAIL_SMTP_HOST) throw new Error("EMAIL_SMTP_HOST is required to send email");
-  transporter = nodemailer.createTransport({
-    host: env.EMAIL_SMTP_HOST,
-    port: env.EMAIL_SMTP_PORT,
-    secure: env.EMAIL_SMTP_SECURE,
-    pool: true,
-    maxConnections: 5,
-    maxMessages: 100,
-    auth:
-      env.EMAIL_SMTP_USER || env.EMAIL_SMTP_PASSWORD
-        ? { user: env.EMAIL_SMTP_USER ?? "", pass: env.EMAIL_SMTP_PASSWORD ?? "" }
-        : undefined,
-  });
+  transporter = nodemailer.createTransport(
+    buildSmtpTransportOptions({
+      host: env.EMAIL_SMTP_HOST,
+      port: env.EMAIL_SMTP_PORT,
+      secure: env.EMAIL_SMTP_SECURE,
+      requireTLS: env.EMAIL_SMTP_REQUIRE_TLS,
+      user: env.EMAIL_SMTP_USER,
+      password: env.EMAIL_SMTP_PASSWORD,
+    }),
+  );
   return transporter;
 }
 

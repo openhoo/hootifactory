@@ -219,6 +219,7 @@ const EnvSchema = z
     EMAIL_SMTP_HOST: optionalNonEmptyString,
     EMAIL_SMTP_PORT: positiveInt(1025),
     EMAIL_SMTP_SECURE: boolish.default(false),
+    EMAIL_SMTP_REQUIRE_TLS: boolish.optional(),
     EMAIL_SMTP_USER: optionalNonEmptyString,
     EMAIL_SMTP_PASSWORD: optionalNonEmptyString,
 
@@ -327,12 +328,28 @@ const EnvSchema = z
         message: "EMAIL_SMTP_HOST is required when EMAIL_ENABLED=true",
       });
     }
+    if (
+      v.NODE_ENV === "production" &&
+      v.EMAIL_ENABLED &&
+      (v.EMAIL_SMTP_USER || v.EMAIL_SMTP_PASSWORD) &&
+      !v.EMAIL_SMTP_SECURE &&
+      v.EMAIL_SMTP_REQUIRE_TLS === false
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["EMAIL_SMTP_REQUIRE_TLS"],
+        message: "EMAIL_SMTP_REQUIRE_TLS cannot be false with SMTP auth in production",
+      });
+    }
   })
   .transform((v) =>
     Object.freeze({
       ...v,
       AUTH_ALLOW_REGISTRATION: v.AUTH_ALLOW_REGISTRATION ?? v.NODE_ENV !== "production",
       AUTH_ALLOW_ORG_CREATION: v.AUTH_ALLOW_ORG_CREATION ?? v.NODE_ENV !== "production",
+      EMAIL_SMTP_REQUIRE_TLS:
+        v.EMAIL_SMTP_REQUIRE_TLS ??
+        Boolean((v.EMAIL_SMTP_USER || v.EMAIL_SMTP_PASSWORD) && !v.EMAIL_SMTP_SECURE),
     }),
   );
 

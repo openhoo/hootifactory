@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { renderEmail } from "./index";
+import { buildSmtpTransportOptions, renderEmail } from "./index";
 
 describe("email rendering", () => {
   test("renders password reset messages with text and html bodies", () => {
@@ -27,5 +27,22 @@ describe("email rendering", () => {
 
     expect(rendered.text).toContain("<script>");
     expect(rendered.html).toContain("&lt;script&gt;");
+  });
+
+  test("requires STARTTLS for credentialed non-secure SMTP transports", () => {
+    expect(
+      buildSmtpTransportOptions({
+        host: "smtp.example.test",
+        port: 587,
+        secure: false,
+        requireTLS: true,
+        user: "mailer",
+        password: "secret",
+      }),
+    ).toMatchObject({
+      secure: false,
+      requireTLS: true,
+      auth: { user: "mailer", pass: "secret" },
+    });
   });
 });

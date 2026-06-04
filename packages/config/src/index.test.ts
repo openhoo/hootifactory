@@ -187,10 +187,43 @@ describe("environment auth creation defaults", () => {
     expect(env.EMAIL_ENABLED).toBe(true);
     expect(env.EMAIL_SMTP_HOST).toBe("mailpit");
     expect(env.EMAIL_SMTP_PORT).toBe(1025);
+    expect(env.EMAIL_SMTP_REQUIRE_TLS).toBe(false);
     expect(env.APP_PUBLIC_URL).toBe("https://hoot.example.test");
     expect(() => loadEnv({ EMAIL_ENABLED: "true" })).toThrow(/EMAIL_SMTP_HOST/);
     expect(() => loadEnv({ EMAIL_SMTP_PORT: "0" })).toThrow();
     expect(() => loadEnv({ APP_PUBLIC_URL: "notaurl" })).toThrow();
+  });
+
+  test("production requires TLS for credentialed SMTP transports", () => {
+    const credentialedSmtp = {
+      ...prodSource,
+      EMAIL_ENABLED: "true",
+      EMAIL_SMTP_HOST: "smtp.example.test",
+      EMAIL_SMTP_PORT: "587",
+      EMAIL_SMTP_USER: "mailer",
+      EMAIL_SMTP_PASSWORD: "secret",
+    };
+
+    expect(loadEnv(credentialedSmtp).EMAIL_SMTP_REQUIRE_TLS).toBe(true);
+    expect(
+      loadEnv({
+        ...credentialedSmtp,
+        EMAIL_SMTP_REQUIRE_TLS: "true",
+      }).EMAIL_SMTP_REQUIRE_TLS,
+    ).toBe(true);
+    expect(
+      loadEnv({
+        ...credentialedSmtp,
+        EMAIL_SMTP_SECURE: "true",
+        EMAIL_SMTP_REQUIRE_TLS: "false",
+      }).EMAIL_SMTP_REQUIRE_TLS,
+    ).toBe(false);
+    expect(() =>
+      loadEnv({
+        ...credentialedSmtp,
+        EMAIL_SMTP_REQUIRE_TLS: "false",
+      }),
+    ).toThrow(/EMAIL_SMTP_REQUIRE_TLS/);
   });
 
   test("OIDC configuration is parsed when enabled", () => {
