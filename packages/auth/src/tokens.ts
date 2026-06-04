@@ -50,6 +50,9 @@ export type ApiTokenWithOwner = {
   ownerUsername: string | null;
 };
 
+const TOKEN_LAST_USED_WRITE_INTERVAL_MS = 60_000;
+const tokenLastUsedWrites = new Map<string, number>();
+
 export async function createApiToken(
   input: CreateTokenInput,
 ): Promise<{ token: ApiTokenRow; secret: string }> {
@@ -118,6 +121,19 @@ export async function listOrgTokensOwnedBy(
     .orderBy(desc(apiTokens.createdAt));
 }
 
+export async function recordTokenLastUsed(tokenId: string, now = Date.now()): Promise<boolean> {
+  const previous = tokenLastUsedWrites.get(tokenId);
+  if (previous !== undefined && now - previous < TOKEN_LAST_USED_WRITE_INTERVAL_MS) {
+    return false;
+  }
+  tokenLastUsedWrites.set(tokenId, now);
+  await db
+    .update(apiTokens)
+    .set({ lastUsedAt: new Date(now) })
+    .where(eq(apiTokens.id, tokenId));
+  return true;
+}
+
 /** Resolve a presented secret to a token Principal, or null if invalid/expired/revoked. */
 export async function resolveToken(secret: string): Promise<Principal | null> {
   if (!secret.startsWith(TOKEN_PREFIX)) return null;
@@ -137,14 +153,9 @@ export async function resolveToken(secret: string): Promise<Principal | null> {
   }
   const grants = row.token.grants ?? [];
 
-  // best-effort last-used bookkeeping. `.catch()` both executes the lazy Drizzle
-  // query (a bare `void db.update(...)` is never sent) and swallows transient
-  // failures so they don't surface as an unhandled rejection on every request.
-  void db
-    .update(apiTokens)
-    .set({ lastUsedAt: new Date() })
-    .where(eq(apiTokens.id, row.token.id))
-    .catch(() => {});
+  // Best-effort, display-only bookkeeping. Debounce writes so install storms
+  // against one token do not turn every authenticated read into a hot-row update.
+  void recordTokenLastUsed(row.token.id).catch(() => {});
 
   return {
     kind: "token",

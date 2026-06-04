@@ -26,7 +26,7 @@ import { hashPassword, verifyPassword } from "./password";
 import type { Principal } from "./principal";
 import { issueRegistryToken, registryJwks, verifyRegistryToken } from "./registry-jwt";
 import { createSession, resolveSession, revokeSession } from "./sessions";
-import { createApiToken, resolveToken, revokeToken } from "./tokens";
+import { createApiToken, recordTokenLastUsed, resolveToken, revokeToken } from "./tokens";
 import {
   authenticateUserPassword,
   createLocalUser,
@@ -120,6 +120,33 @@ describe("api tokens (DB)", () => {
   test("garbage secret resolves to null", async () => {
     expect(await resolveToken("hoot_not-a-real-token")).toBeNull();
     expect(await resolveToken("totally-bogus")).toBeNull();
+  });
+
+  test("last-used token bookkeeping is debounced", async () => {
+    const { token } = await createApiToken({
+      orgId,
+      ownerUserId: userId,
+      name: "last-used-debounce",
+    });
+    const firstWrite = Date.UTC(2026, 0, 1, 0, 0, 0);
+    const secondWrite = firstWrite + 60_000;
+
+    expect(await recordTokenLastUsed(token.id, firstWrite)).toBe(true);
+    expect(await recordTokenLastUsed(token.id, firstWrite + 30_000)).toBe(false);
+    let [row] = await db
+      .select({ lastUsedAt: apiTokens.lastUsedAt })
+      .from(apiTokens)
+      .where(eq(apiTokens.id, token.id))
+      .limit(1);
+    expect(row?.lastUsedAt?.getTime()).toBe(firstWrite);
+
+    expect(await recordTokenLastUsed(token.id, secondWrite)).toBe(true);
+    [row] = await db
+      .select({ lastUsedAt: apiTokens.lastUsedAt })
+      .from(apiTokens)
+      .where(eq(apiTokens.id, token.id))
+      .limit(1);
+    expect(row?.lastUsedAt?.getTime()).toBe(secondWrite);
   });
 
   test("owner-backed token roles are capped by repo-scoped owner bindings", async () => {
