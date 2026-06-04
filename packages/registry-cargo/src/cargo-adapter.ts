@@ -12,6 +12,7 @@ import {
   registryCapabilities,
   registryPlugin,
   serveRegistryBlob,
+  textResponseWithEtag,
 } from "@hootifactory/registry";
 import {
   buildCargoOwnersBody,
@@ -78,7 +79,7 @@ export class CargoAdapter implements RegistryPlugin {
       route.delete("/api/v1/crates/:crate/owners", "ownersRemove", ({ params, req, ctx }) =>
         this.updateOwners(params.crate, req, "remove", ctx),
       ),
-      route.get("/:path+", "index", ({ params, ctx }) => this.index(params.path, ctx)),
+      route.get("/:path+", "index", ({ params, req, ctx }) => this.index(params.path, req, ctx)),
     ])
     .build();
   private readonly delegate = delegateRegistryPlugin(this.plugin);
@@ -111,7 +112,7 @@ export class CargoAdapter implements RegistryPlugin {
     return ctx.data.packages.findByName(name.toLowerCase());
   }
 
-  private async index(path: string, ctx: RegistryRequestContext): Promise<Response> {
+  private async index(path: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     path = parseRegistryInput(CargoIndexPathSchema, path, {
       code: "NAME_INVALID",
       message: "invalid cargo index path",
@@ -128,7 +129,7 @@ export class CargoAdapter implements RegistryPlugin {
         return index ? [JSON.stringify(index)] : [];
       })
       .join("\n");
-    return new Response(`${lines}\n`, { headers: { "content-type": "text/plain" } });
+    return textResponseWithEtag(req, `${lines}\n`, { "content-type": "text/plain" });
   }
 
   private async download(

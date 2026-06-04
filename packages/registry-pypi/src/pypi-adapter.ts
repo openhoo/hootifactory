@@ -11,6 +11,7 @@ import {
   registryCapabilities,
   registryPlugin,
   serveRegistryBlob,
+  textResponseWithEtag,
 } from "@hootifactory/registry";
 import { handlePypiUpload } from "./pypi-upload-lifecycle";
 import { PypiFilenameSchema, PypiProjectParamSchema } from "./pypi-validation";
@@ -79,12 +80,12 @@ export class PypiAdapter implements RegistryPlugin {
     const rows = await ctx.data.packages.listNames();
     const projects = rows.map((r) => r.name);
     if (preferredSimpleResponse(req.headers.get("accept")) === "json") {
-      return Response.json(buildSimpleRootJson(projects), {
-        headers: { "content-type": SIMPLE_JSON_CONTENT_TYPE },
+      return textResponseWithEtag(req, JSON.stringify(buildSimpleRootJson(projects)), {
+        "content-type": SIMPLE_JSON_CONTENT_TYPE,
       });
     }
-    return new Response(renderRootHtml(projects), {
-      headers: { "content-type": simpleHtmlContentType(req.headers.get("accept")) },
+    return textResponseWithEtag(req, renderRootHtml(projects), {
+      "content-type": simpleHtmlContentType(req.headers.get("accept")),
     });
   }
 
@@ -110,12 +111,16 @@ export class PypiAdapter implements RegistryPlugin {
       mountPath: ctx.repo.mountPath,
     });
     if (preferredSimpleResponse(req.headers.get("accept")) === "json") {
-      return Response.json(buildSimpleProjectJson(name, versions, files), {
-        headers: { "content-type": SIMPLE_JSON_CONTENT_TYPE },
-      });
+      return textResponseWithEtag(
+        req,
+        JSON.stringify(buildSimpleProjectJson(name, versions, files)),
+        {
+          "content-type": SIMPLE_JSON_CONTENT_TYPE,
+        },
+      );
     }
-    return new Response(renderProjectHtml(name, files), {
-      headers: { "content-type": simpleHtmlContentType(req.headers.get("accept")) },
+    return textResponseWithEtag(req, renderProjectHtml(name, files), {
+      "content-type": simpleHtmlContentType(req.headers.get("accept")),
     });
   }
 

@@ -1,8 +1,33 @@
 import { describe, expect, test } from "bun:test";
 import { createTestRegistryContext } from "../testing";
-import { serveRegistryBlob } from "./helpers";
+import { serveRegistryBlob, textResponseWithEtag } from "./helpers";
 
 describe("registry SDK helpers", () => {
+  test("textResponseWithEtag emits validators and honors conditional requests", async () => {
+    const first = textResponseWithEtag(new Request("https://registry.test/index"), "hello", {
+      "content-type": "text/plain",
+    });
+    const etag = first.headers.get("etag");
+
+    expect(first.status).toBe(200);
+    expect(etag).toBeTruthy();
+    if (!etag) throw new Error("expected ETag");
+    expect(first.headers.get("content-type")).toBe("text/plain");
+    await expect(first.text()).resolves.toBe("hello");
+
+    const cached = textResponseWithEtag(
+      new Request("https://registry.test/index", {
+        headers: { "if-none-match": `W/${etag}` },
+      }),
+      "hello",
+      { "content-type": "text/plain" },
+    );
+
+    expect(cached.status).toBe(304);
+    expect(cached.headers.get("etag")).toBe(etag);
+    await expect(cached.text()).resolves.toBe("");
+  });
+
   test("serveRegistryBlob returns the caller's missing response when the blob is absent", async () => {
     const ctx = createTestRegistryContext();
 

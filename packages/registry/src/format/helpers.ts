@@ -21,6 +21,31 @@ export interface ServeRegistryBlobOptions {
   missing?: () => Response;
 }
 
+export function sha1hexText(data: string): string {
+  const h = new Bun.CryptoHasher("sha1");
+  h.update(data);
+  return h.digest("hex");
+}
+
+export function ifNoneMatch(req: Request, etag: string): boolean {
+  const header = req.headers.get("if-none-match");
+  if (!header) return false;
+  return header
+    .split(",")
+    .map((v) => v.trim())
+    .some((v) => v === "*" || v === etag || v === `W/${etag}`);
+}
+
+export function textResponseWithEtag(
+  req: Request,
+  body: string,
+  headers: Record<string, string>,
+): Response {
+  const etag = `"${sha1hexText(body)}"`;
+  if (ifNoneMatch(req, etag)) return new Response(null, { status: 304, headers: { etag } });
+  return new Response(body, { headers: { ...headers, etag } });
+}
+
 export async function serveRegistryBlob(
   ctx: RegistryRequestContext,
   opts: ServeRegistryBlobOptions,

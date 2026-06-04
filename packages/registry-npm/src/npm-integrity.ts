@@ -18,12 +18,6 @@ export function sha1hex(data: Uint8Array): string {
   return h.digest("hex");
 }
 
-export function sha1hexText(data: string): string {
-  const h = new Bun.CryptoHasher("sha1");
-  h.update(data);
-  return h.digest("hex");
-}
-
 export function sha512b64(data: Uint8Array): string {
   const h = new Bun.CryptoHasher("sha512");
   h.update(data);

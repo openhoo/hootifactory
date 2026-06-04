@@ -1,3 +1,5 @@
+export { ifNoneMatch } from "@hootifactory/registry";
+
 export function decodeBase64(data: unknown): Buffer | null {
   if (typeof data !== "string") return null;
   const normalized = data.replace(/\s+/g, "");
@@ -6,15 +8,6 @@ export function decodeBase64(data: unknown): Buffer | null {
   const decoded = Buffer.from(normalized, "base64");
   if (!decoded.length) return null;
   return decoded;
-}
-
-export function ifNoneMatch(req: Request, etag: string): boolean {
-  const header = req.headers.get("if-none-match");
-  if (!header) return false;
-  return header
-    .split(",")
-    .map((v) => v.trim())
-    .some((v) => v === "*" || v === etag || v === `W/${etag}`);
 }
 
 export async function responseBytes(res: Response, maxBytes: number): Promise<Uint8Array | null> {

@@ -15,10 +15,11 @@ import {
   type SearchQuery,
   type SearchResult,
   serveRegistryBlob,
+  textResponseWithEtag,
 } from "@hootifactory/registry";
 import { parseNpmDistTag, parseNpmDistTagRequestBody } from "./npm-dist-tags";
 import { ifNoneMatch } from "./npm-http";
-import { type NpmDist, sha1hexText } from "./npm-integrity";
+import type { NpmDist } from "./npm-integrity";
 import { handleNpmProxyIngest } from "./npm-proxy-lifecycle";
 import { handleNpmPublish } from "./npm-publish-lifecycle";
 import {
@@ -182,11 +183,7 @@ export class NpmAdapter implements RegistryPlugin {
     const versions = await this.liveVersionsFor(ctx, pkg);
     const tags = await this.distTags(ctx, pkg);
     const body = JSON.stringify(buildPackument(name, versions, tags));
-    const etag = `"${sha1hexText(body)}"`;
-    if (ifNoneMatch(req, etag)) return new Response(null, { status: 304, headers: { etag } });
-    return new Response(body, {
-      headers: { "content-type": "application/json; charset=utf-8", etag },
-    });
+    return textResponseWithEtag(req, body, { "content-type": "application/json; charset=utf-8" });
   }
 
   private async tarball(

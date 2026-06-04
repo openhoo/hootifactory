@@ -124,7 +124,10 @@ describe("Cargo adapter", () => {
       ctx,
     );
 
+    const etag = res.headers.get("etag");
     expect(res.status).toBe(200);
+    expect(etag).toBeTruthy();
+    if (!etag) throw new Error("expected ETag");
     expect(JSON.parse((await res.text()).trim())).toEqual({
       name: "demo_crate",
       vers: "1.2.3",
@@ -134,5 +137,17 @@ describe("Cargo adapter", () => {
       yanked: false,
       storedAtPublishTime: true,
     });
+
+    const cached = await new CargoAdapter().handle(
+      indexMatch,
+      new Request("https://registry.test/de/mo/demo_crate", {
+        headers: { "if-none-match": etag },
+      }),
+      ctx,
+    );
+
+    expect(cached.status).toBe(304);
+    expect(cached.headers.get("etag")).toBe(etag);
+    await expect(cached.text()).resolves.toBe("");
   });
 });
