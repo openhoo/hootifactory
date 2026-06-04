@@ -7,6 +7,7 @@ import {
   eq,
   inArray,
   isNull,
+  notInArray,
   packages,
   packageVersions,
   sql,
@@ -233,16 +234,23 @@ export async function replaceDistTags(
   packageId: string,
   desiredTags: Map<string, { version: string; versionId: string }>,
 ): Promise<void> {
-  const currentTags = await listLiveDistTags(packageId);
-  for (const tag of Object.keys(currentTags)) {
-    if (desiredTags.has(tag)) continue;
-    await deleteDistTag(packageId, tag);
-  }
-  for (const [tag, { versionId }] of desiredTags) {
+  const tags = [...desiredTags.keys()];
+  await db
+    .delete(versionTags)
+    .where(
+      and(
+        eq(versionTags.packageId, packageId),
+        tags.length > 0 ? notInArray(versionTags.tag, tags) : sql`true`,
+      ),
+    );
+  if (desiredTags.size > 0) {
     await db
       .insert(versionTags)
-      .values({ packageId, tag, versionId })
-      .onConflictDoUpdate({ target: [versionTags.packageId, versionTags.tag], set: { versionId } });
+      .values([...desiredTags].map(([tag, { versionId }]) => ({ packageId, tag, versionId })))
+      .onConflictDoUpdate({
+        target: [versionTags.packageId, versionTags.tag],
+        set: { versionId: sql`excluded.version_id` },
+      });
   }
   await updatePackageLatestVersion(packageId, desiredTags.get("latest")?.version ?? null);
 }
