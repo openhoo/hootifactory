@@ -14,11 +14,11 @@ export async function runExternalScanners(
   options: ScannerRuntimeOptions = {},
   scanners: AvailableScanners = detectScanners(options),
 ): Promise<NormalizedFinding[]> {
-  const findings: NormalizedFinding[] = [];
-  if (scanners.grype) findings.push(...(await runGrypeIfAvailable(target, options, scanners)));
-  if (scanners.trivy) findings.push(...(await runTrivyIfAvailable(target, options, scanners)));
+  const tasks: Promise<NormalizedFinding[]>[] = [];
+  if (scanners.grype) tasks.push(runGrypeIfAvailable(target, options, scanners));
+  if (scanners.trivy) tasks.push(runTrivyIfAvailable(target, options, scanners));
   if (scanners.clamav) {
-    findings.push(...(await runClamAvIfAvailable(target, bytes, options, scanners)));
+    tasks.push(runClamAvIfAvailable(target, bytes, options, scanners));
   }
-  return findings;
+  return (await Promise.all(tasks)).flat();
 }
