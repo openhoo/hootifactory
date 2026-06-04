@@ -5,9 +5,6 @@ export function decodeBase64(data: unknown): Buffer | null {
   if (!/^[A-Za-z0-9+/]*={0,2}$/.test(normalized)) return null;
   const decoded = Buffer.from(normalized, "base64");
   if (!decoded.length) return null;
-  if (decoded.toString("base64").replace(/=+$/, "") !== normalized.replace(/=+$/, "")) {
-    return null;
-  }
   return decoded;
 }
 
