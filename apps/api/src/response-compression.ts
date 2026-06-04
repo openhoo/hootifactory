@@ -89,11 +89,26 @@ export async function compressRegistryResponse(
 
   const cacheKey = `gzip:${res.headers.get("content-type") ?? ""}:${etag}`;
   let compressed = compressedResponseCache.get(cacheKey);
+  let rawBytes: ArrayBuffer | null = null;
   if (!compressed) {
-    const rawBytes = await res.clone().arrayBuffer();
-    if (rawBytes.byteLength > COMPRESSED_RESPONSE_MAX_BYTES) return res;
+    rawBytes = await res.arrayBuffer();
+    if (rawBytes.byteLength > COMPRESSED_RESPONSE_MAX_BYTES) {
+      return new Response(rawBytes, {
+        status: res.status,
+        statusText: res.statusText,
+        headers: res.headers,
+      });
+    }
     compressed = Bun.gzipSync(rawBytes);
-    if (compressed.byteLength >= rawBytes.byteLength) return res;
+    if (compressed.byteLength >= rawBytes.byteLength) {
+      const headers = new Headers(res.headers);
+      headers.set("content-length", String(rawBytes.byteLength));
+      return new Response(rawBytes, {
+        status: res.status,
+        statusText: res.statusText,
+        headers,
+      });
+    }
     cacheCompressedResponse(cacheKey, compressed);
   }
 

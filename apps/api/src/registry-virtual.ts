@@ -7,7 +7,7 @@ import {
   type RouteMatch,
 } from "@hootifactory/registry";
 import { loadVirtualMembers } from "@hootifactory/registry-application";
-import { adapterResponseOrRegistryError } from "./registry-adapter";
+import { adapterResponse, adapterResponseOrRegistryError } from "./registry-adapter";
 import { isReadMethod, repoSpanAttributes } from "./registry-utils";
 import { authorizeVirtualMembers, virtualMemberSkipReason } from "./registry-virtual-member";
 import { dispatchVirtualMetadata, virtualMetadataPackageName } from "./registry-virtual-metadata";
@@ -33,6 +33,7 @@ export async function dispatchVirtual(
     async (span) => {
       if (!isReadMethod(req.method))
         throw Errors.unsupported({ reason: "writes are not allowed on virtual repositories" });
+      if (match.entry.handlerId === "serviceIndex") return adapterResponse(adapter, match, req, ctx);
       if (match.entry.handlerId === "search")
         return dispatchVirtualSearch(adapter, match, req, ctx);
       const metadataName = virtualMetadataPackageName(match);

@@ -48,7 +48,9 @@ export default defineConfig({
       env: {
         API_PORT: String(PORT),
         API_HOST: "127.0.0.1",
+        APP_PUBLIC_URL: WEB_URL,
         REGISTRY_PUBLIC_URL: BASE_URL,
+        REGISTRY_ALLOW_PRIVATE_UPSTREAMS: "true",
         API_TRUSTED_ORIGINS: WEB_URL,
         DATABASE_URL: TEST_DATABASE_URL,
         NODE_ENV: "test",

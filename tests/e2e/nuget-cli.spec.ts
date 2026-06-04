@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { expect, test } from "@playwright/test";
 import { CLI_IMAGES, dockerReachableUrl, dockerRun, ensureDockerAvailable } from "./docker-clients";
 import { addMember, createRepo, createRepoReturning, createToken, setupOwner } from "./helpers";
@@ -344,11 +344,12 @@ function packAndPush(
 }
 
 /** Create a fresh Consumer classlib wired to `source` and return its csproj path. */
-function newConsumer(work: string, source: string, name: string): string {
-  const dir = join(work, name);
-  runDotnet(["new", "classlib", "-n", name, "--no-restore"], work);
-  writeNugetConfig(dir, source);
-  return join(dir, `${name}.csproj`);
+function newConsumer(_work: string, source: string, name: string): string {
+  const dir = mkdtempSync(join(tmpdir(), "hoot-nuget-consumer-"));
+  runDotnet(["new", "classlib", "-n", name, "--no-restore"], dir);
+  const projectDir = join(dir, name);
+  writeNugetConfig(projectDir, source);
+  return join(projectDir, `${name}.csproj`);
 }
 
 test.describe("nuget registry extended scenarios (Dockerized real dotnet)", () => {
@@ -375,9 +376,10 @@ test.describe("nuget registry extended scenarios (Dockerized real dotnet)", () =
 
     // No version + no --prerelease resolves to the highest STABLE release (1.0.0).
     const stable = newConsumer(work, source, "StableConsumer");
-    runDotnet(["add", stable, "package", packageId], work);
+    const stableDir = dirname(stable);
+    runDotnet(["add", stable, "package", packageId], stableDir);
     const stableAssets = readFileSync(
-      join(work, "StableConsumer", "obj", "project.assets.json"),
+      join(stableDir, "obj", "project.assets.json"),
       "utf8",
     );
     expect(stableAssets).toContain(`${packageId}/1.0.0`);
@@ -385,9 +387,10 @@ test.describe("nuget registry extended scenarios (Dockerized real dotnet)", () =
 
     // --prerelease opts in to the floating prerelease; NuGet lowercases the suffix in assets.
     const pre = newConsumer(work, source, "PrereleaseConsumer");
-    runDotnet(["add", pre, "package", packageId, "--prerelease"], work);
+    const preDir = dirname(pre);
+    runDotnet(["add", pre, "package", packageId, "--prerelease"], preDir);
     const preAssets = readFileSync(
-      join(work, "PrereleaseConsumer", "obj", "project.assets.json"),
+      join(preDir, "obj", "project.assets.json"),
       "utf8",
     );
     expect(preAssets).toContain(`${packageId}/1.1.0-rc.1`);
@@ -419,8 +422,9 @@ test.describe("nuget registry extended scenarios (Dockerized real dotnet)", () =
     // With [1.1.0,2.0.0) and versions {1.0.0, 1.1.0, 2.0.0}, the floor excludes
     // 1.0.0, the open upper bound excludes 2.0.0, leaving 1.1.0 as the pick.
     const consumer = newConsumer(work, source, "RangeConsumer");
-    runDotnet(["add", consumer, "package", packageId, "--version", "[1.1.0,2.0.0)"], work);
-    const assets = readFileSync(join(work, "RangeConsumer", "obj", "project.assets.json"), "utf8");
+    const consumerDir = dirname(consumer);
+    runDotnet(["add", consumer, "package", packageId, "--version", "[1.1.0,2.0.0)"], consumerDir);
+    const assets = readFileSync(join(consumerDir, "obj", "project.assets.json"), "utf8");
     expect(assets).toContain(`${packageId}/1.1.0`);
     expect(assets).not.toContain(`${packageId}/1.0.0`);
     expect(assets).not.toContain(`${packageId}/2.0.0`);
@@ -532,10 +536,11 @@ test.describe("nuget registry extended scenarios (Dockerized real dotnet)", () =
 
     // A consumer pointed only at the virtual source resolves both members' packages.
     const consumer = newConsumer(work, virtualSource, "VirtualConsumer");
-    runDotnet(["add", consumer, "package", pkgA, "--version", "1.0.0"], work);
-    runDotnet(["add", consumer, "package", pkgB, "--version", "1.0.0"], work);
+    const consumerDir = dirname(consumer);
+    runDotnet(["add", consumer, "package", pkgA, "--version", "1.0.0"], consumerDir);
+    runDotnet(["add", consumer, "package", pkgB, "--version", "1.0.0"], consumerDir);
     const assets = readFileSync(
-      join(work, "VirtualConsumer", "obj", "project.assets.json"),
+      join(consumerDir, "obj", "project.assets.json"),
       "utf8",
     );
     expect(assets).toContain(`${pkgA}/1.0.0`);
@@ -696,9 +701,10 @@ test.describe("nuget registry error and edge scenarios (Dockerized real dotnet)"
 
     // With no version specified, NuGet skips the unlisted 1.1.0 and falls back to 1.0.0.
     const consumer = newConsumer(work, source, "UnlistResolveConsumer");
-    runDotnet(["add", consumer, "package", packageId], work);
+    const consumerDir = dirname(consumer);
+    runDotnet(["add", consumer, "package", packageId], consumerDir);
     const assets = readFileSync(
-      join(work, "UnlistResolveConsumer", "obj", "project.assets.json"),
+      join(consumerDir, "obj", "project.assets.json"),
       "utf8",
     );
     expect(assets).toContain(`${packageId}/1.0.0`);

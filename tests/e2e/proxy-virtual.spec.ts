@@ -229,6 +229,31 @@ function proxyNpmRefState(input: { repoId: string; scope: string }): { refs: str
   return JSON.parse(out);
 }
 
+function setProxyUpstreamCacheTtl(repoId: string, cacheTtlSeconds: number): void {
+  execFileSync(
+    "bun",
+    [
+      "-e",
+      [
+        'import { db, eq, repositoryUpstreams } from "@hootifactory/db";',
+        "await db",
+        "  .update(repositoryUpstreams)",
+        "  .set({ cacheTtlSeconds: Number(process.env.CACHE_TTL_SECONDS) })",
+        "  .where(eq(repositoryUpstreams.repositoryId, process.env.REPO_ID));",
+      ].join("\n"),
+    ],
+    {
+      env: {
+        ...process.env,
+        DATABASE_URL: TEST_DATABASE_URL,
+        REPO_ID: repoId,
+        CACHE_TTL_SECONDS: String(cacheTtlSeconds),
+      },
+      stdio: "pipe",
+    },
+  );
+}
+
 const CRC_TABLE = new Uint32Array(256).map((_, n) => {
   let c = n;
   for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
@@ -554,6 +579,7 @@ test.describe("virtual + proxy repositories (Dockerized real npm)", () => {
     await owner.ctx.post(`/api/repositories/${proxy.id}/upstreams`, {
       data: { url: `${baseURL}/${upstream.mountPath}/` },
     });
+    setProxyUpstreamCacheTtl(proxy.id, 0);
 
     const pkg = `refresh${Date.now().toString(36)}`;
     publish(baseURL!, upstream.mountPath, token, pkg, "1.0.0", "stable");
@@ -602,6 +628,7 @@ test.describe("virtual + proxy repositories (Dockerized real npm)", () => {
       await owner.ctx.post(`/api/repositories/${proxy.id}/upstreams`, {
         data: { url: `${upstream.url}/` },
       });
+      setProxyUpstreamCacheTtl(proxy.id, 0);
       expect((await owner.ctx.get(`/${proxy.mountPath}/${pkg}`)).status()).toBe(200);
       await pollArtifact(owner.ctx, proxy.id, pkg);
       await owner.ctx.post(`/api/orgs/${owner.orgId}/quota`, {

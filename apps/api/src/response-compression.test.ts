@@ -90,6 +90,18 @@ describe("registry response compression", () => {
     expect(binary.headers.get("content-encoding")).toBeNull();
   });
 
+  test("preserves small responses when gzip would be larger", async () => {
+    const response = await compressRegistryResponse(
+      gzipRequest(),
+      textResponse("v1.0.0\n"),
+      { format: "go", handlerId: "list" },
+    );
+
+    expect(response.headers.get("content-encoding")).toBeNull();
+    expect(response.headers.get("content-length")).toBe("7");
+    expect(await response.text()).toBe("v1.0.0\n");
+  });
+
   test("only opts in known registry metadata handlers", async () => {
     expect(registryHandlerSupportsCompression("npm", "packument")).toBe(true);
     expect(registryHandlerSupportsCompression("go", "file")).toBe(true);

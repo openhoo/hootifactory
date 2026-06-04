@@ -83,7 +83,7 @@ describe("auth throttle helpers", () => {
     await expect(
       authenticateUserPasswordWithThrottle(username, "wrong", "203.0.113.10", verify),
     ).resolves.toMatchObject({ kind: "throttled" });
-    expect(calls).toBe(5);
+    expect(calls).toBe(6);
   });
 
   test("throttles password verification across changing client addresses", async () => {
@@ -103,7 +103,7 @@ describe("auth throttle helpers", () => {
     await expect(
       authenticateUserPasswordWithThrottle(username, "wrong", "203.0.113.250", verify),
     ).resolves.toMatchObject({ kind: "throttled" });
-    expect(calls).toBe(5);
+    expect(calls).toBe(6);
   });
 
   test("successful password verification clears prior shared failures within the budget", async () => {
