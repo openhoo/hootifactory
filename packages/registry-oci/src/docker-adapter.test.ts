@@ -1,8 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import type {
   RegistryOciManifestRow,
+  RegistryOciUploadSessionMutations,
+  RegistryOciUploadSessionRow,
   RegistryPackageRow,
   RegistryRequestContext,
+  RegistryUploadedBlob,
   RouteMatch,
 } from "@hootifactory/registry";
 import { createTestRegistryContext } from "@hootifactory/registry/testing";
@@ -14,6 +17,8 @@ const OTHER_REFERRER_DIGEST =
   "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
 const REFERRER_ARTIFACT_TYPE = "application/vnd.hootifactory.test.referrer";
 const RAW_MANIFEST = JSON.stringify({ schemaVersion: 2 });
+const UPLOAD_DIGEST = "sha256:1111111111111111111111111111111111111111111111111111111111111111";
+const UPLOAD_UUID = "11111111-1111-4111-8111-111111111111";
 
 const ctx = {
   repo: { mountPath: "v2/acme/containers" },
@@ -75,6 +80,40 @@ function referrerRow(digest: string): RegistryOciManifestRow {
     raw,
     sizeBytes: raw.length,
     configDigest: null,
+    createdAt: new Date("2026-01-03T00:00:00.000Z"),
+    updatedAt: new Date("2026-01-03T00:00:00.000Z"),
+  };
+}
+
+async function readStreamText(stream: ReadableStream<Uint8Array>): Promise<string> {
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    size += value.byteLength;
+  }
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(bytes);
+}
+
+function uploadSession(): RegistryOciUploadSessionRow {
+  return {
+    id: UPLOAD_UUID,
+    repositoryId: "repo_1",
+    scope: pkg.name,
+    storageKey: "oci/uploads/upload_1",
+    offsetBytes: 0,
+    state: "open",
+    multipart: null,
+    expiresAt: new Date("2026-07-04T00:00:00.000Z"),
     createdAt: new Date("2026-01-03T00:00:00.000Z"),
     updatedAt: new Date("2026-01-03T00:00:00.000Z"),
   };
@@ -223,6 +262,112 @@ describe("Docker adapter contract", () => {
     };
     expect(body.manifests.map(({ digest, artifactType }) => ({ digest, artifactType }))).toEqual([
       { digest: REFERRER_DIGEST, artifactType: REFERRER_ARTIFACT_TYPE },
+    ]);
+  });
+
+  test("commits uploaded blobs after streaming outside the locked session", async () => {
+    const ctx = createTestRegistryContext({ baseUrl: "https://registry.test" });
+    ctx.repo = { ...ctx.repo, format: "docker", mountPath: "v2/acme/containers" };
+    const calls: string[] = [];
+    let lockDepth = 0;
+    let committedOffset = 0;
+    const uploaded: RegistryUploadedBlob = { digest: UPLOAD_DIGEST, size: 5, deduped: false };
+
+    ctx.data.oci.withLockedUploadSession = async ({ scope, uuid, run }) => {
+      expect(scope).toBe(pkg.name);
+      expect(uuid).toBe(UPLOAD_UUID);
+      calls.push("lock:start");
+      lockDepth += 1;
+      const mutations: RegistryOciUploadSessionMutations = {
+        assertStagingBudget: async () => {},
+        updateOpen: async () => {},
+        commitBlobWithRef: async (input) => {
+          calls.push("commitBlobWithRef");
+          expect(lockDepth).toBe(1);
+          expect(input).toEqual({
+            blob: uploaded,
+            kind: "oci_layer",
+            scope: pkg.name,
+            mediaType: "application/octet-stream",
+          });
+          return { ...input.blob, refCreated: true };
+        },
+        commit: async (offsetBytes) => {
+          calls.push("commit");
+          expect(lockDepth).toBe(1);
+          committedOffset = offsetBytes;
+        },
+        markAborted: async () => {},
+        deleteSession: async () => {},
+      };
+      try {
+        return await run(uploadSession(), mutations);
+      } finally {
+        lockDepth -= 1;
+        calls.push("lock:end");
+      }
+    };
+    ctx.data.content.uploadBlobStream = async ({ data, expectedDigest }) => {
+      calls.push("uploadBlobStream");
+      expect(lockDepth).toBe(0);
+      expect(expectedDigest).toBe(UPLOAD_DIGEST);
+      await expect(readStreamText(data)).resolves.toBe("layer");
+      return uploaded;
+    };
+    ctx.data.content.discardUploadedBlob = async () => {
+      throw new Error("committed upload should not be discarded");
+    };
+    ctx.data.assets.upsert = async (input) => {
+      calls.push("asset");
+      expect(input.digest).toBe(UPLOAD_DIGEST);
+      expect(input.sizeBytes).toBe(5);
+      expect(input.scope).toBe(pkg.name);
+      return {
+        id: "asset_1",
+        orgId: "org_1",
+        repositoryId: "repo_1",
+        packageId: null,
+        packageVersionId: null,
+        ociManifestId: null,
+        blobRefId: null,
+        digest: input.digest,
+        role: input.role,
+        scope: pkg.name,
+        path: input.path ?? null,
+        mediaType: input.mediaType ?? null,
+        sizeBytes: input.sizeBytes ?? 5,
+        metadata: input.metadata ?? {},
+        deletedAt: null,
+        createdAt: new Date("2026-01-04T00:00:00.000Z"),
+        updatedAt: new Date("2026-01-04T00:00:00.000Z"),
+      };
+    };
+
+    const response = await new DockerAdapter().handle(
+      {
+        entry: { method: "PUT", pattern: "/:name+/blobs/uploads/:uuid", handlerId: "putUpload" },
+        params: { name: pkg.name, uuid: UPLOAD_UUID },
+        path: `/team/api/blobs/uploads/${UPLOAD_UUID}`,
+      },
+      new Request(
+        `https://registry.test/v2/acme/containers/team/api/blobs/uploads/${UPLOAD_UUID}?digest=${UPLOAD_DIGEST}`,
+        { method: "PUT", body: "layer" },
+      ),
+      ctx,
+    );
+
+    expect(response.status).toBe(201);
+    expect(response.headers.get("docker-content-digest")).toBe(UPLOAD_DIGEST);
+    expect(committedOffset).toBe(5);
+    expect(calls).toEqual([
+      "lock:start",
+      "lock:end",
+      "uploadBlobStream",
+      "lock:start",
+      "commitBlobWithRef",
+      "commit",
+      "lock:end",
+      "asset",
     ]);
   });
 

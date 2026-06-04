@@ -7,8 +7,8 @@ import {
   Errors,
   parseRegistryInput,
   type RegistryRequestContext,
+  type RegistryUploadedBlob,
   stagingKey,
-  storeRegistryBlobStreamWithRef,
   storeRegistryBlobWithRef,
 } from "@hootifactory/registry";
 import {
@@ -140,7 +140,7 @@ export async function putUpload(
 
   const chunk = await bodyBytes(req);
   const parsedUuid = parseUploadUuid(uuid);
-  const committed = await ctx.data.oci.withLockedUploadSession({
+  const pending = await ctx.data.oci.withLockedUploadSession({
     scope: image,
     uuid: parsedUuid,
     run: async (session, mutations) => {
@@ -155,31 +155,66 @@ export async function putUpload(
       const state = uploadMultipartState(openSession.multipart);
       const existing = state.chunks.reduce((sum, part) => sum + part.size, 0);
       assertUploadOffset(existing, openSession.offsetBytes);
-      const stored = await storeRegistryBlobStreamWithRef(ctx, {
-        data: uploadChunkStream(ctx, state.chunks, chunk),
+      return { storageKey: openSession.storageKey, chunks: state.chunks };
+    },
+  });
+
+  let uploaded: RegistryUploadedBlob | null = null;
+  try {
+    uploaded = await ctx.data.content
+      .uploadBlobStream({
+        data: uploadChunkStream(ctx, pending.chunks, chunk),
         expectedDigest: digest,
-        kind: "oci_layer",
-        scope: image,
-        asset: {
-          role: "oci_layer",
-          scope: image,
-          path: `${image}/blobs/${digest}`,
-          mediaType: "application/octet-stream",
-        },
-      }).catch((err) => {
+      })
+      .catch((err) => {
         if (err instanceof Error && err.name === "InvalidDigestError") {
           throw Errors.digestInvalid({ expected: digest, error: err.message });
         }
         throw err;
       });
-      await mutations.commit(stored.size);
-      return { size: stored.size, storageKey: openSession.storageKey, chunks: state.chunks };
-    },
-  });
-  await ctx.data.content.staging.deleteKey(committed.storageKey).catch(() => {});
-  await deleteUploadChunks(ctx, committed.chunks);
 
-  return buildOciUploadCommittedResponse({ ctx, image, digest, size: committed.size });
+    const committed = await ctx.data.oci.withLockedUploadSession({
+      scope: image,
+      uuid: parsedUuid,
+      run: async (session, mutations) => {
+        const openSession = await assertLoadedOpenSession({
+          image,
+          uuid: parsedUuid,
+          ctx,
+          session,
+          mutations,
+        });
+        validateContentRange(req, openSession.offsetBytes, chunk.length);
+        const state = uploadMultipartState(openSession.multipart);
+        const existing = state.chunks.reduce((sum, part) => sum + part.size, 0);
+        assertUploadOffset(existing, openSession.offsetBytes);
+        const stored = await mutations.commitBlobWithRef({
+          blob: uploaded!,
+          kind: "oci_layer",
+          scope: image,
+          mediaType: "application/octet-stream",
+        });
+        await mutations.commit(stored.size);
+        return { size: stored.size, storageKey: openSession.storageKey, chunks: state.chunks };
+      },
+    });
+    uploaded = null;
+    await ctx.data.assets.upsert({
+      digest,
+      role: "oci_layer",
+      scope: image,
+      path: `${image}/blobs/${digest}`,
+      mediaType: "application/octet-stream",
+      sizeBytes: committed.size,
+    });
+    await ctx.data.content.staging.deleteKey(committed.storageKey).catch(() => {});
+    await deleteUploadChunks(ctx, committed.chunks);
+
+    return buildOciUploadCommittedResponse({ ctx, image, digest, size: committed.size });
+  } catch (err) {
+    if (uploaded) await ctx.data.content.discardUploadedBlob(uploaded);
+    throw err;
+  }
 }
 
 export async function cancelUpload(

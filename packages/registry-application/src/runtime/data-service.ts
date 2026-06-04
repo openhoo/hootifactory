@@ -18,6 +18,7 @@ import {
 import {
   areAllArtifactsBlocked,
   blobRefExists,
+  discardUncommittedBlobPut,
   ensureBlobRef,
   getBlobRef,
   isArtifactBlocked,
@@ -25,6 +26,7 @@ import {
   serveBlobIfClean,
   storeBlobStreamWithRef,
   storeBlobWithRef,
+  uploadBlobStream,
 } from "../content";
 import {
   deleteOciManifestIfUnassociated,
@@ -314,6 +316,8 @@ export function createRegistryDataService(ctx: RegistryRequestContext): Registry
       isArtifactBlocked: (digest) => isArtifactBlocked(ctx, digest),
       areAllArtifactsBlocked: (digests) => areAllArtifactsBlocked(ctx, digests),
       serveBlobIfClean: (opts) => serveBlobIfClean(ctx, opts),
+      uploadBlobStream: (input) => uploadBlobStream(input.data, input.expectedDigest),
+      discardUploadedBlob: (blob) => discardUncommittedBlobPut(ctx, blob),
       blobRefExists: (input: RegistryBlobRefInput) => blobRefExists(ctx, input),
       getBlobRef: (input: RegistryBlobRefInput) => getBlobRef(ctx, input),
       storeBlobWithRef: async (input) => {

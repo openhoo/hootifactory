@@ -101,6 +101,12 @@ export interface RegistryStoredBlob {
   refCreated: boolean;
 }
 
+export interface RegistryUploadedBlob {
+  digest: string;
+  size: number;
+  deduped: boolean;
+}
+
 export interface RegistryAssetRow {
   id: string;
   orgId: string;
@@ -177,6 +183,12 @@ export interface RegistryOciUploadSessionMutations {
     maxStagedUploadBytes: number;
   }): Promise<void>;
   updateOpen(patch: { offsetBytes: number; multipart: string }): Promise<void>;
+  commitBlobWithRef(input: {
+    blob: RegistryUploadedBlob;
+    mediaType?: string;
+    kind: RegistryBlobRefKind;
+    scope: string;
+  }): Promise<RegistryStoredBlob>;
   commit(offsetBytes: number): Promise<void>;
   markAborted(): Promise<void>;
   deleteSession(): Promise<void>;
@@ -353,6 +365,11 @@ export interface RegistryDataService {
     isArtifactBlocked(digest: string): Promise<boolean>;
     areAllArtifactsBlocked(digests: string[]): Promise<boolean>;
     serveBlobIfClean(opts: RegistryBlobResponseOptions): Promise<Response>;
+    uploadBlobStream(input: {
+      data: ReadableStream<Uint8Array>;
+      expectedDigest?: string;
+    }): Promise<RegistryUploadedBlob>;
+    discardUploadedBlob(blob: RegistryUploadedBlob): Promise<void>;
     blobRefExists(input: RegistryBlobRefInput): Promise<boolean>;
     getBlobRef(input: RegistryBlobRefInput): Promise<RegistryReferencedBlob | null>;
     storeBlobWithRef(input: StoreBlobWithRefInput): Promise<RegistryStoredBlob>;

@@ -187,6 +187,23 @@ async function commitBlobPutTx(
   };
 }
 
+export async function uploadBlobStream(
+  data: ReadableStream<Uint8Array>,
+  expectedDigest?: string,
+): Promise<BlobPutResult> {
+  return blobStore.putStream(data, expectedDigest);
+}
+
+export async function commitUploadedBlobRefTx(
+  tx: Tx,
+  ctx: RegistryRequestContext,
+  put: BlobPutResult,
+  opts: { mediaType?: string; kind: BlobRefKind; scope: string },
+): Promise<StoredBlob> {
+  await lockDigestTx(tx, put.digest);
+  return commitBlobPutTx(tx, ctx, put, opts);
+}
+
 /**
  * Run a store-with-ref transaction: `acquire` performs the per-variant lock +
  * CAS put (registering the put for rollback cleanup the moment it lands), then
@@ -242,13 +259,13 @@ export async function storeBlobStreamWithRef(
     scope: string;
   },
 ): Promise<StoredBlob> {
-  return runStoreBlobWithRef(ctx, opts, async (tx, registerCleanup) => {
-    if (opts.expectedDigest) await lockDigestTx(tx, opts.expectedDigest);
-    const put = await blobStore.putStream(opts.data, opts.expectedDigest);
-    registerCleanup(put);
-    if (!opts.expectedDigest) await lockDigestTx(tx, put.digest);
-    return put;
-  });
+  const put = await uploadBlobStream(opts.data, opts.expectedDigest);
+  try {
+    return await db.transaction((tx) => commitUploadedBlobRefTx(tx, ctx, put, opts));
+  } catch (err) {
+    await discardUncommittedBlobPut(ctx, put);
+    throw err;
+  }
 }
 
 export async function ensureBlobRef(

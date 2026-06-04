@@ -7,7 +7,9 @@ export {
 export {
   type BlobRefKind,
   blobRefExists,
+  commitUploadedBlobRefTx,
   deleteUnreferencedCasBlob,
+  discardUncommittedBlobPut,
   ensureBlobRef,
   getBlobRef,
   releaseBlobRef,
@@ -15,4 +17,5 @@ export {
   type StoredBlob,
   storeBlobStreamWithRef,
   storeBlobWithRef,
+  uploadBlobStream,
 } from "./blobs";

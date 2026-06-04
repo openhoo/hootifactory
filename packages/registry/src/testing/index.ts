@@ -62,6 +62,8 @@ function createTestDataService(): RegistryDataService {
         Promise.resolve(
           new Response(`blob:${digest}`, { headers: { "content-type": contentType } }),
         ),
+      uploadBlobStream: () => unimplemented("data.content.uploadBlobStream"),
+      discardUploadedBlob: () => Promise.resolve(),
       blobRefExists: () => Promise.resolve(false),
       getBlobRef: () => Promise.resolve(null),
       storeBlobWithRef: () => unimplemented("data.content.storeBlobWithRef"),

@@ -1,7 +1,13 @@
 import { Errors } from "@hootifactory/core";
 import { and, blobRefs, db, eq, ne, repositories, sql, uploadSessions } from "@hootifactory/db";
-import type { RegistryRequestContext } from "@hootifactory/registry";
+import type {
+  RegistryBlobRefKind,
+  RegistryRequestContext,
+  RegistryStoredBlob,
+  RegistryUploadedBlob,
+} from "@hootifactory/registry";
 import { blobStore } from "@hootifactory/storage";
+import { commitUploadedBlobRefTx } from "../content";
 import { assertStorageQuotaRowAllows, lockOrgQuotaTx, type Tx } from "../governance/quota";
 
 export type OciUploadSessionRow = typeof uploadSessions.$inferSelect;
@@ -26,6 +32,12 @@ export interface OciUploadSessionMutations {
     maxStagedUploadBytes: number;
   }): Promise<void>;
   updateOpen(patch: { offsetBytes: number; multipart: string }): Promise<void>;
+  commitBlobWithRef(input: {
+    blob: RegistryUploadedBlob;
+    mediaType?: string;
+    kind: RegistryBlobRefKind;
+    scope: string;
+  }): Promise<RegistryStoredBlob>;
   commit(offsetBytes: number): Promise<void>;
   markAborted(): Promise<void>;
   deleteSession(): Promise<void>;
@@ -89,6 +101,12 @@ export async function withLockedOciUploadSession<T>(
           .set({ offsetBytes: patch.offsetBytes, multipart: patch.multipart })
           .where(openOciUploadSessionWhere(ctx, opts.scope, opts.uuid));
       },
+      commitBlobWithRef: async (input) =>
+        commitUploadedBlobRefTx(tx, ctx, input.blob, {
+          mediaType: input.mediaType,
+          kind: input.kind,
+          scope: input.scope,
+        }),
       commit: async (offsetBytes) => {
         await tx
           .update(uploadSessions)
