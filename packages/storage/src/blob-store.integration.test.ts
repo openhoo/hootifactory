@@ -54,9 +54,30 @@ describe("S3BlobStore (MinIO integration)", () => {
     await store.putAtKey(key, payload);
     expect(await store.existsKey(key)).toBe(true);
 
-    await store.promoteToBlob(key, digest);
-    expect(await store.exists(digest)).toBe(true);
-    expect(await store.getBytes(digest)).toEqual(payload);
+    const originalFetch = globalThis.fetch;
+    let copyRequests = 0;
+    let copySucceeded = false;
+    const fetchSpy = (async (input, init) => {
+      const headers = new Headers(init?.headers);
+      if (init?.method === "PUT" && headers.has("x-amz-copy-source")) {
+        copyRequests += 1;
+        const response = await originalFetch(input, init);
+        copySucceeded = response.ok;
+        return response;
+      }
+      return originalFetch(input, init);
+    }) as typeof fetch;
+    fetchSpy.preconnect = originalFetch.preconnect;
+    globalThis.fetch = fetchSpy;
+    try {
+      await store.promoteToBlob(key, digest);
+      expect(await store.exists(digest)).toBe(true);
+      expect(await store.getBytes(digest)).toEqual(payload);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    expect(copyRequests).toBe(1);
+    expect(copySucceeded).toBe(true);
 
     await store.deleteKey(key);
     await store.delete(digest);
