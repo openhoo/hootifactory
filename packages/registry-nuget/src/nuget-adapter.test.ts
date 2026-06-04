@@ -18,6 +18,12 @@ const registrationMatch = {
   path: "/v3/registrations/hoot.lib/index.json",
 } satisfies RouteMatch;
 
+const searchMatch = {
+  entry: { method: "GET", pattern: "/v3/query", handlerId: "search" },
+  params: {},
+  path: "/v3/query",
+} satisfies RouteMatch;
+
 const pkg = {
   id: "pkg_1",
   orgId: "org_1",
@@ -33,17 +39,18 @@ const pkg = {
 function versionRow(
   version: string,
   updatedAt: Date,
-  opts: { listed?: boolean } = {},
+  opts: { listed?: boolean; pkg?: RegistryPackageRow } = {},
 ): RegistryPackageVersionRow {
+  const rowPkg = opts.pkg ?? pkg;
   return {
     id: `version_${version}`,
     orgId: "org_1",
-    packageId: pkg.id,
+    packageId: rowPkg.id,
     version,
     metadata: {
       nupkgDigest: `sha256:${"a".repeat(64)}`,
-      file: `hoot.lib.${version}.nupkg`,
-      displayId: "Hoot.Lib",
+      file: `${rowPkg.name}.${version}.nupkg`,
+      displayId: rowPkg.name === "hoot.lib" ? "Hoot.Lib" : rowPkg.name,
       ...(opts.listed === undefined ? {} : { listed: opts.listed }),
     },
     sizeBytes: 1,
@@ -111,5 +118,44 @@ describe("NuGet adapter registration cache", () => {
     expect(await rebuilt.json()).toMatchObject({
       items: [{ items: [{ catalogEntry: { version: "1.0.0", listed: false } }] }],
     });
+  });
+});
+
+describe("NuGet adapter search", () => {
+  test("uses paged package search and batched version reads", async () => {
+    const adapter = new NugetAdapter();
+    const ctx = createTestRegistryContext();
+    ctx.repo = { ...ctx.repo, format: "nuget", mountPath: "nuget/private" };
+    let packageSearches = 0;
+    let batchedVersionReads = 0;
+    ctx.data.packages.list = async () => {
+      throw new Error("NuGet search should not load the whole package table");
+    };
+    ctx.data.packages.search = async (input) => {
+      packageSearches += 1;
+      expect(input).toEqual({ text: "hoot", from: 0, size: 250 });
+      return { packages: [pkg], total: 1 };
+    };
+    ctx.data.versions.listLive = async () => {
+      throw new Error("NuGet search should not read versions one package at a time");
+    };
+    ctx.data.versions.listLiveForPackages = async (packages) => {
+      batchedVersionReads += 1;
+      expect(packages.map((row) => row.id)).toEqual([pkg.id]);
+      return new Map([[pkg.id, [versionRow("1.0.0", new Date("2026-01-01T00:00:00.000Z"))]]]);
+    };
+
+    const res = await adapter.handle(
+      searchMatch,
+      new Request("https://registry.test/v3/query?q=hoot"),
+      ctx,
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      totalHits: 1,
+      data: [{ id: "Hoot.Lib", version: "1.0.0" }],
+    });
+    expect(packageSearches).toBe(1);
+    expect(batchedVersionReads).toBe(1);
   });
 });
