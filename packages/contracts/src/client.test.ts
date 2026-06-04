@@ -90,4 +90,10 @@ describe("Hootifactory API client", () => {
       },
     ]);
   });
+
+  test("treats empty successful responses as no data", async () => {
+    const client = createHootifactoryClient(async () => new Response(null, { status: 204 }));
+
+    await expect(client.logout()).resolves.toBeUndefined();
+  });
 });

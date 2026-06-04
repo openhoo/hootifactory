@@ -1,3 +1,5 @@
+import { safeJsonParse } from "@hootifactory/registry";
+
 export { ifNoneMatch } from "@hootifactory/registry";
 
 export function decodeBase64(data: unknown): Buffer | null {
@@ -39,9 +41,6 @@ export async function responseBytes(res: Response, maxBytes: number): Promise<Ui
 export async function responseJson(res: Response, maxBytes: number): Promise<unknown | null> {
   const bytes = await responseBytes(res, maxBytes);
   if (!bytes) return null;
-  try {
-    return JSON.parse(new TextDecoder().decode(bytes));
-  } catch {
-    return null;
-  }
+  const decoded = safeJsonParse(new TextDecoder().decode(bytes));
+  return decoded.success ? decoded.data : null;
 }

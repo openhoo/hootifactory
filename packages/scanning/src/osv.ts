@@ -1,8 +1,28 @@
+import { z } from "@hootifactory/core";
 import type { NormalizedFinding, Severity } from "@hootifactory/scan-core";
 import { normalizeSeverity } from "@hootifactory/scan-core";
-import { asRecord, asString } from "./scanner-json";
 
 const OSV_DETAIL_CONCURRENCY = 8;
+const NonEmptyScannerStringSchema = z.string().min(1);
+const OsvBatchResponseSchema = z.looseObject({
+  results: z.array(z.unknown()).optional(),
+});
+const OsvResultSchema = z.looseObject({
+  vulns: z.array(z.unknown()).optional(),
+});
+const OsvVulnerabilityRefSchema = z.looseObject({
+  id: z.unknown().optional(),
+});
+const OsvDatabaseSpecificSchema = z.looseObject({
+  severity: z.unknown().optional(),
+});
+const OsvDetailSchema = z.looseObject({
+  database_specific: z.unknown().optional(),
+  severity: z.array(z.unknown()).optional(),
+});
+const OsvSeveritySchema = z.looseObject({
+  score: z.unknown().optional(),
+});
 
 function stripRange(version: string): string {
   return version.replace(/^[\^~>=<\s]+/, "").trim();
@@ -45,7 +65,7 @@ export async function osvScanDependencies(
       }),
     });
     if (!res.ok) return [];
-    const data = asRecord(await res.json().catch(() => null));
+    const data = OsvBatchResponseSchema.safeParse(await res.json().catch(() => null));
     const severityCache = new Map<string, Severity>();
     async function osvSeverity(id: string): Promise<Severity> {
       const cached = severityCache.get(id);
@@ -55,12 +75,19 @@ export async function osvScanDependencies(
         signal: AbortSignal.timeout(options.timeoutMs ?? 30_000),
       }).catch(() => null);
       if (detail?.ok) {
-        const vuln = asRecord(await detail.json().catch(() => null));
-        const databaseSpecific = asRecord(vuln?.database_specific);
-        severity = normalizeSeverity(asString(databaseSpecific?.severity));
-        const severities = Array.isArray(vuln?.severity) ? vuln.severity : [];
+        const vuln = OsvDetailSchema.safeParse(await detail.json().catch(() => null));
+        const databaseSpecific = OsvDatabaseSpecificSchema.safeParse(
+          vuln.success ? vuln.data.database_specific : undefined,
+        );
+        severity = normalizeSeverity(
+          scannerString(databaseSpecific.success ? databaseSpecific.data.severity : undefined),
+        );
+        const severities = vuln.success ? (vuln.data.severity ?? []) : [];
         for (const item of severities) {
-          const parsed = normalizeSeverity(asString(asRecord(item)?.score));
+          const parsedSeverity = OsvSeveritySchema.safeParse(item);
+          const parsed = normalizeSeverity(
+            scannerString(parsedSeverity.success ? parsedSeverity.data.score : undefined),
+          );
           if (parsed !== "unknown") severity = parsed;
         }
       }
@@ -68,14 +95,15 @@ export async function osvScanDependencies(
       return severity;
     }
     const out: NormalizedFinding[] = [];
-    const results = Array.isArray(data?.results) ? data.results : [];
+    const results = data.success ? (data.data.results ?? []) : [];
     const vulnIds = new Set<string>();
     for (let i = 0; i < results.length; i++) {
-      const result = asRecord(results[i]);
-      if (!entries[i] || !result) continue;
-      const vulns = Array.isArray(result.vulns) ? result.vulns : [];
+      const result = OsvResultSchema.safeParse(results[i]);
+      if (!entries[i] || !result.success) continue;
+      const vulns = result.data.vulns ?? [];
       for (const vuln of vulns) {
-        const id = asString(asRecord(vuln)?.id);
+        const parsedVuln = OsvVulnerabilityRefSchema.safeParse(vuln);
+        const id = scannerString(parsedVuln.success ? parsedVuln.data.id : undefined);
         if (id) vulnIds.add(id);
       }
     }
@@ -83,12 +111,13 @@ export async function osvScanDependencies(
       await osvSeverity(id);
     });
     for (let i = 0; i < results.length; i++) {
-      const result = asRecord(results[i]);
+      const result = OsvResultSchema.safeParse(results[i]);
       const entry = entries[i];
-      if (!entry || !result) continue;
-      const vulns = Array.isArray(result.vulns) ? result.vulns : [];
+      if (!entry || !result.success) continue;
+      const vulns = result.data.vulns ?? [];
       for (const vuln of vulns) {
-        const id = asString(asRecord(vuln)?.id);
+        const parsedVuln = OsvVulnerabilityRefSchema.safeParse(vuln);
+        const id = scannerString(parsedVuln.success ? parsedVuln.data.id : undefined);
         if (!id) continue;
         const packageVersion = stripRange(entry[1]);
         out.push({
@@ -105,4 +134,9 @@ export async function osvScanDependencies(
   } catch {
     return [];
   }
+}
+
+function scannerString(value: unknown): string | undefined {
+  const parsed = NonEmptyScannerStringSchema.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
 }

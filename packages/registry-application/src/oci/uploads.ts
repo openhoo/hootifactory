@@ -1,4 +1,4 @@
-import { Errors } from "@hootifactory/core";
+import { Errors, parseJsonWithSchema, z } from "@hootifactory/core";
 import { and, blobRefs, db, eq, ne, repositories, sql, uploadSessions } from "@hootifactory/db";
 import type {
   RegistryBlobRefKind,
@@ -9,6 +9,7 @@ import type {
 import { blobStore } from "@hootifactory/storage";
 import { commitUploadedBlobRefTx } from "../content";
 import { assertStorageQuotaRowAllows, lockOrgQuotaTx, type Tx } from "../governance/quota";
+import { rowsFromExecute, stringField } from "../runtime/raw-rows";
 
 export type OciUploadSessionRow = typeof uploadSessions.$inferSelect;
 
@@ -25,6 +26,14 @@ interface ExpiredUploadSessionRow {
   storageKey: string;
   multipart: string | null;
 }
+
+const OciUploadChunkCandidateSchema = z.looseObject({
+  key: z.string().min(1),
+});
+
+const OciUploadChunkListSchema = z.looseObject({
+  chunks: z.array(z.unknown()).optional(),
+});
 
 export interface OciUploadSessionMutations {
   assertStagingBudget(input: {
@@ -194,45 +203,20 @@ export async function listOciMountSources(digest: string): Promise<OciMountSourc
     .where(eq(blobRefs.digest, digest));
 }
 
-function rowsFromExecute(result: unknown): unknown[] {
-  if (Array.isArray(result)) return result;
-  if (
-    result &&
-    typeof result === "object" &&
-    Array.isArray((result as { rows?: unknown[] }).rows)
-  ) {
-    return (result as { rows: unknown[] }).rows;
-  }
-  return [];
-}
-
 function expiredUploadSessionRow(row: unknown): ExpiredUploadSessionRow | null {
-  if (!row || typeof row !== "object") return null;
-  const record = row as Record<string, unknown>;
-  const id = typeof record.id === "string" ? record.id : null;
-  const storageKey =
-    typeof record.storageKey === "string"
-      ? record.storageKey
-      : typeof record.storage_key === "string"
-        ? record.storage_key
-        : null;
-  const multipart = typeof record.multipart === "string" ? record.multipart : null;
+  const id = stringField(row, "id");
+  const storageKey = stringField(row, "storageKey") ?? stringField(row, "storage_key");
+  const multipart = stringField(row, "multipart");
   return id && storageKey ? { id, storageKey, multipart } : null;
 }
 
 function uploadChunkKeys(raw: string | null): string[] {
   if (!raw) return [];
-  try {
-    const decoded = JSON.parse(raw) as { chunks?: unknown };
-    if (!Array.isArray(decoded.chunks)) return [];
-    return decoded.chunks.flatMap((chunk) => {
-      if (!chunk || typeof chunk !== "object") return [];
-      const key = (chunk as { key?: unknown }).key;
-      return typeof key === "string" && key ? [key] : [];
-    });
-  } catch {
-    return [];
-  }
+  const decoded = parseJsonWithSchema(OciUploadChunkListSchema, raw);
+  return (decoded?.chunks ?? []).flatMap((chunk) => {
+    const parsed = OciUploadChunkCandidateSchema.safeParse(chunk);
+    return parsed.success ? [parsed.data.key] : [];
+  });
 }
 
 async function deleteOciUploadSessionStorage(session: {

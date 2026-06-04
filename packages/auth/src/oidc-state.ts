@@ -1,5 +1,5 @@
 import { timingSafeEqual } from "node:crypto";
-import { z } from "zod";
+import { parseJsonWithSchema, z } from "@hootifactory/core";
 import type { SignedOidcState } from "./oidc-types";
 
 function hmacHex(secret: string, body: string): string {
@@ -48,13 +48,10 @@ export function verifyOidcState(
   if (sig.length !== expected.length || !timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) {
     return null;
   }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(Buffer.from(body, "base64url").toString("utf8"));
-  } catch {
-    return null;
-  }
-  const state = SignedOidcStateSchema.safeParse(parsed);
-  if (!state.success || state.data.expiresAt < now) return null;
-  return state.data;
+  const state = parseJsonWithSchema(
+    SignedOidcStateSchema,
+    Buffer.from(body, "base64url").toString("utf8"),
+  );
+  if (!state || state.expiresAt < now) return null;
+  return state;
 }

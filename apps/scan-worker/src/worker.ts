@@ -13,16 +13,11 @@ import {
   sweepUnreferencedCasBlobs,
 } from "@hootifactory/registry-application";
 import { processScan, recordScanFailure, scannerRuntimeFromEnv } from "./pipeline";
+import { type ClaimedScanIntent, claimedScanIntentsFromExecute } from "./scan-outbox-rows";
 
 const workerRole = "scan-worker";
 
 initializeObservability({ serviceRole: workerRole });
-
-interface ClaimedScanIntent {
-  id: string;
-  artifactId: string;
-  attempts: number;
-}
 
 const workerBatchSize = intEnv("SCAN_WORKER_BATCH_SIZE", 16, 1);
 const workerConcurrency = Math.min(workerBatchSize, intEnv("SCAN_WORKER_CONCURRENCY", 4, 1));
@@ -35,33 +30,6 @@ const blobGcBatchSize = intEnv("BLOB_GC_BATCH_SIZE", 100, 1);
 const blobGcGraceSeconds = intEnv("BLOB_GC_GRACE_SECONDS", 60, 0);
 
 const scannerRuntime = scannerRuntimeFromEnv();
-
-function rowsFromExecute(result: unknown): unknown[] {
-  if (Array.isArray(result)) return result;
-  if (
-    result &&
-    typeof result === "object" &&
-    Array.isArray((result as { rows?: unknown[] }).rows)
-  ) {
-    return (result as { rows: unknown[] }).rows;
-  }
-  return [];
-}
-
-function claimedRow(row: unknown): ClaimedScanIntent | null {
-  if (!row || typeof row !== "object") return null;
-  const r = row as Record<string, unknown>;
-  const id = typeof r.id === "string" ? r.id : null;
-  const artifactId =
-    typeof r.artifactId === "string"
-      ? r.artifactId
-      : typeof r.artifact_id === "string"
-        ? r.artifact_id
-        : null;
-  const attempts = typeof r.attempts === "number" ? r.attempts : Number(r.attempts);
-  if (!id || !artifactId || !Number.isFinite(attempts)) return null;
-  return { id, artifactId, attempts };
-}
 
 async function claimScanIntents(limit: number): Promise<ClaimedScanIntent[]> {
   const result = await db.execute(sql`
@@ -82,10 +50,7 @@ async function claimScanIntents(limit: number): Promise<ClaimedScanIntent[]> {
      where so.id = claimed.id
     returning so.id, so.artifact_id as "artifactId", so.attempts
   `);
-  return rowsFromExecute(result).flatMap((row) => {
-    const claimed = claimedRow(row);
-    return claimed ? [claimed] : [];
-  });
+  return claimedScanIntentsFromExecute(result);
 }
 
 async function markSucceeded(intentId: string): Promise<void> {

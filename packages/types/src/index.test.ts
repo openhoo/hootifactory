@@ -83,6 +83,7 @@ describe("shared type constants", () => {
 
   test("ignores non-object manifests and malformed descriptor entries", () => {
     expect(ociManifestReferences("[]")).toEqual({ blobs: [], manifests: [] });
+    expect(ociManifestReferences("{not json")).toEqual({ blobs: [], manifests: [] });
     expect(
       ociManifestReferences(
         JSON.stringify({

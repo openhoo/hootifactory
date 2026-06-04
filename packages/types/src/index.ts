@@ -70,6 +70,16 @@ export interface OciManifestReferenceLists {
   manifests: string[];
 }
 
+type JsonParseResult = { success: true; data: unknown } | { success: false };
+
+function safeJsonParse(raw: string): JsonParseResult {
+  try {
+    return { success: true, data: JSON.parse(raw) };
+  } catch {
+    return { success: false };
+  }
+}
+
 export function ociManifestReferencesFromValue(value: unknown): OciManifestReferenceLists {
   const parsed = OciReferenceManifestSchema.safeParse(value);
   if (!parsed.success) return { blobs: [], manifests: [] };
@@ -83,11 +93,8 @@ export function ociManifestReferencesFromValue(value: unknown): OciManifestRefer
 }
 
 export function ociManifestReferences(raw: string): OciManifestReferenceLists {
-  let value: unknown;
-  try {
-    value = JSON.parse(raw);
-  } catch {
-    return { blobs: [], manifests: [] };
-  }
-  return ociManifestReferencesFromValue(value);
+  const parsed = safeJsonParse(raw);
+  return parsed.success
+    ? ociManifestReferencesFromValue(parsed.data)
+    : { blobs: [], manifests: [] };
 }

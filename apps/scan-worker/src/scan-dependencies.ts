@@ -1,6 +1,6 @@
+import { JsonRecordSchema, z } from "@hootifactory/core";
 import { and, db, eq, packages, packageVersions } from "@hootifactory/db";
 import { withSpan } from "@hootifactory/observability";
-import { asRecord, asString, asStringRecord } from "@hootifactory/scanning";
 
 export interface DependencyTarget {
   repositoryId: string;
@@ -18,6 +18,39 @@ export interface CollectedDependencies {
   deps: Record<string, string>;
   osvEcosystem: string;
 }
+
+const NonEmptyStringSchema = z.string().min(1);
+const NpmManifestSchema = z.looseObject({
+  dependencies: z.unknown().optional(),
+  devDependencies: z.unknown().optional(),
+});
+const NpmMetadataSchema = z.looseObject({
+  manifest: z.unknown().optional(),
+});
+const CargoDependencySchema = z.looseObject({
+  name: NonEmptyStringSchema,
+  req: NonEmptyStringSchema,
+});
+const CargoMetadataSchema = z.looseObject({
+  index: z
+    .looseObject({
+      deps: z.array(z.unknown()).optional(),
+    })
+    .optional(),
+});
+const NugetDependencySchema = z.looseObject({
+  id: NonEmptyStringSchema,
+  range: NonEmptyStringSchema,
+});
+const NugetDependencyGroupSchema = z.looseObject({
+  dependencies: z.array(z.unknown()).optional(),
+});
+const NugetMetadataSchema = z.looseObject({
+  dependencyGroups: z.array(z.unknown()).optional(),
+});
+const GoMetadataSchema = z.looseObject({
+  mod: NonEmptyStringSchema.optional(),
+});
 
 export async function collectPackageDependencies(
   target: DependencyTarget,
@@ -105,7 +138,8 @@ async function loadPackageVersionMetadata(
     )
     .limit(1);
 
-  return asRecord(version?.metadata) ?? {};
+  const parsed = JsonRecordSchema.safeParse(version?.metadata);
+  return parsed.success ? parsed.data : {};
 }
 
 function defaultOsvEcosystem(_format: string): string {
@@ -113,48 +147,60 @@ function defaultOsvEcosystem(_format: string): string {
 }
 
 function npmDependencies(metadata: Record<string, unknown>): Record<string, string> {
-  const manifest = asRecord(metadata.manifest);
+  const parsedMetadata = NpmMetadataSchema.safeParse(metadata);
+  const parsedManifest = NpmManifestSchema.safeParse(
+    parsedMetadata.success ? parsedMetadata.data.manifest : undefined,
+  );
+  const manifest = parsedManifest.success ? parsedManifest.data : {};
   return {
-    ...asStringRecord(manifest?.dependencies),
-    ...asStringRecord(manifest?.devDependencies),
+    ...stringRecord(manifest.dependencies),
+    ...stringRecord(manifest.devDependencies),
   };
 }
 
 function cargoDependencies(metadata: Record<string, unknown>): Record<string, string> {
-  const index = asRecord(metadata.index);
-  const deps = Array.isArray(index?.deps) ? index.deps : [];
+  const parsed = CargoMetadataSchema.safeParse(metadata);
+  const deps = parsed.success ? (parsed.data.index?.deps ?? []) : [];
   const entries: [string, string][] = [];
   for (const dep of deps) {
-    const item = asRecord(dep);
-    const name = asString(item?.name);
-    const req = asString(item?.req);
-    if (name && req) entries.push([name, req]);
+    const item = CargoDependencySchema.safeParse(dep);
+    if (item.success) entries.push([item.data.name, item.data.req]);
   }
   return Object.fromEntries(entries);
 }
 
 function nugetDependencies(metadata: Record<string, unknown>): Record<string, string> {
-  const groups = Array.isArray(metadata.dependencyGroups) ? metadata.dependencyGroups : [];
+  const parsed = NugetMetadataSchema.safeParse(metadata);
+  const groups = parsed.success ? (parsed.data.dependencyGroups ?? []) : [];
   const entries: [string, string][] = [];
   for (const group of groups) {
-    const dependencies = asRecord(group)?.dependencies;
-    if (!Array.isArray(dependencies)) continue;
+    const parsedGroup = NugetDependencyGroupSchema.safeParse(group);
+    const dependencies = parsedGroup.success ? (parsedGroup.data.dependencies ?? []) : [];
     for (const dependency of dependencies) {
-      const item = asRecord(dependency);
-      const id = asString(item?.id);
-      const range = asString(item?.range);
-      if (id && range) entries.push([id, range]);
+      const item = NugetDependencySchema.safeParse(dependency);
+      if (item.success) entries.push([item.data.id, item.data.range]);
     }
   }
   return Object.fromEntries(entries);
 }
 
 function goDependencies(metadata: Record<string, unknown>): Record<string, string> {
-  const mod = asString(metadata.mod) ?? "";
+  const parsed = GoMetadataSchema.safeParse(metadata);
+  const mod = parsed.success ? (parsed.data.mod ?? "") : "";
   const entries: [string, string][] = [];
   for (const match of mod.matchAll(/^\s*require\s+([^\s]+)\s+([^\s]+)\s*$/gm)) {
     const [, name, version] = match;
     if (name && version) entries.push([name, version]);
   }
   return Object.fromEntries(entries);
+}
+
+function stringRecord(value: unknown): Record<string, string> {
+  const parsed = JsonRecordSchema.safeParse(value);
+  if (!parsed.success) return {};
+  return Object.fromEntries(
+    Object.entries(parsed.data).flatMap(([key, item]) =>
+      typeof item === "string" ? [[key, item]] : [],
+    ),
+  );
 }

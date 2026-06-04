@@ -1,4 +1,4 @@
-import { parseRegistryInput, z } from "@hootifactory/registry";
+import { parseJsonWithSchema, parseRegistryInput, z } from "@hootifactory/registry";
 
 const NpmSearchWindowSchema = z.strictObject({
   from: z.coerce.number().int().min(0).max(10_000).default(0),
@@ -108,16 +108,11 @@ export function parseNugetSearchBody(
   memberMountPath: string,
   virtualMountPath: string,
 ): NugetSearchBody | null {
-  try {
-    const rewritten =
-      memberMountPath === virtualMountPath
-        ? text
-        : text.replaceAll(`/${memberMountPath}/`, `/${virtualMountPath}/`);
-    const parsed = NugetSearchBodySchema.safeParse(JSON.parse(rewritten));
-    return parsed.success ? parsed.data : null;
-  } catch {
-    return null;
-  }
+  const rewritten =
+    memberMountPath === virtualMountPath
+      ? text
+      : text.replaceAll(`/${memberMountPath}/`, `/${virtualMountPath}/`);
+  return parseJsonWithSchema(NugetSearchBodySchema, rewritten);
 }
 
 export function mergeNugetSearchBodies(

@@ -6,8 +6,13 @@ import {
   ATTR_SERVER_ADDRESS,
   ATTR_URL_SCHEME,
 } from "@opentelemetry/semantic-conventions";
+import { z } from "zod";
 import { INSTRUMENTATION_NAME } from "./constants";
 import type { LogLevel, Signal } from "./types";
+
+const ErrorStatusSchema = z.looseObject({
+  status: z.number().int().min(100).max(599),
+});
 
 export const appTracer = () => trace.getTracer(INSTRUMENTATION_NAME, env.OTEL_SERVICE_VERSION);
 
@@ -84,13 +89,8 @@ export function messageFor(err: unknown): string {
 }
 
 export function statusCodeForError(err: unknown): number {
-  if (err && typeof err === "object") {
-    const status = (err as { status?: unknown }).status;
-    if (typeof status === "number" && Number.isInteger(status) && status >= 100 && status <= 599) {
-      return status;
-    }
-  }
-  return 500;
+  const parsed = ErrorStatusSchema.safeParse(err);
+  return parsed.success ? parsed.data.status : 500;
 }
 
 export function elapsedMs(started: number): number {

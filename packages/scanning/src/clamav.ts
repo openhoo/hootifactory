@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
+import { z } from "@hootifactory/core";
 import type { NormalizedFinding } from "@hootifactory/scan-core";
-import { asRecord, asString } from "./scanner-json";
 import {
   type AvailableScanners,
   coerceScannerOptions,
@@ -10,6 +10,23 @@ import {
 } from "./scanner-runtime";
 
 export type ScannerByteSource = Uint8Array | (() => Promise<Uint8Array>);
+
+const NonEmptyScannerStringSchema = z.string().min(1);
+const ClamAvRestSchema = z.looseObject({
+  found: z.array(z.unknown()).optional(),
+  infected: z.boolean().optional(),
+  matches: z.array(z.unknown()).optional(),
+  name: z.unknown().optional(),
+  signature: z.unknown().optional(),
+  signatures: z.array(z.unknown()).optional(),
+  virus: z.unknown().optional(),
+  viruses: z.array(z.unknown()).optional(),
+});
+const ClamAvNamedFindingSchema = z.looseObject({
+  name: z.unknown().optional(),
+  signature: z.unknown().optional(),
+  virus: z.unknown().optional(),
+});
 
 function clamAvFinding(name: string): NormalizedFinding {
   return {
@@ -21,26 +38,36 @@ function clamAvFinding(name: string): NormalizedFinding {
 }
 
 export function parseClamAvRestFindings(data: unknown): NormalizedFinding[] {
-  const root = asRecord(data);
-  if (!root) return [];
+  const root = ClamAvRestSchema.safeParse(data);
+  if (!root.success) return [];
+  const body = root.data;
   const names = new Set<string>();
   for (const key of ["matches", "viruses", "signatures", "found"]) {
-    const value = root[key];
-    if (!Array.isArray(value)) continue;
+    const value = body[key as "matches" | "viruses" | "signatures" | "found"] ?? [];
     for (const item of value) {
       if (typeof item === "string" && item) {
         names.add(item);
         continue;
       }
-      const record = asRecord(item);
-      const name = asString(record?.name) ?? asString(record?.signature) ?? asString(record?.virus);
+      const record = ClamAvNamedFindingSchema.safeParse(item);
+      const name = record.success
+        ? (scannerString(record.data.name) ??
+          scannerString(record.data.signature) ??
+          scannerString(record.data.virus))
+        : undefined;
       if (name) names.add(name);
     }
   }
-  const signature = asString(root.signature) ?? asString(root.virus) ?? asString(root.name);
+  const signature =
+    scannerString(body.signature) ?? scannerString(body.virus) ?? scannerString(body.name);
   if (signature) names.add(signature);
-  if (names.size === 0 && root.infected === true) names.add("malware");
+  if (names.size === 0 && body.infected === true) names.add("malware");
   return [...names].map(clamAvFinding);
+}
+
+function scannerString(value: unknown): string | undefined {
+  const parsed = NonEmptyScannerStringSchema.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
 }
 
 function parseClamAvCliFindings(output: string): NormalizedFinding[] {

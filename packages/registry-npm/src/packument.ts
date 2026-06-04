@@ -1,4 +1,10 @@
-import { asJsonRecord, type FormatMetadata, jsonRecordOrEmpty } from "@hootifactory/registry";
+import {
+  asJsonRecord,
+  type FormatMetadata,
+  JsonRecordSchema,
+  jsonRecordOrEmpty,
+  parseJsonWithSchema,
+} from "@hootifactory/registry";
 
 export interface VersionRow {
   version: string;
@@ -52,11 +58,7 @@ export function mergePackuments(parts: FormatMetadata[]): FormatMetadata {
   const docs = parts
     .map((part) => {
       const body = typeof part.body === "string" ? part.body : decoder.decode(part.body);
-      try {
-        return asJsonRecord(JSON.parse(body));
-      } catch {
-        return null;
-      }
+      return parseJsonWithSchema(JsonRecordSchema, body);
     })
     .filter((doc): doc is Record<string, unknown> => doc != null);
   const first = docs[0] ?? {};

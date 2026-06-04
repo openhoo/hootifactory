@@ -12,6 +12,13 @@ import { z } from "@hootifactory/registry";
 import { blobStore } from "@hootifactory/storage";
 import { deleteUnreferencedCasBlob } from "../content";
 import { adjustArtifactsUsedTx, adjustStorageUsedTx } from "../governance/quota";
+import {
+  booleanField,
+  fieldValue,
+  numberField,
+  rowsFromExecute,
+  stringField,
+} from "../runtime/raw-rows";
 
 const DigestRefSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 const DigestObjectSchema = z.looseObject({ blobDigest: DigestRefSchema });
@@ -61,39 +68,8 @@ function collectVersionDigests(rows: { metadata: unknown }[]): Set<string> {
   return out;
 }
 
-function rowsFromExecute(result: unknown): unknown[] {
-  if (Array.isArray(result)) return result;
-  if (
-    result &&
-    typeof result === "object" &&
-    Array.isArray((result as { rows?: unknown[] }).rows)
-  ) {
-    return (result as { rows: unknown[] }).rows;
-  }
-  return [];
-}
-
-function stringField(row: unknown, field: string): string | null {
-  if (!row || typeof row !== "object") return null;
-  const value = (row as Record<string, unknown>)[field];
-  return typeof value === "string" ? value : null;
-}
-
-function numberField(row: unknown, field: string): number | null {
-  if (!row || typeof row !== "object") return null;
-  const value = (row as Record<string, unknown>)[field];
-  if (typeof value === "number") return value;
-  if (typeof value !== "string" || !/^-?\d+$/.test(value)) return null;
-  const parsed = Number(value);
-  return Number.isSafeInteger(parsed) ? parsed : null;
-}
-
-function booleanField(row: unknown, field: string): boolean {
-  return Boolean(row && typeof row === "object" && (row as Record<string, unknown>)[field]);
-}
-
 function metadataField(row: unknown): unknown {
-  return row && typeof row === "object" ? (row as Record<string, unknown>).metadata : null;
+  return fieldValue(row, "metadata");
 }
 
 function uuidValueRows(values: string[]) {

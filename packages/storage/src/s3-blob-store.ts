@@ -4,9 +4,14 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@hootifactory/config";
+import { z } from "@hootifactory/core";
 import { S3Client } from "bun";
 import { blobKey, computeDigest, InvalidDigestError } from "./digest";
 import type { BlobData, BlobStat, BlobStore, PutResult } from "./types";
+
+const S3MissingObjectErrorSchema = z.looseObject({
+  code: z.literal("NoSuchKey"),
+});
 
 /**
  * True only for a genuine "object does not exist" S3 error. Bun surfaces these
@@ -15,7 +20,7 @@ import type { BlobData, BlobStat, BlobStore, PutResult } from "./types";
  * "blob absent", or transient/config faults silently look like data loss.
  */
 function isObjectMissing(err: unknown): boolean {
-  return !!err && typeof err === "object" && (err as { code?: unknown }).code === "NoSuchKey";
+  return S3MissingObjectErrorSchema.safeParse(err).success;
 }
 
 async function streamToTempFile(

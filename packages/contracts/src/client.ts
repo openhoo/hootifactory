@@ -23,6 +23,22 @@ const ApiV1ErrorBodySchema = z.looseObject({
   }),
 });
 
+type JsonParseResult = { success: true; data: unknown } | { success: false };
+
+function parseResponseBody(text: string): unknown {
+  if (!text) return undefined;
+  const parsed = safeJsonParse(text);
+  return parsed.success ? parsed.data : text;
+}
+
+function safeJsonParse(text: string): JsonParseResult {
+  try {
+    return { success: true, data: JSON.parse(text) };
+  } catch {
+    return { success: false };
+  }
+}
+
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -50,12 +66,7 @@ async function req<T = unknown>(
     credentials: "include",
   });
   const text = await res.text();
-  let data: unknown;
-  try {
-    data = text ? JSON.parse(text) : undefined;
-  } catch {
-    data = text;
-  }
+  const data = parseResponseBody(text);
   if (!res.ok) {
     const legacyError = LegacyApiErrorBodySchema.safeParse(data);
     const v1Error = ApiV1ErrorBodySchema.safeParse(data);

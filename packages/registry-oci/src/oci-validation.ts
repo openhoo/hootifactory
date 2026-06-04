@@ -1,4 +1,10 @@
-import { Errors, isValidDigest, parseRegistryInput, z } from "@hootifactory/registry";
+import {
+  Errors,
+  isValidDigest,
+  parseJsonWithSchema,
+  parseRegistryInput,
+  z,
+} from "@hootifactory/registry";
 import {
   OCI_MEDIA_TYPES,
   type OciDescriptor,
@@ -204,14 +210,7 @@ export function validateManifest(parsed: OciManifestDocument, mediaType: string)
 }
 
 function parseManifestJson(raw: string): OciManifestDocument | null {
-  let value: unknown;
-  try {
-    value = JSON.parse(raw);
-  } catch {
-    return null;
-  }
-  const parsed = OciManifestObjectSchema.safeParse(value);
-  return parsed.success ? parsed.data : null;
+  return parseJsonWithSchema(OciManifestObjectSchema, raw);
 }
 
 export function parseManifestRequestRaw(raw: string): OciManifestDocument {

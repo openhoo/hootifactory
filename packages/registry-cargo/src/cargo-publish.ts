@@ -1,4 +1,4 @@
-import { Errors, parseRegistryInput } from "@hootifactory/registry";
+import { Errors, parseRegistryInput, safeJsonParse } from "@hootifactory/registry";
 import {
   type CargoIndexEntry,
   type CargoPublishMetadata,
@@ -24,10 +24,8 @@ export function parseCargoPublishBody(buf: Uint8Array): CargoPublishBody {
     throw Errors.manifestInvalid({ reason: "truncated publish metadata" });
   }
 
-  let rawMetadata: unknown;
-  try {
-    rawMetadata = JSON.parse(textDecoder.decode(buf.subarray(off, off + jsonLen)));
-  } catch {
+  const rawMetadata = safeJsonParse(textDecoder.decode(buf.subarray(off, off + jsonLen)));
+  if (!rawMetadata.success) {
     throw Errors.manifestInvalid({ reason: "invalid publish metadata json" });
   }
   off += jsonLen;
@@ -39,7 +37,7 @@ export function parseCargoPublishBody(buf: Uint8Array): CargoPublishBody {
   }
 
   return {
-    metadata: parseRegistryInput(CargoPublishMetadataSchema, rawMetadata, {
+    metadata: parseRegistryInput(CargoPublishMetadataSchema, rawMetadata.data, {
       code: "MANIFEST_INVALID",
       message: "invalid publish metadata",
     }),

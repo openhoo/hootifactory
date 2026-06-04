@@ -1,4 +1,9 @@
-import { Errors, type RegistryRequestContext, z } from "@hootifactory/registry";
+import {
+  Errors,
+  parseJsonWithSchema,
+  type RegistryRequestContext,
+  z,
+} from "@hootifactory/registry";
 
 const UploadChunkSchema = z.strictObject({
   key: z.string().min(1),
@@ -17,16 +22,9 @@ export interface UploadMultipartState {
 
 export function uploadMultipartState(raw: string | null): UploadMultipartState {
   if (!raw) return { chunks: [] };
-  let decoded: unknown;
-  try {
-    decoded = JSON.parse(raw);
-  } catch {
-    return { chunks: [] };
-  }
-  const parsed = UploadMultipartStateSchema.safeParse(decoded);
-  if (!parsed.success) return { chunks: [] };
+  const parsed = parseJsonWithSchema(UploadMultipartStateSchema, raw);
   return {
-    chunks: (parsed.data.chunks ?? []).flatMap((chunk) => {
+    chunks: (parsed?.chunks ?? []).flatMap((chunk) => {
       const parsedChunk = UploadChunkSchema.safeParse(chunk);
       return parsedChunk.success ? [parsedChunk.data] : [];
     }),

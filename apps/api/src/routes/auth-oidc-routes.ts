@@ -11,6 +11,7 @@ import {
   verifyOidcState,
 } from "@hootifactory/auth";
 import { env } from "@hootifactory/config";
+import { parseJsonWithSchema, z } from "@hootifactory/core";
 import { addSpanEvent, logger, setActiveSpanAttributes } from "@hootifactory/observability";
 import type { Context, Hono } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
@@ -41,6 +42,12 @@ import { audit } from "./http";
 
 const OIDC_LINK_CSRF_COOKIE = "hoot_oidc_link_confirm";
 const OIDC_LINK_CSRF_TTL_MS = 10 * 60 * 1000;
+
+const OidcLinkCsrfPayloadSchema = z.strictObject({
+  tokenHash: z.string().regex(/^[a-f0-9]{64}$/),
+  csrf: z.string().min(1).max(512),
+  expiresAt: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+});
 
 function oidcAuditDetail(claims: { issuer: string; subject: string }) {
   return { issuer: claims.issuer, subject: claims.subject };
@@ -86,21 +93,11 @@ function verifyOidcLinkCsrf(
   if (!body || !sig || extra !== undefined) return false;
   if (!safeEquals(sig, hmacHex(env.SESSION_SECRET, body))) return false;
 
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(Buffer.from(body, "base64url").toString("utf8"));
-  } catch {
-    return false;
-  }
-  if (!parsed || typeof parsed !== "object") return false;
-  const payload = parsed as { tokenHash?: unknown; csrf?: unknown; expiresAt?: unknown };
-  if (
-    typeof payload.tokenHash !== "string" ||
-    typeof payload.csrf !== "string" ||
-    typeof payload.expiresAt !== "number"
-  ) {
-    return false;
-  }
+  const payload = parseJsonWithSchema(
+    OidcLinkCsrfPayloadSchema,
+    Buffer.from(body, "base64url").toString("utf8"),
+  );
+  if (!payload) return false;
   return (
     payload.expiresAt >= now &&
     payload.tokenHash === sha256Hex(input.token) &&

@@ -1,3 +1,4 @@
+import { safeJsonParse } from "@hootifactory/core";
 import {
   and,
   asc,
@@ -15,6 +16,7 @@ import {
   versionTags,
 } from "@hootifactory/db";
 import type { RegistryRequestContext } from "@hootifactory/registry";
+import { dateField, fieldValue, rowsFromExecute, stringField } from "../runtime/raw-rows";
 
 export type PackageVersionReadRow = typeof packageVersions.$inferSelect;
 
@@ -59,42 +61,11 @@ export interface PackageSearchResult {
   total: number;
 }
 
-function rowsFromExecute(result: unknown): unknown[] {
-  if (Array.isArray(result)) return result;
-  if (
-    result &&
-    typeof result === "object" &&
-    Array.isArray((result as { rows?: unknown[] }).rows)
-  ) {
-    return (result as { rows: unknown[] }).rows;
-  }
-  return [];
-}
-
-function stringField(row: unknown, field: string): string | null {
-  if (!row || typeof row !== "object") return null;
-  const value = (row as Record<string, unknown>)[field];
-  return typeof value === "string" ? value : null;
-}
-
-function dateField(row: unknown, field: string): Date | null {
-  if (!row || typeof row !== "object") return null;
-  const value = (row as Record<string, unknown>)[field];
-  if (value instanceof Date) return value;
-  if (typeof value !== "string") return null;
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
-}
-
 function metadataField(row: unknown): unknown {
-  if (!row || typeof row !== "object") return null;
-  const value = (row as Record<string, unknown>).metadata;
+  const value = fieldValue(row, "metadata");
   if (typeof value !== "string") return value ?? null;
-  try {
-    return JSON.parse(value) as unknown;
-  } catch {
-    return null;
-  }
+  const decoded = safeJsonParse(value);
+  return decoded.success ? decoded.data : null;
 }
 
 function uuidValueRows(values: string[]) {

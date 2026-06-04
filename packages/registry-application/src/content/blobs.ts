@@ -14,6 +14,7 @@ import {
   orgAlreadyReferencesDigestTx,
   type Tx,
 } from "../governance/quota";
+import { rowsFromExecute, stringField } from "../runtime/raw-rows";
 
 export type BlobRefKind =
   | "oci_layer"
@@ -52,24 +53,6 @@ type BlobLifecycleContext = unknown;
 export interface BlobGcSweepResult {
   candidates: number;
   reclaimed: number;
-}
-
-function rowsFromExecute(result: unknown): unknown[] {
-  if (Array.isArray(result)) return result;
-  if (
-    result &&
-    typeof result === "object" &&
-    Array.isArray((result as { rows?: unknown[] }).rows)
-  ) {
-    return (result as { rows: unknown[] }).rows;
-  }
-  return [];
-}
-
-function stringField(row: unknown, field: string): string | null {
-  if (!row || typeof row !== "object") return null;
-  const value = (row as Record<string, unknown>)[field];
-  return typeof value === "string" ? value : null;
 }
 
 export async function lockDigestTx(tx: Tx, digest: string): Promise<void> {
