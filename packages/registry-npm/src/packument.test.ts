@@ -23,6 +23,14 @@ describe("npm packument builder", () => {
           },
           createdAt: new Date("2024-02-01T00:00:00Z"),
         },
+        {
+          version: "1.2.0",
+          metadata: {
+            manifest: { name: "@scope/pkg", version: "1.2.0" },
+            dist: { filename: "../invalid.tgz" },
+          },
+          createdAt: new Date("2024-03-01T00:00:00Z"),
+        },
       ],
       { latest: "1.1.0", beta: "1.0.0" },
     );
@@ -35,13 +43,17 @@ describe("npm packument builder", () => {
       readme: "# Readme",
       time: {
         created: "2024-01-01T00:00:00.000Z",
-        modified: "2024-02-01T00:00:00.000Z",
+        modified: "2024-03-01T00:00:00.000Z",
         "1.0.0": "2024-01-01T00:00:00.000Z",
         "1.1.0": "2024-02-01T00:00:00.000Z",
+        "1.2.0": "2024-03-01T00:00:00.000Z",
       },
     });
     expect((packument.versions as Record<string, unknown>)["1.1.0"]).toMatchObject({
       version: "1.1.0",
+    });
+    expect((packument.versions as Record<string, unknown>)["1.2.0"]).toMatchObject({
+      version: "1.2.0",
     });
   });
 
