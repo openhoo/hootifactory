@@ -102,6 +102,45 @@ describe("heuristic scanning", () => {
     }
   });
 
+  test("resolves OSV vulnerability severities concurrently", async () => {
+    const originalFetch = globalThis.fetch;
+    let inFlightDetails = 0;
+    let maxInFlightDetails = 0;
+    globalThis.fetch = (async (...args: Parameters<typeof fetch>) => {
+      const url = String(args[0]);
+      if (url.includes("/v1/vulns/")) {
+        inFlightDetails += 1;
+        maxInFlightDetails = Math.max(maxInFlightDetails, inFlightDetails);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        inFlightDetails -= 1;
+        return Response.json({
+          database_specific: {
+            severity: url.endsWith("GHSA-456") ? "medium" : "critical",
+          },
+        });
+      }
+      return Response.json({
+        results: [{ vulns: [{ id: "GHSA-123" }] }, { vulns: [{ id: "GHSA-456" }] }],
+      });
+    }) as unknown as typeof fetch;
+
+    try {
+      const findings = await osvScanDependencies(
+        "npm",
+        { first: "1.0.0", second: "2.0.0" },
+        "https://osv.test",
+      );
+
+      expect(maxInFlightDetails).toBe(2);
+      expect(findings.map((finding) => [finding.vulnId, finding.severity])).toEqual([
+        ["GHSA-123", "critical"],
+        ["GHSA-456", "medium"],
+      ]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   test("maps Trivy JSON vulnerabilities and includes server-mode CLI args", () => {
     expect(trivyFsArgs("/tmp/pkg", "http://trivy:4954")).toEqual([
       "fs",

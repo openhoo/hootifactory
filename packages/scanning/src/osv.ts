@@ -2,8 +2,25 @@ import type { NormalizedFinding, Severity } from "@hootifactory/scan-core";
 import { normalizeSeverity } from "@hootifactory/scan-core";
 import { asRecord, asString } from "./scanner-json";
 
+const OSV_DETAIL_CONCURRENCY = 8;
+
 function stripRange(version: string): string {
   return version.replace(/^[\^~>=<\s]+/, "").trim();
+}
+
+async function mapWithConcurrency<T>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T) => Promise<void>,
+): Promise<void> {
+  let next = 0;
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (next < items.length) {
+      const item = items[next++];
+      if (item !== undefined) await worker(item);
+    }
+  });
+  await Promise.all(workers);
 }
 
 /** Optional OSV.dev batch dependency vuln lookup (network). Returns [] on failure. */
@@ -52,6 +69,19 @@ export async function osvScanDependencies(
     }
     const out: NormalizedFinding[] = [];
     const results = Array.isArray(data?.results) ? data.results : [];
+    const vulnIds = new Set<string>();
+    for (let i = 0; i < results.length; i++) {
+      const result = asRecord(results[i]);
+      if (!entries[i] || !result) continue;
+      const vulns = Array.isArray(result.vulns) ? result.vulns : [];
+      for (const vuln of vulns) {
+        const id = asString(asRecord(vuln)?.id);
+        if (id) vulnIds.add(id);
+      }
+    }
+    await mapWithConcurrency([...vulnIds], OSV_DETAIL_CONCURRENCY, async (id) => {
+      await osvSeverity(id);
+    });
     for (let i = 0; i < results.length; i++) {
       const result = asRecord(results[i]);
       const entry = entries[i];
@@ -60,13 +90,14 @@ export async function osvScanDependencies(
       for (const vuln of vulns) {
         const id = asString(asRecord(vuln)?.id);
         if (!id) continue;
+        const packageVersion = stripRange(entry[1]);
         out.push({
           type: "vuln",
           vulnId: id,
-          severity: await osvSeverity(id),
+          severity: severityCache.get(id) ?? "high",
           packageName: entry[0],
-          packageVersion: stripRange(entry[1]),
-          purl: `pkg:${ecosystem.toLowerCase()}/${entry[0]}@${stripRange(entry[1])}`,
+          packageVersion,
+          purl: `pkg:${ecosystem.toLowerCase()}/${entry[0]}@${packageVersion}`,
         });
       }
     }
