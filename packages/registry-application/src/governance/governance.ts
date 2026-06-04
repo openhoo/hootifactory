@@ -78,16 +78,24 @@ export async function setOrgQuota(orgId: string, limits: OrgQuotaLimits): Promis
 }
 
 export async function calculateOrgQuotaUsage(orgId: string): Promise<OrgQuotaUsage> {
-  const [storageAgg] = await db
-    .select({ used: sql<number>`coalesce(sum(${blobs.sizeBytes}), 0)` })
-    .from(blobs)
-    .where(
-      sql`${blobs.digest} in (select distinct ${blobRefs.digest} from ${blobRefs} join ${repositories} on ${blobRefs.repositoryId} = ${repositories.id} where ${repositories.orgId} = ${orgId})`,
-    );
-  const [artifactAgg] = await db
-    .select({ used: count() })
-    .from(packageVersions)
-    .where(and(eq(packageVersions.orgId, orgId), isNull(packageVersions.deletedAt)));
+  const orgBlobDigests = db
+    .selectDistinct({ digest: blobRefs.digest })
+    .from(blobRefs)
+    .innerJoin(repositories, eq(blobRefs.repositoryId, repositories.id))
+    .where(eq(repositories.orgId, orgId))
+    .as("org_blob_digests");
+  const [storageRows, artifactRows] = await Promise.all([
+    db
+      .select({ used: sql<number>`coalesce(sum(${blobs.sizeBytes}), 0)` })
+      .from(orgBlobDigests)
+      .innerJoin(blobs, eq(orgBlobDigests.digest, blobs.digest)),
+    db
+      .select({ used: count() })
+      .from(packageVersions)
+      .where(and(eq(packageVersions.orgId, orgId), isNull(packageVersions.deletedAt))),
+  ]);
+  const storageAgg = storageRows[0];
+  const artifactAgg = artifactRows[0];
 
   return {
     usedStorageBytes: Number(storageAgg?.used ?? 0),
