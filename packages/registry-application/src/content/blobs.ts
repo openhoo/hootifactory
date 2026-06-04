@@ -204,31 +204,6 @@ export async function commitUploadedBlobRefTx(
   return commitBlobPutTx(tx, ctx, put, opts);
 }
 
-/**
- * Run a store-with-ref transaction: `acquire` performs the per-variant lock +
- * CAS put (registering the put for rollback cleanup the moment it lands), then
- * the shared `commitBlobPutTx` body runs. On any failure the uncommitted CAS put
- * is discarded (best-effort).
- */
-async function runStoreBlobWithRef(
-  ctx: RegistryRequestContext,
-  opts: { mediaType?: string; kind: BlobRefKind; scope: string },
-  acquire: (tx: Tx, registerCleanup: (put: BlobPutResult) => void) => Promise<BlobPutResult>,
-): Promise<StoredBlob> {
-  let putForCleanup: BlobPutResult | null = null;
-  try {
-    return await db.transaction(async (tx) => {
-      const put = await acquire(tx, (p) => {
-        putForCleanup = p;
-      });
-      return commitBlobPutTx(tx, ctx, put, opts);
-    });
-  } catch (err) {
-    await discardUncommittedBlobPut(ctx, putForCleanup);
-    throw err;
-  }
-}
-
 export async function storeBlobWithRef(
   ctx: RegistryRequestContext,
   opts: { data: Uint8Array; mediaType?: string; kind: BlobRefKind; scope: string },
@@ -241,12 +216,13 @@ export async function storeBlobWithRef(
     .where(and(eq(repositories.orgId, ctx.repo.orgId), eq(blobRefs.digest, digest)))
     .limit(1);
   if (!existingOrgRef) await assertStorageQuota(ctx, opts.data.byteLength);
-  return runStoreBlobWithRef(ctx, opts, async (tx, registerCleanup) => {
-    await lockDigestTx(tx, digest);
-    const put = await blobStore.put(opts.data);
-    registerCleanup(put);
-    return put;
-  });
+  const put = await blobStore.put(opts.data);
+  try {
+    return await db.transaction((tx) => commitUploadedBlobRefTx(tx, ctx, put, opts));
+  } catch (err) {
+    await discardUncommittedBlobPut(ctx, put);
+    throw err;
+  }
 }
 
 export async function storeBlobStreamWithRef(
