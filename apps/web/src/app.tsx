@@ -3,22 +3,14 @@ import {
   createRootRoute,
   createRoute,
   createRouter,
+  lazyRouteComponent,
   Outlet,
   RouterProvider,
 } from "@tanstack/react-router";
 import { Toaster } from "@/components/ui/sonner";
 import { ForgotPasswordPage, LoginPage, ResetPasswordPage } from "@/features/auth/pages";
-import { DashboardPage } from "@/features/dashboard/pages";
-import { RepoDetailPage, ReposPage } from "@/features/repositories/pages";
-import { TokensPage } from "@/features/tokens/pages";
-import { AppShell } from "@/layout/app-shell";
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-
-function RepoDetailRoutePage() {
-  const { repoId } = repoDetailRoute.useParams();
-  return <RepoDetailPage repoId={repoId} />;
-}
 
 // ── router ─────────────────────────────────────────────────────────────────
 const rootRoute = createRootRoute({ component: () => <Outlet /> });
@@ -37,26 +29,33 @@ const resetPasswordRoute = createRoute({
   path: "/reset-password",
   component: ResetPasswordPage,
 });
-const appRoute = createRoute({ getParentRoute: () => rootRoute, id: "app", component: AppShell });
+const appRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  id: "app",
+  component: lazyRouteComponent(() => import("@/layout/app-shell"), "AppShell"),
+});
 const dashboardRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/",
-  component: DashboardPage,
+  component: lazyRouteComponent(() => import("@/features/dashboard/pages"), "DashboardPage"),
 });
 const reposRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/repositories",
-  component: ReposPage,
+  component: lazyRouteComponent(() => import("@/features/repositories/pages"), "ReposPage"),
 });
 const repoDetailRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/repositories/$repoId",
-  component: RepoDetailRoutePage,
+  component: lazyRouteComponent(
+    () => import("@/features/repositories/pages"),
+    "RepoDetailRoutePage",
+  ),
 });
 const tokensRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/tokens",
-  component: TokensPage,
+  component: lazyRouteComponent(() => import("@/features/tokens/pages"), "TokensPage"),
 });
 
 const routeTree = rootRoute.addChildren([

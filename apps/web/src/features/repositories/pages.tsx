@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
+import { Link, useParams } from "@tanstack/react-router";
 import { Boxes, ChevronDown, Package, Plus, Search, Terminal } from "lucide-react";
 import { useMemo, useState } from "react";
 import {
@@ -304,4 +304,9 @@ export function RepoDetailPage({ repoId }: { repoId: string }) {
       </div>
     </div>
   );
+}
+
+export function RepoDetailRoutePage() {
+  const { repoId } = useParams({ strict: false }) as { repoId: string };
+  return <RepoDetailPage repoId={repoId} />;
 }
