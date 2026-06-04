@@ -17,6 +17,8 @@ import {
   parseNpmStoredVersionMetadata,
 } from "./npm-validation";
 
+const NPM_PROXY_MIRROR_CONCURRENCY = 4;
+
 export async function handleNpmProxyIngest(
   pkgName: string,
   upstreamBase: string,
@@ -30,93 +32,107 @@ export async function handleNpmProxyIngest(
 
   const scope = pkgName.startsWith("@") ? (pkgName.split("/")[0] ?? null) : null;
   let pkg = await ctx.data.packages.findByName(pkgName);
-  const ingestedVersions = new Map<string, { id: string; packageId: string; version: string }>();
-  for (const [version, manifestRaw] of Object.entries(packument.versions ?? {})) {
-    if (!isValidNpmVersion(version)) continue;
-    const proxyManifest = normalizeNpmProxyManifest(pkgName, version, manifestRaw);
-    if (!proxyManifest) continue;
-
-    let { manifest } = proxyManifest;
-    const { tarballUrl, upstreamDist } = proxyManifest;
-    const existingVersion = pkg ? await ctx.data.versions.findLive(pkg, version) : null;
-    const existingDist = existingVersion
-      ? parseNpmStoredVersionMetadata(existingVersion.metadata).dist
-      : undefined;
-
-    if (pkg && existingDist && upstreamDistMatchesStored(upstreamDist, existingDist)) {
-      manifest = rewriteNpmProxyManifestForExistingDist({
-        manifest,
-        upstreamDist,
-        existingDist,
-        baseUrl: ctx.baseUrl,
-        mountPath: ctx.repo.mountPath,
-        packageName: pkgName,
-      });
-      const versionId = await ctx.data.versions.upsert({
-        package: pkg,
-        version,
-        metadata: { manifest, dist: existingDist },
-        sizeBytes: existingDist.size,
-      });
-      ingestedVersions.set(version, { id: versionId, packageId: pkg.id, version });
-      continue;
-    }
-
-    const tarball = await fetchVerifiedNpmTarball({
-      tarballUrl,
-      upstreamHost,
-      upstreamDist,
-      ctx,
-    });
-    if (!tarball) continue;
-
-    pkg ??= await ctx.data.packages.findOrCreate({
+  let packagePromise: Promise<NonNullable<typeof pkg>> | null = null;
+  const ensurePackage = async () => {
+    if (pkg) return pkg;
+    packagePromise ??= ctx.data.packages.findOrCreate({
       name: pkgName,
       namespace: scope,
     });
-    const previousDigest = existingDist?.blobDigest;
-    const { manifestDist, dist } = buildNpmMirroredDist({
-      packageName: pkgName,
-      version,
-      upstreamDist,
-      tarball,
-      baseUrl: ctx.baseUrl,
-      mountPath: ctx.repo.mountPath,
-    });
-    manifest.dist = manifestDist;
-    const { stored, versionId } = await ctx.data.versions.upsertWithBlobRef({
-      package: pkg,
-      version,
-      metadata: { manifest, dist },
-      sizeBytes: tarball.length,
-      blob: {
-        data: tarball,
-        kind: "npm_tarball",
-        scope: `${pkgName}@${version}`,
-        mediaType: "application/octet-stream",
-        previousDigest,
-        asset: {
-          role: "npm_tarball",
+    pkg = await packagePromise;
+    return pkg;
+  };
+  const ingestedVersions = new Map<string, { id: string; packageId: string; version: string }>();
+  const versionEntries = Object.entries(packument.versions ?? {}).filter(([version]) =>
+    isValidNpmVersion(version),
+  );
+
+  await runWithConcurrency(
+    versionEntries,
+    NPM_PROXY_MIRROR_CONCURRENCY,
+    async ([version, manifestRaw]) => {
+      const proxyManifest = normalizeNpmProxyManifest(pkgName, version, manifestRaw);
+      if (!proxyManifest) return;
+
+      let { manifest } = proxyManifest;
+      const { tarballUrl, upstreamDist } = proxyManifest;
+      const existingVersion = pkg ? await ctx.data.versions.findLive(pkg, version) : null;
+      const existingDist = existingVersion
+        ? parseNpmStoredVersionMetadata(existingVersion.metadata).dist
+        : undefined;
+
+      if (pkg && existingDist && upstreamDistMatchesStored(upstreamDist, existingDist)) {
+        manifest = rewriteNpmProxyManifestForExistingDist({
+          manifest,
+          upstreamDist,
+          existingDist,
+          baseUrl: ctx.baseUrl,
+          mountPath: ctx.repo.mountPath,
+          packageName: pkgName,
+        });
+        const versionId = await ctx.data.versions.upsert({
+          package: pkg,
+          version,
+          metadata: { manifest, dist: existingDist },
+          sizeBytes: existingDist.size,
+        });
+        ingestedVersions.set(version, { id: versionId, packageId: pkg.id, version });
+        return;
+      }
+
+      const tarball = await fetchVerifiedNpmTarball({
+        tarballUrl,
+        upstreamHost,
+        upstreamDist,
+        ctx,
+      });
+      if (!tarball) return;
+
+      const targetPkg = await ensurePackage();
+      const previousDigest = existingDist?.blobDigest;
+      const { manifestDist, dist } = buildNpmMirroredDist({
+        packageName: pkgName,
+        version,
+        upstreamDist,
+        tarball,
+        baseUrl: ctx.baseUrl,
+        mountPath: ctx.repo.mountPath,
+      });
+      manifest.dist = manifestDist;
+      const { stored, versionId } = await ctx.data.versions.upsertWithBlobRef({
+        package: targetPkg,
+        version,
+        metadata: { manifest, dist },
+        sizeBytes: tarball.length,
+        blob: {
+          data: tarball,
+          kind: "npm_tarball",
           scope: `${pkgName}@${version}`,
-          path: dist.filename,
           mediaType: "application/octet-stream",
-          metadata: {
-            shasum: dist.shasum,
-            integrity: dist.integrity,
-            upstreamTarball: tarballUrl,
+          previousDigest,
+          asset: {
+            role: "npm_tarball",
+            scope: `${pkgName}@${version}`,
+            path: dist.filename,
+            mediaType: "application/octet-stream",
+            metadata: {
+              shasum: dist.shasum,
+              integrity: dist.integrity,
+              upstreamTarball: tarballUrl,
+            },
           },
         },
-      },
-    });
-    if (stored.digest !== dist.blobDigest) throw new Error("stored npm tarball digest mismatch");
-    ingestedVersions.set(version, { id: versionId, packageId: pkg.id, version });
-    await ctx.enqueueScan({
-      digest: stored.digest,
-      name: pkgName,
-      version,
-      mediaType: "application/octet-stream",
-    });
-  }
+      });
+      if (stored.digest !== dist.blobDigest) throw new Error("stored npm tarball digest mismatch");
+      ingestedVersions.set(version, { id: versionId, packageId: targetPkg.id, version });
+      await ctx.enqueueScan({
+        digest: stored.digest,
+        name: pkgName,
+        version,
+        mediaType: "application/octet-stream",
+      });
+    },
+  );
 
   if (!pkg) return false;
   await ctx.data.tags.replace(
@@ -164,6 +180,23 @@ async function fetchVerifiedNpmTarball(input: {
   const tarball = await responseBytes(response, input.ctx.limits.maxUploadBytes);
   if (!tarball) return null;
   return upstreamDistMatchesBytes(input.upstreamDist, tarball) ? tarball : null;
+}
+
+async function runWithConcurrency<T>(
+  items: T[],
+  limit: number,
+  run: (item: T) => Promise<void>,
+): Promise<void> {
+  let next = 0;
+  const workerCount = Math.min(limit, items.length);
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (next < items.length) {
+        const item = items[next++];
+        if (item !== undefined) await run(item);
+      }
+    }),
+  );
 }
 
 export function resolveNpmProxyDistTags(
