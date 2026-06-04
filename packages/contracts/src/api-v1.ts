@@ -110,6 +110,10 @@ export const V1FindingTypeSchema = z
   .enum(["vuln", "license", "secret", "malware"])
   .describe("Scanner finding category.");
 
+export const V1ArtifactFindingsQuerySchema = V1PaginationQuerySchema.extend({
+  severity: V1SeveritySchema.describe("Limit findings to one severity.").optional(),
+}).describe("Artifact finding listing filters.");
+
 export const V1TokenActionsSchema = z
   .array(V1ActionSchema)
   .min(1)
@@ -585,9 +589,7 @@ export const V1PackageVersionDetailResponseSchema = V1DataResponseSchema(
 );
 export const V1ArtifactListResponseSchema = V1ListResponseSchema(V1ArtifactSummarySchema);
 export const V1AssetListResponseSchema = V1ListResponseSchema(V1RegistryAssetSchema);
-export const V1ArtifactFindingsResponseSchema = V1DataResponseSchema(
-  z.array(V1ArtifactFindingSchema).describe("Artifact findings."),
-);
+export const V1ArtifactFindingsResponseSchema = V1ListResponseSchema(V1ArtifactFindingSchema);
 export const V1ScanPolicyResponseSchema = V1DataResponseSchema(V1ScanPolicySchema);
 export const V1QuotaResponseSchema = V1DataResponseSchema(V1OrgQuotaSchema);
 export const V1OkResponseSchema = V1DataResponseSchema(V1OkSchema);

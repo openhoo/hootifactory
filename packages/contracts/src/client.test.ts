@@ -63,13 +63,15 @@ describe("Hootifactory API client", () => {
     });
   });
 
-  test("uses API v1 paths for registry version and asset contracts", async () => {
+  test("uses expected paths for paginated inventory and API v1 contracts", async () => {
     const requests: Array<{ path: string; method?: string }> = [];
     const client = createHootifactoryClient(async (path, init) => {
       requests.push({ path, method: init?.method });
       return Response.json({ data: [], pagination: { limit: 25, offset: 5, total: 0 } });
     });
 
+    await client.packages("repo-1", { limit: 50, offset: 100 });
+    await client.versions("pkg-1", { limit: 25, offset: 5 });
     await client.version("pkg-1", "1.0.0+build");
     await client.assets("repo-1", {
       limit: 25,
@@ -79,6 +81,8 @@ describe("Hootifactory API client", () => {
     });
 
     expect(requests).toEqual([
+      { method: "GET", path: "/api/repositories/repo-1/packages?limit=50&offset=100" },
+      { method: "GET", path: "/api/packages/pkg-1/versions?limit=25&offset=5" },
       { method: "GET", path: "/api/v1/packages/pkg-1/versions/1.0.0%2Bbuild" },
       {
         method: "GET",

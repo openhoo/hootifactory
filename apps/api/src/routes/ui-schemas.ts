@@ -27,6 +27,15 @@ const TokenActionsSchema = z
   });
 const TokenPatternSchema = z.string().trim().min(1).max(512);
 
+export const PaginationQuerySchema = z.strictObject({
+  limit: z.coerce.number().int().min(1).max(500).default(100),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+
+export const FindingListQuerySchema = PaginationQuerySchema.extend({
+  severity: SeveritySchema.optional(),
+});
+
 export const CreateOrgBodySchema = z.strictObject({
   slug: z
     .string()

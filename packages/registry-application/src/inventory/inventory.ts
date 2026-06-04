@@ -11,6 +11,7 @@ import {
   packageVersions,
   repositories,
 } from "@hootifactory/db";
+import type { Severity } from "@hootifactory/scan-core";
 
 export type InventoryPackageRow = typeof packages.$inferSelect;
 export type InventoryRepositoryRow = typeof repositories.$inferSelect;
@@ -89,16 +90,31 @@ export async function getPackageWithRepository(
 
 export async function listLivePackageVersionSummaries(
   packageId: string,
+  page?: InventoryPageInput,
 ): Promise<PackageVersionSummaryRow[]> {
-  return db
-    .select({
-      version: packageVersions.version,
-      sizeBytes: packageVersions.sizeBytes,
-      createdAt: packageVersions.createdAt,
-    })
+  const query = () =>
+    db
+      .select({
+        version: packageVersions.version,
+        sizeBytes: packageVersions.sizeBytes,
+        createdAt: packageVersions.createdAt,
+      })
+      .from(packageVersions)
+      .where(and(eq(packageVersions.packageId, packageId), isNull(packageVersions.deletedAt)))
+      .orderBy(desc(packageVersions.createdAt));
+  return page ? query().limit(page.limit).offset(page.offset) : query();
+}
+
+export async function countLivePackageVersions(packageId: string): Promise<number> {
+  const rows = (await db
+    .select({ value: count() })
     .from(packageVersions)
-    .where(and(eq(packageVersions.packageId, packageId), isNull(packageVersions.deletedAt)))
-    .orderBy(desc(packageVersions.createdAt));
+    .where(
+      and(eq(packageVersions.packageId, packageId), isNull(packageVersions.deletedAt)),
+    )) as Array<{
+    value: number;
+  }>;
+  return rows[0]?.value ?? 0;
 }
 
 export async function listRepositoryArtifactSummaries(
@@ -142,17 +158,41 @@ export async function getArtifactWithRepository(
   return row ?? null;
 }
 
-export async function listArtifactFindings(artifactId: string): Promise<ArtifactFindingRow[]> {
-  return db
-    .select({
-      vulnId: findings.vulnId,
-      type: findings.type,
-      severity: findings.severity,
-      packageName: findings.packageName,
-      packageVersion: findings.packageVersion,
-      fixedVersion: findings.fixedVersion,
-      title: findings.title,
-    })
+function artifactFindingsWhere(artifactId: string, severity?: Severity) {
+  return and(
+    eq(findings.artifactId, artifactId),
+    severity ? eq(findings.severity, severity) : undefined,
+  );
+}
+
+export async function countArtifactFindings(
+  artifactId: string,
+  input: { severity?: Severity } = {},
+): Promise<number> {
+  const rows = (await db
+    .select({ value: count() })
     .from(findings)
-    .where(eq(findings.artifactId, artifactId));
+    .where(artifactFindingsWhere(artifactId, input.severity))) as Array<{ value: number }>;
+  return rows[0]?.value ?? 0;
+}
+
+export async function listArtifactFindings(
+  artifactId: string,
+  input: (InventoryPageInput & { severity?: Severity }) | { severity?: Severity } = {},
+): Promise<ArtifactFindingRow[]> {
+  const query = () =>
+    db
+      .select({
+        vulnId: findings.vulnId,
+        type: findings.type,
+        severity: findings.severity,
+        packageName: findings.packageName,
+        packageVersion: findings.packageVersion,
+        fixedVersion: findings.fixedVersion,
+        title: findings.title,
+      })
+      .from(findings)
+      .where(artifactFindingsWhere(artifactId, input.severity))
+      .orderBy(desc(findings.createdAt), findings.id);
+  return "limit" in input ? query().limit(input.limit).offset(input.offset) : query();
 }

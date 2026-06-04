@@ -2,6 +2,8 @@ export {
   type ArtifactFindingRow,
   type ArtifactListRow,
   type ArtifactWithRepositoryRow,
+  countArtifactFindings,
+  countLivePackageVersions,
   countRepositoryArtifacts,
   countRepositoryPackages,
   getArtifactWithRepository,

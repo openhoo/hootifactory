@@ -55,6 +55,17 @@ export interface AssetDto {
   updatedAt: WireTimestamp;
 }
 
+export interface PaginationQuery {
+  limit?: number;
+  offset?: number;
+}
+
+export interface PaginationMeta {
+  limit: number;
+  offset: number;
+  total: number;
+}
+
 export interface PackageVersionDetailDto {
   package: { id: string; name: string };
   version: {
@@ -116,16 +127,26 @@ export interface HootifactoryApiClient {
   repos(orgId: string): Promise<{ repositories: RepositoryDto[] }>;
   createRepo(orgId: string, data: Record<string, unknown>): Promise<{ repository: RepositoryDto }>;
   repo(repoId: string): Promise<{ repository: RepositoryDto; packageCount: number }>;
-  packages(repoId: string): Promise<{ packages: PackageDto[] }>;
-  versions(packageId: string): Promise<{
+  packages(
+    repoId: string,
+    query?: PaginationQuery,
+  ): Promise<{
+    packages: PackageDto[];
+    pagination: PaginationMeta;
+  }>;
+  versions(
+    packageId: string,
+    query?: PaginationQuery,
+  ): Promise<{
     package: { id: string; name: string };
     versions: PackageVersionDto[];
+    pagination: PaginationMeta;
   }>;
   version(packageId: string, version: string): Promise<{ data: PackageVersionDetailDto }>;
   assets(
     repoId: string,
     query?: { limit?: number; offset?: number; packageId?: string; digest?: string },
-  ): Promise<{ data: AssetDto[]; pagination: { limit: number; offset: number; total: number } }>;
+  ): Promise<{ data: AssetDto[]; pagination: PaginationMeta }>;
   tokens(orgId: string): Promise<{ tokens: ApiTokenDto[] }>;
   createToken(
     orgId: string,

@@ -8,6 +8,8 @@ import type {
   PackageDto,
   PackageVersionDetailDto,
   PackageVersionDto,
+  PaginationMeta,
+  PaginationQuery,
   RepositoryDto,
 } from "./index";
 
@@ -67,6 +69,14 @@ async function req<T = unknown>(
   return data as T;
 }
 
+function querySuffix(query: object = {}): string {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined) params.set(key, String(value));
+  }
+  return params.size ? `?${params.toString()}` : "";
+}
+
 export function createHootifactoryClient(
   fetchFn: FetchLike = globalThis.fetch.bind(globalThis),
 ): HootifactoryApiClient {
@@ -97,29 +107,27 @@ export function createHootifactoryClient(
         "GET",
         `/api/repositories/${repoId}`,
       ),
-    packages: (repoId: string) =>
-      request<{ packages: PackageDto[] }>("GET", `/api/repositories/${repoId}/packages`),
-    versions: (packageId: string) =>
-      request<{ package: { id: string; name: string }; versions: PackageVersionDto[] }>(
+    packages: (repoId: string, query?: PaginationQuery) =>
+      request<{ packages: PackageDto[]; pagination: PaginationMeta }>(
         "GET",
-        `/api/packages/${packageId}/versions`,
+        `/api/repositories/${repoId}/packages${querySuffix(query)}`,
       ),
+    versions: (packageId: string, query?: PaginationQuery) =>
+      request<{
+        package: { id: string; name: string };
+        versions: PackageVersionDto[];
+        pagination: PaginationMeta;
+      }>("GET", `/api/packages/${packageId}/versions${querySuffix(query)}`),
     version: (packageId: string, version: string) =>
       request<{ data: PackageVersionDetailDto }>(
         "GET",
         `/api/v1/packages/${packageId}/versions/${encodeURIComponent(version)}`,
       ),
-    assets: (repoId: string, query = {}) => {
-      const params = new URLSearchParams();
-      for (const [key, value] of Object.entries(query)) {
-        if (value !== undefined) params.set(key, String(value));
-      }
-      const suffix = params.size ? `?${params.toString()}` : "";
-      return request<{
+    assets: (repoId: string, query = {}) =>
+      request<{
         data: AssetDto[];
-        pagination: { limit: number; offset: number; total: number };
-      }>("GET", `/api/v1/repositories/${repoId}/assets${suffix}`);
-    },
+        pagination: PaginationMeta;
+      }>("GET", `/api/v1/repositories/${repoId}/assets${querySuffix(query)}`),
     tokens: (orgId: string) =>
       request<{ tokens: ApiTokenDto[] }>("GET", `/api/orgs/${orgId}/tokens`),
     createToken: (orgId: string, data: Record<string, unknown>) =>

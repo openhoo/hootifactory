@@ -1,4 +1,5 @@
 import {
+  countLivePackageVersions,
   countRepositoryPackages,
   getPackageWithRepository,
   listLivePackageVersionSummaries,
@@ -6,12 +7,13 @@ import {
 } from "@hootifactory/registry-application";
 import type { Hono } from "hono";
 import type { AppEnv } from "../types";
-import { uuidParams, validateParams } from "../validation";
+import { uuidParams, validateInput, validateParams } from "../validation";
 import { repositoryDto } from "./ui-dto";
 import {
   requireReadableParentRepo,
   requireRepositoryAccessFromParam,
 } from "./ui-repository-access";
+import { PaginationQuerySchema } from "./ui-schemas";
 
 export function registerContentRoutes(router: Hono<AppEnv>): void {
   router.get("/repositories/:repoId", async (c) => {
@@ -27,9 +29,14 @@ export function registerContentRoutes(router: Hono<AppEnv>): void {
   router.get("/repositories/:repoId/packages", async (c) => {
     const access = await requireRepositoryAccessFromParam(c, "read");
     if (!access.ok) return access.response;
+    const pagination = validateInput(c, PaginationQuerySchema, c.req.query(), "invalid pagination");
+    if (!pagination.ok) return pagination.response;
     const { repo } = access;
-    const rows = await listRepositoryPackageSummaries(repo.id);
-    return c.json({ packages: rows });
+    const [total, rows] = await Promise.all([
+      countRepositoryPackages(repo.id),
+      listRepositoryPackageSummaries(repo.id, pagination.data),
+    ]);
+    return c.json({ packages: rows, pagination: { ...pagination.data, total } });
   });
 
   router.get("/packages/:packageId/versions", async (c) => {
@@ -43,7 +50,16 @@ export function registerContentRoutes(router: Hono<AppEnv>): void {
     if (denied) return denied;
     // unreachable at runtime (innerJoin); retained for type narrowing
     if (!pkg) return c.json({ error: "package not found" }, 404);
-    const rows = await listLivePackageVersionSummaries(pkg.id);
-    return c.json({ package: { id: pkg.id, name: pkg.name }, versions: rows });
+    const pagination = validateInput(c, PaginationQuerySchema, c.req.query(), "invalid pagination");
+    if (!pagination.ok) return pagination.response;
+    const [total, rows] = await Promise.all([
+      countLivePackageVersions(pkg.id),
+      listLivePackageVersionSummaries(pkg.id, pagination.data),
+    ]);
+    return c.json({
+      package: { id: pkg.id, name: pkg.name },
+      versions: rows,
+      pagination: { ...pagination.data, total },
+    });
   });
 }

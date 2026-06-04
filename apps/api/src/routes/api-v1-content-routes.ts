@@ -1,4 +1,5 @@
 import {
+  V1ArtifactFindingsQuerySchema,
   V1ArtifactFindingsResponseSchema,
   V1ArtifactListResponseSchema,
   V1AssetListResponseSchema,
@@ -8,6 +9,8 @@ import {
   V1RepositoryDetailResponseSchema,
 } from "@hootifactory/contracts";
 import {
+  countArtifactFindings,
+  countLivePackageVersions,
   countRepositoryArtifacts,
   countRepositoryPackages,
   findLiveVersion,
@@ -117,17 +120,16 @@ export function registerApiV1ContentRoutes(apiV1Router: Hono<AppEnv>) {
       if (!row) return errorResponse(c, 404, "NOT_FOUND", "package not found");
       const response = await authorizePackage(c, row, "read");
       if (response) return response;
-      const rows = await listLivePackageVersionSummaries(row.pkg.id);
-      const page = rows.slice(
-        pagination.data.offset,
-        pagination.data.offset + pagination.data.limit,
-      );
+      const [total, page] = await Promise.all([
+        countLivePackageVersions(row.pkg.id),
+        listLivePackageVersionSummaries(row.pkg.id, pagination.data),
+      ]);
       return c.json({
         data: { package: { id: row.pkg.id, name: row.pkg.name }, versions: page },
         pagination: {
           limit: pagination.data.limit,
           offset: pagination.data.offset,
-          total: rows.length,
+          total,
         },
       });
     },
@@ -250,6 +252,7 @@ export function registerApiV1ContentRoutes(apiV1Router: Hono<AppEnv>) {
       tag: "Artifacts",
       description: "Lists vulnerability, license, secret, and malware findings for an artifact.",
       pathParams: ArtifactIdParamsSchema,
+      query: V1ArtifactFindingsQuerySchema,
       response: { description: "Artifact findings.", schema: V1ArtifactFindingsResponseSchema },
     }),
     async (c) => {
@@ -264,8 +267,17 @@ export function registerApiV1ContentRoutes(apiV1Router: Hono<AppEnv>) {
       if (!row) return errorResponse(c, 404, "NOT_FOUND", "artifact not found");
       const response = await authorizeArtifactFindings(c, row);
       if (response) return response;
-      const rows = await listArtifactFindings(row.art.id);
-      return dataResponse(c, rows);
+      const query = validateV1(c, V1ArtifactFindingsQuerySchema, c.req.query(), "invalid query");
+      if (!query.ok) return query.response;
+      const [total, rows] = await Promise.all([
+        countArtifactFindings(row.art.id, { severity: query.data.severity }),
+        listArtifactFindings(row.art.id, query.data),
+      ]);
+      return listResponse(c, rows, {
+        limit: query.data.limit,
+        offset: query.data.offset,
+        total,
+      });
     },
   );
 }
