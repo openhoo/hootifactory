@@ -156,9 +156,11 @@ export class NugetAdapter implements RegistryPlugin {
     id = parseNugetId(id);
     const pkg = await this.findPkg(ctx, id);
     if (!pkg) return new Response("Not Found", { status: 404 });
-    const rows = await this.listVersions(ctx, pkg, { includeUnlisted: true });
-    if (rows.length === 0) return new Response("Not Found", { status: 404 });
-    return Response.json({ versions: rows.map((r) => r.version) });
+    const versions = (await ctx.data.versions.listLiveNames(pkg))
+      .map((row) => row.version)
+      .sort(compareNugetVersions);
+    if (versions.length === 0) return new Response("Not Found", { status: 404 });
+    return Response.json({ versions });
   }
 
   private async registration(

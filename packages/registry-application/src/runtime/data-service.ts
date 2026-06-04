@@ -51,6 +51,7 @@ import {
   deleteDistTag,
   listLiveDistTags,
   listLiveDistTagsForPackages,
+  listLivePackageVersionNames,
   listLivePackageVersions,
   listLivePackageVersionsForPackages,
   listLiveVersionPublishers,
@@ -209,6 +210,7 @@ export function createRegistryDataService(ctx: RegistryRequestContext): Registry
           packageId: opts?.package ? packageId(ctx, opts.package) : undefined,
           liveOnly: opts?.liveOnly,
         }),
+      listLiveNames: (pkg) => listLivePackageVersionNames(packageId(ctx, pkg)),
       create: (input) =>
         createPackageVersion(ctx, { ...input, packageId: packageId(ctx, input.package) }),
       upsert: (input) =>

@@ -197,6 +197,15 @@ export async function listPackageVersionNames(packageId: string): Promise<Packag
     .where(eq(packageVersions.packageId, packageId));
 }
 
+export async function listLivePackageVersionNames(
+  packageId: string,
+): Promise<PackageVersionNameRow[]> {
+  return db
+    .select({ version: packageVersions.version })
+    .from(packageVersions)
+    .where(and(eq(packageVersions.packageId, packageId), isNull(packageVersions.deletedAt)));
+}
+
 export async function listLiveDistTags(packageId: string): Promise<Record<string, string>> {
   const rows = (await db
     .select({ tag: versionTags.tag, version: packageVersions.version })
