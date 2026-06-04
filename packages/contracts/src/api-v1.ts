@@ -1,9 +1,11 @@
+import { ARTIFACT_STATES, FINDING_TYPES, POLICY_MODES, SEVERITIES } from "@hootifactory/scan-core";
 import {
   ACTIONS,
   POLICY_NAMES,
   REPO_KINDS,
   ROLE_NAMES,
   TOKEN_TARGETS,
+  TOKEN_TYPES,
   VISIBILITIES,
 } from "@hootifactory/types";
 import { z } from "zod";
@@ -102,19 +104,13 @@ export const V1RegistryModuleIdSchema = z
   .max(128)
   .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/)
   .describe("Registry module identifier.");
-export const V1PolicyModeSchema = z
-  .enum(["audit", "enforce"])
-  .describe("Scan policy enforcement mode.");
-export const V1TokenTypeSchema = z.enum(["personal", "robot"]).describe("API token type.");
-export const V1SeveritySchema = z
-  .enum(["critical", "high", "medium", "low", "negligible", "unknown"])
-  .describe("Finding severity.");
+export const V1PolicyModeSchema = z.enum(POLICY_MODES).describe("Scan policy enforcement mode.");
+export const V1TokenTypeSchema = z.enum(TOKEN_TYPES).describe("API token type.");
+export const V1SeveritySchema = z.enum(SEVERITIES).describe("Finding severity.");
 export const V1ArtifactStateSchema = z
-  .enum(["pending", "clean", "quarantined", "blocked"])
+  .enum(ARTIFACT_STATES)
   .describe("Artifact scan and policy state.");
-export const V1FindingTypeSchema = z
-  .enum(["vuln", "license", "secret", "malware"])
-  .describe("Scanner finding category.");
+export const V1FindingTypeSchema = z.enum(FINDING_TYPES).describe("Scanner finding category.");
 
 export const V1ArtifactFindingsQuerySchema = V1PaginationQuerySchema.extend({
   severity: V1SeveritySchema.describe("Limit findings to one severity.").optional(),

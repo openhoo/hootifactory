@@ -1,5 +1,5 @@
 import { z } from "@hootifactory/core";
-import { isValidRepositoryPattern, SEVERITY_ORDER, type Severity } from "@hootifactory/scan-core";
+import { isValidRepositoryPattern, POLICY_MODES, SEVERITIES } from "@hootifactory/scan-core";
 import {
   ACTIONS,
   type Action,
@@ -7,6 +7,7 @@ import {
   REPO_KINDS,
   ROLE_NAMES,
   TOKEN_TARGETS,
+  TOKEN_TYPES,
   type TokenGrant,
   type TokenScope,
   VISIBILITIES,
@@ -19,9 +20,9 @@ const RoleNameSchema = z.enum(ROLE_NAMES);
 const ActionSchema = z.enum(ACTIONS);
 export const RepoKindSchema = z.enum(REPO_KINDS);
 export const VisibilitySchema = z.enum(VISIBILITIES);
-const PolicyModeSchema = z.enum(["audit", "enforce"]);
-const TokenTypeSchema = z.enum(["personal", "robot"]);
-const SeveritySchema = z.enum(Object.keys(SEVERITY_ORDER) as [Severity, ...Severity[]]);
+const PolicyModeSchema = z.enum(POLICY_MODES);
+const TokenTypeSchema = z.enum(TOKEN_TYPES);
+const SeveritySchema = z.enum(SEVERITIES);
 const RegistryModuleIdSchema = z
   .string()
   .trim()

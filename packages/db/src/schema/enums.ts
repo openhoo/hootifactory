@@ -1,4 +1,5 @@
-import { REPO_KINDS, ROLE_NAMES, VISIBILITIES } from "@hootifactory/types";
+import { ARTIFACT_STATES, FINDING_TYPES, POLICY_MODES, SEVERITIES } from "@hootifactory/scan-core";
+import { REPO_KINDS, ROLE_NAMES, TOKEN_TYPES, VISIBILITIES } from "@hootifactory/types";
 import { pgEnum } from "drizzle-orm/pg-core";
 
 export const repoKindEnum = pgEnum("repo_kind", REPO_KINDS);
@@ -8,7 +9,7 @@ export const visibilityEnum = pgEnum("visibility", VISIBILITIES);
 /** Fixed RBAC role matrix (resolved to permissions in code). */
 export const roleNameEnum = pgEnum("role_name", ROLE_NAMES);
 
-export const tokenTypeEnum = pgEnum("token_type", ["personal", "robot"]);
+export const tokenTypeEnum = pgEnum("token_type", TOKEN_TYPES);
 
 export const authEmailTokenPurposeEnum = pgEnum("auth_email_token_purpose", [
   "password_reset",
@@ -29,24 +30,12 @@ export const scanStatusEnum = pgEnum("scan_status", [
 
 export const scanTypeEnum = pgEnum("scan_type", ["sbom", "vuln", "malware", "license", "secret"]);
 
-export const findingTypeEnum = pgEnum("finding_type", ["vuln", "license", "secret", "malware"]);
+export const findingTypeEnum = pgEnum("finding_type", FINDING_TYPES);
 
-export const severityEnum = pgEnum("severity", [
-  "critical",
-  "high",
-  "medium",
-  "low",
-  "negligible",
-  "unknown",
-]);
+export const severityEnum = pgEnum("severity", SEVERITIES);
 
-export const artifactStateEnum = pgEnum("artifact_state", [
-  "pending",
-  "clean",
-  "quarantined",
-  "blocked",
-]);
+export const artifactStateEnum = pgEnum("artifact_state", ARTIFACT_STATES);
 
-export const policyModeEnum = pgEnum("policy_mode", ["audit", "enforce"]);
+export const policyModeEnum = pgEnum("policy_mode", POLICY_MODES);
 
 export const auditResultEnum = pgEnum("audit_result", ["allow", "deny", "success", "failure"]);

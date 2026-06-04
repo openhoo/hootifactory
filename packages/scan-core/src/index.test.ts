@@ -1,17 +1,28 @@
 import { describe, expect, test } from "bun:test";
 import {
+  ARTIFACT_STATES,
   asRecord,
   asString,
   asStringRecord,
+  FINDING_TYPES,
   findingKey,
   isValidRepositoryPattern,
   maxSeverity,
   normalizeSeverity,
+  POLICY_MODES,
   repositoryPatternMatches,
   resolveScanPolicy,
+  SEVERITIES,
 } from "./index";
 
 describe("scan-core severity helpers", () => {
+  test("keeps scan-domain enum constants stable", () => {
+    expect(SEVERITIES).toEqual(["critical", "high", "medium", "low", "negligible", "unknown"]);
+    expect(FINDING_TYPES).toEqual(["vuln", "license", "secret", "malware"]);
+    expect(ARTIFACT_STATES).toEqual(["pending", "clean", "quarantined", "blocked"]);
+    expect(POLICY_MODES).toEqual(["audit", "enforce"]);
+  });
+
   test("validates scanner JSON object helpers with Zod", () => {
     expect(asRecord({ matches: [] })).toEqual({ matches: [] });
     expect(asRecord(["matches"])).toBeNull();

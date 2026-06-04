@@ -1,10 +1,10 @@
-import type { RoleName, TokenGrant, TokenScope } from "@hootifactory/types";
+import type { RoleName, TokenGrant, TokenScope, TokenType } from "@hootifactory/types";
 
 export const DEFAULT_TOKEN_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 
 export interface CreateApiTokenRequestInput {
   name: string;
-  type?: "personal" | "robot";
+  type?: TokenType;
   grants?: TokenGrant[];
   scopes?: TokenScope[];
   role?: RoleName;
@@ -13,7 +13,7 @@ export interface CreateApiTokenRequestInput {
 
 export interface ResolvedCreateApiTokenRequest {
   name: string;
-  type: "personal" | "robot";
+  type: TokenType;
   grants: TokenGrant[];
   requestedRole?: RoleName;
   expiresAt: Date | null;

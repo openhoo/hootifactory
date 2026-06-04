@@ -1,6 +1,6 @@
 import { BoundedLruCache } from "@hootifactory/core";
 import { and, apiTokens, db, desc, eq, users } from "@hootifactory/db";
-import type { TokenGrant, TokenScope } from "@hootifactory/types";
+import type { TokenGrant, TokenScope, TokenType } from "@hootifactory/types";
 import type { RoleName } from "./permissions";
 import type { Principal } from "./principal";
 import { repositoryGrantsAsScopes } from "./scope";
@@ -28,7 +28,7 @@ export interface CreateTokenInput {
   orgId: string;
   ownerUserId?: string | null;
   name: string;
-  type?: "personal" | "robot";
+  type?: TokenType;
   grants?: TokenGrant[];
   /** Legacy pre-v1 input, normalized to repository grants before storage. */
   scopes?: TokenScope[];

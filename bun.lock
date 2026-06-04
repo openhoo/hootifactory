@@ -14,6 +14,7 @@
         "@hootifactory/queue": "workspace:*",
         "@hootifactory/registry": "workspace:*",
         "@hootifactory/registry-application": "workspace:*",
+        "@hootifactory/scan-core": "workspace:*",
         "@hootifactory/storage": "workspace:*",
         "@hootifactory/types": "workspace:*",
         "@playwright/test": "^1.60.0",
@@ -79,6 +80,7 @@
         "@fontsource-variable/hanken-grotesk": "^5.2.8",
         "@fontsource-variable/jetbrains-mono": "^5.2.8",
         "@hootifactory/contracts": "workspace:*",
+        "@hootifactory/types": "workspace:*",
         "@tanstack/react-query": "^5.100.14",
         "@tanstack/react-router": "^1.170.10",
         "class-variance-authority": "^0.7.1",
@@ -117,6 +119,7 @@
         "@hootifactory/config": "workspace:*",
         "@hootifactory/core": "workspace:*",
         "@hootifactory/db": "workspace:*",
+        "@hootifactory/types": "workspace:*",
         "jose": "^6.2.3",
         "openid-client": "^6.8.4",
         "zod": "^4.4.3",
@@ -126,6 +129,7 @@
       "name": "@hootifactory/config",
       "version": "0.0.0",
       "dependencies": {
+        "@hootifactory/types": "workspace:*",
         "zod": "^4.4.3",
       },
     },
@@ -133,6 +137,7 @@
       "name": "@hootifactory/contracts",
       "version": "0.0.0",
       "dependencies": {
+        "@hootifactory/scan-core": "workspace:*",
         "@hootifactory/types": "workspace:*",
         "zod": "^4.4.3",
       },
@@ -149,6 +154,8 @@
       "version": "0.0.0",
       "dependencies": {
         "@hootifactory/config": "workspace:*",
+        "@hootifactory/scan-core": "workspace:*",
+        "@hootifactory/types": "workspace:*",
         "drizzle-orm": "^0.45.2",
       },
     },

@@ -16,6 +16,7 @@ import {
   type RegistryModuleId,
   ROLE_NAMES,
   TOKEN_TARGETS,
+  TOKEN_TYPES,
   VISIBILITIES,
 } from "./index";
 
@@ -25,6 +26,7 @@ describe("shared type constants", () => {
     expect(VISIBILITIES).toEqual(["private", "public"]);
     expect(ACTIONS).toEqual(["read", "write", "delete", "admin"]);
     expect(ROLE_NAMES).toEqual(["viewer", "developer", "admin", "owner"]);
+    expect(TOKEN_TYPES).toEqual(["personal", "robot"]);
     expect(POLICY_NAMES).toEqual(["scan", "quota", "retention", "*"]);
     expect(TOKEN_TARGETS).toEqual(["self", "org"]);
   });

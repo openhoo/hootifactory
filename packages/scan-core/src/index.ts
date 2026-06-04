@@ -26,7 +26,8 @@ export function asString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
-export type Severity = "critical" | "high" | "medium" | "low" | "negligible" | "unknown";
+export const SEVERITIES = ["critical", "high", "medium", "low", "negligible", "unknown"] as const;
+export type Severity = (typeof SEVERITIES)[number];
 
 export const SEVERITY_ORDER: Record<Severity, number> = {
   critical: 5,
@@ -62,7 +63,14 @@ export function normalizeSeverity(raw: string | null | undefined): Severity {
   }
 }
 
-export type FindingType = "vuln" | "license" | "secret" | "malware";
+export const FINDING_TYPES = ["vuln", "license", "secret", "malware"] as const;
+export type FindingType = (typeof FINDING_TYPES)[number];
+
+export const ARTIFACT_STATES = ["pending", "clean", "quarantined", "blocked"] as const;
+export type ArtifactState = (typeof ARTIFACT_STATES)[number];
+
+export const POLICY_MODES = ["audit", "enforce"] as const;
+export type PolicyMode = (typeof POLICY_MODES)[number];
 
 export interface NormalizedFinding {
   type: FindingType;

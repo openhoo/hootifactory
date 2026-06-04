@@ -3,14 +3,15 @@ import {
   resolveRegistryScanPolicy,
 } from "@hootifactory/registry-application/governance";
 import {
+  type ArtifactState,
   maxSeverity,
   type NormalizedFinding,
+  type PolicyMode,
   SEVERITY_ORDER,
   type Severity,
 } from "@hootifactory/scan-core";
 
-type ArtifactState = "clean" | "quarantined" | "blocked";
-type PolicyMode = "audit" | "enforce";
+type ScanPolicyArtifactState = Exclude<ArtifactState, "pending">;
 
 export interface ScanPolicyRules {
   mode?: PolicyMode | null;
@@ -31,7 +32,7 @@ export interface ScanPolicyEvaluation {
     cvssViolates: boolean;
     licenseViolates: boolean;
   };
-  state: ArtifactState;
+  state: ScanPolicyArtifactState;
 }
 
 export function loadPolicy(orgId: string, repoName: string): Promise<RegistryScanPolicyRow | null> {
