@@ -66,16 +66,29 @@ export async function listRegistryAssets(
   return listRegistryAssetsForRepository(ctx.repo.id, input);
 }
 
+type RegistryAssetListInput = {
+  packageId?: string;
+  packageVersionId?: string;
+  digest?: string;
+  limit?: number;
+  offset?: number;
+  withTotal?: boolean;
+};
+
+type RegistryAssetListResult = { assets: RegistryAssetRow[]; total: number };
+
+export function listRegistryAssetsForRepository(
+  repositoryId: string,
+  input: RegistryAssetListInput & { withTotal: false },
+): Promise<{ assets: RegistryAssetRow[] }>;
+export function listRegistryAssetsForRepository(
+  repositoryId: string,
+  input?: RegistryAssetListInput,
+): Promise<RegistryAssetListResult>;
 export async function listRegistryAssetsForRepository(
   repositoryId: string,
-  input: {
-    packageId?: string;
-    packageVersionId?: string;
-    digest?: string;
-    limit?: number;
-    offset?: number;
-  } = {},
-): Promise<{ assets: RegistryAssetRow[]; total: number }> {
+  input: RegistryAssetListInput = {},
+): Promise<{ assets: RegistryAssetRow[]; total?: number }> {
   const filters = [
     eq(registryAssets.repositoryId, repositoryId),
     isNull(registryAssets.deletedAt),
@@ -86,14 +99,20 @@ export async function listRegistryAssetsForRepository(
     input.digest ? eq(registryAssets.digest, input.digest) : undefined,
   ].filter((filter): filter is Exclude<typeof filter, undefined> => Boolean(filter));
   const where = filters.length > 0 ? and(...filters) : sql`true`;
-  const totalRows = await db.select({ value: count() }).from(registryAssets).where(where);
-  const assets = await db
+  const assetsQuery = db
     .select()
     .from(registryAssets)
     .where(where)
     .orderBy(desc(registryAssets.createdAt), desc(registryAssets.id))
     .limit(input.limit ?? 100)
     .offset(input.offset ?? 0);
+  if (input.withTotal === false) {
+    return { assets: await assetsQuery };
+  }
+  const [totalRows, assets] = await Promise.all([
+    db.select({ value: count() }).from(registryAssets).where(where),
+    assetsQuery,
+  ]);
   return { assets, total: totalRows[0]?.value ?? 0 };
 }
 

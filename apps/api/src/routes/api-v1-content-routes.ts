@@ -176,6 +176,7 @@ export function registerApiV1ContentRoutes(apiV1Router: Hono<AppEnv>) {
       const { assets } = await listRegistryAssetsForRepository(row.repo.id, {
         packageId: row.pkg.id,
         packageVersionId: version.id,
+        withTotal: false,
       });
       return dataResponse(c, {
         package: { id: row.pkg.id, name: row.pkg.name },
