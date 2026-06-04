@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { OCI_MEDIA_TYPES } from "@hootifactory/types";
 import { type APIRequestContext, type APIResponse, expect, test } from "@playwright/test";
 import { dockerNpm, dockerReachableUrl, ensureDockerAvailable } from "./docker-clients";
 import { createRepo, createToken, setupOwner, uniq } from "./helpers";
@@ -46,6 +47,37 @@ async function uploadOciBlob(
   return ctx.post(`/${mountPath}/${image}/blobs/uploads?digest=${digest}`, {
     headers: { "content-type": "application/octet-stream" },
     data: bytes,
+  });
+}
+
+async function putOciManifest(
+  ctx: APIRequestContext,
+  mountPath: string,
+  image: string,
+  tag: string,
+  configDigest: string,
+  layerDigest: string,
+  layerSize: number,
+): Promise<APIResponse> {
+  const raw = JSON.stringify({
+    schemaVersion: 2,
+    mediaType: OCI_MEDIA_TYPES.manifestV1,
+    config: {
+      mediaType: OCI_MEDIA_TYPES.configV1,
+      digest: configDigest,
+      size: Buffer.byteLength("{}"),
+    },
+    layers: [
+      {
+        mediaType: OCI_MEDIA_TYPES.layerTarGzip,
+        digest: layerDigest,
+        size: layerSize,
+      },
+    ],
+  });
+  return ctx.put(`/${mountPath}/${image}/manifests/${tag}`, {
+    headers: { "content-type": OCI_MEDIA_TYPES.manifestV1 },
+    data: raw,
   });
 }
 
@@ -249,5 +281,97 @@ test.describe("governance: quotas + retention", () => {
     const versionsBody = (await versionsRes.json()) as { versions: { version: string }[] };
     expect(versionsBody.versions.map((v) => v.version).sort()).toEqual(["1.0.1", "1.0.2"]);
     expect(publish(baseURL!, repo.mountPath, token, pkg, "1.0.0").ok).toBe(false);
+  });
+
+  test("artifact quota charges OCI version reactivation after retention", async ({ baseURL }) => {
+    const owner = await setupOwner(baseURL!);
+    const repo = (
+      await (
+        await createRepo(owner.ctx, owner.orgId, {
+          name: uniq("quota-oci-retention"),
+          format: "docker",
+        })
+      ).json()
+    ).repository as { id: string; mountPath: string };
+    const image = uniq("quota-reactivation");
+    const config = Buffer.from("{}");
+    const layer = Buffer.from("quota reactivation layer");
+    const configDigest = sha256(config);
+    const layerDigest = sha256(layer);
+    const quotaState = async (): Promise<{ usedArtifacts: number }> => {
+      const res = await owner.ctx.get(`/api/v1/orgs/${owner.orgId}/quota`);
+      expect(res.status()).toBe(200);
+      return ((await res.json()) as { data: { usedArtifacts: number } }).data;
+    };
+
+    expect((await uploadOciBlob(owner.ctx, repo.mountPath, image, config)).status()).toBe(201);
+    expect((await uploadOciBlob(owner.ctx, repo.mountPath, image, layer)).status()).toBe(201);
+    await owner.ctx.post(`/api/orgs/${owner.orgId}/quota`, { data: { maxArtifacts: 2 } });
+
+    for (const tag of ["v1", "v2"]) {
+      expect(
+        (
+          await putOciManifest(
+            owner.ctx,
+            repo.mountPath,
+            image,
+            tag,
+            configDigest,
+            layerDigest,
+            layer.byteLength,
+          )
+        ).status(),
+      ).toBe(201);
+    }
+    expect((await quotaState()).usedArtifacts).toBe(2);
+
+    const applied = await (
+      await owner.ctx.post(`/api/repositories/${repo.id}/retention/apply`, {
+        data: { keepLastN: 1 },
+      })
+    ).json();
+    expect(applied.pruned).toBe(1);
+    expect((await quotaState()).usedArtifacts).toBe(1);
+
+    const packagesRes = await owner.ctx.get(`/api/repositories/${repo.id}/packages`);
+    const packagesBody = (await packagesRes.json()) as {
+      packages: { id: string; name: string }[];
+    };
+    const pkg = packagesBody.packages.find((row) => row.name === image);
+    expect(pkg).toBeTruthy();
+    const versionsRes = await owner.ctx.get(`/api/packages/${pkg!.id}/versions`);
+    const versionsBody = (await versionsRes.json()) as {
+      versions: { version: string }[];
+    };
+    const liveVersions = new Set(versionsBody.versions.map((version) => version.version));
+    const prunedTag = ["v1", "v2"].find((tag) => !liveVersions.has(tag));
+    expect(prunedTag).toBeTruthy();
+
+    expect(
+      (
+        await putOciManifest(
+          owner.ctx,
+          repo.mountPath,
+          image,
+          prunedTag!,
+          configDigest,
+          layerDigest,
+          layer.byteLength,
+        )
+      ).status(),
+    ).toBe(201);
+    expect((await quotaState()).usedArtifacts).toBe(2);
+
+    const blocked = await putOciManifest(
+      owner.ctx,
+      repo.mountPath,
+      image,
+      "v3",
+      configDigest,
+      layerDigest,
+      layer.byteLength,
+    );
+    expect(blocked.status()).toBe(403);
+    expect((await blocked.json()).errors[0].message).toBe("storage quota exceeded");
   });
 });

@@ -75,7 +75,7 @@ export async function upsertPackageVersion(
   const publisher = publisherOf(ctx);
   return db.transaction(async (tx) => {
     const [existing] = await tx
-      .select({ id: packageVersions.id })
+      .select({ id: packageVersions.id, deletedAt: packageVersions.deletedAt })
       .from(packageVersions)
       .where(
         and(
@@ -85,15 +85,16 @@ export async function upsertPackageVersion(
       )
       .for("update")
       .limit(1);
+    const chargeArtifact = !existing || existing.deletedAt !== null;
     const quota = await lockOrgQuotaTx(tx, ctx.repo.orgId);
-    if (!existing) assertArtifactQuotaRowAllows(quota, 1);
+    if (chargeArtifact) assertArtifactQuotaRowAllows(quota, 1);
     const [row] = await tx
       .insert(packageVersions)
       .values(packageVersionValues(ctx, opts, publisher))
       .onConflictDoUpdate(packageVersionConflictUpdate(opts))
       .returning({ id: packageVersions.id });
     if (!row) throw new Error("failed to upsert package version");
-    if (!existing) await adjustArtifactsUsedTx(tx, ctx.repo.orgId, 1);
+    if (chargeArtifact) await adjustArtifactsUsedTx(tx, ctx.repo.orgId, 1);
     return row.id;
   });
 }
@@ -134,7 +135,7 @@ export async function upsertPackageVersionWithBlobRef(
       putForCleanup = put;
       const quota = await lockOrgQuotaTx(tx, ctx.repo.orgId);
       const [existingVersion] = await tx
-        .select({ id: packageVersions.id })
+        .select({ id: packageVersions.id, deletedAt: packageVersions.deletedAt })
         .from(packageVersions)
         .where(
           and(
@@ -144,7 +145,8 @@ export async function upsertPackageVersionWithBlobRef(
         )
         .for("update")
         .limit(1);
-      if (!existingVersion) assertArtifactQuotaRowAllows(quota, 1);
+      const chargeArtifact = !existingVersion || existingVersion.deletedAt !== null;
+      if (chargeArtifact) assertArtifactQuotaRowAllows(quota, 1);
       const previousDigest = previousDigestInput;
       let oldRefundBytes = 0;
 
@@ -195,7 +197,7 @@ export async function upsertPackageVersionWithBlobRef(
         .onConflictDoUpdate(packageVersionConflictUpdate(opts))
         .returning({ id: packageVersions.id });
       if (!versionRow) throw new Error("failed to upsert package version");
-      if (!existingVersion) await adjustArtifactsUsedTx(tx, ctx.repo.orgId, 1);
+      if (chargeArtifact) await adjustArtifactsUsedTx(tx, ctx.repo.orgId, 1);
 
       return {
         deleteCasDigest: previousDigest,
