@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { Boxes, Package, Plus, Search, Terminal } from "lucide-react";
+import { Boxes, ChevronDown, Package, Plus, Search, Terminal } from "lucide-react";
 import { useMemo, useState } from "react";
 import {
   Code,
@@ -30,6 +30,7 @@ import { api, apiErrorMessage } from "@/lib/api";
 import { snippetsFor } from "@/lib/format";
 
 const FORMATS = ["npm", "docker", "oci", "pypi", "helm", "nuget", "go", "cargo"];
+const PACKAGE_PAGE_SIZE = 50;
 
 export function ReposPage() {
   const { selected } = useOrg();
@@ -186,8 +187,12 @@ export function ReposPage() {
 }
 
 export function RepoDetailPage({ repoId }: { repoId: string }) {
+  const [packageLimit, setPackageLimit] = useState(PACKAGE_PAGE_SIZE);
   const repoQ = useQuery({ queryKey: ["repo", repoId], queryFn: () => api.repo(repoId) });
-  const pkgsQ = useQuery({ queryKey: ["packages", repoId], queryFn: () => api.packages(repoId) });
+  const pkgsQ = useQuery({
+    queryKey: ["packages", repoId, packageLimit],
+    queryFn: () => api.packages(repoId, { limit: packageLimit, offset: 0 }),
+  });
 
   if (repoQ.isLoading) return <Loading />;
   if (repoQ.isError || !repoQ.data)
@@ -206,6 +211,8 @@ export function RepoDetailPage({ repoId }: { repoId: string }) {
   const repo = repoQ.data.repository;
   const snippets = snippetsFor(repo, window.location.origin);
   const packages = pkgsQ.data?.packages ?? [];
+  const packageTotal = pkgsQ.data?.pagination.total ?? repoQ.data.packageCount;
+  const canLoadMorePackages = packages.length < packageTotal;
 
   return (
     <div>
@@ -237,18 +244,37 @@ export function RepoDetailPage({ repoId }: { repoId: string }) {
             {pkgsQ.isLoading ? (
               <Loading />
             ) : packages.length ? (
-              <ul className="-my-1 divide-y divide-border">
-                {packages.map((p) => (
-                  <li key={p.id} className="flex items-center justify-between gap-3 py-2.5">
-                    <span className="truncate font-mono text-sm">{p.name}</span>
-                    {p.latestVersion && (
-                      <Pill tone="neutral">
-                        <span className="font-mono">{p.latestVersion}</span>
-                      </Pill>
-                    )}
-                  </li>
-                ))}
-              </ul>
+              <div className="space-y-3">
+                <ul className="-my-1 divide-y divide-border">
+                  {packages.map((p) => (
+                    <li key={p.id} className="flex items-center justify-between gap-3 py-2.5">
+                      <span className="truncate font-mono text-sm">{p.name}</span>
+                      {p.latestVersion && (
+                        <Pill tone="neutral">
+                          <span className="font-mono">{p.latestVersion}</span>
+                        </Pill>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+                <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3">
+                  <span className="text-xs text-muted-foreground">
+                    Showing {packages.length} of {packageTotal}
+                  </span>
+                  {canLoadMorePackages && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setPackageLimit((limit) => limit + PACKAGE_PAGE_SIZE)}
+                      disabled={pkgsQ.isFetching}
+                    >
+                      <ChevronDown />
+                      Show more
+                    </Button>
+                  )}
+                </div>
+              </div>
             ) : (
               <EmptyState
                 icon={<Package className="size-5" />}
