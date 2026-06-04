@@ -32,16 +32,8 @@ function hasRequestCredentials(headers: Headers): boolean {
   return headers.has("authorization") || headers.has("cookie") || headers.has("x-nuget-apikey");
 }
 
-function isImmutableOciManifestPath(pathname: string): boolean {
-  return pathname.startsWith("/v2/") && /\/manifests\/sha256:[a-fA-F0-9]{64}$/.test(pathname);
-}
-
 function isImmutableOciBlobPath(pathname: string): boolean {
   return pathname.startsWith("/v2/") && /\/blobs\/sha256:[a-fA-F0-9]{64}$/.test(pathname);
-}
-
-function isImmutableOciDigestPath(pathname: string): boolean {
-  return isImmutableOciManifestPath(pathname) || isImmutableOciBlobPath(pathname);
 }
 
 function isImmutableCacheControl(value: string | null): boolean {
@@ -67,7 +59,7 @@ export function securityHeadersForRequest(
 ): Record<string, string> {
   const shouldForceNoStore =
     isApiOrTokenPath(pathname) ||
-    (hasRequestCredentials(request.headers) && !isImmutableOciDigestPath(pathname));
+    (hasRequestCredentials(request.headers) && !isImmutableOciBlobPath(pathname));
   return {
     ...securityHeadersForNodeEnv(nodeEnv),
     ...(shouldForceNoStore ? SENSITIVE_CACHE_HEADERS : {}),

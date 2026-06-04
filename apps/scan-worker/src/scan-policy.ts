@@ -82,7 +82,7 @@ export function invalidateScanPolicyCache(orgId?: string): void {
 }
 
 export async function loadPolicy(orgId: string, repoName: string): Promise<PolicyRow | null> {
-  const rows = await policyRowsCache.get(orgId);
+  const rows = await db.select().from(scanPolicies).where(eq(scanPolicies.orgId, orgId));
   return resolveScanPolicy(rows, repoName);
 }
 

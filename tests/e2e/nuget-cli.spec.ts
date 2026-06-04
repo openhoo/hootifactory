@@ -378,10 +378,7 @@ test.describe("nuget registry extended scenarios (Dockerized real dotnet)", () =
     const stable = newConsumer(work, source, "StableConsumer");
     const stableDir = dirname(stable);
     runDotnet(["add", stable, "package", packageId], stableDir);
-    const stableAssets = readFileSync(
-      join(stableDir, "obj", "project.assets.json"),
-      "utf8",
-    );
+    const stableAssets = readFileSync(join(stableDir, "obj", "project.assets.json"), "utf8");
     expect(stableAssets).toContain(`${packageId}/1.0.0`);
     expect(stableAssets).not.toContain(`${packageId}/1.1.0-rc.1`);
 
@@ -389,10 +386,7 @@ test.describe("nuget registry extended scenarios (Dockerized real dotnet)", () =
     const pre = newConsumer(work, source, "PrereleaseConsumer");
     const preDir = dirname(pre);
     runDotnet(["add", pre, "package", packageId, "--prerelease"], preDir);
-    const preAssets = readFileSync(
-      join(preDir, "obj", "project.assets.json"),
-      "utf8",
-    );
+    const preAssets = readFileSync(join(preDir, "obj", "project.assets.json"), "utf8");
     expect(preAssets).toContain(`${packageId}/1.1.0-rc.1`);
   });
 
@@ -539,10 +533,7 @@ test.describe("nuget registry extended scenarios (Dockerized real dotnet)", () =
     const consumerDir = dirname(consumer);
     runDotnet(["add", consumer, "package", pkgA, "--version", "1.0.0"], consumerDir);
     runDotnet(["add", consumer, "package", pkgB, "--version", "1.0.0"], consumerDir);
-    const assets = readFileSync(
-      join(consumerDir, "obj", "project.assets.json"),
-      "utf8",
-    );
+    const assets = readFileSync(join(consumerDir, "obj", "project.assets.json"), "utf8");
     expect(assets).toContain(`${pkgA}/1.0.0`);
     expect(assets).toContain(`${pkgB}/1.0.0`);
 
@@ -703,10 +694,7 @@ test.describe("nuget registry error and edge scenarios (Dockerized real dotnet)"
     const consumer = newConsumer(work, source, "UnlistResolveConsumer");
     const consumerDir = dirname(consumer);
     runDotnet(["add", consumer, "package", packageId], consumerDir);
-    const assets = readFileSync(
-      join(consumerDir, "obj", "project.assets.json"),
-      "utf8",
-    );
+    const assets = readFileSync(join(consumerDir, "obj", "project.assets.json"), "utf8");
     expect(assets).toContain(`${packageId}/1.0.0`);
     expect(assets).not.toContain(`${packageId}/1.1.0`);
   });

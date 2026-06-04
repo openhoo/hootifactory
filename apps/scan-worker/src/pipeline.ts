@@ -199,6 +199,7 @@ async function processScanInner(artifactId: string, scannerRuntime: ScannerRunti
   const found: NormalizedFinding[] = [];
   const scannedBlobDigests = new Set<string>();
   const scanReferencedBytes = createAsyncLimiter(OCI_REFERENCE_SCAN_CONCURRENCY);
+  const scanReferencedManifests = createAsyncLimiter(OCI_REFERENCE_SCAN_CONCURRENCY);
   await withSpan("scan.heuristic_dependencies", {}, async (span) => {
     const dependencyFindings = scanDependencies(deps);
     found.push(...dependencyFindings);
@@ -243,7 +244,10 @@ async function processScanInner(artifactId: string, scannerRuntime: ScannerRunti
     }
   }
 
-  async function scanStoredBytes(digest: string): Promise<boolean> {
+  async function scanStoredBytes(
+    digest: string,
+    opts: { allowMissing?: boolean } = {},
+  ): Promise<boolean> {
     if (scannedBlobDigests.has(digest)) return true;
     scannedBlobDigests.add(digest);
     return withSpan("scan.bytes", { "artifact.digest": digest }, async (span) => {
@@ -251,7 +255,8 @@ async function processScanInner(artifactId: string, scannerRuntime: ScannerRunti
       if (!stat) {
         span.setAttribute("scan.bytes.available", false);
         addSpanEvent("scan.bytes_missing", { "artifact.digest": digest });
-        return false;
+        if (opts.allowMissing) return false;
+        throw new Error(`blob bytes missing for artifact ${digest}`);
       }
       span.setAttributes({
         "scan.bytes.available": true,
@@ -301,9 +306,8 @@ async function processScanInner(artifactId: string, scannerRuntime: ScannerRunti
         try {
           malwareFindings = await scanStoredByteStream(digest, path);
         } catch (err) {
-          if (err instanceof Error && err.message.includes("SCAN_MAX_BYTES")) throw err;
           addSpanEvent("scan.bytes_read_failed", { "artifact.digest": digest });
-          return false;
+          throw err;
         }
         scannedBytePayload = true;
         found.push(...malwareFindings);
@@ -334,42 +338,65 @@ async function processScanInner(artifactId: string, scannerRuntime: ScannerRunti
     });
   }
 
-  async function scanOciManifestReferences(
-    digest: string,
-    seen = new Set<string>(),
-  ): Promise<number | null> {
-    return withSpan("scan.oci_manifest", { "artifact.digest": digest }, async (span) => {
-      if (seen.has(digest)) {
-        span.setAttribute("scan.oci_manifest.seen", true);
-        return 0;
-      }
-      seen.add(digest);
-      const [manifest] = await db
-        .select({ raw: ociManifests.raw })
-        .from(ociManifests)
-        .where(and(eq(ociManifests.repositoryId, repoId), eq(ociManifests.digest, digest)))
-        .limit(1);
-      if (!manifest) {
-        span.setAttribute("scan.oci_manifest.found", false);
-        return null;
-      }
-      span.setAttribute("scan.oci_manifest.found", true);
-      const refs = ociManifestReferences(manifest.raw);
-      span.setAttributes({
-        "scan.oci_manifest.blob_refs": refs.blobs.length,
-        "scan.oci_manifest.manifest_refs": refs.manifests.length,
+  async function scanOciManifestReferences(digest: string): Promise<number | null> {
+    const seen = new Set<string>();
+    const queue = [digest];
+    let next = 0;
+    let rootFound = false;
+    let referenceCount = 0;
+
+    async function scanQueuedManifest(manifestDigest: string): Promise<void> {
+      return withSpan("scan.oci_manifest", { "artifact.digest": manifestDigest }, async (span) => {
+        if (seen.has(manifestDigest)) {
+          span.setAttribute("scan.oci_manifest.seen", true);
+          return;
+        }
+        seen.add(manifestDigest);
+        const [manifest] = await db
+          .select({ raw: ociManifests.raw })
+          .from(ociManifests)
+          .where(
+            and(eq(ociManifests.repositoryId, repoId), eq(ociManifests.digest, manifestDigest)),
+          )
+          .limit(1);
+        if (!manifest) {
+          span.setAttribute("scan.oci_manifest.found", false);
+          return;
+        }
+        if (manifestDigest === digest) rootFound = true;
+        span.setAttribute("scan.oci_manifest.found", true);
+        const refs = ociManifestReferences(manifest.raw);
+        span.setAttributes({
+          "scan.oci_manifest.blob_refs": refs.blobs.length,
+          "scan.oci_manifest.manifest_refs": refs.manifests.length,
+        });
+        referenceCount += refs.blobs.length + refs.manifests.length;
+        await mapWithBoundedConcurrency(refs.blobs, OCI_REFERENCE_SCAN_CONCURRENCY, (blobDigest) =>
+          scanReferencedBytes(() => scanStoredBytes(blobDigest)),
+        );
+        for (const childDigest of refs.manifests) {
+          if (!seen.has(childDigest)) queue.push(childDigest);
+        }
+        span.setAttribute("scan.oci_manifest.reference_count", referenceCount);
       });
-      let referenceCount = refs.blobs.length + refs.manifests.length;
-      await mapWithBoundedConcurrency(refs.blobs, OCI_REFERENCE_SCAN_CONCURRENCY, (blobDigest) =>
-        scanReferencedBytes(() => scanStoredBytes(blobDigest)),
-      );
-      const manifestReferenceCounts = await mapWithBoundedConcurrency(
-        refs.manifests,
-        OCI_REFERENCE_SCAN_CONCURRENCY,
-        (manifestDigest) => scanOciManifestReferences(manifestDigest, seen),
-      );
-      for (const count of manifestReferenceCounts) {
-        referenceCount += count ?? 0;
+    }
+
+    await Promise.all(
+      Array.from({ length: OCI_REFERENCE_SCAN_CONCURRENCY }, async () => {
+        while (next < queue.length) {
+          const index = next;
+          next += 1;
+          const manifestDigest = queue[index];
+          if (manifestDigest)
+            await scanReferencedManifests(() => scanQueuedManifest(manifestDigest));
+        }
+      }),
+    );
+
+    if (!rootFound) return null;
+    return withSpan("scan.oci_manifest_summary", { "artifact.digest": digest }, async (span) => {
+      if (seen.has(digest)) {
+        span.setAttribute("scan.oci_manifest.unique_count", seen.size);
       }
       span.setAttribute("scan.oci_manifest.reference_count", referenceCount);
       return referenceCount;
@@ -393,7 +420,9 @@ async function processScanInner(artifactId: string, scannerRuntime: ScannerRunti
     return version?.deletedAt != null;
   }
 
-  const scannedDirectBytes = await scanStoredBytes(art.digest);
+  const scannedDirectBytes = await scanStoredBytes(art.digest, {
+    allowMissing: OCI_FORMATS.has(repoFormat),
+  });
   let scannedOciManifest = false;
   let ociReferenceCount = 0;
   if (!scannedDirectBytes && OCI_FORMATS.has(repoFormat)) {

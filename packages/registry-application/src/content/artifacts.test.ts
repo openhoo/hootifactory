@@ -60,7 +60,7 @@ describe("serveBlobIfClean", () => {
     expect(await res.text()).toBe("BYTES");
   });
 
-  test("a clean artifact redirects to a public blob URL when requested", async () => {
+  test("a clean artifact stays server-mediated even when a public blob URL is available", async () => {
     const res = await serveBlobWithScanGate(
       ctxForBlobResponse("https://cdn.example.test/blob"),
       {
@@ -71,10 +71,10 @@ describe("serveBlobIfClean", () => {
       },
       async () => false,
     );
-    expect(res.status).toBe(302);
-    expect(res.headers.get("location")).toBe("https://cdn.example.test/blob");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("location")).toBeNull();
     expect(res.headers.get("content-disposition")).toBe('attachment; filename="sha256_deadbeef"');
-    expect(await res.text()).toBe("");
+    expect(await res.text()).toBe("BYTES");
   });
 
   test("a clean artifact falls back to streaming when no public blob URL is available", async () => {

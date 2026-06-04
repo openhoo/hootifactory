@@ -17,13 +17,6 @@ type BlobResponseOptions = {
   notModified?: () => Response | null;
   redirect?: boolean;
 };
-type ScanPolicyCacheEntry = {
-  expiresAt: number;
-  promise: Promise<ScanPolicyRow[]>;
-};
-
-const SCAN_POLICY_CACHE_TTL_MS = 5_000;
-const scanPolicyCache = new Map<string, ScanPolicyCacheEntry>();
 
 function attachmentFilename(digest: string): string {
   return digest.replace(/[^A-Za-z0-9._-]/g, "_");
@@ -38,16 +31,6 @@ function blobResponseHeaders(ctx: unknown, opts: BlobResponseOptions): Record<st
     "x-content-type-options": "nosniff",
     ...opts.extraHeaders,
   };
-}
-
-function publicBlobUrl(ctx: unknown, digest: string): string | null {
-  if (ctx && typeof ctx === "object" && "presignBlobGet" in ctx) {
-    return (
-      (ctx as { presignBlobGet?: (digest: string) => string | null }).presignBlobGet?.(digest) ??
-      null
-    );
-  }
-  return blobStore.publicPresignGet(digest);
 }
 
 export async function isArtifactBlocked(
@@ -87,22 +70,13 @@ export async function areAllArtifactsBlocked(
 }
 
 export function invalidateScanPolicyCache(orgId: string): void {
-  scanPolicyCache.delete(orgId);
+  void orgId;
 }
 
 function scanPolicyRowsForOrg(orgId: string): Promise<ScanPolicyRow[]> {
-  const now = Date.now();
-  const cached = scanPolicyCache.get(orgId);
-  if (cached && cached.expiresAt > now) return cached.promise;
-
-  const promise = db.select().from(scanPolicies).where(eq(scanPolicies.orgId, orgId)) as Promise<
+  return db.select().from(scanPolicies).where(eq(scanPolicies.orgId, orgId)) as Promise<
     ScanPolicyRow[]
   >;
-  scanPolicyCache.set(orgId, { expiresAt: now + SCAN_POLICY_CACHE_TTL_MS, promise });
-  promise.catch(() => {
-    if (scanPolicyCache.get(orgId)?.promise === promise) scanPolicyCache.delete(orgId);
-  });
-  return promise;
 }
 
 /**
@@ -131,16 +105,6 @@ export async function serveBlobWithScanGate(
   const notModified = opts.notModified?.();
   if (notModified) return notModified;
   const headers = blobResponseHeaders(ctx, opts);
-  const location = opts.redirect ? publicBlobUrl(ctx, opts.digest) : null;
-  if (location) {
-    return new Response(null, {
-      status: 302,
-      headers: {
-        ...headers,
-        location,
-      },
-    });
-  }
   const read =
     ctx && typeof ctx === "object" && "getBlob" in ctx
       ? (ctx as { getBlob?: (digest: string) => ConstructorParameters<typeof Response>[0] }).getBlob

@@ -33,7 +33,8 @@ export async function dispatchVirtual(
     async (span) => {
       if (!isReadMethod(req.method))
         throw Errors.unsupported({ reason: "writes are not allowed on virtual repositories" });
-      if (match.entry.handlerId === "serviceIndex") return adapterResponse(adapter, match, req, ctx);
+      if (match.entry.handlerId === "serviceIndex")
+        return adapterResponse(adapter, match, req, ctx);
       if (match.entry.handlerId === "search")
         return dispatchVirtualSearch(adapter, match, req, ctx);
       const metadataName = virtualMetadataPackageName(match);

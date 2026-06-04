@@ -100,22 +100,16 @@ async function deleteUnrecordedCasBlob(
 async function reclaimUnreferencedCasBlob(digest: string): Promise<boolean> {
   return db.transaction(async (tx) => {
     await lockDigestTx(tx, digest);
-    const [row] = await tx
-      .select({ digest: blobs.digest })
-      .from(blobs)
-      .where(
-        and(eq(blobs.digest, digest), eq(blobs.refCount, 0), eq(blobs.state, "pending_delete")),
-      )
-      .limit(1);
-    if (!row) return false;
-    await blobStore.delete(digest);
     const deleted = await tx
       .delete(blobs)
       .where(
         and(eq(blobs.digest, digest), eq(blobs.refCount, 0), eq(blobs.state, "pending_delete")),
       )
       .returning({ digest: blobs.digest });
-    return deleted.length > 0;
+    const deletedDigest = deleted[0]?.digest ?? null;
+    if (!deletedDigest) return false;
+    await blobStore.delete(deletedDigest);
+    return true;
   });
 }
 
@@ -282,9 +276,13 @@ export async function storeBlobWithRef(
     .where(and(eq(repositories.orgId, ctx.repo.orgId), eq(blobRefs.digest, digest)))
     .limit(1);
   if (!existingOrgRef) await assertStorageQuota(ctx, opts.data.byteLength);
-  const put = await blobStore.put(opts.data, digest);
+  let put: BlobPutResult | null = null;
   try {
-    return await db.transaction((tx) => commitUploadedBlobRefTx(tx, ctx, put, opts));
+    return await db.transaction(async (tx) => {
+      await lockDigestTx(tx, digest);
+      put = await blobStore.put(opts.data, digest);
+      return commitBlobPutTx(tx, ctx, put, opts);
+    });
   } catch (err) {
     await discardUncommittedBlobPut(ctx, put);
     throw err;
@@ -303,7 +301,12 @@ export async function storeBlobStreamWithRef(
 ): Promise<StoredBlob> {
   const put = await uploadBlobStream(opts.data, opts.expectedDigest);
   try {
-    return await db.transaction((tx) => commitUploadedBlobRefTx(tx, ctx, put, opts));
+    return await db.transaction(async (tx) => {
+      await lockDigestTx(tx, put.digest);
+      const stat = await blobStore.stat(put.digest);
+      if (!stat) throw Errors.blobUnknown({ digest: put.digest });
+      return commitBlobPutTx(tx, ctx, put, opts);
+    });
   } catch (err) {
     await discardUncommittedBlobPut(ctx, put);
     throw err;
@@ -315,6 +318,7 @@ export async function ensureBlobRef(
   ref: { digest: string; kind: BlobRefKind; scope: string },
 ): Promise<void> {
   await db.transaction(async (tx) => {
+    await lockDigestTx(tx, ref.digest);
     const [b] = await tx
       .select({ size: blobs.sizeBytes })
       .from(blobs)
@@ -383,7 +387,6 @@ export async function getBlobRef(
     size: row.size,
     get: () => blobStore.get(ref.digest),
     getRange: (start, end) => blobStore.getRange(ref.digest, start, end),
-    publicUrl: () => blobStore.publicPresignGet(ref.digest),
   };
 }
 

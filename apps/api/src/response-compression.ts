@@ -1,5 +1,10 @@
+import { promisify } from "node:util";
+import { gzip } from "node:zlib";
+
 const COMPRESSED_RESPONSE_CACHE_MAX_ENTRIES = 512;
 const COMPRESSED_RESPONSE_MAX_BYTES = 8 * 1024 * 1024;
+const COMPRESSED_RESPONSE_CONCURRENCY = 2;
+const gzipAsync = promisify(gzip);
 
 const COMPRESSIBLE_TEXT_TYPES = [
   "application/json",
@@ -17,6 +22,22 @@ const COMPRESSIBLE_REGISTRY_HANDLERS: Record<string, Set<string>> = {
 };
 
 const compressedResponseCache = new Map<string, Uint8Array>();
+let activeCompressions = 0;
+const compressionWaiters: Array<() => void> = [];
+
+async function acquireCompressionSlot(): Promise<() => void> {
+  while (activeCompressions >= COMPRESSED_RESPONSE_CONCURRENCY) {
+    await new Promise<void>((resolve) => compressionWaiters.push(resolve));
+  }
+  activeCompressions += 1;
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    activeCompressions = Math.max(0, activeCompressions - 1);
+    compressionWaiters.shift()?.();
+  };
+}
 
 export function clearCompressedResponseCacheForTest(): void {
   compressedResponseCache.clear();
@@ -91,25 +112,33 @@ export async function compressRegistryResponse(
   let compressed = compressedResponseCache.get(cacheKey);
   let rawBytes: ArrayBuffer | null = null;
   if (!compressed) {
-    rawBytes = await res.arrayBuffer();
-    if (rawBytes.byteLength > COMPRESSED_RESPONSE_MAX_BYTES) {
-      return new Response(rawBytes, {
-        status: res.status,
-        statusText: res.statusText,
-        headers: res.headers,
-      });
+    const release = await acquireCompressionSlot();
+    try {
+      compressed = compressedResponseCache.get(cacheKey);
+      if (!compressed) {
+        rawBytes = await res.arrayBuffer();
+        if (rawBytes.byteLength > COMPRESSED_RESPONSE_MAX_BYTES) {
+          return new Response(rawBytes, {
+            status: res.status,
+            statusText: res.statusText,
+            headers: res.headers,
+          });
+        }
+        compressed = new Uint8Array(await gzipAsync(Buffer.from(rawBytes)));
+        if (compressed.byteLength >= rawBytes.byteLength) {
+          const headers = new Headers(res.headers);
+          headers.set("content-length", String(rawBytes.byteLength));
+          return new Response(rawBytes, {
+            status: res.status,
+            statusText: res.statusText,
+            headers,
+          });
+        }
+        cacheCompressedResponse(cacheKey, compressed);
+      }
+    } finally {
+      release();
     }
-    compressed = Bun.gzipSync(rawBytes);
-    if (compressed.byteLength >= rawBytes.byteLength) {
-      const headers = new Headers(res.headers);
-      headers.set("content-length", String(rawBytes.byteLength));
-      return new Response(rawBytes, {
-        status: res.status,
-        statusText: res.statusText,
-        headers,
-      });
-    }
-    cacheCompressedResponse(cacheKey, compressed);
   }
 
   const headers = new Headers(res.headers);

@@ -181,7 +181,7 @@ export class DockerAdapter implements RegistryPlugin {
       "content-length": String(m.sizeBytes),
       etag,
     };
-    if (ref.kind === "digest") headers["cache-control"] = "public, max-age=31536000, immutable";
+    if (ref.kind === "digest") headers["cache-control"] = immutableRegistryBlobCacheControl(ctx);
     if (ifNoneMatch(req, etag)) {
       const { "content-length": _contentLength, ...notModifiedHeaders } = headers;
       return new Response(null, { status: 304, headers: notModifiedHeaders });
@@ -282,7 +282,6 @@ export class DockerAdapter implements RegistryPlugin {
       headOnly,
       get: () => blob.get(),
       getRange: (start, end) => blob.getRange(start, end),
-      redirectUrl: () => blob.publicUrl?.() ?? null,
     });
   }
 

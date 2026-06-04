@@ -91,11 +91,10 @@ describe("registry response compression", () => {
   });
 
   test("preserves small responses when gzip would be larger", async () => {
-    const response = await compressRegistryResponse(
-      gzipRequest(),
-      textResponse("v1.0.0\n"),
-      { format: "go", handlerId: "list" },
-    );
+    const response = await compressRegistryResponse(gzipRequest(), textResponse("v1.0.0\n"), {
+      format: "go",
+      handlerId: "list",
+    });
 
     expect(response.headers.get("content-encoding")).toBeNull();
     expect(response.headers.get("content-length")).toBe("7");

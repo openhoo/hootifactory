@@ -65,7 +65,7 @@ describe("request body guard", () => {
     }
   });
 
-  test("does not overwrite immutable cache headers for credentialed OCI digest paths", () => {
+  test("forces no-store for credentialed manifest responses but preserves blob immutability", () => {
     const digest = `sha256:${"a".repeat(64)}`;
     expect(
       securityHeadersForRequest(
@@ -74,7 +74,7 @@ describe("request body guard", () => {
           headers: { authorization: "Bearer token" },
         }),
       )["cache-control"],
-    ).toBeUndefined();
+    ).toBe("no-store");
     expect(
       securityHeadersForRequest(
         "development",

@@ -506,7 +506,7 @@ describe("Docker adapter contract", () => {
     expect(streamStores).toBe(1);
   });
 
-  test("digest-pinned manifests emit immutable validators and honor If-None-Match", async () => {
+  test("digest-pinned manifests use principal-aware immutable validators and honor If-None-Match", async () => {
     const ctx = createTestRegistryContext();
     ctx.repo = { ...ctx.repo, format: "docker", mountPath: "v2/acme/containers" };
     let blockChecks = 0;
@@ -535,7 +535,7 @@ describe("Docker adapter contract", () => {
 
     expect(first.status).toBe(200);
     expect(etag).toBe(`"${DIGEST}"`);
-    expect(first.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
+    expect(first.headers.get("cache-control")).toBe("private, max-age=31536000, immutable");
     expect(first.headers.get("docker-content-digest")).toBe(DIGEST);
     await expect(first.text()).resolves.toBe(RAW_MANIFEST);
 
@@ -549,7 +549,7 @@ describe("Docker adapter contract", () => {
 
     expect(cached.status).toBe(304);
     expect(cached.headers.get("etag")).toBe(`"${DIGEST}"`);
-    expect(cached.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
+    expect(cached.headers.get("cache-control")).toBe("private, max-age=31536000, immutable");
     expect(cached.headers.get("content-length")).toBeNull();
     await expect(cached.text()).resolves.toBe("");
     expect(blockChecks).toBe(2);
