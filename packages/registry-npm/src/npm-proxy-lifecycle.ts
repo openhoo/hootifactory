@@ -30,6 +30,7 @@ export async function handleNpmProxyIngest(
 
   const scope = pkgName.startsWith("@") ? (pkgName.split("/")[0] ?? null) : null;
   let pkg = await ctx.data.packages.findByName(pkgName);
+  const ingestedVersions = new Map<string, { id: string; packageId: string; version: string }>();
   for (const [version, manifestRaw] of Object.entries(packument.versions ?? {})) {
     if (!isValidNpmVersion(version)) continue;
     const proxyManifest = normalizeNpmProxyManifest(pkgName, version, manifestRaw);
@@ -51,12 +52,13 @@ export async function handleNpmProxyIngest(
         mountPath: ctx.repo.mountPath,
         packageName: pkgName,
       });
-      await ctx.data.versions.upsert({
+      const versionId = await ctx.data.versions.upsert({
         package: pkg,
         version,
         metadata: { manifest, dist: existingDist },
         sizeBytes: existingDist.size,
       });
+      ingestedVersions.set(version, { id: versionId, packageId: pkg.id, version });
       continue;
     }
 
@@ -82,7 +84,7 @@ export async function handleNpmProxyIngest(
       mountPath: ctx.repo.mountPath,
     });
     manifest.dist = manifestDist;
-    const { stored } = await ctx.data.versions.upsertWithBlobRef({
+    const { stored, versionId } = await ctx.data.versions.upsertWithBlobRef({
       package: pkg,
       version,
       metadata: { manifest, dist },
@@ -107,6 +109,7 @@ export async function handleNpmProxyIngest(
       },
     });
     if (stored.digest !== dist.blobDigest) throw new Error("stored npm tarball digest mismatch");
+    ingestedVersions.set(version, { id: versionId, packageId: pkg.id, version });
     await ctx.enqueueScan({
       digest: stored.digest,
       name: pkgName,
@@ -118,9 +121,7 @@ export async function handleNpmProxyIngest(
   if (!pkg) return false;
   await ctx.data.tags.replace(
     pkg,
-    await resolveNpmProxyDistTags(packument["dist-tags"] ?? {}, (version) =>
-      findVersion(ctx, pkg, version),
-    ),
+    resolveNpmProxyDistTags(packument["dist-tags"] ?? {}, ingestedVersions),
   );
   return true;
 }
@@ -165,25 +166,15 @@ async function fetchVerifiedNpmTarball(input: {
   return upstreamDistMatchesBytes(input.upstreamDist, tarball) ? tarball : null;
 }
 
-export async function resolveNpmProxyDistTags(
+export function resolveNpmProxyDistTags(
   distTags: Record<string, string>,
-  resolveVersion: (
-    version: string,
-  ) => Promise<{ id: string; packageId: string; version: string } | null>,
-): Promise<Map<string, { id: string; packageId: string; version: string }>> {
+  versionsByName: ReadonlyMap<string, { id: string; packageId: string; version: string }>,
+): Map<string, { id: string; packageId: string; version: string }> {
   const desiredTags = new Map<string, { id: string; packageId: string; version: string }>();
   for (const [tag, version] of Object.entries(distTags)) {
     if (!isValidDistTag(tag) || typeof version !== "string") continue;
-    const row = await resolveVersion(version);
+    const row = versionsByName.get(version);
     if (row) desiredTags.set(tag, row);
   }
   return desiredTags;
-}
-
-async function findVersion(
-  ctx: RegistryRequestContext,
-  pkg: { id: string; orgId: string; repositoryId: string; name: string },
-  version: string,
-): Promise<{ id: string; packageId: string; version: string } | null> {
-  return ctx.data.versions.findLive(pkg, version);
 }
