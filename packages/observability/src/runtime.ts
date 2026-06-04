@@ -21,6 +21,7 @@ import {
   ATTR_SERVICE_VERSION,
 } from "@opentelemetry/semantic-conventions";
 import { INSTRUMENTATION_NAME } from "./constants";
+import { resetOtelLogger } from "./logger";
 import { resetInstruments } from "./metrics";
 import { endpointFor, parseKeyValueList } from "./otel-helpers";
 import type { ObservabilityOptions, ObservabilityRuntime, ServiceLogContext } from "./types";
@@ -94,6 +95,7 @@ export function initializeObservability(options: ObservabilityOptions): Observab
   logs.setGlobalLoggerProvider(loggerProvider);
 
   resetInstruments();
+  resetOtelLogger();
   runtime = {
     disabled: false,
     forceFlush: async () => {
@@ -123,6 +125,7 @@ export async function shutdownObservability(): Promise<void> {
   runtime = null;
   serviceLogContext = null;
   resetInstruments();
+  resetOtelLogger();
 }
 
 export function currentServiceLogContext(): ServiceLogContext | null {

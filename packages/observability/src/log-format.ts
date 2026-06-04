@@ -20,9 +20,17 @@ export function attributesForMeta(meta: unknown): Attributes {
   if (meta instanceof Error) {
     return exceptionAttributes(meta);
   }
+  return attributesForSanitizedMeta(sanitizeForJson(meta), error);
+}
+
+export function attributesForSanitizedMeta(meta: unknown, error?: Error): Attributes {
+  if (meta === undefined || meta === null) return error ? exceptionAttributes(error) : {};
   const objectMeta = objectLike(meta);
   if (!objectMeta) {
-    return { "meta.value": String(meta) };
+    return {
+      ...(error ? exceptionAttributes(error) : {}),
+      "meta.value": String(meta),
+    };
   }
 
   const attrs: Attributes = {};
@@ -32,10 +40,7 @@ export function attributesForMeta(meta: unknown): Attributes {
     if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
       attrs[`meta.${key}`] = value;
     } else if (value != null) {
-      attrs[`meta.${key}`] = truncate(
-        safeJsonStringify(sanitizeForJson(value)),
-        MAX_META_ATTRIBUTE_LENGTH,
-      );
+      attrs[`meta.${key}`] = truncate(safeJsonStringify(value), MAX_META_ATTRIBUTE_LENGTH);
     }
   }
   return attrs;

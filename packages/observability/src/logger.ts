@@ -3,10 +3,27 @@ import { context } from "@opentelemetry/api";
 import { logs } from "@opentelemetry/api-logs";
 import { INSTRUMENTATION_NAME, LOG_LEVELS } from "./constants";
 import { currentCorrelationContext } from "./correlation";
-import { attributesForMeta, errorForMeta, safeJsonStringify, sanitizeForJson } from "./log-format";
+import {
+  attributesForMeta,
+  attributesForSanitizedMeta,
+  errorForMeta,
+  safeJsonStringify,
+  sanitizeForJson,
+} from "./log-format";
 import { severityNumberFor } from "./otel-helpers";
 import { currentServiceLogContext } from "./runtime";
 import type { AppLogger, LogLevel } from "./types";
+
+let otelLogger: ReturnType<typeof logs.getLogger> | null = null;
+
+function getOtelLogger(): ReturnType<typeof logs.getLogger> {
+  otelLogger ??= logs.getLogger(INSTRUMENTATION_NAME, env.OTEL_SERVICE_VERSION);
+  return otelLogger;
+}
+
+export function resetOtelLogger(): void {
+  otelLogger = null;
+}
 
 function emit(level: LogLevel, msg: string, meta?: unknown): void {
   if (LOG_LEVELS[level] < LOG_LEVELS[env.LOG_LEVEL]) return;
@@ -35,20 +52,26 @@ function emit(level: LogLevel, msg: string, meta?: unknown): void {
   if (current.attributes) {
     for (const [key, value] of Object.entries(current.attributes)) line[key] = value;
   }
-  if (meta !== undefined) line.meta = sanitizeForJson(meta);
+  const sanitizedMeta = meta !== undefined ? sanitizeForJson(meta) : undefined;
+  if (sanitizedMeta !== undefined) line.meta = sanitizedMeta;
 
   console.log(safeJsonStringify(line));
 
-  const otelLogger = logs.getLogger(INSTRUMENTATION_NAME, env.OTEL_SERVICE_VERSION);
+  const otelLogger = getOtelLogger();
   const severityNumber = severityNumberFor(level);
-  if (otelLogger.enabled({ context: context.active(), severityNumber })) {
+  const activeContext = context.active();
+  if (otelLogger.enabled({ context: activeContext, severityNumber })) {
+    const metaAttributes =
+      meta instanceof Error
+        ? attributesForMeta(meta)
+        : attributesForSanitizedMeta(sanitizedMeta, error);
     otelLogger.emit({
       timestamp: now,
       observedTimestamp: now,
       severityNumber,
       severityText: level.toUpperCase(),
       body: msg,
-      context: context.active(),
+      context: activeContext,
       attributes: {
         "log.level": level,
         ...(serviceLogContext
@@ -61,7 +84,7 @@ function emit(level: LogLevel, msg: string, meta?: unknown): void {
         ...(current.correlationId ? { "correlation.id": current.correlationId } : {}),
         ...(current.traceId ? { trace_id: current.traceId } : {}),
         ...(current.spanId ? { span_id: current.spanId } : {}),
-        ...attributesForMeta(meta),
+        ...metaAttributes,
       },
       exception: error,
     });
