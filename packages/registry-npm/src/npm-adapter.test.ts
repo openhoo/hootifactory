@@ -20,6 +20,12 @@ const searchMatch = {
   path: "/-/v1/search",
 } satisfies RouteMatch;
 
+const packumentMatch = {
+  entry: { method: "GET", pattern: "/:pkg+", handlerId: "packument" },
+  params: { pkg: "pkg" },
+  path: "pkg",
+} satisfies RouteMatch;
+
 const tarballMatch = {
   entry: { method: "GET", pattern: "/:pkg+/-/:filename", handlerId: "tarball" },
   params: { pkg: "@scope/pkg", filename: "pkg-1.2.3-beta.1.tgz" },
@@ -163,6 +169,59 @@ describe("npm adapter contract", () => {
     expect(perPackageTagReads).toBe(0);
     expect(searchVersionReads).toBe(1);
     expect(batchedTagReads).toBe(1);
+  });
+
+  test("packument responses reuse cached bodies and etags", async () => {
+    const adapter = new NpmAdapter();
+    const ctx = createTestRegistryContext();
+    let fullVersionReads = 0;
+    let fingerprintReads = 0;
+
+    ctx.data.packages.findByName = async (name) => {
+      expect(name).toBe("pkg");
+      return fullPackageRow("pkg_1", "pkg");
+    };
+    ctx.data.tags.listLive = async () => ({ latest: "1.0.0" });
+    ctx.data.versions.listLiveFingerprints = async () => {
+      fingerprintReads += 1;
+      return [{ version: "1.0.0", updatedAt: new Date("2026-01-01T00:00:00.000Z") }];
+    };
+    ctx.data.versions.listLive = async () => {
+      fullVersionReads += 1;
+      return [
+        {
+          ...versionRow("pkg_1", "1.0.0", new Date("2026-01-01T00:00:00.000Z")),
+          metadata: {
+            manifest: { name: "pkg", version: "1.0.0", description: "cached" },
+          },
+        },
+      ];
+    };
+
+    const first = await adapter.handle(
+      packumentMatch,
+      new Request("https://registry.test/pkg"),
+      ctx,
+    );
+    const etag = first.headers.get("etag");
+    expect(first.status).toBe(200);
+    expect(etag).toMatch(/^".+"$/);
+    expect(await first.json()).toMatchObject({ description: "cached" });
+    expect(fullVersionReads).toBe(1);
+
+    const metadata = await adapter.generateMetadata("pkg", ctx);
+    expect(JSON.parse(String(metadata?.body))).toMatchObject({ description: "cached" });
+    expect(fullVersionReads).toBe(1);
+
+    const cached = await adapter.handle(
+      packumentMatch,
+      new Request("https://registry.test/pkg", { headers: { "if-none-match": etag ?? "" } }),
+      ctx,
+    );
+    expect(cached.status).toBe(304);
+    expect(cached.headers.get("etag")).toBe(etag);
+    expect(fullVersionReads).toBe(1);
+    expect(fingerprintReads).toBe(3);
   });
 
   test("tarball lookup derives the version and avoids scanning live versions", async () => {

@@ -15,6 +15,7 @@ import {
   type SearchQuery,
   type SearchResult,
   serveRegistryBlob,
+  textEtag,
   textResponseWithEtag,
 } from "@hootifactory/registry";
 import { parseNpmDistTag, parseNpmDistTagRequestBody } from "./npm-dist-tags";
@@ -41,6 +42,15 @@ function parseNpmName(name: string): string {
     code: "NAME_INVALID",
     message: "invalid package name",
   });
+}
+
+const PACKUMENT_CONTENT_TYPE = "application/json; charset=utf-8";
+const PACKUMENT_CACHE_MAX_ENTRIES = 512;
+
+interface CachedPackument {
+  token: string;
+  body: string;
+  etag: string;
 }
 
 export class NpmAdapter implements RegistryPlugin {
@@ -85,6 +95,7 @@ export class NpmAdapter implements RegistryPlugin {
     ])
     .build();
   private readonly delegate = delegateRegistryPlugin(this.plugin);
+  private readonly packumentCache = new Map<string, CachedPackument>();
 
   routes = this.delegate.routes;
 
@@ -132,6 +143,46 @@ export class NpmAdapter implements RegistryPlugin {
     return ctx.data.tags.listLive(pkg);
   }
 
+  private async packumentToken(
+    ctx: RegistryRequestContext,
+    pkg: RegistryPackageHandle,
+    tags: Record<string, string>,
+  ): Promise<string> {
+    const versions = await ctx.data.versions.listLiveFingerprints(pkg);
+    return JSON.stringify({
+      tags: Object.entries(tags).sort(([a], [b]) => a.localeCompare(b)),
+      versions: versions.map((version) => [version.version, version.updatedAt.toISOString()]),
+    });
+  }
+
+  private packumentCacheKey(ctx: RegistryRequestContext, pkg: RegistryPackageHandle): string {
+    return `${ctx.repo.id}:${pkg.id}`;
+  }
+
+  private cachedPackument(
+    ctx: RegistryRequestContext,
+    pkg: RegistryPackageHandle,
+    token: string,
+  ): CachedPackument | null {
+    const cached = this.packumentCache.get(this.packumentCacheKey(ctx, pkg));
+    return cached?.token === token ? cached : null;
+  }
+
+  private cachePackument(
+    ctx: RegistryRequestContext,
+    pkg: RegistryPackageHandle,
+    token: string,
+    body: string,
+  ): CachedPackument {
+    const cached = { token, body, etag: textEtag(body) };
+    this.packumentCache.set(this.packumentCacheKey(ctx, pkg), cached);
+    if (this.packumentCache.size > PACKUMENT_CACHE_MAX_ENTRIES) {
+      const oldest = this.packumentCache.keys().next().value;
+      if (oldest) this.packumentCache.delete(oldest);
+    }
+    return cached;
+  }
+
   private whoamiUsername(ctx: RegistryRequestContext): string {
     const principal = ctx.principal;
     if (principal.kind === "user") return principal.username;
@@ -149,11 +200,25 @@ export class NpmAdapter implements RegistryPlugin {
     name = parseNpmName(name);
     const pkg = await this.findPackage(ctx, name);
     if (!pkg) return null;
-    const versions = await this.liveVersionsFor(ctx, pkg);
     const tags = await this.distTags(ctx, pkg);
+    const token = await this.packumentToken(ctx, pkg, tags);
+    const cached = this.cachedPackument(ctx, pkg, token);
+    if (cached) {
+      return {
+        contentType: PACKUMENT_CONTENT_TYPE,
+        body: cached.body,
+      };
+    }
+    const versions = await this.liveVersionsFor(ctx, pkg);
+    const packed = this.cachePackument(
+      ctx,
+      pkg,
+      token,
+      JSON.stringify(buildPackument(name, versions, tags)),
+    );
     return {
-      contentType: "application/json; charset=utf-8",
-      body: JSON.stringify(buildPackument(name, versions, tags)),
+      contentType: PACKUMENT_CONTENT_TYPE,
+      body: packed.body,
     };
   }
 
@@ -181,10 +246,24 @@ export class NpmAdapter implements RegistryPlugin {
     name = parseNpmName(name);
     const pkg = await this.findPackage(ctx, name);
     if (!pkg) return Response.json({ error: "Not found" }, { status: 404 });
-    const versions = await this.liveVersionsFor(ctx, pkg);
     const tags = await this.distTags(ctx, pkg);
-    const body = JSON.stringify(buildPackument(name, versions, tags));
-    return textResponseWithEtag(req, body, { "content-type": "application/json; charset=utf-8" });
+    const token = await this.packumentToken(ctx, pkg, tags);
+    let cached = this.cachedPackument(ctx, pkg, token);
+    if (!cached) {
+      const versions = await this.liveVersionsFor(ctx, pkg);
+      cached = this.cachePackument(
+        ctx,
+        pkg,
+        token,
+        JSON.stringify(buildPackument(name, versions, tags)),
+      );
+    }
+    return textResponseWithEtag(
+      req,
+      cached.body,
+      { "content-type": PACKUMENT_CONTENT_TYPE },
+      cached.etag,
+    );
   }
 
   private async tarball(
