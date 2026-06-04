@@ -18,6 +18,7 @@
     "@fontsource-variable/hanken-grotesk": "^5.2.8",
     "@fontsource-variable/jetbrains-mono": "^5.2.8",
     "@hootifactory/contracts": "workspace:*",
+    "@hootifactory/types": "workspace:*",
     "@tanstack/react-query": "^5.100.14",
     "@tanstack/react-router": "^1.170.10",
     "class-variance-authority": "^0.7.1",

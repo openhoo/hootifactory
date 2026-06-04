@@ -1,3 +1,4 @@
+import { ROLE_NAMES } from "@hootifactory/types";
 import { z } from "zod";
 
 /**
@@ -77,7 +78,7 @@ const originList = z
     return [...new Set(origins)];
   });
 
-const roleName = z.enum(["viewer", "developer", "admin", "owner"]);
+const roleName = z.enum(ROLE_NAMES);
 
 const orgSlug = z
   .string()

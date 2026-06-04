@@ -1,11 +1,12 @@
+import { REPO_KINDS, ROLE_NAMES, VISIBILITIES } from "@hootifactory/types";
 import { pgEnum } from "drizzle-orm/pg-core";
 
-export const repoKindEnum = pgEnum("repo_kind", ["hosted", "proxy", "virtual"]);
+export const repoKindEnum = pgEnum("repo_kind", REPO_KINDS);
 
-export const visibilityEnum = pgEnum("visibility", ["private", "public"]);
+export const visibilityEnum = pgEnum("visibility", VISIBILITIES);
 
 /** Fixed RBAC role matrix (resolved to permissions in code). */
-export const roleNameEnum = pgEnum("role_name", ["viewer", "developer", "admin", "owner"]);
+export const roleNameEnum = pgEnum("role_name", ROLE_NAMES);
 
 export const tokenTypeEnum = pgEnum("token_type", ["personal", "robot"]);
 

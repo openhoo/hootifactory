@@ -1,3 +1,4 @@
+import { ACTIONS, type Action } from "@hootifactory/types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { KeyRound } from "lucide-react";
 import { useState } from "react";
@@ -23,7 +24,7 @@ export function TokensPage() {
   const [secret, setSecret] = useState("");
   const [grantResource, setGrantResource] = useState<"org" | "repository">("org");
   const [repositoryPattern, setRepositoryPattern] = useState("*");
-  const [grantActions, setGrantActions] = useState<string[]>(["read", "write"]);
+  const [grantActions, setGrantActions] = useState<Action[]>(["read", "write"]);
 
   const tokensQ = useQuery({
     queryKey: ["tokens", selected?.id],
@@ -53,9 +54,9 @@ export function TokensPage() {
 
   const tokens = tokensQ.data?.tokens ?? [];
   const canSeeTokenOwners = selected?.role === "admin" || selected?.role === "owner";
-  const actions = ["read", "write", "delete", "admin"];
+  const actions = ACTIONS;
 
-  function toggleAction(action: string) {
+  function toggleAction(action: Action) {
     setGrantActions((current) =>
       current.includes(action) ? current.filter((a) => a !== action) : [...current, action],
     );

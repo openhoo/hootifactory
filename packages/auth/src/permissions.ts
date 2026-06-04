@@ -1,4 +1,5 @@
 import {
+  ACTIONS,
   type Action,
   isRoleName as isSharedRoleName,
   ROLE_NAMES,
@@ -12,8 +13,8 @@ export const ROLES: readonly RoleName[] = ROLE_NAMES;
 export const ROLE_ACTIONS: Record<RoleName, readonly Action[]> = {
   viewer: ["read"],
   developer: ["read", "write"],
-  admin: ["read", "write", "delete", "admin"],
-  owner: ["read", "write", "delete", "admin"],
+  admin: ACTIONS,
+  owner: ACTIONS,
 };
 
 export const ROLE_RANK: Record<RoleName, number> = {
