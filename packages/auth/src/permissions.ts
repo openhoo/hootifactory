@@ -1,4 +1,9 @@
-import { type Action, ROLE_NAMES, type RoleName } from "@hootifactory/types";
+import {
+  type Action,
+  isRoleName as isSharedRoleName,
+  ROLE_NAMES,
+  type RoleName,
+} from "@hootifactory/types";
 
 export type { Action, RoleName } from "@hootifactory/types";
 
@@ -23,7 +28,7 @@ export function roleAllows(role: RoleName, action: Action): boolean {
 }
 
 export function isRoleName(value: unknown): value is RoleName {
-  return typeof value === "string" && Object.hasOwn(ROLE_RANK, value);
+  return isSharedRoleName(value);
 }
 
 export function roleOutranks(candidate: RoleName, current: RoleName): boolean {

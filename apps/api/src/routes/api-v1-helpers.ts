@@ -29,12 +29,13 @@ import {
   getRepositoryById,
   listRepositoriesForOrg,
 } from "@hootifactory/registry-application/repositories";
+import type { Action, PolicyName } from "@hootifactory/types";
 import type { Context } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { describeRoute } from "hono-openapi";
 import type { AppEnv } from "../types";
 
-type ApiV1Action = "read" | "write" | "delete" | "admin";
+type ManagedPolicyName = Exclude<PolicyName, "*">;
 type ValidationResult<T> = { ok: true; data: T } | { ok: false; response: Response };
 
 export const PaginationQuerySchema = V1PaginationQuerySchema;
@@ -115,7 +116,7 @@ export function authorizationDenied(c: Context<AppEnv>, decision: Decision): Res
   );
 }
 
-export async function requireOrg(c: Context<AppEnv>, orgId: string, action: ApiV1Action) {
+export async function requireOrg(c: Context<AppEnv>, orgId: string, action: Action) {
   const decision = await authorize(c.get("principal"), action, { type: "org", orgId });
   if (decision.allowed) return undefined;
   return authorizationDenied(c, decision);
@@ -125,11 +126,7 @@ export async function repositoryById(repoId: string) {
   return getRepositoryById(repoId);
 }
 
-export async function authorizeRepository(
-  c: Context<AppEnv>,
-  repo: ResolvedRepo,
-  action: ApiV1Action,
-) {
+export async function authorizeRepository(c: Context<AppEnv>, repo: ResolvedRepo, action: Action) {
   const decision = await authorize(c.get("principal"), action, {
     type: "repository",
     orgId: repo.orgId,
@@ -144,7 +141,7 @@ export async function authorizeRepository(
 export async function requireRepository(
   c: Context<AppEnv>,
   repoId: string,
-  action: ApiV1Action,
+  action: Action,
 ): Promise<{ ok: true; repo: ResolvedRepo } | { ok: false; response: Response }> {
   const repo = await repositoryById(repoId);
   if (!repo)
@@ -161,7 +158,7 @@ export async function packageWithRepository(packageId: string) {
 export async function authorizePackage(
   c: Context<AppEnv>,
   row: PackageWithRepositoryRow,
-  action: ApiV1Action,
+  action: Action,
 ) {
   const decision = await authorize(c.get("principal"), action, {
     type: "package",
@@ -182,7 +179,7 @@ export async function artifactWithRepository(artifactId: string) {
 export async function authorizeArtifact(
   c: Context<AppEnv>,
   row: ArtifactWithRepositoryRow,
-  action: ApiV1Action,
+  action: Action,
 ) {
   const decision = await authorize(c.get("principal"), action, {
     type: "artifact",
@@ -215,8 +212,8 @@ export async function authorizePolicy(
   c: Context<AppEnv>,
   input: {
     orgId: string;
-    policy: "scan" | "quota" | "retention";
-    action: ApiV1Action;
+    policy: ManagedPolicyName;
+    action: Action;
     repo?: ResolvedRepo;
   },
 ) {

@@ -6,7 +6,13 @@ import {
 } from "@hootifactory/auth";
 import { isUniqueViolation } from "@hootifactory/core";
 import { type RegistryPlugin, type ResolvedRepo, registryPlugins } from "@hootifactory/registry";
-import type { RegistryModuleId, RepoKind, Visibility } from "@hootifactory/types";
+import {
+  isRepoKind,
+  isVisibility,
+  type RegistryModuleId,
+  type RepoKind,
+  type Visibility,
+} from "@hootifactory/types";
 import { isValidRepositoryName, isValidRepositoryNameForModule } from "./paths";
 import { createRepository } from "./repositories";
 
@@ -50,14 +56,6 @@ export type CreateRepositoryUseCaseResult =
       error: string;
     };
 
-function parseRepoKind(value: unknown): RepoKind | null {
-  return value === "hosted" || value === "proxy" || value === "virtual" ? value : null;
-}
-
-function parseVisibility(value: unknown): Visibility | null {
-  return value === "private" || value === "public" ? value : null;
-}
-
 export function resolveCreateRepositoryRequest(
   body: CreateRepositoryBodyInput,
   registry: RepositoryCapabilityRegistry = registryPlugins,
@@ -86,13 +84,13 @@ export function resolveCreateRepositoryRequest(
     };
   }
 
-  const kind = parseRepoKind(body.kind ?? "hosted");
-  if (!kind) {
+  const kind = body.kind ?? "hosted";
+  if (!isRepoKind(kind)) {
     return { ok: false, error: `unsupported repository kind '${String(body.kind)}'` };
   }
 
-  const visibility = parseVisibility(body.visibility ?? "private");
-  if (!visibility) {
+  const visibility = body.visibility ?? "private";
+  if (!isVisibility(visibility)) {
     return {
       ok: false,
       error: `unsupported repository visibility '${String(body.visibility)}'`,

@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import {
   ACTIONS,
+  isAction,
+  isPolicyName,
+  isRepoKind,
+  isRoleName,
+  isTokenTarget,
+  isVisibility,
   OCI_MEDIA_TYPES,
   type OciManifest,
   ociManifestReferences,
@@ -21,6 +27,21 @@ describe("shared type constants", () => {
     expect(ROLE_NAMES).toEqual(["viewer", "developer", "admin", "owner"]);
     expect(POLICY_NAMES).toEqual(["scan", "quota", "retention", "*"]);
     expect(TOKEN_TARGETS).toEqual(["self", "org"]);
+  });
+
+  test("narrows shared enum values through canonical guards", () => {
+    expect(isRepoKind("hosted")).toBe(true);
+    expect(isRepoKind("mirror")).toBe(false);
+    expect(isVisibility("public")).toBe(true);
+    expect(isVisibility("internal")).toBe(false);
+    expect(isAction("write")).toBe(true);
+    expect(isAction("publish")).toBe(false);
+    expect(isRoleName("developer")).toBe(true);
+    expect(isRoleName("superuser")).toBe(false);
+    expect(isPolicyName("retention")).toBe(true);
+    expect(isPolicyName("routing")).toBe(false);
+    expect(isTokenTarget("org")).toBe(true);
+    expect(isTokenTarget("repository")).toBe(false);
   });
 
   test("keeps OCI and Docker media type constants stable", () => {

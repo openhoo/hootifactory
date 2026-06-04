@@ -25,6 +25,34 @@ export type DenialCode =
   | "insufficient_role"
   | "forbidden";
 
+function isOneOf<const T extends readonly string[]>(values: T, value: unknown): value is T[number] {
+  return typeof value === "string" && values.includes(value);
+}
+
+export function isRepoKind(value: unknown): value is RepoKind {
+  return isOneOf(REPO_KINDS, value);
+}
+
+export function isVisibility(value: unknown): value is Visibility {
+  return isOneOf(VISIBILITIES, value);
+}
+
+export function isAction(value: unknown): value is Action {
+  return isOneOf(ACTIONS, value);
+}
+
+export function isRoleName(value: unknown): value is RoleName {
+  return isOneOf(ROLE_NAMES, value);
+}
+
+export function isPolicyName(value: unknown): value is PolicyName {
+  return isOneOf(POLICY_NAMES, value);
+}
+
+export function isTokenTarget(value: unknown): value is TokenTarget {
+  return isOneOf(TOKEN_TARGETS, value);
+}
+
 /** Legacy repository-scope token shape accepted by pre-v1 UI/API callers. */
 export interface TokenScope {
   repository: string;
