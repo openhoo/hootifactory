@@ -14,6 +14,24 @@ const CONTENT_SECURITY_POLICY = [
   "connect-src 'self'",
 ].join("; ");
 
+const SENSITIVE_CACHE_HEADERS = {
+  "cache-control": "no-store",
+  vary: "Authorization, Cookie, X-NuGet-ApiKey",
+};
+
+function isApiOrTokenPath(pathname: string): boolean {
+  return (
+    pathname === "/api" ||
+    pathname.startsWith("/api/") ||
+    pathname === "/token" ||
+    pathname.startsWith("/token/")
+  );
+}
+
+function hasRequestCredentials(headers: Headers): boolean {
+  return headers.has("authorization") || headers.has("cookie") || headers.has("x-nuget-apikey");
+}
+
 export function securityHeadersForNodeEnv(nodeEnv: string): Record<string, string> {
   return {
     "content-security-policy": CONTENT_SECURITY_POLICY,
@@ -26,9 +44,27 @@ export function securityHeadersForNodeEnv(nodeEnv: string): Record<string, strin
   };
 }
 
+export function securityHeadersForRequest(
+  nodeEnv: string,
+  request: Request,
+): Record<string, string> {
+  const pathname = new URL(request.url).pathname;
+  return {
+    ...securityHeadersForNodeEnv(nodeEnv),
+    ...(isApiOrTokenPath(pathname) || hasRequestCredentials(request.headers)
+      ? SENSITIVE_CACHE_HEADERS
+      : {}),
+  };
+}
+
 export const securityHeaders: MiddlewareHandler<AppEnv> = async (c, next) => {
-  for (const [name, value] of Object.entries(securityHeadersForNodeEnv(env.NODE_ENV))) {
-    c.header(name, value);
+  try {
+    await next();
+  } finally {
+    for (const [name, value] of Object.entries(
+      securityHeadersForRequest(env.NODE_ENV, c.req.raw),
+    )) {
+      c.header(name, value);
+    }
   }
-  await next();
 };

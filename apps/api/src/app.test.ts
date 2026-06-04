@@ -2,7 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { env } from "@hootifactory/config";
 import { app } from "./app";
-import { securityHeadersForNodeEnv } from "./middleware/security-headers";
+import {
+  securityHeadersForNodeEnv,
+  securityHeadersForRequest,
+} from "./middleware/security-headers";
 
 const uuidPattern = /^[0-9a-f-]{36}$/;
 
@@ -46,11 +49,34 @@ describe("request body guard", () => {
     expect(response.headers.get("content-security-policy")).toContain("object-src 'none'");
   });
 
+  test("prevents caching API, token, and credentialed responses", async () => {
+    const api = await app.fetch(new Request("http://localhost/api/auth/me"));
+    const token = await app.fetch(new Request("http://localhost/token"));
+    const credentialed = await app.fetch(
+      new Request("http://localhost/healthz", {
+        headers: { authorization: "Bearer invalid" },
+      }),
+    );
+
+    for (const response of [api, token, credentialed]) {
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      expect(response.headers.get("vary")).toBe("Authorization, Cookie, X-NuGet-ApiKey");
+    }
+  });
+
   test("enables HSTS only for production", () => {
     expect(securityHeadersForNodeEnv("development")["strict-transport-security"]).toBeUndefined();
     expect(securityHeadersForNodeEnv("production")["strict-transport-security"]).toBe(
       "max-age=63072000; includeSubDomains",
     );
+  });
+
+  test("leaves anonymous non-api responses cache-neutral", () => {
+    expect(
+      securityHeadersForRequest("development", new Request("http://localhost/healthz"))[
+        "cache-control"
+      ],
+    ).toBeUndefined();
   });
 
   test("rejects requests whose declared body exceeds the configured buffered upload ceiling", async () => {
