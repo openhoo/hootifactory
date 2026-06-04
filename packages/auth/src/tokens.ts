@@ -1,14 +1,6 @@
 import { BoundedLruCache } from "@hootifactory/core";
-import {
-  and,
-  apiTokens,
-  db,
-  desc,
-  eq,
-  type TokenGrant,
-  type TokenScope,
-  users,
-} from "@hootifactory/db";
+import { and, apiTokens, db, desc, eq, users } from "@hootifactory/db";
+import type { TokenGrant, TokenScope } from "@hootifactory/types";
 import type { RoleName } from "./permissions";
 import type { Principal } from "./principal";
 import { repositoryGrantsAsScopes } from "./scope";

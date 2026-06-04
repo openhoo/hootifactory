@@ -1,3 +1,11 @@
+import {
+  ACTIONS,
+  POLICY_NAMES,
+  REPO_KINDS,
+  ROLE_NAMES,
+  TOKEN_TARGETS,
+  VISIBILITIES,
+} from "@hootifactory/types";
 import { z } from "zod";
 
 const SHA256_DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
@@ -82,17 +90,11 @@ export const V1AssetListQuerySchema = V1PaginationQuerySchema.extend({
   digest: V1DigestSchema.describe("Limit assets to one content digest.").optional(),
 }).describe("Registry asset listing filters.");
 
-export const V1RoleNameSchema = z
-  .enum(["viewer", "developer", "admin", "owner"])
-  .describe("Role assigned by Hootifactory RBAC.");
-export const V1ActionSchema = z
-  .enum(["read", "write", "delete", "admin"])
-  .describe("Grant action.");
+export const V1RoleNameSchema = z.enum(ROLE_NAMES).describe("Role assigned by Hootifactory RBAC.");
+export const V1ActionSchema = z.enum(ACTIONS).describe("Grant action.");
 export type V1Action = z.output<typeof V1ActionSchema>;
-export const V1RepoKindSchema = z
-  .enum(["hosted", "proxy", "virtual"])
-  .describe("Repository behavior mode.");
-export const V1VisibilitySchema = z.enum(["private", "public"]).describe("Repository visibility.");
+export const V1RepoKindSchema = z.enum(REPO_KINDS).describe("Repository behavior mode.");
+export const V1VisibilitySchema = z.enum(VISIBILITIES).describe("Repository visibility.");
 export const V1RegistryModuleIdSchema = z
   .string()
   .trim()
@@ -171,9 +173,7 @@ export const V1TokenGrantSchema = z
     z
       .strictObject({
         resource: z.literal("policy").describe("Grant applies to policy management."),
-        policy: z
-          .enum(["scan", "quota", "retention", "*"])
-          .describe("Policy family covered by this grant."),
+        policy: z.enum(POLICY_NAMES).describe("Policy family covered by this grant."),
         repository: V1TokenPatternSchema.describe(
           "Optional repository name or wildcard.",
         ).optional(),
@@ -183,7 +183,7 @@ export const V1TokenGrantSchema = z
     z
       .strictObject({
         resource: z.literal("token").describe("Grant applies to token management."),
-        target: z.enum(["self", "org"]).describe("Whether the grant targets itself or org tokens."),
+        target: z.enum(TOKEN_TARGETS).describe("Whether the grant targets itself or org tokens."),
         actions: V1TokenActionsSchema,
       })
       .describe("Token-management grant."),

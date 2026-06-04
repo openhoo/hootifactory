@@ -4,6 +4,7 @@ import {
   getApiTokenById,
   getApiTokenWithOwner,
   principalActor,
+  resolveCreateApiTokenRequest,
   revokeToken,
   rotateToken,
   tokenResourceDecision,
@@ -36,7 +37,6 @@ import {
 import { audit } from "./http";
 import { tokenDto } from "./ui-dto";
 import { requireUserPrincipal } from "./ui-repository-access";
-import { resolveCreateTokenRequest } from "./ui-token-create";
 
 export function registerApiV1TokenRoutes(apiV1Router: Hono<AppEnv>) {
   apiV1Router.get(
@@ -101,7 +101,7 @@ export function registerApiV1TokenRoutes(apiV1Router: Hono<AppEnv>) {
         "invalid token request",
       );
       if (!parsedBody.ok) return parsedBody.response;
-      const request = resolveCreateTokenRequest(parsedBody.data);
+      const request = resolveCreateApiTokenRequest(parsedBody.data);
       const grant = await validateCreatedTokenGrant({
         principal: user.principal,
         orgId: params.data.orgId,

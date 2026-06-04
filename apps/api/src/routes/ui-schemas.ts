@@ -1,14 +1,24 @@
-import type { Action, TokenGrant, TokenScope } from "@hootifactory/auth";
 import { z } from "@hootifactory/core";
 import { isValidRepositoryPattern, SEVERITY_ORDER, type Severity } from "@hootifactory/scan-core";
+import {
+  ACTIONS,
+  type Action,
+  POLICY_NAMES,
+  REPO_KINDS,
+  ROLE_NAMES,
+  TOKEN_TARGETS,
+  type TokenGrant,
+  type TokenScope,
+  VISIBILITIES,
+} from "@hootifactory/types";
 
 export type ParsedTokenScope = TokenScope;
 export type ParsedTokenGrant = TokenGrant;
 
-const RoleNameSchema = z.enum(["viewer", "developer", "admin", "owner"]);
-const ActionSchema = z.enum(["read", "write", "delete", "admin"]);
-export const RepoKindSchema = z.enum(["hosted", "proxy", "virtual"]);
-export const VisibilitySchema = z.enum(["private", "public"]);
+const RoleNameSchema = z.enum(ROLE_NAMES);
+const ActionSchema = z.enum(ACTIONS);
+export const RepoKindSchema = z.enum(REPO_KINDS);
+export const VisibilitySchema = z.enum(VISIBILITIES);
 const PolicyModeSchema = z.enum(["audit", "enforce"]);
 const TokenTypeSchema = z.enum(["personal", "robot"]);
 const SeveritySchema = z.enum(Object.keys(SEVERITY_ORDER) as [Severity, ...Severity[]]);
@@ -117,13 +127,13 @@ export const TokenGrantSchema = z.discriminatedUnion("resource", [
   }),
   z.strictObject({
     resource: z.literal("policy"),
-    policy: z.enum(["scan", "quota", "retention", "*"]),
+    policy: z.enum(POLICY_NAMES),
     repository: TokenPatternSchema.optional(),
     actions: TokenActionsSchema,
   }),
   z.strictObject({
     resource: z.literal("token"),
-    target: z.enum(["self", "org"]),
+    target: z.enum(TOKEN_TARGETS),
     actions: TokenActionsSchema,
   }),
 ]);

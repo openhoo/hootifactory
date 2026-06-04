@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { DEFAULT_TOKEN_TTL_MS, resolveCreateTokenRequest } from "./ui-token-create";
+import { DEFAULT_TOKEN_TTL_MS, resolveCreateApiTokenRequest } from "./create-token-request";
 
 const now = new Date("2026-06-02T12:00:00.000Z");
 
-describe("create token request resolution", () => {
+describe("create API token request resolution", () => {
   test("defaults scopeless tokens to developer role and a 90-day expiry", () => {
-    const request = resolveCreateTokenRequest({ name: "ci", type: "personal", scopes: [] }, now);
+    const request = resolveCreateApiTokenRequest({ name: "ci", type: "personal", scopes: [] }, now);
 
     expect(request).toEqual({
       name: "ci",
@@ -17,7 +17,7 @@ describe("create token request resolution", () => {
   });
 
   test("does not add a role to explicitly scoped tokens", () => {
-    const request = resolveCreateTokenRequest(
+    const request = resolveCreateApiTokenRequest(
       {
         name: "reader",
         type: "robot",
@@ -37,14 +37,14 @@ describe("create token request resolution", () => {
   test("preserves explicit role and expiry choices", () => {
     const expiresAt = new Date("2026-07-01T00:00:00.000Z");
     expect(
-      resolveCreateTokenRequest(
+      resolveCreateApiTokenRequest(
         { name: "admin", type: "personal", scopes: [], role: "admin", expiresAt },
         now,
       ),
     ).toMatchObject({ requestedRole: "admin", expiresAt });
 
     expect(
-      resolveCreateTokenRequest(
+      resolveCreateApiTokenRequest(
         { name: "forever", type: "personal", scopes: [], expiresAt: null },
         now,
       ),

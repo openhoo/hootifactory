@@ -1,7 +1,8 @@
-export type { TokenGrant, TokenScope } from "@hootifactory/db";
+export type { TokenGrant, TokenScope } from "@hootifactory/types";
 export * from "./audit";
 export * from "./authorize";
 export * from "./can";
+export * from "./create-token-request";
 export * from "./email-tokens";
 export * from "./oidc";
 export * from "./organizations";

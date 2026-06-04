@@ -1,8 +1,8 @@
-import type { Action, RoleName } from "@hootifactory/types";
+import { type Action, ROLE_NAMES, type RoleName } from "@hootifactory/types";
 
 export type { Action, RoleName } from "@hootifactory/types";
 
-export const ROLES: readonly RoleName[] = ["viewer", "developer", "admin", "owner"];
+export const ROLES: readonly RoleName[] = ROLE_NAMES;
 
 export const ROLE_ACTIONS: Record<RoleName, readonly Action[]> = {
   viewer: ["read"],

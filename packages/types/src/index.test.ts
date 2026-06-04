@@ -1,13 +1,28 @@
 import { describe, expect, test } from "bun:test";
 import {
+  ACTIONS,
   OCI_MEDIA_TYPES,
   type OciManifest,
   ociManifestReferences,
   ociManifestReferencesFromValue,
+  POLICY_NAMES,
+  REPO_KINDS,
   type RegistryModuleId,
+  ROLE_NAMES,
+  TOKEN_TARGETS,
+  VISIBILITIES,
 } from "./index";
 
 describe("shared type constants", () => {
+  test("keeps shared RBAC and repository enum values stable", () => {
+    expect(REPO_KINDS).toEqual(["hosted", "proxy", "virtual"]);
+    expect(VISIBILITIES).toEqual(["private", "public"]);
+    expect(ACTIONS).toEqual(["read", "write", "delete", "admin"]);
+    expect(ROLE_NAMES).toEqual(["viewer", "developer", "admin", "owner"]);
+    expect(POLICY_NAMES).toEqual(["scan", "quota", "retention", "*"]);
+    expect(TOKEN_TARGETS).toEqual(["self", "org"]);
+  });
+
   test("keeps OCI and Docker media type constants stable", () => {
     expect(OCI_MEDIA_TYPES.manifestV1).toBe("application/vnd.oci.image.manifest.v1+json");
     expect(OCI_MEDIA_TYPES.dockerManifestV2).toBe(

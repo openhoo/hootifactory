@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { TokenScope } from "@hootifactory/db";
+import type { TokenScope } from "@hootifactory/types";
 import {
   grantGrants,
   patternMatches,

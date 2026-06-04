@@ -1,12 +1,5 @@
-import {
-  and,
-  db,
-  eq,
-  isNotNull,
-  repositories,
-  roleBindings,
-  type TokenGrant,
-} from "@hootifactory/db";
+import { and, db, eq, isNotNull, repositories, roleBindings } from "@hootifactory/db";
+import type { TokenGrant } from "@hootifactory/types";
 import { resolveUserRole } from "./authorize";
 import { type RoleName, roleAllows, roleOutranks } from "./permissions";
 import { scopeMayTargetRepo } from "./scope";

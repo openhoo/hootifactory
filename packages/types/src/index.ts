@@ -3,14 +3,20 @@ import { z } from "zod";
 
 export type RegistryModuleId = string;
 
-export type RepoKind = "hosted" | "proxy" | "virtual";
-export type Visibility = "private" | "public";
+export const REPO_KINDS = ["hosted", "proxy", "virtual"] as const;
+export type RepoKind = (typeof REPO_KINDS)[number];
+export const VISIBILITIES = ["private", "public"] as const;
+export type Visibility = (typeof VISIBILITIES)[number];
 
-export type Action = "read" | "write" | "delete" | "admin";
+export const ACTIONS = ["read", "write", "delete", "admin"] as const;
+export type Action = (typeof ACTIONS)[number];
 export type TokenAction = Action;
-export type RoleName = "viewer" | "developer" | "admin" | "owner";
-export type PolicyName = "scan" | "quota" | "retention" | "*";
-export type TokenTarget = "self" | "org";
+export const ROLE_NAMES = ["viewer", "developer", "admin", "owner"] as const;
+export type RoleName = (typeof ROLE_NAMES)[number];
+export const POLICY_NAMES = ["scan", "quota", "retention", "*"] as const;
+export type PolicyName = (typeof POLICY_NAMES)[number];
+export const TOKEN_TARGETS = ["self", "org"] as const;
+export type TokenTarget = (typeof TOKEN_TARGETS)[number];
 export type DenialCode =
   | "unauthenticated"
   | "cross_org"

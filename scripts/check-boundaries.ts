@@ -217,6 +217,7 @@ const rules: BoundaryRule[] = [
 const failures: string[] = [];
 
 await checkBoundaryRules();
+await checkRootPackageImports();
 await checkWorkspaceShape();
 await checkRegistryApplicationShape();
 await checkWorkspaceManifestDrift();
@@ -247,6 +248,55 @@ async function checkBoundaryRules(): Promise<void> {
 
 function isTestFile(path: string): boolean {
   return /\.test\.[cm]?[tj]sx?$/.test(path);
+}
+
+async function checkRootPackageImports(): Promise<void> {
+  for (const file of await sourceFilesUnder(["apps", "packages"])) {
+    const content = await Bun.file(file).text();
+    const relative = relativePath(repoRoot, file);
+    if (hasExactWorkspaceImport(content, "@hootifactory/registry-application")) {
+      failures.push(
+        `${relative} imports @hootifactory/registry-application root; use a feature-slice subpath`,
+      );
+    }
+    if (
+      hasExactWorkspaceImport(content, "@hootifactory/contracts") &&
+      !isApiV1RouteSource(relative)
+    ) {
+      failures.push(
+        `${relative} imports @hootifactory/contracts root outside API v1 routes; use @hootifactory/contracts/legacy for UI DTO/client code`,
+      );
+    }
+  }
+}
+
+async function sourceFilesUnder(roots: string[]): Promise<string[]> {
+  const files: string[] = [];
+  for (const root of roots) {
+    for await (const file of new Bun.Glob("*/src/**/*.{ts,tsx}").scan({
+      cwd: pathJoin(repoRoot, root),
+      absolute: true,
+      onlyFiles: true,
+    })) {
+      if (!file.includes("/coverage/")) files.push(file);
+    }
+  }
+  return files.sort();
+}
+
+function hasExactWorkspaceImport(content: string, packageName: string): boolean {
+  const pattern = new RegExp(
+    String.raw`\b(?:from|import)\s*(?:\(\s*)?["']${escapeRegExp(packageName)}["']`,
+  );
+  return pattern.test(content);
+}
+
+function isApiV1RouteSource(relative: string): boolean {
+  return /^apps\/api\/src\/routes\/api-v1(?:-|\.ts)/.test(relative);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 async function checkWorkspaceShape(): Promise<void> {

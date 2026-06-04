@@ -3,6 +3,7 @@ import {
   createApiToken,
   getApiTokenById,
   principalActor,
+  resolveCreateApiTokenRequest,
   revokeToken,
   tokenResourceDecision,
   validateCreatedTokenGrant,
@@ -15,7 +16,6 @@ import { audit, denied } from "./http";
 import { tokenDto } from "./ui-dto";
 import { requireUserPrincipal } from "./ui-repository-access";
 import { CreateTokenBodySchema } from "./ui-schemas";
-import { resolveCreateTokenRequest } from "./ui-token-create";
 
 export function registerTokenRoutes(router: Hono<AppEnv>): void {
   router.get("/orgs/:orgId/tokens", async (c) => {
@@ -61,7 +61,7 @@ export function registerTokenRoutes(router: Hono<AppEnv>): void {
 
     const parsedBody = await validateJsonBody(c, CreateTokenBodySchema, "invalid token request");
     if (!parsedBody.ok) return parsedBody.response;
-    const request = resolveCreateTokenRequest(parsedBody.data);
+    const request = resolveCreateApiTokenRequest(parsedBody.data);
 
     const grant = await validateCreatedTokenGrant({
       principal: p,

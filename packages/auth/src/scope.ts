@@ -1,4 +1,4 @@
-import type { TokenGrant, TokenScope } from "@hootifactory/db";
+import type { TokenGrant, TokenScope } from "@hootifactory/types";
 import type { Action } from "./permissions";
 import type { ResourceRef } from "./principal";
 
