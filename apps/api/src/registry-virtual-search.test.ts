@@ -154,4 +154,18 @@ describe("virtual registry search helpers", () => {
       parseNugetSearchBody(JSON.stringify({ totalHits: "1", data: [] }), "hosted", "virtual"),
     ).toBeNull();
   });
+
+  test("keeps NuGet search bodies unchanged when mount paths match", () => {
+    expect(
+      parseNugetSearchBody(
+        JSON.stringify({
+          data: [
+            { id: "package.one", registration: "/virtual/registration/package.one/index.json" },
+          ],
+        }),
+        "virtual",
+        "virtual",
+      )?.data?.[0]?.registration,
+    ).toBe("/virtual/registration/package.one/index.json");
+  });
 });

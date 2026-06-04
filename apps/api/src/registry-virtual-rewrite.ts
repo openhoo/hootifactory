@@ -11,7 +11,7 @@ function rewriteMountPathInText(
   memberMountPath: string,
   virtualMountPath: string,
 ): string {
-  return body.split(`/${memberMountPath}/`).join(`/${virtualMountPath}/`);
+  return body.replaceAll(`/${memberMountPath}/`, `/${virtualMountPath}/`);
 }
 
 function metadataHeadersWithoutContentLength(

@@ -107,7 +107,10 @@ export function parseNugetSearchBody(
   virtualMountPath: string,
 ): NugetSearchBody | null {
   try {
-    const rewritten = text.split(`/${memberMountPath}/`).join(`/${virtualMountPath}/`);
+    const rewritten =
+      memberMountPath === virtualMountPath
+        ? text
+        : text.replaceAll(`/${memberMountPath}/`, `/${virtualMountPath}/`);
     const parsed = NugetSearchBodySchema.safeParse(JSON.parse(rewritten));
     return parsed.success ? parsed.data : null;
   } catch {
