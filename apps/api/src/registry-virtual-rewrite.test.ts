@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
   metadataResponse,
+  metadataResponseEtag,
+  metadataResponseWithEtag,
   rewriteVirtualBody,
   rewriteVirtualMetadata,
   shouldRewriteVirtualBody,
@@ -81,5 +83,38 @@ describe("virtual registry response rewriting", () => {
     expect(res.headers.get("content-type")).toBe("application/json; charset=utf-8");
     expect(res.headers.get("content-length")).toBeNull();
     expect(res.headers.get("x-merged")).toBe("true");
+  });
+
+  test("emits validators for metadata responses and honors conditional requests", async () => {
+    const part = {
+      contentType: "application/json; charset=utf-8",
+      body: '{"name":"pkg"}',
+      headers: {
+        "content-length": "14",
+        "x-merged": "true",
+      },
+    };
+    const etag = metadataResponseEtag(part);
+
+    const res = metadataResponseWithEtag(new Request("https://registry.test/pkg"), part, etag);
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("etag")).toBe(etag);
+    expect(res.headers.get("content-type")).toBe("application/json; charset=utf-8");
+    expect(res.headers.get("content-length")).toBeNull();
+    expect(res.headers.get("x-merged")).toBe("true");
+    await expect(res.text()).resolves.toBe('{"name":"pkg"}');
+
+    const cached = metadataResponseWithEtag(
+      new Request("https://registry.test/pkg", {
+        headers: { "if-none-match": etag },
+      }),
+      part,
+      etag,
+    );
+
+    expect(cached.status).toBe(304);
+    expect(cached.headers.get("etag")).toBe(etag);
+    await expect(cached.text()).resolves.toBe("");
   });
 });

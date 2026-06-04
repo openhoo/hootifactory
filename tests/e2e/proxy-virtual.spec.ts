@@ -408,10 +408,20 @@ test.describe("virtual + proxy repositories (Dockerized real npm)", () => {
     publish(baseURL!, a.mountPath, token, pkg, "1.0.0", "first");
     publish(baseURL!, b.mountPath, token, pkg, "1.1.0", "second");
 
-    const packument = await (await owner.ctx.get(`/${v.mountPath}/${pkg}`)).json();
+    const packumentRes = await owner.ctx.get(`/${v.mountPath}/${pkg}`);
+    const etag = packumentRes.headers().etag;
+    expect(packumentRes.status()).toBe(200);
+    expect(etag).toMatch(/^".+"$/);
+    const packument = await packumentRes.json();
     expect(Object.keys(packument.versions)).toEqual(["1.0.0", "1.1.0"]);
     expect(packument.versions["1.1.0"].dist.tarball).toContain(`/${v.mountPath}/`);
     expect(packument.versions["1.1.0"].dist.tarball).not.toContain(`/${b.mountPath}/`);
+
+    const notModified = await owner.ctx.get(`/${v.mountPath}/${pkg}`, {
+      headers: { "if-none-match": etag },
+    });
+    expect(notModified.status()).toBe(304);
+    expect(notModified.headers().etag).toBe(etag);
   });
 
   test("virtual repo search merges readable member repos", async ({ baseURL }) => {

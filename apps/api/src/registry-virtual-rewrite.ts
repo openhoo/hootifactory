@@ -1,4 +1,4 @@
-import type { FormatMetadata } from "@hootifactory/registry";
+import { type FormatMetadata, textEtag, textResponseWithEtag } from "@hootifactory/registry";
 import { headersWithoutContentLength } from "./registry-utils";
 
 export function shouldRewriteVirtualBody(contentType: string): boolean {
@@ -55,4 +55,21 @@ export function metadataResponse(part: FormatMetadata): Response {
   headers.set("content-type", part.contentType);
   headers.delete("content-length");
   return new Response(part.body, { headers });
+}
+
+export function metadataResponseEtag(part: FormatMetadata): string {
+  const body = typeof part.body === "string" ? part.body : new TextDecoder().decode(part.body);
+  return textEtag(body);
+}
+
+export function metadataResponseWithEtag(
+  req: Request,
+  part: FormatMetadata,
+  etag = metadataResponseEtag(part),
+): Response {
+  const body = typeof part.body === "string" ? part.body : new TextDecoder().decode(part.body);
+  const headers = new Headers(part.headers);
+  headers.set("content-type", part.contentType);
+  headers.delete("content-length");
+  return textResponseWithEtag(req, body, Object.fromEntries(headers), etag);
 }
