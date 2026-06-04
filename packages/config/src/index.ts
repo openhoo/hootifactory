@@ -178,6 +178,12 @@ const EnvSchema = z
       .string()
       .refine((s) => /^postgres(ql)?:\/\//.test(s), "must be a postgres:// connection URL")
       .default("postgres://hootifactory:hootifactory@localhost:5432/hootifactory"),
+    DATABASE_POOL_MAX: positiveInt(20),
+    DATABASE_POOL_IDLE_TIMEOUT_SECONDS: positiveInt(30),
+    DATABASE_POOL_MAX_LIFETIME_SECONDS: positiveInt(30 * 60),
+    DATABASE_POOL_CONNECTION_TIMEOUT_SECONDS: positiveInt(10),
+    DATABASE_STATEMENT_TIMEOUT_MS: positiveInt(30_000),
+    DATABASE_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS: positiveInt(30_000),
 
     // Object storage (S3-compatible)
     S3_ENDPOINT: absoluteUrl.default("http://localhost:9000"),
@@ -245,6 +251,9 @@ const EnvSchema = z
     OSV_API_URL: absoluteUrl.default("https://api.osv.dev"),
     SCAN_SCRATCH_DIR: z.string().default("./scratch"),
     SCAN_MAX_BYTES: positiveInt(100 * 1024 * 1024),
+
+    // Queue (pg-boss)
+    PG_BOSS_POOL_MAX: positiveInt(5),
   })
   .superRefine((v, ctx) => {
     // Fail fast (never silently boot) when a production deployment still carries a

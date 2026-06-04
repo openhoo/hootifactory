@@ -29,6 +29,13 @@ describe("environment auth creation defaults", () => {
     expect(devEnv.AUTH_PASSWORD_RESET_TTL_SECONDS).toBe(30 * 60);
     expect(devEnv.AUTH_OIDC_LINK_TTL_SECONDS).toBe(15 * 60);
     expect(devEnv.EMAIL_ENABLED).toBe(false);
+    expect(devEnv.DATABASE_POOL_MAX).toBe(20);
+    expect(devEnv.DATABASE_POOL_IDLE_TIMEOUT_SECONDS).toBe(30);
+    expect(devEnv.DATABASE_POOL_MAX_LIFETIME_SECONDS).toBe(30 * 60);
+    expect(devEnv.DATABASE_POOL_CONNECTION_TIMEOUT_SECONDS).toBe(10);
+    expect(devEnv.DATABASE_STATEMENT_TIMEOUT_MS).toBe(30_000);
+    expect(devEnv.DATABASE_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS).toBe(30_000);
+    expect(devEnv.PG_BOSS_POOL_MAX).toBe(5);
     expect(devEnv.REGISTRY_MAX_UPLOAD_BYTES).toBe(100 * 1024 * 1024);
     expect(devEnv.REGISTRY_MAX_STAGED_UPLOAD_BYTES).toBe(100 * 1024 * 1024);
     expect(devEnv.REGISTRY_MAX_INFLIGHT_UPLOAD_BYTES).toBe(256 * 1024 * 1024);
@@ -142,6 +149,28 @@ describe("environment auth creation defaults", () => {
     expect(() => loadEnv({ REGISTRY_MAX_UPLOAD_BYTES: "-1" })).toThrow();
     expect(() => loadEnv({ REGISTRY_MAX_STAGED_UPLOAD_BYTES: "0" })).toThrow();
     expect(() => loadEnv({ REGISTRY_MAX_INFLIGHT_UPLOAD_BYTES: "0" })).toThrow();
+  });
+
+  test("database and queue pool configuration is positive integer based", () => {
+    const env = loadEnv({
+      DATABASE_POOL_MAX: "30",
+      DATABASE_POOL_IDLE_TIMEOUT_SECONDS: "45",
+      DATABASE_POOL_MAX_LIFETIME_SECONDS: "3600",
+      DATABASE_POOL_CONNECTION_TIMEOUT_SECONDS: "15",
+      DATABASE_STATEMENT_TIMEOUT_MS: "45000",
+      DATABASE_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS: "60000",
+      PG_BOSS_POOL_MAX: "7",
+    });
+    expect(env.DATABASE_POOL_MAX).toBe(30);
+    expect(env.DATABASE_POOL_IDLE_TIMEOUT_SECONDS).toBe(45);
+    expect(env.DATABASE_POOL_MAX_LIFETIME_SECONDS).toBe(3600);
+    expect(env.DATABASE_POOL_CONNECTION_TIMEOUT_SECONDS).toBe(15);
+    expect(env.DATABASE_STATEMENT_TIMEOUT_MS).toBe(45_000);
+    expect(env.DATABASE_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS).toBe(60_000);
+    expect(env.PG_BOSS_POOL_MAX).toBe(7);
+    expect(() => loadEnv({ DATABASE_POOL_MAX: "0" })).toThrow();
+    expect(() => loadEnv({ DATABASE_STATEMENT_TIMEOUT_MS: "0" })).toThrow();
+    expect(() => loadEnv({ PG_BOSS_POOL_MAX: "0" })).toThrow();
   });
 
   test("private registry upstreams require explicit non-production opt-in", () => {

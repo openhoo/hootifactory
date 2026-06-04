@@ -17,7 +17,10 @@ export async function getBoss(): Promise<PgBoss> {
   if (bossInstance) return bossInstance;
   if (!startPromise) {
     startPromise = (async () => {
-      const boss = new PgBoss(env.DATABASE_URL);
+      const boss = new PgBoss({
+        connectionString: env.DATABASE_URL,
+        max: env.PG_BOSS_POOL_MAX,
+      });
       boss.on("error", (err) => logger.error("pg-boss error", { error: err }));
       await withSpan("queue.start", {}, async () => {
         await boss.start();
