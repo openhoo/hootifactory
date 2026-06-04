@@ -1,5 +1,6 @@
 import {
   Errors,
+  type RegistryPackageHandle,
   type RegistryRequestContext,
   releaseRegistryBlobRef,
 } from "@hootifactory/registry";
@@ -40,7 +41,7 @@ export async function putOciManifest(
   await assertOciManifestBlobRefsExist(ctx, image, manifestPut.referencedBlobs);
 
   const pkg = await ctx.data.packages.findOrCreate({ name: image });
-  await assertReferencedOciManifestsExist(ctx, image, manifestPut.referencedManifests);
+  await assertReferencedOciManifestsExist(ctx, pkg, manifestPut.referencedManifests);
 
   const manifest = await ctx.data.oci.upsertManifest({
     digest: manifestPut.digest,
@@ -105,14 +106,16 @@ async function assertOciManifestBlobRefsExist(
 
 async function assertReferencedOciManifestsExist(
   ctx: RegistryRequestContext,
-  image: string,
+  pkg: RegistryPackageHandle,
   referencedManifests: string[],
 ): Promise<void> {
-  const missing: string[] = [];
-  for (const manifestDigest of referencedManifests) {
-    if (!(await resolveOciManifestForImage(ctx, image, manifestDigest)))
-      missing.push(manifestDigest);
-  }
+  if (referencedManifests.length === 0) return;
+  const present = await ctx.data.oci.listExistingManifestDigests({
+    package: pkg,
+    digests: referencedManifests,
+  });
+  const have = new Set(present);
+  const missing = referencedManifests.filter((digest) => !have.has(digest));
   if (missing.length > 0) throw Errors.manifestBlobUnknown({ missing });
 }
 

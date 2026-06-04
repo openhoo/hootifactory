@@ -17,6 +17,7 @@ const IMAGE_INDEX_MEDIA_TYPES = new Set<string>([
   OCI_MEDIA_TYPES.imageIndexV1,
   OCI_MEDIA_TYPES.dockerManifestListV2,
 ]);
+export const MAX_OCI_DESCRIPTOR_ARRAY_ITEMS = 4096;
 
 const TAG_RE = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$/;
 const NAME_RE =
@@ -141,6 +142,11 @@ export function validateDescriptor(value: unknown, field: string): OciDescriptor
 function validateDescriptorArray(value: unknown, field: string): OciDescriptor[] {
   if (value === undefined) return [];
   if (!Array.isArray(value)) throw Errors.manifestInvalid({ reason: `${field} must be an array` });
+  if (value.length > MAX_OCI_DESCRIPTOR_ARRAY_ITEMS) {
+    throw Errors.manifestInvalid({
+      reason: `${field} must contain at most ${MAX_OCI_DESCRIPTOR_ARRAY_ITEMS} descriptors`,
+    });
+  }
   return value.map((descriptor, i) => validateDescriptor(descriptor, `${field}[${i}]`));
 }
 

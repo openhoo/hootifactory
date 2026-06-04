@@ -83,6 +83,7 @@ function createTestDataService(): RegistryDataService {
       markUploadSessionAborted: () => Promise.resolve(),
       listMountSources: () => Promise.resolve([]),
       listExistingBlobRefDigests: () => Promise.resolve([]),
+      listExistingManifestDigests: () => Promise.resolve([]),
       blobRefExists: () => Promise.resolve(false),
       upsertManifest: () => unimplemented("data.oci.upsertManifest"),
       upsertTag: () => Promise.resolve(),

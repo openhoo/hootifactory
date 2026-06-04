@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { RegistryError } from "@hootifactory/registry";
 import { OCI_MEDIA_TYPES } from "@hootifactory/types";
 import {
   acceptsMediaType,
+  MAX_OCI_DESCRIPTOR_ARRAY_ITEMS,
   manifestMediaType,
   parseBlobRange,
   parseManifestRaw,
@@ -77,6 +79,31 @@ describe("OCI validation helpers", () => {
     expect(mediaType).toBe(OCI_MEDIA_TYPES.manifestV1);
     expect(() => validateManifest(manifest, mediaType)).not.toThrow();
     expect(() => validateManifest({ ...manifest, layers: undefined }, mediaType)).toThrow();
+  });
+
+  test("caps image-index descriptor arrays before manifest reference checks", () => {
+    const descriptor = {
+      mediaType: OCI_MEDIA_TYPES.manifestV1,
+      digest: "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      size: 1,
+    };
+    const manifest: Record<string, unknown> = {
+      schemaVersion: 2,
+      mediaType: OCI_MEDIA_TYPES.imageIndexV1,
+      manifests: Array.from({ length: MAX_OCI_DESCRIPTOR_ARRAY_ITEMS + 1 }, () => descriptor),
+    };
+
+    let thrown: unknown;
+    try {
+      validateManifest(manifest, OCI_MEDIA_TYPES.imageIndexV1);
+    } catch (err) {
+      thrown = err;
+    }
+
+    expect(thrown).toBeInstanceOf(RegistryError);
+    expect((thrown as RegistryError).detail).toEqual({
+      reason: `manifests must contain at most ${MAX_OCI_DESCRIPTOR_ARRAY_ITEMS} descriptors`,
+    });
   });
 
   test("parses stored manifest JSON as an object or falls back for referrer metadata", () => {

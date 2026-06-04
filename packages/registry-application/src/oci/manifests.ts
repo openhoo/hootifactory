@@ -64,6 +64,42 @@ export async function listExistingOciBlobRefDigests(
   return rows.map((row) => row.digest);
 }
 
+export async function listExistingOciManifestDigests(
+  ctx: RegistryRequestContext,
+  opts: { packageId: string; digests: string[] },
+): Promise<string[]> {
+  if (opts.digests.length === 0) return [];
+  const taggedRows = (await db
+    .select({ digest: ociManifests.digest })
+    .from(ociTags)
+    .innerJoin(ociManifests, eq(ociTags.manifestId, ociManifests.id))
+    .where(
+      and(
+        eq(ociTags.packageId, opts.packageId),
+        eq(ociManifests.repositoryId, ctx.repo.id),
+        inArray(ociManifests.digest, opts.digests),
+      ),
+    )) as OciDigestRow[];
+  const versionRows = (await db
+    .select({ digest: packageVersions.version })
+    .from(packageVersions)
+    .innerJoin(
+      ociManifests,
+      and(
+        eq(ociManifests.repositoryId, ctx.repo.id),
+        eq(ociManifests.digest, packageVersions.version),
+      ),
+    )
+    .where(
+      and(
+        eq(packageVersions.packageId, opts.packageId),
+        isNull(packageVersions.deletedAt),
+        inArray(packageVersions.version, opts.digests),
+      ),
+    )) as OciDigestRow[];
+  return [...new Set([...taggedRows, ...versionRows].map((row) => row.digest))];
+}
+
 export async function ociBlobRefExists(
   ctx: RegistryRequestContext,
   opts: { scope: string; digest: string },

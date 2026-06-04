@@ -371,6 +371,10 @@ export interface RegistryDataService {
     markUploadSessionAborted(input: { scope: string; uuid: string }): Promise<void>;
     listMountSources(digest: string): Promise<RegistryOciMountSourceRow[]>;
     listExistingBlobRefDigests(input: { scope: string; digests: string[] }): Promise<string[]>;
+    listExistingManifestDigests(input: {
+      package: RegistryPackageHandle;
+      digests: string[];
+    }): Promise<string[]>;
     blobRefExists(input: { scope: string; digest: string }): Promise<boolean>;
     upsertManifest(input: {
       digest: string;

@@ -25,6 +25,7 @@ import {
   deleteOciTag,
   deleteOciTagsForManifest,
   listExistingOciBlobRefDigests,
+  listExistingOciManifestDigests,
   listLiveOciManifestsForPackage,
   listOciSubjectManifests,
   listOciTags,
@@ -359,6 +360,11 @@ export function createRegistryDataService(ctx: RegistryRequestContext): Registry
       markUploadSessionAborted: (input) => markOciUploadSessionAborted(ctx, input),
       listMountSources: listOciMountSources,
       listExistingBlobRefDigests: (input) => listExistingOciBlobRefDigests(ctx, input),
+      listExistingManifestDigests: (input) =>
+        listExistingOciManifestDigests(ctx, {
+          packageId: packageId(ctx, input.package),
+          digests: input.digests,
+        }),
       blobRefExists: (input) => ociBlobRefExists(ctx, input),
       upsertManifest: (input) => upsertOciManifest(ctx, input),
       upsertTag: (input) => {
