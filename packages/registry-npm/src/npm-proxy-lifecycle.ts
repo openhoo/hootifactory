@@ -1,7 +1,6 @@
 import { type RegistryRequestContext, safeFetch } from "@hootifactory/registry";
-import { responseBytes, responseJson } from "./npm-http";
+import { responseJson } from "./npm-http";
 import {
-  computeNpmTarballDigests,
   type NpmTarballDigests,
   upstreamDistMatchesDigests,
   upstreamDistMatchesStored,
@@ -184,11 +183,10 @@ async function fetchVerifiedNpmTarball(input: {
     return null;
   }
   if (!response?.ok) return null;
-  const tarball = await responseBytes(response, input.ctx.limits.maxUploadBytes);
-  if (!tarball) return null;
-  const digests = computeNpmTarballDigests(tarball);
-  return upstreamDistMatchesDigests(input.upstreamDist, digests, tarball)
-    ? { tarball, digests }
+  const result = await responseBytesWithDigests(response, input.ctx.limits.maxUploadBytes);
+  if (!result) return null;
+  return upstreamDistMatchesDigests(input.upstreamDist, result.digests, result.tarball)
+    ? result
     : null;
 }
 
@@ -207,6 +205,60 @@ async function runWithConcurrency<T>(
       }
     }),
   );
+}
+
+async function responseBytesWithDigests(
+  res: Response,
+  maxBytes: number,
+): Promise<{ tarball: Uint8Array; digests: NpmTarballDigests } | null> {
+  const declared = Number(res.headers.get("content-length") ?? 0);
+  if (declared > maxBytes) return null;
+  const reader = res.body?.getReader();
+  if (!reader) {
+    return {
+      tarball: new Uint8Array(0),
+      digests: {
+        blobDigest: "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        shasum: "da39a3ee5e6b4b0d3255bfef95601890afd80709",
+        integrity:
+          "sha512-z4PhNX7vuL3xVChQ1m2AB9Yg5AULVxXcg/SpIdNs6c5H0NE8XYXysP+DGNKHfuwvY7kxvUdBeoGlODJ6+SfaPg==",
+      },
+    };
+  }
+
+  const sha256 = new Bun.CryptoHasher("sha256");
+  const sha1 = new Bun.CryptoHasher("sha1");
+  const sha512 = new Bun.CryptoHasher("sha512");
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => {});
+      return null;
+    }
+    sha256.update(value);
+    sha1.update(value);
+    sha512.update(value);
+    chunks.push(value);
+  }
+
+  const tarball = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    tarball.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return {
+    tarball,
+    digests: {
+      blobDigest: `sha256:${sha256.digest("hex")}`,
+      shasum: sha1.digest("hex"),
+      integrity: `sha512-${sha512.digest("base64")}`,
+    },
+  };
 }
 
 export function resolveNpmProxyDistTags(
