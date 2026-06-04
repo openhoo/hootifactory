@@ -1,5 +1,5 @@
-import type { ReadinessDependencyCheck } from "@hootifactory/registry-application";
-import { checkReadiness } from "@hootifactory/registry-application";
+import type { ReadinessDependencyCheck } from "@hootifactory/registry-application/runtime";
+import { checkReadiness } from "@hootifactory/registry-application/runtime";
 import { Hono } from "hono";
 import type { AppEnv } from "../types";
 

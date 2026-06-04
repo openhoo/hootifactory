@@ -1,73 +1,29 @@
-import type { RegistryModuleId, RepoKind, Visibility } from "@hootifactory/types";
+import type {
+  Action,
+  Decision,
+  Principal,
+  RegistryModuleId,
+  RepoKind,
+  ResourceRef,
+  Visibility,
+} from "@hootifactory/types";
 import type { RegistryDataService } from "./data";
 
-export type Action = "read" | "write" | "delete" | "admin";
-export type TokenAction = Action;
-export type RoleName = "viewer" | "developer" | "admin" | "owner";
-export type PolicyName = "scan" | "quota" | "retention" | "*";
-export type TokenTarget = "self" | "org";
-export type DenialCode =
-  | "unauthenticated"
-  | "cross_org"
-  | "not_member"
-  | "insufficient_scope"
-  | "insufficient_role"
-  | "forbidden";
+export type {
+  Action,
+  Decision,
+  DenialCode,
+  PolicyName,
+  RegistryAccess,
+  ResourceRef,
+  RoleName,
+  TokenAction,
+  TokenGrant,
+  TokenScope,
+  TokenTarget,
+} from "@hootifactory/types";
 
-export type TokenGrant =
-  | { resource: "org"; actions: TokenAction[] }
-  | { resource: "repository"; repository: string; actions: TokenAction[] }
-  | { resource: "package"; repository: string; package: string; actions: TokenAction[] }
-  | { resource: "artifact"; repository: string; artifact: string; actions: TokenAction[] }
-  | { resource: "policy"; policy: PolicyName; repository?: string; actions: TokenAction[] }
-  | { resource: "token"; target: TokenTarget; actions: TokenAction[] };
-
-export interface TokenScope {
-  repository: string;
-  actions: TokenAction[];
-}
-
-export interface RegistryAccess {
-  type: string;
-  name: string;
-  actions: string[];
-}
-
-export type RegistryPrincipal =
-  | { kind: "anonymous" }
-  | { kind: "user"; userId: string; username: string }
-  | {
-      kind: "token";
-      tokenId: string;
-      orgId: string;
-      ownerUserId: string | null;
-      ownerUsername?: string | null;
-      tokenName?: string;
-      grants: TokenGrant[];
-      scopes: TokenScope[];
-      role: RoleName | null;
-      isRobot: boolean;
-    }
-  | { kind: "registryToken"; subject: string; access: RegistryAccess[] };
-
-export interface ResourceRef {
-  type: "org" | "repository" | "package" | "artifact" | "policy" | "token" | "system";
-  orgId?: string;
-  repositoryId?: string;
-  repositoryName?: string;
-  packageName?: string;
-  artifactRef?: string;
-  policy?: PolicyName;
-  tokenTarget?: TokenTarget;
-  tokenId?: string;
-  visibility?: Visibility;
-}
-
-export interface Decision {
-  allowed: boolean;
-  code?: DenialCode;
-  reason?: string;
-}
+export type RegistryPrincipal = Principal;
 
 export interface ResolvedRepo {
   id: string;

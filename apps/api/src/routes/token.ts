@@ -6,7 +6,7 @@ import {
   setActiveSpanAttributes,
   withSpan,
 } from "@hootifactory/observability";
-import { REGISTRY_TOKEN_SERVICE } from "@hootifactory/registry-application";
+import { REGISTRY_TOKEN_SERVICE } from "@hootifactory/registry-application/content";
 import type { Context } from "hono";
 import { Hono } from "hono";
 import type { AppEnv } from "../types";

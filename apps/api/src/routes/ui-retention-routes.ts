@@ -1,4 +1,4 @@
-import { applyRetention } from "@hootifactory/registry-application";
+import { applyRetention } from "@hootifactory/registry-application/repositories";
 import type { Hono } from "hono";
 import type { AppEnv } from "../types";
 import { validateJsonBody } from "../validation";

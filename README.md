@@ -5,7 +5,7 @@ A self-hostable, **multi-format artifact & package manager** — an open-source 
 - **Formats:** npm, Docker, OCI, PyPI, Helm, Go, Cargo, NuGet (8 total). npm,
   Docker, OCI, PyPI, Helm, Go, Cargo and NuGet are verified end-to-end against
   Dockerized real clients.
-- **Repository kinds:** hosted, remote (pull-through proxy/cache), virtual (group/aggregate).
+- **Repository kinds:** hosted, proxy (pull-through cache), virtual (group/aggregate).
 - **Supply-chain security:** dependency/malware scanning (heuristic + optional
   Syft/Grype/Trivy/OSV/ClamAV), policy gates (audit / enforce) that quarantine or
   block on findings, async scan workers (pg-boss).
@@ -70,9 +70,17 @@ apps/
   scan-worker/  async scanning pipeline (pg-boss consumer)
   web/          management UI (React + Vite + Tailwind + shadcn)
 packages/
-  config/  types/  db/  storage/  core/  auth/  queue/  observability/  scan-core/
-  format-npm/  format-docker/  format-pypi/  ...
+  config/  types/  core/  db/  storage/  auth/  contracts/
+  registry/              protocol-neutral registry plugin contracts and helpers
+  registry-application/  platform use cases split by slice: routing, runtime,
+                         repositories, content, inventory, assets, governance, oci
+  registry-builtins/     built-in module registration
+  registry-npm/  registry-oci/  registry-pypi/  registry-go/  registry-cargo/  registry-nuget/
+  queue/  observability/  scan-core/  scanning/  email/
 ```
+
+`bun run check:boundaries` validates the workspace manifests, route-layer import
+boundaries, API v1 contract docs, and registry-application slice exports.
 
 ## Quick start (dev)
 
@@ -95,4 +103,6 @@ host. Use a production manifest with `NODE_ENV=production` and real secrets.
 For production bootstrap, set `SEED_USER` and `SEED_PASS` explicitly before `bun run db:seed`.
 Production seed runs do not mint or print an owner token unless `SEED_PRINT_TOKEN=true` is set.
 
-See `docs/` and the architecture plan for details.
+Start with this README and the package entry points above for architecture
+orientation; the automated boundary check is the source of truth for enforced
+module rules.

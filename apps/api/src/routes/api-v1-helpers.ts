@@ -1,10 +1,8 @@
 import {
-  type ApiTokenRow,
   authorize,
   createRequestAuthorizer,
   type Decision,
   httpStatusForDenial,
-  type Principal,
 } from "@hootifactory/auth";
 import {
   V1ArtifactIdParamsSchema,
@@ -22,13 +20,15 @@ import { z, zodIssueTree } from "@hootifactory/core";
 import type { ResolvedRepo } from "@hootifactory/registry";
 import {
   type ArtifactWithRepositoryRow,
-  countRepositoriesForOrg,
   getArtifactWithRepository,
   getPackageWithRepository,
+  type PackageWithRepositoryRow,
+} from "@hootifactory/registry-application/inventory";
+import {
+  countRepositoriesForOrg,
   getRepositoryById,
   listRepositoriesForOrg,
-  type PackageWithRepositoryRow,
-} from "@hootifactory/registry-application";
+} from "@hootifactory/registry-application/repositories";
 import type { Context } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { describeRoute } from "hono-openapi";
@@ -103,13 +103,6 @@ export async function validateJsonV1<T extends z.ZodType>(
 
 export function validatePagination(c: Context<AppEnv>) {
   return validateV1(c, PaginationQuerySchema, c.req.query(), "invalid pagination query");
-}
-
-export function principalActor(principal: Principal) {
-  return {
-    userId: principal.kind === "user" ? principal.userId : null,
-    tokenId: principal.kind === "token" ? principal.tokenId : null,
-  };
 }
 
 export function authorizationDenied(c: Context<AppEnv>, decision: Decision): Response {
@@ -234,19 +227,6 @@ export async function authorizePolicy(
     repositoryName: input.repo?.name,
     policy: input.policy,
     visibility: input.repo?.visibility,
-  });
-  if (decision.allowed) return undefined;
-  return authorizationDenied(c, decision);
-}
-
-export async function tokenResource(c: Context<AppEnv>, token: ApiTokenRow, action: ApiV1Action) {
-  const principal = c.get("principal");
-  const target = principal.kind === "token" && principal.tokenId === token.id ? "self" : "org";
-  const decision = await authorize(principal, action, {
-    type: "token",
-    orgId: token.orgId,
-    tokenId: token.id,
-    tokenTarget: target,
   });
   if (decision.allowed) return undefined;
   return authorizationDenied(c, decision);

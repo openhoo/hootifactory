@@ -2,7 +2,7 @@ export {
   isReadMethod,
   repoModuleSpanAttributes,
   repoSpanAttributes,
-} from "@hootifactory/registry-application";
+} from "@hootifactory/registry-application/runtime";
 
 export function headersWithoutContentLength(headers: Headers): Headers {
   const next = new Headers(headers);

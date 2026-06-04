@@ -13,5 +13,6 @@ export * from "./scope";
 export * from "./sessions";
 export * from "./throttle";
 export * from "./token-grants";
+export * from "./token-management";
 export * from "./tokens";
 export * from "./users";

@@ -12,7 +12,7 @@ import type {
   PaginationQuery,
   RegistryModuleDto,
   RepositoryDto,
-} from "./index";
+} from "./legacy";
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 const LegacyApiErrorBodySchema = z.looseObject({

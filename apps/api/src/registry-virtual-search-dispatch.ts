@@ -6,11 +6,11 @@ import {
   type RegistryRequestContext,
   type RouteMatch,
 } from "@hootifactory/registry";
+import { loadVirtualMembers } from "@hootifactory/registry-application/repositories";
 import {
   adapterResponseOrRegistryError,
-  loadVirtualMembers,
   repoSpanAttributes,
-} from "@hootifactory/registry-application";
+} from "@hootifactory/registry-application/runtime";
 import { authorizeVirtualMembers } from "./registry-virtual-member";
 
 export function dispatchVirtualSearch(

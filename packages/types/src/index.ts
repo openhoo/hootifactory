@@ -6,6 +6,88 @@ export type RegistryModuleId = string;
 export type RepoKind = "hosted" | "proxy" | "virtual";
 export type Visibility = "private" | "public";
 
+export type Action = "read" | "write" | "delete" | "admin";
+export type TokenAction = Action;
+export type RoleName = "viewer" | "developer" | "admin" | "owner";
+export type PolicyName = "scan" | "quota" | "retention" | "*";
+export type TokenTarget = "self" | "org";
+export type DenialCode =
+  | "unauthenticated"
+  | "cross_org"
+  | "not_member"
+  | "insufficient_scope"
+  | "insufficient_role"
+  | "forbidden";
+
+/** Legacy repository-scope token shape accepted by pre-v1 UI/API callers. */
+export interface TokenScope {
+  repository: string;
+  actions: TokenAction[];
+}
+
+export type TokenGrant =
+  | { resource: "org"; actions: TokenAction[] }
+  | { resource: "repository"; repository: string; actions: TokenAction[] }
+  | { resource: "package"; repository: string; package: string; actions: TokenAction[] }
+  | { resource: "artifact"; repository: string; artifact: string; actions: TokenAction[] }
+  | { resource: "policy"; policy: PolicyName; repository?: string; actions: TokenAction[] }
+  | { resource: "token"; target: TokenTarget; actions: TokenAction[] };
+
+/** An OCI Bearer-token access claim authorized at /token issue time. */
+export interface RegistryAccess {
+  type: string;
+  name: string;
+  actions: string[];
+}
+
+/** Normalized identity after authentication; every delivery adapter converges here. */
+export type Principal =
+  | { kind: "anonymous" }
+  | { kind: "user"; userId: string; username: string }
+  | {
+      kind: "token";
+      tokenId: string;
+      orgId: string;
+      ownerUserId: string | null;
+      ownerUsername?: string | null;
+      tokenName?: string;
+      grants: TokenGrant[];
+      scopes: TokenScope[];
+      role: RoleName | null;
+      isRobot: boolean;
+    }
+  | { kind: "registryToken"; subject: string; access: RegistryAccess[] };
+
+export type ResourceType =
+  | "org"
+  | "repository"
+  | "package"
+  | "artifact"
+  | "policy"
+  | "token"
+  | "system";
+
+export interface ResourceRef {
+  type: ResourceType;
+  /** Resolved from the DB, never trusted from a request path. */
+  orgId?: string;
+  repositoryId?: string;
+  /** Used for token-grant matching, e.g. "acme/app" or "@scope/pkg". */
+  repositoryName?: string;
+  packageName?: string;
+  artifactRef?: string;
+  policy?: PolicyName;
+  tokenTarget?: TokenTarget;
+  tokenId?: string;
+  visibility?: Visibility;
+}
+
+export interface Decision {
+  allowed: boolean;
+  code?: DenialCode;
+  reason?: string;
+}
+
 /** OCI / Docker manifest + config media types. */
 export const OCI_MEDIA_TYPES = {
   manifestV1: "application/vnd.oci.image.manifest.v1+json",

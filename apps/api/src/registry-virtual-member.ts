@@ -9,7 +9,7 @@ import type {
 import {
   buildRegistryRequestContext,
   repoSpanAttributes,
-} from "@hootifactory/registry-application";
+} from "@hootifactory/registry-application/runtime";
 import { authorizeRoute, type RouteAuthorization } from "./registry-auth";
 
 export interface AuthAttributeSpan {

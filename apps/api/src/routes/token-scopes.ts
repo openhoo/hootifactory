@@ -7,7 +7,7 @@ import {
 } from "@hootifactory/auth";
 import { z } from "@hootifactory/core";
 import type { ResolvedRepo } from "@hootifactory/registry";
-import { resolveRepository } from "@hootifactory/registry-application";
+import { resolveRepository } from "@hootifactory/registry-application/routing";
 
 export const TokenQuerySchema = z.strictObject({
   service: z.string().min(1).max(512).optional(),

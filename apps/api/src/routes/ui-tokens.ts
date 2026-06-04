@@ -1,16 +1,17 @@
 import {
-  authorize,
+  authorizeTokenCreation,
   createApiToken,
   getApiTokenById,
-  listOrgTokens,
-  listOrgTokensOwnedBy,
+  principalActor,
   revokeToken,
-  validateTokenGrant,
+  tokenResourceDecision,
+  validateCreatedTokenGrant,
+  visibleTokensForPrincipal,
 } from "@hootifactory/auth";
 import type { Hono } from "hono";
 import type { AppEnv } from "../types";
 import { uuidParams, validateJsonBody, validateParams } from "../validation";
-import { audit } from "./http";
+import { audit, denied } from "./http";
 import { tokenDto } from "./ui-dto";
 import { requireUserPrincipal } from "./ui-repository-access";
 import { CreateTokenBodySchema } from "./ui-schemas";
@@ -21,19 +22,10 @@ export function registerTokenRoutes(router: Hono<AppEnv>): void {
     const parsedParams = validateParams(c, uuidParams.orgId);
     if (!parsedParams.ok) return parsedParams.response;
     const { orgId } = parsedParams.data;
-    const user = requireUserPrincipal(c);
-    if (!user.ok) return user.response;
-    const p = user.principal;
-    const adminDecision = await authorize(p, "admin", { type: "org", orgId });
-    const readDecision = adminDecision.allowed
-      ? adminDecision
-      : await authorize(p, "read", { type: "org", orgId });
-    if (!readDecision.allowed) return c.json({ error: readDecision.reason }, 403);
-    const rows = adminDecision.allowed
-      ? await listOrgTokens(orgId)
-      : await listOrgTokensOwnedBy(orgId, p.userId);
+    const visible = await visibleTokensForPrincipal(c.get("principal"), orgId);
+    if (!visible.ok) return denied(c, visible.decision);
     return c.json({
-      tokens: rows.map((row) => tokenDto(row.token, row.ownerUsername)),
+      tokens: visible.value.map((row) => tokenDto(row.token, row.ownerUsername)),
     });
   });
 
@@ -41,24 +33,18 @@ export function registerTokenRoutes(router: Hono<AppEnv>): void {
     const parsedParams = validateParams(c, uuidParams.orgToken);
     if (!parsedParams.ok) return parsedParams.response;
     const { orgId, tokenId } = parsedParams.data;
-    const user = requireUserPrincipal(c);
-    if (!user.ok) return user.response;
-    const p = user.principal;
     const tok = await getApiTokenById(tokenId);
     if (!tok || tok.orgId !== orgId) return c.json({ error: "token not found" }, 404);
-    const isOwner = tok.ownerUserId === p.userId;
-    if (!isOwner) {
-      const decision = await authorize(p, "admin", { type: "org", orgId });
-      if (!decision.allowed) return c.json({ error: "forbidden" }, 403);
-    }
-    await revokeToken(tokenId, { userId: p.userId });
+    const decision = await tokenResourceDecision(c.get("principal"), tok, "delete");
+    if (!decision.allowed) return denied(c, decision);
+    await revokeToken(tokenId, principalActor(c.get("principal")), "revoked via ui");
     audit({
       orgId,
       action: "token.revoke",
       result: "success",
       resourceType: "token",
       resourceId: tokenId,
-      principal: p,
+      principal: c.get("principal"),
     });
     return c.json({ ok: true });
   });
@@ -70,20 +56,20 @@ export function registerTokenRoutes(router: Hono<AppEnv>): void {
     const user = requireUserPrincipal(c);
     if (!user.ok) return user.response;
     const p = user.principal;
-    const decision = await authorize(p, "read", { type: "org", orgId });
-    if (!decision.allowed) return c.json({ error: decision.reason }, 403);
+    const decision = await authorizeTokenCreation(p, orgId);
+    if (!decision.allowed) return denied(c, decision);
 
     const parsedBody = await validateJsonBody(c, CreateTokenBodySchema, "invalid token request");
     if (!parsedBody.ok) return parsedBody.response;
     const request = resolveCreateTokenRequest(parsedBody.data);
 
-    const grant = await validateTokenGrant({
-      userId: p.userId,
+    const grant = await validateCreatedTokenGrant({
+      principal: p,
       orgId,
       requestedRole: request.requestedRole,
       grants: request.grants,
     });
-    if (!grant.ok) return c.json({ error: grant.error }, 403);
+    if (!grant.ok) return denied(c, grant.decision);
 
     const { token, secret } = await createApiToken({
       orgId,

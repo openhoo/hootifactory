@@ -6,13 +6,13 @@ import {
   type RegistryRequestContext,
   type RouteMatch,
 } from "@hootifactory/registry";
+import { loadVirtualMembers } from "@hootifactory/registry-application/repositories";
 import {
   adapterResponse,
   adapterResponseOrRegistryError,
   isReadMethod,
-  loadVirtualMembers,
   repoSpanAttributes,
-} from "@hootifactory/registry-application";
+} from "@hootifactory/registry-application/runtime";
 import { authorizeVirtualMembers, virtualMemberSkipReason } from "./registry-virtual-member";
 import { dispatchVirtualMetadata, virtualMetadataPackageName } from "./registry-virtual-metadata";
 import { virtualNotFound } from "./registry-virtual-response";

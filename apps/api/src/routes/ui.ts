@@ -1,12 +1,11 @@
-import {
-  createOrganizationWithOwner,
-  getOrganizationById,
-  listAccessibleOrgs,
-} from "@hootifactory/auth";
+import { createOrganizationWithOwner, listAccessibleOrgs } from "@hootifactory/auth";
 import { env } from "@hootifactory/config";
 import { isUniqueViolation } from "@hootifactory/core";
 import { registryPlugins } from "@hootifactory/registry";
-import { createRepository, listRepositoriesForOrg } from "@hootifactory/registry-application";
+import {
+  createRepositoryForPrincipal,
+  listRepositoriesForOrg,
+} from "@hootifactory/registry-application/repositories";
 import { Hono } from "hono";
 import type { AppEnv } from "../types";
 import { uuidParams, validateJsonBody, validateParams } from "../validation";
@@ -16,7 +15,6 @@ import { repositoryDto } from "./ui-dto";
 import { registerGovernanceRoutes } from "./ui-governance";
 import { requireOrgAccess, requireUserPrincipal } from "./ui-repository-access";
 import { registerRepositoryConfigRoutes } from "./ui-repository-config";
-import { resolveCreateRepositoryRequest } from "./ui-repository-create";
 import { CreateOrgBodySchema, CreateRepositoryBodySchema } from "./ui-schemas";
 import { registerTokenRoutes } from "./ui-tokens";
 
@@ -99,47 +97,29 @@ uiRouter.post("/orgs/:orgId/repositories", async (c) => {
   const parsedParams = validateParams(c, uuidParams.orgId);
   if (!parsedParams.ok) return parsedParams.response;
   const { orgId } = parsedParams.data;
-  const denied = await requireOrgAccess(c, orgId, "admin");
-  if (denied) return denied;
   const parsedBody = await validateJsonBody(
     c,
     CreateRepositoryBodySchema,
     "invalid repository request",
   );
   if (!parsedBody.ok) return parsedBody.response;
-  const resolvedRequest = resolveCreateRepositoryRequest(parsedBody.data);
-  if (!resolvedRequest.ok) return c.json({ error: resolvedRequest.error }, 400);
-  const request = resolvedRequest.request;
-  const org = await getOrganizationById(orgId);
-  if (!org) return c.json({ error: "org not found" }, 404);
-
-  try {
-    const repo = await createRepository({
-      orgId,
-      orgSlug: org.slug,
-      name: request.name,
-      moduleId: request.moduleId,
-      module: request.module,
-      kind: request.kind,
-      visibility: request.visibility,
-      description: request.description,
-    });
-    audit({
-      orgId,
-      action: "repository.create",
-      result: "success",
-      resourceType: "repository",
-      resourceId: repo.id,
-      principal: c.get("principal"),
-      detail: { name: repo.name, moduleId: repo.moduleId, kind: repo.kind },
-    });
-    return c.json({ repository: repositoryDto(repo) }, 201);
-  } catch (err) {
-    if (isUniqueViolation(err)) {
-      return c.json({ error: `repository '${request.name}' already exists` }, 409);
-    }
-    throw err;
-  }
+  const created = await createRepositoryForPrincipal({
+    principal: c.get("principal"),
+    orgId,
+    body: parsedBody.data,
+  });
+  if (!created.ok) return c.json({ error: created.error }, created.status);
+  const { repo } = created;
+  audit({
+    orgId,
+    action: "repository.create",
+    result: "success",
+    resourceType: "repository",
+    resourceId: repo.id,
+    principal: c.get("principal"),
+    detail: { name: repo.name, moduleId: repo.moduleId, kind: repo.kind },
+  });
+  return c.json({ repository: repositoryDto(repo) }, 201);
 });
 
 registerTokenRoutes(uiRouter);

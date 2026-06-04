@@ -1,5 +1,5 @@
 import type { ApiTokenRow } from "@hootifactory/auth";
-import type { ApiTokenDto, RepositoryDto, WireTimestamp } from "@hootifactory/contracts";
+import type { ApiTokenDto, RepositoryDto, WireTimestamp } from "@hootifactory/contracts/legacy";
 import type { ResolvedRepo } from "@hootifactory/registry";
 
 type RepositoryRow = ResolvedRepo;

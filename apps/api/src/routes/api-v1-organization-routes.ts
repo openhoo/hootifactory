@@ -7,8 +7,7 @@ import {
   V1RepositoryListResponseSchema,
   V1RepositoryResponseSchema,
 } from "@hootifactory/contracts";
-import { isUniqueViolation } from "@hootifactory/core";
-import { createRepository } from "@hootifactory/registry-application";
+import { createRepositoryForPrincipal } from "@hootifactory/registry-application/repositories";
 import type { Hono } from "hono";
 import type { AppEnv } from "../types";
 import {
@@ -26,7 +25,6 @@ import {
 } from "./api-v1-helpers";
 import { audit } from "./http";
 import { repositoryDto } from "./ui-dto";
-import { resolveCreateRepositoryRequest } from "./ui-repository-create";
 
 export function registerApiV1OrganizationRoutes(apiV1Router: Hono<AppEnv>) {
   apiV1Router.get(
@@ -149,52 +147,31 @@ export function registerApiV1OrganizationRoutes(apiV1Router: Hono<AppEnv>) {
     async (c) => {
       const params = validateV1(c, OrgIdParamsSchema, c.req.param(), "invalid path parameters");
       if (!params.ok) return params.response;
-      const deniedResponse = await requireOrg(c, params.data.orgId, "admin");
-      if (deniedResponse) return deniedResponse;
       const parsedBody = await validateJsonV1(
         c,
         V1CreateRepositoryRequestSchema,
         "invalid repository request",
       );
       if (!parsedBody.ok) return parsedBody.response;
-      const resolvedRequest = resolveCreateRepositoryRequest(parsedBody.data);
-      if (!resolvedRequest.ok) {
-        return errorResponse(c, 400, "BAD_REQUEST", resolvedRequest.error);
+      const created = await createRepositoryForPrincipal({
+        principal: c.get("principal"),
+        orgId: params.data.orgId,
+        body: parsedBody.data,
+      });
+      if (!created.ok) {
+        return errorResponse(c, created.status, created.code, created.error);
       }
-      const org = await getOrganizationById(params.data.orgId);
-      if (!org) return errorResponse(c, 404, "NOT_FOUND", "organization not found");
-      try {
-        const repo = await createRepository({
-          orgId: params.data.orgId,
-          orgSlug: org.slug,
-          name: resolvedRequest.request.name,
-          moduleId: resolvedRequest.request.moduleId,
-          module: resolvedRequest.request.module,
-          kind: resolvedRequest.request.kind,
-          visibility: resolvedRequest.request.visibility,
-          description: resolvedRequest.request.description,
-        });
-        audit({
-          orgId: params.data.orgId,
-          action: "repository.create",
-          result: "success",
-          resourceType: "repository",
-          resourceId: repo.id,
-          principal: c.get("principal"),
-          detail: { name: repo.name, moduleId: repo.moduleId, kind: repo.kind },
-        });
-        return dataResponse(c, repositoryDto(repo), 201);
-      } catch (err) {
-        if (isUniqueViolation(err)) {
-          return errorResponse(
-            c,
-            409,
-            "CONFLICT",
-            `repository '${resolvedRequest.request.name}' already exists`,
-          );
-        }
-        throw err;
-      }
+      const { repo } = created;
+      audit({
+        orgId: params.data.orgId,
+        action: "repository.create",
+        result: "success",
+        resourceType: "repository",
+        resourceId: repo.id,
+        principal: c.get("principal"),
+        detail: { name: repo.name, moduleId: repo.moduleId, kind: repo.kind },
+      });
+      return dataResponse(c, repositoryDto(repo), 201);
     },
   );
 }

@@ -65,17 +65,6 @@ export async function adapterResponse(
         });
         return response;
       } catch (err) {
-        if (err instanceof RegistryError) {
-          const response = registryErrorToModuleResponse(adapter, err);
-          span.setAttribute("http.response.status_code", response.status);
-          logger.debug("registry adapter error", {
-            moduleId: adapter.id,
-            repo: ctx.repo.name,
-            handler: match.entry.handlerId,
-            code: err.code,
-          });
-          return response;
-        }
         if (isRegistryMiss(err)) {
           const response = registryErrorToModuleResponse(adapter, err);
           span.setAttribute("http.response.status_code", response.status);
@@ -84,6 +73,17 @@ export async function adapterResponse(
             "registry.error.message": err.message,
           });
           logger.debug("registry adapter miss", {
+            moduleId: adapter.id,
+            repo: ctx.repo.name,
+            handler: match.entry.handlerId,
+            code: err.code,
+          });
+          return response;
+        }
+        if (err instanceof RegistryError) {
+          const response = registryErrorToModuleResponse(adapter, err);
+          span.setAttribute("http.response.status_code", response.status);
+          logger.debug("registry adapter error", {
             moduleId: adapter.id,
             repo: ctx.repo.name,
             handler: match.entry.handlerId,

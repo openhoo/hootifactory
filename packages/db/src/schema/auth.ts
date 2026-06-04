@@ -1,3 +1,4 @@
+import type { TokenGrant } from "@hootifactory/types";
 import { sql } from "drizzle-orm";
 import {
   boolean,
@@ -17,47 +18,7 @@ import { authEmailTokenPurposeEnum, roleNameEnum, tokenTypeEnum } from "./enums"
 import { repositories } from "./repositories";
 import { organizations, users } from "./tenancy";
 
-export type TokenAction = "read" | "write" | "delete" | "admin";
-
-/** Legacy request shape accepted only by pre-v1 token routes. */
-export interface TokenScope {
-  repository: string;
-  actions: TokenAction[];
-}
-
-export type TokenGrant =
-  | {
-      resource: "org";
-      actions: TokenAction[];
-    }
-  | {
-      resource: "repository";
-      repository: string;
-      actions: TokenAction[];
-    }
-  | {
-      resource: "package";
-      repository: string;
-      package: string;
-      actions: TokenAction[];
-    }
-  | {
-      resource: "artifact";
-      repository: string;
-      artifact: string;
-      actions: TokenAction[];
-    }
-  | {
-      resource: "policy";
-      policy: "scan" | "quota" | "retention" | "*";
-      repository?: string;
-      actions: TokenAction[];
-    }
-  | {
-      resource: "token";
-      target: "self" | "org";
-      actions: TokenAction[];
-    };
+export type { TokenAction, TokenGrant, TokenScope } from "@hootifactory/types";
 
 /**
  * Opaque API tokens for CLI/registry clients. The secret is shown once at

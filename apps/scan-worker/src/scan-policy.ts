@@ -1,7 +1,7 @@
 import {
   type RegistryScanPolicyRow,
   resolveRegistryScanPolicy,
-} from "@hootifactory/registry-application";
+} from "@hootifactory/registry-application/governance";
 import {
   maxSeverity,
   type NormalizedFinding,

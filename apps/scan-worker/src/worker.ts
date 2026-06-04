@@ -8,10 +8,8 @@ import {
   withSpan,
 } from "@hootifactory/observability";
 import { createMaintenanceScheduler, intEnv } from "@hootifactory/queue";
-import {
-  reapExpiredOciUploadSessions,
-  sweepUnreferencedCasBlobs,
-} from "@hootifactory/registry-application";
+import { sweepUnreferencedCasBlobs } from "@hootifactory/registry-application/content";
+import { reapExpiredOciUploadSessions } from "@hootifactory/registry-application/oci";
 import { registerBuiltInRegistryPlugins } from "@hootifactory/registry-builtins";
 import { processScan, recordScanFailure, scannerRuntimeFromEnv } from "./pipeline";
 import { type ClaimedScanIntent, claimedScanIntentsFromExecute } from "./scan-outbox-rows";

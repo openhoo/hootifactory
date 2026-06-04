@@ -8,11 +8,11 @@ import {
   V1ScanPolicyResponseSchema,
 } from "@hootifactory/contracts";
 import {
-  applyRetention,
   getOrgQuota,
   setOrgQuota,
   upsertScanPolicy,
-} from "@hootifactory/registry-application";
+} from "@hootifactory/registry-application/governance";
+import { applyRetention } from "@hootifactory/registry-application/repositories";
 import type { Hono } from "hono";
 import type { AppEnv } from "../types";
 import {

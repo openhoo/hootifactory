@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   type RepositoryCapabilityRegistry,
   resolveCreateRepositoryRequest,
-} from "./ui-repository-create";
+} from "./repository-create";
 
 const registry = {
   has(moduleId) {
@@ -77,7 +77,10 @@ describe("create repository request resolution", () => {
   test("rejects unsupported modules and invalid names before capability checks", () => {
     expect(
       resolveCreateRepositoryRequest({ name: "packages", moduleId: "generic" }, registry),
-    ).toEqual({ ok: false, error: "unsupported registry module 'generic'" });
+    ).toEqual({
+      ok: false,
+      error: "unsupported registry module 'generic'",
+    });
 
     expect(
       resolveCreateRepositoryRequest({ name: "../packages", moduleId: "npm" }, registry),

@@ -1,15 +1,14 @@
 import {
-  type ApiTokenRow,
-  type ApiTokenWithOwner,
-  authorize,
+  authorizeTokenCreation,
   createApiToken,
   getApiTokenById,
   getApiTokenWithOwner,
-  listOrgTokens,
-  listOrgTokensOwnedBy,
+  principalActor,
   revokeToken,
   rotateToken,
-  validateTokenGrant,
+  tokenResourceDecision,
+  validateCreatedTokenGrant,
+  visibleTokensForPrincipal,
 } from "@hootifactory/auth";
 import {
   V1CreateTokenRequestSchema,
@@ -18,7 +17,7 @@ import {
   V1TokenResponseSchema,
   V1TokenSecretResponseSchema,
 } from "@hootifactory/contracts";
-import type { Context, Hono } from "hono";
+import type { Hono } from "hono";
 import type { AppEnv } from "../types";
 import {
   authorizationDenied,
@@ -29,9 +28,7 @@ import {
   OrgIdParamsSchema,
   OrgTokenParamsSchema,
   PaginationQuerySchema,
-  principalActor,
   TokenIdParamsSchema,
-  tokenResource,
   validateJsonV1,
   validatePagination,
   validateV1,
@@ -40,87 +37,6 @@ import { audit } from "./http";
 import { tokenDto } from "./ui-dto";
 import { requireUserPrincipal } from "./ui-repository-access";
 import { resolveCreateTokenRequest } from "./ui-token-create";
-
-async function authorizeTokenRotation(c: Context<AppEnv>, token: ApiTokenRow) {
-  const principal = c.get("principal");
-  if (principal.kind === "token" && principal.tokenId === token.id) {
-    return tokenResource(c, token, "write");
-  }
-  if (principal.kind === "user" && token.ownerUserId === principal.userId) {
-    const decision = await authorize(principal, "write", {
-      type: "token",
-      orgId: token.orgId,
-      tokenId: token.id,
-      tokenTarget: "self",
-    });
-    if (decision.allowed) return undefined;
-    return authorizationDenied(c, decision);
-  }
-  const decision = await authorize(principal, "admin", {
-    type: "token",
-    orgId: token.orgId,
-    tokenId: token.id,
-    tokenTarget: "org",
-  });
-  if (decision.allowed) return undefined;
-  return authorizationDenied(c, decision);
-}
-
-async function authorizeTokenRead(c: Context<AppEnv>, token: ApiTokenRow) {
-  const principal = c.get("principal");
-  if (principal.kind === "token" && principal.tokenId === token.id) {
-    return tokenResource(c, token, "read");
-  }
-  if (principal.kind === "user" && token.ownerUserId === principal.userId) {
-    const decision = await authorize(principal, "read", {
-      type: "token",
-      orgId: token.orgId,
-      tokenId: token.id,
-      tokenTarget: "self",
-    });
-    if (decision.allowed) return undefined;
-    return authorizationDenied(c, decision);
-  }
-  const decision = await authorize(principal, "admin", {
-    type: "token",
-    orgId: token.orgId,
-    tokenId: token.id,
-    tokenTarget: "org",
-  });
-  if (decision.allowed) return undefined;
-  return authorizationDenied(c, decision);
-}
-
-async function listVisibleTokens(
-  c: Context<AppEnv>,
-  orgId: string,
-): Promise<{ ok: true; rows: ApiTokenWithOwner[] } | { ok: false; response: Response }> {
-  const principal = c.get("principal");
-  const adminDecision = await authorize(principal, "admin", {
-    type: "token",
-    orgId,
-    tokenTarget: "org",
-  });
-  if (adminDecision.allowed) return { ok: true, rows: await listOrgTokens(orgId) };
-
-  if (principal.kind === "user") {
-    const readDecision = await authorize(principal, "read", { type: "org", orgId });
-    if (!readDecision.allowed) {
-      return { ok: false, response: authorizationDenied(c, readDecision) };
-    }
-    return { ok: true, rows: await listOrgTokensOwnedBy(orgId, principal.userId) };
-  }
-
-  const readDecision = await authorize(principal, "read", {
-    type: "token",
-    orgId,
-    tokenTarget: "org",
-  });
-  if (!readDecision.allowed) {
-    return { ok: false, response: authorizationDenied(c, readDecision) };
-  }
-  return { ok: true, rows: await listOrgTokens(orgId) };
-}
 
 export function registerApiV1TokenRoutes(apiV1Router: Hono<AppEnv>) {
   apiV1Router.get(
@@ -139,9 +55,9 @@ export function registerApiV1TokenRoutes(apiV1Router: Hono<AppEnv>) {
       if (!params.ok) return params.response;
       const pagination = validatePagination(c);
       if (!pagination.ok) return pagination.response;
-      const visible = await listVisibleTokens(c, params.data.orgId);
-      if (!visible.ok) return visible.response;
-      const rows = visible.rows;
+      const visible = await visibleTokensForPrincipal(c.get("principal"), params.data.orgId);
+      if (!visible.ok) return authorizationDenied(c, visible.decision);
+      const rows = visible.value;
       const page = rows.slice(
         pagination.data.offset,
         pagination.data.offset + pagination.data.limit,
@@ -177,11 +93,7 @@ export function registerApiV1TokenRoutes(apiV1Router: Hono<AppEnv>) {
       if (!params.ok) return params.response;
       const user = requireUserPrincipal(c);
       if (!user.ok) return errorResponse(c, 401, "UNAUTHENTICATED", "login required");
-      const decision = await authorize(user.principal, "write", {
-        type: "token",
-        orgId: params.data.orgId,
-        tokenTarget: "org",
-      });
+      const decision = await authorizeTokenCreation(user.principal, params.data.orgId);
       if (!decision.allowed) return authorizationDenied(c, decision);
       const parsedBody = await validateJsonV1(
         c,
@@ -190,13 +102,13 @@ export function registerApiV1TokenRoutes(apiV1Router: Hono<AppEnv>) {
       );
       if (!parsedBody.ok) return parsedBody.response;
       const request = resolveCreateTokenRequest(parsedBody.data);
-      const grant = await validateTokenGrant({
-        userId: user.principal.userId,
+      const grant = await validateCreatedTokenGrant({
+        principal: user.principal,
         orgId: params.data.orgId,
         requestedRole: request.requestedRole,
         grants: request.grants,
       });
-      if (!grant.ok) return errorResponse(c, 403, "FORBIDDEN", grant.error);
+      if (!grant.ok) return authorizationDenied(c, grant.decision);
       const { token, secret } = await createApiToken({
         orgId: params.data.orgId,
         ownerUserId: user.principal.userId,
@@ -234,8 +146,8 @@ export function registerApiV1TokenRoutes(apiV1Router: Hono<AppEnv>) {
       if (!params.ok) return params.response;
       const row = await getApiTokenWithOwner(params.data.tokenId);
       if (!row) return errorResponse(c, 404, "NOT_FOUND", "token not found");
-      const response = await authorizeTokenRead(c, row.token);
-      if (response) return response;
+      const decision = await tokenResourceDecision(c.get("principal"), row.token, "read");
+      if (!decision.allowed) return authorizationDenied(c, decision);
       return dataResponse(c, tokenDto(row.token, row.ownerUsername));
     },
   );
@@ -258,8 +170,8 @@ export function registerApiV1TokenRoutes(apiV1Router: Hono<AppEnv>) {
       if (!params.ok) return params.response;
       const token = await getApiTokenById(params.data.tokenId);
       if (!token) return errorResponse(c, 404, "NOT_FOUND", "token not found");
-      const response = await authorizeTokenRotation(c, token);
-      if (response) return response;
+      const decision = await tokenResourceDecision(c.get("principal"), token, "write");
+      if (!decision.allowed) return authorizationDenied(c, decision);
       const rotated = await rotateToken(token.id, principalActor(c.get("principal")));
       if (!rotated) return errorResponse(c, 404, "NOT_FOUND", "token not found");
       audit({
@@ -291,8 +203,8 @@ export function registerApiV1TokenRoutes(apiV1Router: Hono<AppEnv>) {
       if (!token || token.orgId !== params.data.orgId) {
         return errorResponse(c, 404, "NOT_FOUND", "token not found");
       }
-      const response = await tokenResource(c, token, "delete");
-      if (response) return response;
+      const decision = await tokenResourceDecision(c.get("principal"), token, "delete");
+      if (!decision.allowed) return authorizationDenied(c, decision);
       await revokeToken(token.id, principalActor(c.get("principal")), "revoked via api v1");
       audit({
         orgId: token.orgId,

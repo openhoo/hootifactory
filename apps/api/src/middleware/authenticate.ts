@@ -9,7 +9,7 @@ import {
 import { Errors, HttpError } from "@hootifactory/core";
 import { logger, withSpan } from "@hootifactory/observability";
 import { registryPlugins } from "@hootifactory/registry";
-import { REGISTRY_TOKEN_SERVICE } from "@hootifactory/registry-application";
+import { REGISTRY_TOKEN_SERVICE } from "@hootifactory/registry-application/content";
 import type { Context } from "hono";
 import { getCookie } from "hono/cookie";
 import { clientIp } from "../request-ip";

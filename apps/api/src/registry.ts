@@ -7,13 +7,15 @@ import {
 } from "@hootifactory/observability";
 import { Errors, type HttpMethod, registryPlugins } from "@hootifactory/registry";
 import {
+  resolveRegistryRouteMatch,
+  resolveRepository,
+} from "@hootifactory/registry-application/routing";
+import {
   buildRegistryRequestContext,
   dispatchByRepoKind,
   repoModuleSpanAttributes,
-  resolveRegistryRouteMatch,
-  resolveRepository,
   serveWebFallback,
-} from "@hootifactory/registry-application";
+} from "@hootifactory/registry-application/runtime";
 import type { Context } from "hono";
 import { authorizeRoute, registryAuthorizationDeniedResponse } from "./registry-auth";
 import { registryErrorResponseForModule } from "./registry-error-format";

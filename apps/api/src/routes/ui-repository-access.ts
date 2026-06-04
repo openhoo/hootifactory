@@ -1,6 +1,6 @@
 import { type Action, authorize, type Principal } from "@hootifactory/auth";
 import type { ResolvedRepo } from "@hootifactory/registry";
-import { getRepositoryById } from "@hootifactory/registry-application";
+import { getRepositoryById } from "@hootifactory/registry-application/repositories";
 import type { Context } from "hono";
 import type { AppEnv } from "../types";
 import { uuidParams, validateParams } from "../validation";

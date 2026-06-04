@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@hootifactory/config": "workspace:*",
+    "@hootifactory/types": "workspace:*",
     "drizzle-orm": "^0.45.2"
   }
 }

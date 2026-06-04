@@ -1,7 +1,6 @@
-export type Action = "read" | "write" | "delete" | "admin";
+import type { Action, RoleName } from "@hootifactory/types";
 
-/** Fixed RBAC role matrix. Most-specific binding wins (resolved in authorize.ts). */
-export type RoleName = "viewer" | "developer" | "admin" | "owner";
+export type { Action, RoleName } from "@hootifactory/types";
 
 export const ROLES: readonly RoleName[] = ["viewer", "developer", "admin", "owner"];
 

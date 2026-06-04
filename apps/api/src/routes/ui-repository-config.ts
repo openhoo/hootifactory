@@ -3,7 +3,7 @@ import {
   addUpstream,
   addVirtualMember,
   getRepositoryById,
-} from "@hootifactory/registry-application";
+} from "@hootifactory/registry-application/repositories";
 import type { Hono } from "hono";
 import type { AppEnv } from "../types";
 import { validateJsonBody } from "../validation";

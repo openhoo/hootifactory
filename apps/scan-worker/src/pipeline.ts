@@ -12,7 +12,7 @@ import {
   withSpan,
 } from "@hootifactory/observability";
 import { type RegistryPlugin, registryPlugins } from "@hootifactory/registry";
-import { loadContentAddressableManifestRaw } from "@hootifactory/registry-application";
+import { loadContentAddressableManifestRaw } from "@hootifactory/registry-application/content";
 import type { NormalizedFinding } from "@hootifactory/scan-core";
 import {
   type AvailableScanners,

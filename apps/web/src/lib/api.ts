@@ -8,8 +8,8 @@ export {
   type PackageDto as Pkg,
   type PackageVersionDto as Version,
   type RepositoryDto as Repo,
-} from "@hootifactory/contracts";
+} from "@hootifactory/contracts/legacy";
 
-import { createHootifactoryClient } from "@hootifactory/contracts";
+import { createHootifactoryClient } from "@hootifactory/contracts/legacy";
 
 export const api = createHootifactoryClient();
