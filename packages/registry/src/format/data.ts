@@ -347,6 +347,11 @@ export interface RegistryDataService {
   };
   assets: {
     upsert(input: RegistryAssetWriteInput & { digest: string }): Promise<RegistryAssetRow>;
+    findByScope(input: {
+      role: string;
+      scope: string;
+      includeDeleted?: boolean;
+    }): Promise<RegistryAssetRow | null>;
     list(input?: {
       package?: RegistryPackageHandle;
       packageVersion?: RegistryPackageVersionHandle;

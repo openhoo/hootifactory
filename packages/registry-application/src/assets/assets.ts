@@ -66,6 +66,29 @@ export async function listRegistryAssets(
   return listRegistryAssetsForRepository(ctx.repo.id, input);
 }
 
+export async function findRegistryAssetByScope(
+  ctx: RegistryRequestContext,
+  input: {
+    role: string;
+    scope: string;
+    includeDeleted?: boolean;
+  },
+): Promise<RegistryAssetRow | null> {
+  const filters = [
+    eq(registryAssets.repositoryId, ctx.repo.id),
+    eq(registryAssets.role, input.role),
+    eq(registryAssets.scope, input.scope),
+    input.includeDeleted ? undefined : isNull(registryAssets.deletedAt),
+  ].filter((filter): filter is Exclude<typeof filter, undefined> => Boolean(filter));
+  const [row] = await db
+    .select()
+    .from(registryAssets)
+    .where(and(...filters))
+    .orderBy(desc(registryAssets.createdAt), desc(registryAssets.id))
+    .limit(1);
+  return row ?? null;
+}
+
 type RegistryAssetListInput = {
   packageId?: string;
   packageVersionId?: string;

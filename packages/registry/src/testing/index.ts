@@ -76,6 +76,7 @@ function createTestDataService(): RegistryDataService {
     },
     assets: {
       upsert: () => unimplemented("data.assets.upsert"),
+      findByScope: () => Promise.resolve(null),
       list: () => Promise.resolve({ assets: [], total: 0 }),
     },
     oci: {

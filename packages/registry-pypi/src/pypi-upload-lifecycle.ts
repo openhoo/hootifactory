@@ -39,7 +39,9 @@ export async function handlePypiUpload(
 
   // PyPI files are immutable: reject a re-upload of an existing filename,
   // including files hidden by retention.
-  if ((await allFiles(ctx)).some((f) => f.filename === filename)) {
+  if (
+    await ctx.data.assets.findByScope({ role: "pypi_file", scope: filename, includeDeleted: true })
+  ) {
     return Response.json({ message: "File already exists." }, { status: 409 });
   }
 
@@ -94,11 +96,6 @@ export async function handlePypiUpload(
   });
 
   return new Response(null, { status: 200 });
-}
-
-async function allFiles(ctx: RegistryRequestContext): Promise<PypiFileMeta[]> {
-  const rows = await ctx.data.versions.listRepositoryMetadata({ liveOnly: false });
-  return rows.flatMap((r) => normalizePypiVersionMetadata(r.metadata).files ?? []);
 }
 
 async function addFileToVersion(

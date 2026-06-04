@@ -9,7 +9,12 @@ import type {
   RegistryStoredBlob,
 } from "@hootifactory/registry";
 import { blobStore } from "@hootifactory/storage";
-import { deleteRegistryAssetRef, listRegistryAssets, upsertRegistryAsset } from "../assets";
+import {
+  deleteRegistryAssetRef,
+  findRegistryAssetByScope,
+  listRegistryAssets,
+  upsertRegistryAsset,
+} from "../assets";
 import {
   blobRefExists,
   ensureBlobRef,
@@ -353,6 +358,7 @@ export function createRegistryDataService(ctx: RegistryRequestContext): Registry
     },
     assets: {
       upsert: (input) => upsertRegistryAsset(ctx, assetForWrite(ctx, input)),
+      findByScope: (input) => findRegistryAssetByScope(ctx, input),
       list: (input) =>
         listRegistryAssets(ctx, {
           packageId: input?.package ? packageId(ctx, input.package) : undefined,

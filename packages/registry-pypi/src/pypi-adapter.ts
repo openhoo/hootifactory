@@ -4,7 +4,6 @@ import {
   type HttpMethod,
   type Permission,
   parseRegistryInput,
-  type RegistryPackageHandle,
   type RegistryPlugin,
   type RegistryRequestContext,
   type RouteMatch,
@@ -14,12 +13,7 @@ import {
   serveRegistryBlob,
 } from "@hootifactory/registry";
 import { handlePypiUpload } from "./pypi-upload-lifecycle";
-import {
-  normalizePypiVersionMetadata,
-  type PypiFileMeta,
-  PypiFilenameSchema,
-  PypiProjectParamSchema,
-} from "./pypi-validation";
+import { PypiFilenameSchema, PypiProjectParamSchema } from "./pypi-validation";
 import {
   buildSimpleProjectFiles,
   buildSimpleProjectJson,
@@ -94,15 +88,6 @@ export class PypiAdapter implements RegistryPlugin {
     });
   }
 
-  /** All files across this repo's live (non-pruned) versions. */
-  private async liveFiles(
-    ctx: RegistryRequestContext,
-    pkg?: RegistryPackageHandle,
-  ): Promise<PypiFileMeta[]> {
-    const rows = await ctx.data.versions.listRepositoryMetadata({ package: pkg, liveOnly: true });
-    return rows.flatMap((r) => normalizePypiVersionMetadata(r.metadata).files ?? []);
-  }
-
   private async simpleProject(
     projectRaw: string,
     req: Request,
@@ -139,17 +124,14 @@ export class PypiAdapter implements RegistryPlugin {
       code: "NAME_INVALID",
       message: "invalid distribution filename",
     });
-    // Resolve the digest from the SAME metadata the simple index advertises (live
-    // versions only), so the bytes served match the published #sha256 and identical
-    // filenames from different packages don't collide via a blob_refs scan.
-    const file = (await this.liveFiles(ctx)).find((f) => f.filename === filename);
+    const file = await ctx.data.assets.findByScope({ role: "pypi_file", scope: filename });
     if (!file) {
       return new Response("Not Found", { status: 404 });
     }
     return serveRegistryBlob(ctx, {
-      digest: file.blobDigest,
+      digest: file.digest,
       kind: "pypi_file",
-      scope: file.filename,
+      scope: file.scope,
       contentType: "application/octet-stream",
       blocked: () => new Response("artifact blocked by scan policy", { status: 403 }),
     });
