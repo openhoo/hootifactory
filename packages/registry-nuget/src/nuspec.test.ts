@@ -171,6 +171,53 @@ describe("NuGet nuspec extraction", () => {
     });
   });
 
+  test("handles max-sized no-equals dependency tags without quadratic scans", () => {
+    const tagPayload = "a".repeat(16 * 1024 - "<dependency >".length);
+    const dependencyTags = Array.from({ length: 60 }, () => `<dependency ${tagPayload}>`).join("");
+    const nupkg = makeStoredZip(
+      "Example.nuspec",
+      `<package>
+        <metadata>
+          <id>Example.Lib</id>
+          <version>1.2.3</version>
+          <dependencies>${dependencyTags}</dependencies>
+        </metadata>
+      </package>`,
+    );
+
+    expect(extractNuspecMeta(nupkg)).toEqual({
+      id: "Example.Lib",
+      version: "1.2.3",
+      dependencyGroups: [],
+    });
+  });
+
+  test("rejects excessive malformed dependency and group tags", () => {
+    const malformedDependencyTags = Array.from(
+      { length: 513 },
+      () => `<dependency ${"a".repeat(128)} />`,
+    ).join("");
+    const malformedGroupTags = Array.from(
+      { length: 513 },
+      () => `<group ${"a".repeat(128)} />`,
+    ).join("");
+    const packageXml = (dependencies: string) =>
+      `<package>
+        <metadata>
+          <id>Example.Lib</id>
+          <version>1.2.3</version>
+          <dependencies>${dependencies}</dependencies>
+        </metadata>
+      </package>`;
+
+    expect(
+      extractNuspecMeta(makeStoredZip("Example.nuspec", packageXml(malformedDependencyTags))),
+    ).toBeNull();
+    expect(
+      extractNuspecMeta(makeStoredZip("Example.nuspec", packageXml(malformedGroupTags))),
+    ).toBeNull();
+  });
+
   test("rejects nuspec metadata with too many dependencies", () => {
     const dependencies = Array.from(
       { length: 513 },

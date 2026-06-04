@@ -103,10 +103,52 @@ function decodeXml(value: string): string {
     .replace(/&amp;/g, "&");
 }
 
+function isXmlWhitespace(code: number): boolean {
+  return code === 0x20 || code === 0x09 || code === 0x0a || code === 0x0d;
+}
+
+function isAttrNameStart(code: number): boolean {
+  return (
+    (code >= 0x41 && code <= 0x5a) ||
+    (code >= 0x61 && code <= 0x7a) ||
+    code === 0x5f ||
+    code === 0x3a
+  );
+}
+
+function isAttrNameChar(code: number): boolean {
+  return isAttrNameStart(code) || (code >= 0x30 && code <= 0x39) || code === 0x2e || code === 0x2d;
+}
+
 function attrMap(tag: string): Record<string, string> {
   const attrs: Record<string, string> = {};
-  for (const match of tag.matchAll(/([A-Za-z_:][\w:.-]*)\s*=\s*(?:"([^"]*)"|'([^']*)')/g)) {
-    attrs[match[1]!.toLowerCase()] = decodeXml(match[2] ?? match[3] ?? "");
+  let cursor = 0;
+  while (cursor < tag.length) {
+    if (!isAttrNameStart(tag.charCodeAt(cursor))) {
+      cursor += 1;
+      continue;
+    }
+
+    const nameStart = cursor;
+    cursor += 1;
+    while (cursor < tag.length && isAttrNameChar(tag.charCodeAt(cursor))) cursor += 1;
+    const name = tag.slice(nameStart, cursor).toLowerCase();
+
+    while (cursor < tag.length && isXmlWhitespace(tag.charCodeAt(cursor))) cursor += 1;
+    if (tag.charCodeAt(cursor) !== 0x3d) continue;
+    cursor += 1;
+    while (cursor < tag.length && isXmlWhitespace(tag.charCodeAt(cursor))) cursor += 1;
+
+    const quote = tag.charCodeAt(cursor);
+    if (quote !== 0x22 && quote !== 0x27) {
+      cursor += 1;
+      continue;
+    }
+    const valueStart = cursor + 1;
+    const valueEnd = tag.indexOf(String.fromCharCode(quote), valueStart);
+    if (valueEnd < 0) break;
+    attrs[name] = decodeXml(tag.slice(valueStart, valueEnd));
+    cursor = valueEnd + 1;
   }
   return attrs;
 }
@@ -165,6 +207,12 @@ function parseDependencies(xml: string): NuspecDependencyGroup[] | null {
   const directDependencies: NuspecDependency[] = [];
   const groups: NuspecDependencyGroup[] = [];
   let currentGroup: NuspecDependencyGroup | null = null;
+  let processedDependencyTags = 0;
+
+  const countDependencyTag = (): boolean => {
+    processedDependencyTags += 1;
+    return processedDependencyTags <= MAX_NUSPEC_DEPENDENCIES;
+  };
 
   const addDependency = (dep: NuspecDependency | null): boolean => {
     if (!dep) return true;
@@ -183,6 +231,7 @@ function parseDependencies(xml: string): NuspecDependencyGroup[] | null {
     if (tag.closing && tag.name === "dependencies") break;
 
     if (!tag.closing && tag.name === "group") {
+      if (!countDependencyTag()) return null;
       const attrs = attrMap(tag.source);
       currentGroup = {
         ...(attrs.targetframework ? { targetFramework: attrs.targetframework } : {}),
@@ -198,12 +247,9 @@ function parseDependencies(xml: string): NuspecDependencyGroup[] | null {
       continue;
     }
 
-    if (
-      !tag.closing &&
-      tag.name === "dependency" &&
-      !addDependency(dependencyFromTag(tag.source))
-    ) {
-      return null;
+    if (!tag.closing && tag.name === "dependency") {
+      if (!countDependencyTag()) return null;
+      if (!addDependency(dependencyFromTag(tag.source))) return null;
     }
   }
 
