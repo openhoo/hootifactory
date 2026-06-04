@@ -1,6 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import type { RegistryRequestContext, RouteMatch } from "@hootifactory/registry";
+import type {
+  RegistryOciManifestRow,
+  RegistryPackageRow,
+  RegistryRequestContext,
+  RouteMatch,
+} from "@hootifactory/registry";
+import { createTestRegistryContext } from "@hootifactory/registry/testing";
 import { DockerAdapter } from "./docker-adapter";
+
+const DIGEST = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const RAW_MANIFEST = JSON.stringify({ schemaVersion: 2 });
 
 const ctx = {
   repo: { mountPath: "v2/acme/containers" },
@@ -12,6 +21,40 @@ const match = {
   params: { name: "team/api", reference: "latest" },
   path: "/team/api/manifests/latest",
 } satisfies RouteMatch;
+
+const digestMatch = {
+  entry: { method: "GET", pattern: "/:name+/manifests/:reference", handlerId: "getManifest" },
+  params: { name: "team/api", reference: DIGEST },
+  path: `/team/api/manifests/${DIGEST}`,
+} satisfies RouteMatch;
+
+const pkg = {
+  id: "pkg_1",
+  orgId: "org_1",
+  repositoryId: "repo_1",
+  name: "team/api",
+  namespace: null,
+  metadata: {},
+  latestVersion: "latest",
+  createdAt: new Date("2026-01-01T00:00:00.000Z"),
+  updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+} satisfies RegistryPackageRow;
+
+function manifestRow(): RegistryOciManifestRow {
+  return {
+    id: "manifest_1",
+    repositoryId: "repo_1",
+    digest: DIGEST,
+    mediaType: "application/vnd.oci.image.manifest.v1+json",
+    artifactType: null,
+    subjectDigest: null,
+    raw: RAW_MANIFEST,
+    sizeBytes: RAW_MANIFEST.length,
+    configDigest: null,
+    createdAt: new Date("2026-01-02T00:00:00.000Z"),
+    updatedAt: new Date("2026-01-02T00:00:00.000Z"),
+  };
+}
 
 describe("Docker adapter contract", () => {
   test("declares the distribution routes clients depend on", () => {
@@ -73,5 +116,54 @@ describe("Docker adapter contract", () => {
         ctx,
       ),
     ).rejects.toMatchObject({ status: 400, code: "DIGEST_INVALID" });
+  });
+
+  test("digest-pinned manifests emit immutable validators and honor If-None-Match", async () => {
+    const ctx = createTestRegistryContext();
+    ctx.repo = { ...ctx.repo, format: "docker", mountPath: "v2/acme/containers" };
+    let blockChecks = 0;
+    ctx.data.packages.findByName = async (name) => {
+      expect(name).toBe(pkg.name);
+      return pkg;
+    };
+    ctx.data.oci.resolveManifest = async (input) => {
+      expect(input.package.id).toBe(pkg.id);
+      expect(input.reference).toBe(DIGEST);
+      return manifestRow();
+    };
+    ctx.data.content.isArtifactBlocked = async (digest) => {
+      blockChecks += 1;
+      expect(digest).toBe(DIGEST);
+      return false;
+    };
+
+    const adapter = new DockerAdapter();
+    const first = await adapter.handle(
+      digestMatch,
+      new Request(`https://registry.test/v2/acme/containers/team/api/manifests/${DIGEST}`),
+      ctx,
+    );
+    const etag = first.headers.get("etag");
+
+    expect(first.status).toBe(200);
+    expect(etag).toBe(`"${DIGEST}"`);
+    expect(first.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
+    expect(first.headers.get("docker-content-digest")).toBe(DIGEST);
+    await expect(first.text()).resolves.toBe(RAW_MANIFEST);
+
+    const cached = await adapter.handle(
+      digestMatch,
+      new Request(`https://registry.test/v2/acme/containers/team/api/manifests/${DIGEST}`, {
+        headers: { "if-none-match": etag ?? "" },
+      }),
+      ctx,
+    );
+
+    expect(cached.status).toBe(304);
+    expect(cached.headers.get("etag")).toBe(`"${DIGEST}"`);
+    expect(cached.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
+    expect(cached.headers.get("content-length")).toBeNull();
+    await expect(cached.text()).resolves.toBe("");
+    expect(blockChecks).toBe(2);
   });
 });

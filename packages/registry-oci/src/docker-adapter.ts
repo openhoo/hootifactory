@@ -2,6 +2,7 @@ import {
   delegateRegistryPlugin,
   Errors,
   type HttpMethod,
+  ifNoneMatch,
   type Permission,
   parseRegistryInput,
   type RegistryPlugin,
@@ -163,20 +164,27 @@ export class DockerAdapter implements RegistryPlugin {
   private async getManifest(
     image: string,
     reference: string,
-    _req: Request,
+    req: Request,
     ctx: RegistryRequestContext,
     headOnly: boolean,
   ): Promise<Response> {
-    parseReference(reference);
+    const ref = parseReference(reference);
     const m = await resolveOciManifestForImage(ctx, image, reference);
     if (!m) throw Errors.manifestUnknown({ reference });
     if (await ctx.data.content.isArtifactBlocked(m.digest))
       throw Errors.denied({ reason: "blocked by scan policy" });
-    const headers = {
+    const etag = `"${m.digest}"`;
+    const headers: Record<string, string> = {
       "content-type": m.mediaType,
       "docker-content-digest": m.digest,
       "content-length": String(m.sizeBytes),
+      etag,
     };
+    if (ref.kind === "digest") headers["cache-control"] = "public, max-age=31536000, immutable";
+    if (ifNoneMatch(req, etag)) {
+      const { "content-length": _contentLength, ...notModifiedHeaders } = headers;
+      return new Response(null, { status: 304, headers: notModifiedHeaders });
+    }
     if (headOnly) return new Response(null, { status: 200, headers });
     return new Response(m.raw, { status: 200, headers });
   }
