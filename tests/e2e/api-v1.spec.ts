@@ -97,7 +97,7 @@ test.describe("external api v1", () => {
     const owner = await setupOwner(baseURL!);
     const repoName = uniq("v1-repo");
     const repo = (
-      await (await createRepo(owner.ctx, owner.orgId, { name: repoName, format: "npm" })).json()
+      await (await createRepo(owner.ctx, owner.orgId, { name: repoName, moduleId: "npm" })).json()
     ).repository as { id: string; name: string; mountPath: string };
     const pkgName = uniq("v1-pkg");
     await publishRawNpm(owner.ctx, repo.mountPath, pkgName);
@@ -244,7 +244,7 @@ test.describe("external api v1", () => {
       await (
         await createRepo(owner.ctx, owner.orgId, {
           name: uniq("retention-repo"),
-          format: "npm",
+          moduleId: "npm",
         })
       ).json()
     ).repository as { id: string };

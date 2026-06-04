@@ -127,6 +127,13 @@
       "when": 1780582566016,
       "tag": "0017_registry_asset_blob_refs",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1780591873421,
+      "tag": "0018_registry_modules",
+      "breakpoints": true
     }
   ]
 }

@@ -12,12 +12,14 @@ import {
   reapExpiredOciUploadSessions,
   sweepUnreferencedCasBlobs,
 } from "@hootifactory/registry-application";
+import { registerBuiltInRegistryPlugins } from "@hootifactory/registry-builtins";
 import { processScan, recordScanFailure, scannerRuntimeFromEnv } from "./pipeline";
 import { type ClaimedScanIntent, claimedScanIntentsFromExecute } from "./scan-outbox-rows";
 
 const workerRole = "scan-worker";
 
 initializeObservability({ serviceRole: workerRole });
+registerBuiltInRegistryPlugins();
 
 const workerBatchSize = intEnv("SCAN_WORKER_BATCH_SIZE", 16, 1);
 const workerConcurrency = Math.min(workerBatchSize, intEnv("SCAN_WORKER_CONCURRENCY", 4, 1));

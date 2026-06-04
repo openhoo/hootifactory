@@ -155,7 +155,7 @@ describe("api tokens (DB)", () => {
       .values({
         orgId,
         name: `repo-${crypto.randomUUID().slice(0, 8)}`,
-        format: "npm",
+        moduleId: "npm",
         mountPath: `npm/test-${crypto.randomUUID().slice(0, 8)}`,
         storagePrefix: `${orgId}/auth-test`,
       })
@@ -200,7 +200,7 @@ describe("api tokens (DB)", () => {
       .values({
         orgId,
         name: `repo-${crypto.randomUUID().slice(0, 8)}`,
-        format: "npm",
+        moduleId: "npm",
         mountPath: `npm/test-${crypto.randomUUID().slice(0, 8)}`,
         storagePrefix: `${orgId}/auth-test`,
       })
@@ -245,7 +245,7 @@ describe("api tokens (DB)", () => {
       .values({
         orgId,
         name: `repo-${crypto.randomUUID().slice(0, 8)}`,
-        format: "npm",
+        moduleId: "npm",
         mountPath: `npm/test-${crypto.randomUUID().slice(0, 8)}`,
         storagePrefix: `${orgId}/auth-test`,
       })
@@ -279,7 +279,7 @@ describe("api tokens (DB)", () => {
       .values({
         orgId,
         name: `repo-${crypto.randomUUID().slice(0, 8)}`,
-        format: "npm",
+        moduleId: "npm",
         mountPath: `npm/test-${crypto.randomUUID().slice(0, 8)}`,
         storagePrefix: `${orgId}/auth-test`,
       })
@@ -330,7 +330,7 @@ describe("api tokens (DB)", () => {
       .values({
         orgId: secondOrgId,
         name: `repo-${crypto.randomUUID().slice(0, 8)}`,
-        format: "npm",
+        moduleId: "npm",
         mountPath: `npm/test-${crypto.randomUUID().slice(0, 8)}`,
         storagePrefix: `${secondOrgId}/auth-test`,
       })

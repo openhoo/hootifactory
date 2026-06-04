@@ -24,7 +24,9 @@ test.describe("docker registry (Dockerized real CLI)", () => {
     const dockerConfig = mkdtempSync(join(tmpdir(), "hoot-docker-config-"));
     const owner = await setupOwner(baseURL!);
     expect(
-      (await createRepo(owner.ctx, owner.orgId, { name: "containers", format: "docker" })).status(),
+      (
+        await createRepo(owner.ctx, owner.orgId, { name: "containers", moduleId: "docker" })
+      ).status(),
     ).toBe(201);
 
     const image = `${host}/${owner.orgSlug}/containers/app`;
@@ -93,7 +95,7 @@ test.describe("docker registry extended scenarios (Dockerized real CLI)", () => 
     const owner = await setupOwner(baseURL!);
     const repoName = uniq("docker-tags");
     expect(
-      (await createRepo(owner.ctx, owner.orgId, { name: repoName, format: "docker" })).status(),
+      (await createRepo(owner.ctx, owner.orgId, { name: repoName, moduleId: "docker" })).status(),
     ).toBe(201);
 
     const image = `${host}/${owner.orgSlug}/${repoName}/app`;
@@ -137,7 +139,7 @@ test.describe("docker registry extended scenarios (Dockerized real CLI)", () => 
     const owner = await setupOwner(baseURL!);
     const repoName = uniq("docker-digest");
     expect(
-      (await createRepo(owner.ctx, owner.orgId, { name: repoName, format: "docker" })).status(),
+      (await createRepo(owner.ctx, owner.orgId, { name: repoName, moduleId: "docker" })).status(),
     ).toBe(201);
 
     const image = `${host}/${owner.orgSlug}/${repoName}/app`;
@@ -183,7 +185,7 @@ test.describe("docker registry extended scenarios (Dockerized real CLI)", () => 
     const owner = await setupOwner(baseURL!);
     const repoName = uniq("docker-untag");
     expect(
-      (await createRepo(owner.ctx, owner.orgId, { name: repoName, format: "docker" })).status(),
+      (await createRepo(owner.ctx, owner.orgId, { name: repoName, moduleId: "docker" })).status(),
     ).toBe(201);
 
     const ref = `${host}/${owner.orgSlug}/${repoName}/app:1.0`;
@@ -226,7 +228,7 @@ test.describe("docker registry extended scenarios (Dockerized real CLI)", () => 
       (
         await createRepo(owner.ctx, owner.orgId, {
           name: repoName,
-          format: "docker",
+          moduleId: "docker",
           visibility: "public",
         })
       ).status(),
@@ -260,7 +262,7 @@ test.describe("docker registry extended scenarios (Dockerized real CLI)", () => 
     const owner = await setupOwner(baseURL!);
     const repoName = uniq("docker-private");
     expect(
-      (await createRepo(owner.ctx, owner.orgId, { name: repoName, format: "docker" })).status(),
+      (await createRepo(owner.ctx, owner.orgId, { name: repoName, moduleId: "docker" })).status(),
     ).toBe(201);
 
     const ref = `${host}/${owner.orgSlug}/${repoName}/app:priv`;
@@ -294,7 +296,7 @@ test.describe("docker registry error and edge scenarios (Dockerized real CLI)", 
     const owner = await setupOwner(baseURL!);
     const repoName = uniq("docker-missing-tag");
     expect(
-      (await createRepo(owner.ctx, owner.orgId, { name: repoName, format: "docker" })).status(),
+      (await createRepo(owner.ctx, owner.orgId, { name: repoName, moduleId: "docker" })).status(),
     ).toBe(201);
 
     const image = `${host}/${owner.orgSlug}/${repoName}/app`;
@@ -355,7 +357,7 @@ test.describe("docker registry error and edge scenarios (Dockerized real CLI)", 
     // private is the default (visibility omitted)
     const repoName = uniq("docker-private-pull");
     expect(
-      (await createRepo(owner.ctx, owner.orgId, { name: repoName, format: "docker" })).status(),
+      (await createRepo(owner.ctx, owner.orgId, { name: repoName, moduleId: "docker" })).status(),
     ).toBe(201);
 
     const ref = `${host}/${owner.orgSlug}/${repoName}/app:1.0`;
@@ -390,7 +392,7 @@ test.describe("docker registry error and edge scenarios (Dockerized real CLI)", 
     const owner = await setupOwner(baseURL!);
     const repoName = uniq("docker-bad-digest");
     expect(
-      (await createRepo(owner.ctx, owner.orgId, { name: repoName, format: "docker" })).status(),
+      (await createRepo(owner.ctx, owner.orgId, { name: repoName, moduleId: "docker" })).status(),
     ).toBe(201);
 
     const image = `${host}/${owner.orgSlug}/${repoName}/app`;

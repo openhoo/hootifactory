@@ -13,7 +13,7 @@ import {
 describe("defineRegistryPlugin", () => {
   test("builds a RegistryPlugin from route specs", async () => {
     const plugin = defineRegistryPlugin({
-      format: "npm",
+      id: "npm",
       capabilities: {
         contentAddressable: false,
         resumableUploads: false,
@@ -47,7 +47,7 @@ describe("defineRegistryPlugin", () => {
 
   test("uses default read/write permission when a route has no override", () => {
     const plugin = defineRegistryPlugin({
-      format: "pypi",
+      id: "pypi",
       capabilities: {
         contentAddressable: false,
         resumableUploads: false,
@@ -72,7 +72,7 @@ describe("defineRegistryPlugin", () => {
 
   test("declares routes with method-specific sugar", async () => {
     const plugin = defineRegistryPlugin({
-      format: "cargo",
+      id: "cargo",
       capabilities: {
         contentAddressable: false,
         resumableUploads: false,
@@ -184,7 +184,7 @@ describe("defineRegistryPlugin", () => {
 
   test("delegates plugin forwarding and optional pre-handle hooks", async () => {
     const plugin = defineRegistryPlugin({
-      format: "go",
+      id: "go",
       capabilities: {
         contentAddressable: false,
         resumableUploads: false,

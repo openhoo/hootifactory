@@ -5,7 +5,8 @@ describe("web fallback helpers", () => {
   test("detects reserved server path segments without prefix collisions", () => {
     expect(isReservedWebPath("api")).toBe(true);
     expect(isReservedWebPath("api/repositories")).toBe(true);
-    expect(isReservedWebPath("npm/acme/pkg")).toBe(true);
+    expect(isReservedWebPath("module/acme/pkg", ["module"])).toBe(true);
+    expect(isReservedWebPath("module/acme/pkg")).toBe(false);
     expect(isReservedWebPath("apiary")).toBe(false);
     expect(isReservedWebPath("assets/index.js")).toBe(false);
   });

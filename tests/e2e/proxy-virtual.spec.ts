@@ -366,16 +366,16 @@ test.describe("virtual + proxy repositories (Dockerized real npm)", () => {
     const token = (await (await createToken(owner.ctx, owner.orgId, { name: "t" })).json())
       .secret as string;
     const a = (
-      await repoFrom(await createRepo(owner.ctx, owner.orgId, { name: "npm-a", format: "npm" }))
+      await repoFrom(await createRepo(owner.ctx, owner.orgId, { name: "npm-a", moduleId: "npm" }))
     ).repository;
     const b = (
-      await repoFrom(await createRepo(owner.ctx, owner.orgId, { name: "npm-b", format: "npm" }))
+      await repoFrom(await createRepo(owner.ctx, owner.orgId, { name: "npm-b", moduleId: "npm" }))
     ).repository;
     const v = (
       await repoFrom(
         await createRepo(owner.ctx, owner.orgId, {
           name: "npm-virt",
-          format: "npm",
+          moduleId: "npm",
           kind: "virtual",
         }),
       )
@@ -405,19 +405,19 @@ test.describe("virtual + proxy repositories (Dockerized real npm)", () => {
       .secret as string;
     const a = (
       await repoFrom(
-        await createRepo(owner.ctx, owner.orgId, { name: "npm-meta-a", format: "npm" }),
+        await createRepo(owner.ctx, owner.orgId, { name: "npm-meta-a", moduleId: "npm" }),
       )
     ).repository;
     const b = (
       await repoFrom(
-        await createRepo(owner.ctx, owner.orgId, { name: "npm-meta-b", format: "npm" }),
+        await createRepo(owner.ctx, owner.orgId, { name: "npm-meta-b", moduleId: "npm" }),
       )
     ).repository;
     const v = (
       await repoFrom(
         await createRepo(owner.ctx, owner.orgId, {
           name: "npm-meta-virt",
-          format: "npm",
+          moduleId: "npm",
           kind: "virtual",
         }),
       )
@@ -456,19 +456,19 @@ test.describe("virtual + proxy repositories (Dockerized real npm)", () => {
       .secret as string;
     const a = (
       await repoFrom(
-        await createRepo(owner.ctx, owner.orgId, { name: "npm-search-a", format: "npm" }),
+        await createRepo(owner.ctx, owner.orgId, { name: "npm-search-a", moduleId: "npm" }),
       )
     ).repository;
     const b = (
       await repoFrom(
-        await createRepo(owner.ctx, owner.orgId, { name: "npm-search-b", format: "npm" }),
+        await createRepo(owner.ctx, owner.orgId, { name: "npm-search-b", moduleId: "npm" }),
       )
     ).repository;
     const v = (
       await repoFrom(
         await createRepo(owner.ctx, owner.orgId, {
           name: "npm-search-virt",
-          format: "npm",
+          moduleId: "npm",
           kind: "virtual",
         }),
       )
@@ -512,7 +512,7 @@ test.describe("virtual + proxy repositories (Dockerized real npm)", () => {
       await repoFrom(
         await createRepo(owner.ctx, owner.orgId, {
           name: "npm-up",
-          format: "npm",
+          moduleId: "npm",
           visibility: "public",
         }),
       )
@@ -521,7 +521,7 @@ test.describe("virtual + proxy repositories (Dockerized real npm)", () => {
       await repoFrom(
         await createRepo(owner.ctx, owner.orgId, {
           name: "npm-proxy",
-          format: "npm",
+          moduleId: "npm",
           kind: "proxy",
         }),
       )
@@ -562,7 +562,7 @@ test.describe("virtual + proxy repositories (Dockerized real npm)", () => {
       await repoFrom(
         await createRepo(owner.ctx, owner.orgId, {
           name: "npm-refresh-up",
-          format: "npm",
+          moduleId: "npm",
           visibility: "public",
         }),
       )
@@ -571,7 +571,7 @@ test.describe("virtual + proxy repositories (Dockerized real npm)", () => {
       await repoFrom(
         await createRepo(owner.ctx, owner.orgId, {
           name: "npm-refresh-proxy",
-          format: "npm",
+          moduleId: "npm",
           kind: "proxy",
         }),
       )
@@ -610,7 +610,7 @@ test.describe("virtual + proxy repositories (Dockerized real npm)", () => {
       await repoFrom(
         await createRepo(owner.ctx, owner.orgId, {
           name: "npm-proxy-replace",
-          format: "npm",
+          moduleId: "npm",
           kind: "proxy",
         }),
       )
@@ -662,7 +662,7 @@ test.describe("virtual + proxy repositories (Dockerized real npm)", () => {
       await repoFrom(
         await createRepo(owner.ctx, owner.orgId, {
           name: "npm-scan-up",
-          format: "npm",
+          moduleId: "npm",
           visibility: "public",
         }),
       )
@@ -672,7 +672,7 @@ test.describe("virtual + proxy repositories (Dockerized real npm)", () => {
       await repoFrom(
         await createRepo(owner.ctx, owner.orgId, {
           name: proxyName,
-          format: "npm",
+          moduleId: "npm",
           kind: "proxy",
         }),
       )
@@ -703,7 +703,7 @@ test.describe("virtual + proxy repositories (Dockerized real npm)", () => {
       await repoFrom(
         await createRepo(owner.ctx, owner.orgId, {
           name: "npm-proxy-integrity",
-          format: "npm",
+          moduleId: "npm",
           kind: "proxy",
         }),
       )
@@ -735,7 +735,7 @@ test.describe("virtual + proxy repositories (Dockerized real npm)", () => {
       await repoFrom(
         await createRepo(owner.ctx, owner.orgId, {
           name: "npm-proxy-identity",
-          format: "npm",
+          moduleId: "npm",
           kind: "proxy",
         }),
       )
@@ -769,7 +769,7 @@ test.describe("virtual + proxy repositories (Dockerized real npm)", () => {
       await repoFrom(
         await createRepo(owner.ctx, owner.orgId, {
           name: "npm-proxy-unverified",
-          format: "npm",
+          moduleId: "npm",
           kind: "proxy",
         }),
       )
@@ -805,7 +805,7 @@ test.describe("virtual + proxy repositories (Dockerized real npm)", () => {
       await repoFrom(
         await createRepo(owner.ctx, owner.orgId, {
           name: "npm-proxy-redirect",
-          format: "npm",
+          moduleId: "npm",
           kind: "proxy",
         }),
       )
@@ -841,16 +841,18 @@ test.describe("virtual + proxy repositories (Dockerized real npm)", () => {
     const owner = await setupOwner(baseURL!);
     const other = await setupOwner(baseURL!);
     const hosted = (
-      await repoFrom(await createRepo(owner.ctx, owner.orgId, { name: "top-host", format: "npm" }))
+      await repoFrom(
+        await createRepo(owner.ctx, owner.orgId, { name: "top-host", moduleId: "npm" }),
+      )
     ).repository;
     const goHosted = (
-      await repoFrom(await createRepo(owner.ctx, owner.orgId, { name: "top-go", format: "go" }))
+      await repoFrom(await createRepo(owner.ctx, owner.orgId, { name: "top-go", moduleId: "go" }))
     ).repository;
     const proxy = (
       await repoFrom(
         await createRepo(owner.ctx, owner.orgId, {
           name: "top-proxy",
-          format: "npm",
+          moduleId: "npm",
           kind: "proxy",
         }),
       )
@@ -859,14 +861,14 @@ test.describe("virtual + proxy repositories (Dockerized real npm)", () => {
       await repoFrom(
         await createRepo(owner.ctx, owner.orgId, {
           name: "top-virtual",
-          format: "npm",
+          moduleId: "npm",
           kind: "virtual",
         }),
       )
     ).repository;
     const privateOther = (
       await repoFrom(
-        await createRepo(other.ctx, other.orgId, { name: "top-private", format: "npm" }),
+        await createRepo(other.ctx, other.orgId, { name: "top-private", moduleId: "npm" }),
       )
     ).repository;
 
@@ -947,16 +949,16 @@ test.describe("virtual repositories with throwing adapters", () => {
   test("go virtual repo continues past a missing first member", async ({ baseURL }) => {
     const owner = await setupOwner(baseURL!);
     const a = (
-      await repoFrom(await createRepo(owner.ctx, owner.orgId, { name: "go-a", format: "go" }))
+      await repoFrom(await createRepo(owner.ctx, owner.orgId, { name: "go-a", moduleId: "go" }))
     ).repository;
     const b = (
-      await repoFrom(await createRepo(owner.ctx, owner.orgId, { name: "go-b", format: "go" }))
+      await repoFrom(await createRepo(owner.ctx, owner.orgId, { name: "go-b", moduleId: "go" }))
     ).repository;
     const v = (
       await repoFrom(
         await createRepo(owner.ctx, owner.orgId, {
           name: "go-virt",
-          format: "go",
+          moduleId: "go",
           kind: "virtual",
         }),
       )

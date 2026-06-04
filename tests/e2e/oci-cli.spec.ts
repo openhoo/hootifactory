@@ -27,7 +27,7 @@ test.describe("oci registry (Dockerized real ORAS)", () => {
     const host = new URL(dockerReachableUrl(baseURL!)).host;
     const owner = await setupOwner(baseURL!);
     expect(
-      (await createRepo(owner.ctx, owner.orgId, { name: "artifacts", format: "oci" })).status(),
+      (await createRepo(owner.ctx, owner.orgId, { name: "artifacts", moduleId: "oci" })).status(),
     ).toBe(201);
     const secret = (await (await createToken(owner.ctx, owner.orgId, { name: "oras" })).json())
       .secret as string;
@@ -158,9 +158,9 @@ test.describe("oci registry extended scenarios (Dockerized real ORAS)", () => {
     const host = new URL(dockerReachableUrl(baseURL!)).host;
     const owner = await setupOwner(baseURL!);
     const repo = `oci-multifile-${ociSuffix()}`;
-    expect((await createRepo(owner.ctx, owner.orgId, { name: repo, format: "oci" })).status()).toBe(
-      201,
-    );
+    expect(
+      (await createRepo(owner.ctx, owner.orgId, { name: repo, moduleId: "oci" })).status(),
+    ).toBe(201);
     const secret = (
       await (await createToken(owner.ctx, owner.orgId, { name: "oras-multi" })).json()
     ).secret as string;
@@ -207,9 +207,9 @@ test.describe("oci registry extended scenarios (Dockerized real ORAS)", () => {
     const host = new URL(dockerReachableUrl(baseURL!)).host;
     const owner = await setupOwner(baseURL!);
     const repo = `oci-annot-${ociSuffix()}`;
-    expect((await createRepo(owner.ctx, owner.orgId, { name: repo, format: "oci" })).status()).toBe(
-      201,
-    );
+    expect(
+      (await createRepo(owner.ctx, owner.orgId, { name: repo, moduleId: "oci" })).status(),
+    ).toBe(201);
     const secret = (
       await (await createToken(owner.ctx, owner.orgId, { name: "oras-annot" })).json()
     ).secret as string;
@@ -262,10 +262,10 @@ test.describe("oci registry extended scenarios (Dockerized real ORAS)", () => {
     const repoA = `oci-copy-src-${ociSuffix()}`;
     const repoB = `oci-copy-dst-${ociSuffix()}`;
     expect(
-      (await createRepo(owner.ctx, owner.orgId, { name: repoA, format: "oci" })).status(),
+      (await createRepo(owner.ctx, owner.orgId, { name: repoA, moduleId: "oci" })).status(),
     ).toBe(201);
     expect(
-      (await createRepo(owner.ctx, owner.orgId, { name: repoB, format: "oci" })).status(),
+      (await createRepo(owner.ctx, owner.orgId, { name: repoB, moduleId: "oci" })).status(),
     ).toBe(201);
     const secret = (await (await createToken(owner.ctx, owner.orgId, { name: "oras-copy" })).json())
       .secret as string;
@@ -331,9 +331,9 @@ test.describe("oci registry extended scenarios (Dockerized real ORAS)", () => {
     const host = new URL(dockerReachableUrl(baseURL!)).host;
     const owner = await setupOwner(baseURL!);
     const repo = `oci-tag-${ociSuffix()}`;
-    expect((await createRepo(owner.ctx, owner.orgId, { name: repo, format: "oci" })).status()).toBe(
-      201,
-    );
+    expect(
+      (await createRepo(owner.ctx, owner.orgId, { name: repo, moduleId: "oci" })).status(),
+    ).toBe(201);
     const secret = (await (await createToken(owner.ctx, owner.orgId, { name: "oras-tag" })).json())
       .secret as string;
     const auth = ["--plain-http", "--no-tty", "-u", "__token__", "-p", secret];
@@ -368,9 +368,9 @@ test.describe("oci registry extended scenarios (Dockerized real ORAS)", () => {
     const host = new URL(dockerReachableUrl(baseURL!)).host;
     const owner = await setupOwner(baseURL!);
     const repo = `oci-referrers-${ociSuffix()}`;
-    expect((await createRepo(owner.ctx, owner.orgId, { name: repo, format: "oci" })).status()).toBe(
-      201,
-    );
+    expect(
+      (await createRepo(owner.ctx, owner.orgId, { name: repo, moduleId: "oci" })).status(),
+    ).toBe(201);
     const secret = (
       await (await createToken(owner.ctx, owner.orgId, { name: "oras-referrers" })).json()
     ).secret as string;
@@ -475,7 +475,7 @@ test.describe("oci registry extended scenarios (Dockerized real ORAS)", () => {
     const virtualName = `oci-virtual-${ociSuffix()}`;
     await createRepoReturning(owner.ctx, owner.orgId, {
       name: virtualName,
-      format: "oci",
+      moduleId: "oci",
       kind: "virtual",
     });
     const secret = (
@@ -510,9 +510,9 @@ test.describe("oci registry error and edge scenarios (Dockerized real ORAS)", ()
     const host = new URL(dockerReachableUrl(baseURL!)).host;
     const owner = await setupOwner(baseURL!);
     const repo = `oci-missing-tag-${ociSuffix()}`;
-    expect((await createRepo(owner.ctx, owner.orgId, { name: repo, format: "oci" })).status()).toBe(
-      201,
-    );
+    expect(
+      (await createRepo(owner.ctx, owner.orgId, { name: repo, moduleId: "oci" })).status(),
+    ).toBe(201);
     const secret = (
       await (await createToken(owner.ctx, owner.orgId, { name: "oras-missing-tag" })).json()
     ).secret as string;
@@ -546,9 +546,9 @@ test.describe("oci registry error and edge scenarios (Dockerized real ORAS)", ()
     const host = new URL(dockerReachableUrl(baseURL!)).host;
     const owner = await setupOwner(baseURL!);
     const repo = `oci-no-referrers-${ociSuffix()}`;
-    expect((await createRepo(owner.ctx, owner.orgId, { name: repo, format: "oci" })).status()).toBe(
-      201,
-    );
+    expect(
+      (await createRepo(owner.ctx, owner.orgId, { name: repo, moduleId: "oci" })).status(),
+    ).toBe(201);
     const secret = (
       await (await createToken(owner.ctx, owner.orgId, { name: "oras-no-referrers" })).json()
     ).secret as string;
@@ -595,9 +595,9 @@ test.describe("oci registry error and edge scenarios (Dockerized real ORAS)", ()
     const owner = await setupOwner(baseURL!);
     const repo = `oci-bad-token-${ociSuffix()}`;
     // Private repo is the default (no visibility specified).
-    expect((await createRepo(owner.ctx, owner.orgId, { name: repo, format: "oci" })).status()).toBe(
-      201,
-    );
+    expect(
+      (await createRepo(owner.ctx, owner.orgId, { name: repo, moduleId: "oci" })).status(),
+    ).toBe(201);
     const secret = (
       await (await createToken(owner.ctx, owner.orgId, { name: "oras-bad-token" })).json()
     ).secret as string;
@@ -631,9 +631,9 @@ test.describe("oci registry error and edge scenarios (Dockerized real ORAS)", ()
     const host = new URL(dockerReachableUrl(baseURL!)).host;
     const owner = await setupOwner(baseURL!);
     const repo = `oci-missing-manifest-${ociSuffix()}`;
-    expect((await createRepo(owner.ctx, owner.orgId, { name: repo, format: "oci" })).status()).toBe(
-      201,
-    );
+    expect(
+      (await createRepo(owner.ctx, owner.orgId, { name: repo, moduleId: "oci" })).status(),
+    ).toBe(201);
     const secret = (
       await (await createToken(owner.ctx, owner.orgId, { name: "oras-missing-manifest" })).json()
     ).secret as string;

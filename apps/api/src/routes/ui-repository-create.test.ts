@@ -5,29 +5,52 @@ import {
 } from "./ui-repository-create";
 
 const registry = {
-  has(format) {
-    return ["npm", "docker"].includes(format);
+  has(moduleId) {
+    return ["npm", "docker"].includes(moduleId);
   },
-  lookup(format) {
-    if (format === "npm") {
+  lookup(moduleId) {
+    if (moduleId === "npm") {
       return {
-        capabilities: { virtualizable: true },
+        mountSegment: "npm",
+        capabilities: {
+          contentAddressable: false,
+          resumableUploads: false,
+          proxyable: true,
+          virtualizable: true,
+        },
         proxyIngest: async () => true,
       };
     }
-    return { capabilities: { virtualizable: false } };
+    return {
+      mountSegment: "v2",
+      repositoryNamePolicy: {
+        validate: (name: string) => /^[a-z0-9]+(?:(?:\.|_|__|-+)[a-z0-9]+)*$/.test(name),
+        invalidMessage:
+          "repository name is invalid for this registry module; OCI repositories must be lowercase",
+      },
+      capabilities: {
+        contentAddressable: true,
+        resumableUploads: true,
+        proxyable: false,
+        virtualizable: false,
+      },
+    };
   },
 } satisfies RepositoryCapabilityRegistry;
 
 describe("create repository request resolution", () => {
-  test("normalizes defaults after validating the requested format", () => {
-    const resolved = resolveCreateRepositoryRequest({ name: "packages", format: "npm" }, registry);
+  test("normalizes defaults after validating the requested module", () => {
+    const resolved = resolveCreateRepositoryRequest(
+      { name: "packages", moduleId: "npm" },
+      registry,
+    );
 
     expect(resolved).toEqual({
       ok: true,
       request: {
         name: "packages",
-        format: "npm",
+        moduleId: "npm",
+        module: expect.objectContaining({ mountSegment: "npm" }),
         kind: "hosted",
         visibility: "private",
         description: undefined,
@@ -37,60 +60,65 @@ describe("create repository request resolution", () => {
 
   test("preserves public error contracts for invalid enum inputs", () => {
     expect(
-      resolveCreateRepositoryRequest({ name: "packages", format: "npm", kind: "mirror" }, registry),
+      resolveCreateRepositoryRequest(
+        { name: "packages", moduleId: "npm", kind: "mirror" },
+        registry,
+      ),
     ).toEqual({ ok: false, error: "unsupported repository kind 'mirror'" });
 
     expect(
       resolveCreateRepositoryRequest(
-        { name: "packages", format: "npm", visibility: "internal" },
+        { name: "packages", moduleId: "npm", visibility: "internal" },
         registry,
       ),
     ).toEqual({ ok: false, error: "unsupported repository visibility 'internal'" });
   });
 
-  test("rejects unsupported formats and invalid names before capability checks", () => {
+  test("rejects unsupported modules and invalid names before capability checks", () => {
     expect(
-      resolveCreateRepositoryRequest({ name: "packages", format: "generic" }, registry),
-    ).toEqual({ ok: false, error: "unsupported repository format 'generic'" });
+      resolveCreateRepositoryRequest({ name: "packages", moduleId: "generic" }, registry),
+    ).toEqual({ ok: false, error: "unsupported registry module 'generic'" });
 
     expect(
-      resolveCreateRepositoryRequest({ name: "../packages", format: "npm" }, registry),
+      resolveCreateRepositoryRequest({ name: "../packages", moduleId: "npm" }, registry),
     ).toEqual({
       ok: false,
       error: "repository name must be path-safe: letters, numbers, dots, underscores, or dashes",
     });
 
-    expect(resolveCreateRepositoryRequest({ name: "Upper", format: "docker" }, registry)).toEqual({
-      ok: false,
-      error:
-        "repository name is invalid for this format; OCI-family repositories must be lowercase",
-    });
+    expect(resolveCreateRepositoryRequest({ name: "Upper", moduleId: "docker" }, registry)).toEqual(
+      {
+        ok: false,
+        error:
+          "repository name is invalid for this registry module; OCI repositories must be lowercase",
+      },
+    );
   });
 
-  test("enforces format support for proxy and virtual repository kinds", () => {
+  test("enforces module support for proxy and virtual repository kinds", () => {
     expect(
       resolveCreateRepositoryRequest(
-        { name: "containers", format: "docker", kind: "proxy" },
+        { name: "containers", moduleId: "docker", kind: "proxy" },
         registry,
       ),
     ).toEqual({
       ok: false,
-      error: "proxy repositories are not supported for format 'docker'",
+      error: "proxy repositories are not supported for registry module 'docker'",
     });
 
     expect(
       resolveCreateRepositoryRequest(
-        { name: "containers", format: "docker", kind: "virtual" },
+        { name: "containers", moduleId: "docker", kind: "virtual" },
         registry,
       ),
     ).toEqual({
       ok: false,
-      error: "virtual repositories are not supported for format 'docker'",
+      error: "virtual repositories are not supported for registry module 'docker'",
     });
 
     expect(
       resolveCreateRepositoryRequest(
-        { name: "packages", format: "npm", kind: "proxy", visibility: "public" },
+        { name: "packages", moduleId: "npm", kind: "proxy", visibility: "public" },
         registry,
       ),
     ).toMatchObject({

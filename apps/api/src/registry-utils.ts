@@ -1,6 +1,6 @@
 export {
   isReadMethod,
-  repoFormatSpanAttributes,
+  repoModuleSpanAttributes,
   repoSpanAttributes,
 } from "@hootifactory/registry-application";
 

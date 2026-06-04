@@ -224,7 +224,7 @@ test.describe("api tokens", () => {
     const owner = await setupOwner(baseURL!);
     const repoName = uniq("scoped-repo");
     const repo = (
-      await (await createRepo(owner.ctx, owner.orgId, { name: repoName, format: "npm" })).json()
+      await (await createRepo(owner.ctx, owner.orgId, { name: repoName, moduleId: "npm" })).json()
     ).repository as { id: string; name: string; mountPath: string };
     const pkgName = uniq("scoped-pkg");
     await publishRawNpm(owner.ctx, repo.mountPath, pkgName);
@@ -283,7 +283,7 @@ test.describe("api tokens", () => {
     };
     const repoName = uniq("demoted-repo");
     const repo = (
-      await (await createRepo(owner.ctx, owner.orgId, { name: repoName, format: "npm" })).json()
+      await (await createRepo(owner.ctx, owner.orgId, { name: repoName, moduleId: "npm" })).json()
     ).repository as { id: string; name: string; mountPath: string };
     insertRoleBinding({
       orgId: owner.orgId,
@@ -328,7 +328,9 @@ test.describe("api tokens", () => {
     };
     const repoName = uniq("demoted-containers");
     const repo = (
-      await (await createRepo(owner.ctx, owner.orgId, { name: repoName, format: "docker" })).json()
+      await (
+        await createRepo(owner.ctx, owner.orgId, { name: repoName, moduleId: "docker" })
+      ).json()
     ).repository as { id: string; name: string; mountPath: string };
     insertRoleBinding({
       orgId: owner.orgId,

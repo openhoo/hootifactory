@@ -44,7 +44,7 @@ describe("Go adapter contract", () => {
 
   test("@v/list uses live version names without loading metadata", async () => {
     const ctx = createTestRegistryContext();
-    ctx.repo = { ...ctx.repo, format: "go", mountPath: "go/private" };
+    ctx.repo = { ...ctx.repo, moduleId: "go", mountPath: "go/private" };
     let nameReads = 0;
     ctx.data.packages.findByName = async (name) => {
       expect(name).toBe(pkg.name);

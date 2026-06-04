@@ -17,10 +17,11 @@
     "@hootifactory/db": "workspace:*",
     "@hootifactory/observability": "workspace:*",
     "@hootifactory/queue": "workspace:*",
+    "@hootifactory/registry": "workspace:*",
     "@hootifactory/registry-application": "workspace:*",
+    "@hootifactory/registry-builtins": "workspace:*",
     "@hootifactory/scan-core": "workspace:*",
     "@hootifactory/scanning": "workspace:*",
-    "@hootifactory/storage": "workspace:*",
-    "@hootifactory/types": "workspace:*"
+    "@hootifactory/storage": "workspace:*"
   }
 }

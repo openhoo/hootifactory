@@ -100,7 +100,7 @@ test.describe("nuget registry (Dockerized real dotnet)", () => {
       await (
         await createRepo(owner.ctx, owner.orgId, {
           name: "nuget-dotnet",
-          format: "nuget",
+          moduleId: "nuget",
           visibility: "public",
         })
       ).json()
@@ -178,7 +178,7 @@ test.describe("nuget registry (Dockerized real dotnet)", () => {
       await (
         await createRepo(owner.ctx, owner.orgId, {
           name: "nuget-deps",
-          format: "nuget",
+          moduleId: "nuget",
           visibility: "public",
         })
       ).json()
@@ -360,7 +360,7 @@ test.describe("nuget registry extended scenarios (Dockerized real dotnet)", () =
     const owner = await setupOwner(baseURL!);
     const repo = await createRepoReturning(owner.ctx, owner.orgId, {
       name: `nuget-prerelease-${Date.now().toString(36)}`,
-      format: "nuget",
+      moduleId: "nuget",
       visibility: "public",
     });
     const secret = (await (await createToken(owner.ctx, owner.orgId, { name: "nuget" })).json())
@@ -397,7 +397,7 @@ test.describe("nuget registry extended scenarios (Dockerized real dotnet)", () =
     const owner = await setupOwner(baseURL!);
     const repo = await createRepoReturning(owner.ctx, owner.orgId, {
       name: `nuget-range-${Date.now().toString(36)}`,
-      format: "nuget",
+      moduleId: "nuget",
       visibility: "public",
     });
     const secret = (await (await createToken(owner.ctx, owner.orgId, { name: "nuget" })).json())
@@ -429,7 +429,7 @@ test.describe("nuget registry extended scenarios (Dockerized real dotnet)", () =
     const owner = await setupOwner(baseURL!);
     const repo = await createRepoReturning(owner.ctx, owner.orgId, {
       name: `nuget-unlist-${Date.now().toString(36)}`,
-      format: "nuget",
+      moduleId: "nuget",
       visibility: "public",
     });
     const secret = (await (await createToken(owner.ctx, owner.orgId, { name: "nuget" })).json())
@@ -495,17 +495,17 @@ test.describe("nuget registry extended scenarios (Dockerized real dotnet)", () =
     const suffix = `${Date.now().toString(36)}${randomUUID().slice(0, 8)}`;
     const repoA = await createRepoReturning(owner.ctx, owner.orgId, {
       name: `nuget-member-a-${suffix}`,
-      format: "nuget",
+      moduleId: "nuget",
       visibility: "public",
     });
     const repoB = await createRepoReturning(owner.ctx, owner.orgId, {
       name: `nuget-member-b-${suffix}`,
-      format: "nuget",
+      moduleId: "nuget",
       visibility: "public",
     });
     const virtual = await createRepoReturning(owner.ctx, owner.orgId, {
       name: `nuget-virtual-${suffix}`,
-      format: "nuget",
+      moduleId: "nuget",
       kind: "virtual",
       visibility: "public",
     });
@@ -554,7 +554,7 @@ test.describe("nuget registry extended scenarios (Dockerized real dotnet)", () =
     const owner = await setupOwner(baseURL!);
     const repo = await createRepoReturning(owner.ctx, owner.orgId, {
       name: `nuget-dup-${Date.now().toString(36)}`,
-      format: "nuget",
+      moduleId: "nuget",
       visibility: "public",
     });
     const secret = (await (await createToken(owner.ctx, owner.orgId, { name: "nuget" })).json())
@@ -596,7 +596,7 @@ test.describe("nuget registry error and edge scenarios (Dockerized real dotnet)"
     // Empty hosted source: nothing was ever pushed here, so any add+restore must fail.
     const repo = await createRepoReturning(owner.ctx, owner.orgId, {
       name: `nuget-missing-pkg-${Date.now().toString(36)}${randomUUID().slice(0, 8)}`,
-      format: "nuget",
+      moduleId: "nuget",
       visibility: "public",
     });
     const source = nugetSource(baseURL!, repo.mountPath);
@@ -625,7 +625,7 @@ test.describe("nuget registry error and edge scenarios (Dockerized real dotnet)"
     const owner = await setupOwner(baseURL!);
     const repo = await createRepoReturning(owner.ctx, owner.orgId, {
       name: `nuget-missing-version-${Date.now().toString(36)}${randomUUID().slice(0, 8)}`,
-      format: "nuget",
+      moduleId: "nuget",
       visibility: "public",
     });
     const secret = (await (await createToken(owner.ctx, owner.orgId, { name: "nuget" })).json())
@@ -659,7 +659,7 @@ test.describe("nuget registry error and edge scenarios (Dockerized real dotnet)"
     const owner = await setupOwner(baseURL!);
     const repo = await createRepoReturning(owner.ctx, owner.orgId, {
       name: `nuget-unlist-resolve-${Date.now().toString(36)}${randomUUID().slice(0, 8)}`,
-      format: "nuget",
+      moduleId: "nuget",
       visibility: "public",
     });
     const secret = (await (await createToken(owner.ctx, owner.orgId, { name: "nuget" })).json())

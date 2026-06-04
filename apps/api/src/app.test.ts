@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { env } from "@hootifactory/config";
 import { app } from "./app";
+import { registerAdapters } from "./bootstrap";
 import { registryWriteAdmission } from "./middleware/request-safety";
 import {
   securityHeadersForNodeEnv,
@@ -9,6 +10,8 @@ import {
 } from "./middleware/security-headers";
 
 const uuidPattern = /^[0-9a-f-]{36}$/;
+
+registerAdapters();
 
 describe("request body guard", () => {
   test("echoes trusted request and correlation identifiers on responses", async () => {
@@ -61,7 +64,7 @@ describe("request body guard", () => {
 
     for (const response of [api, token, credentialed]) {
       expect(response.headers.get("cache-control")).toBe("no-store");
-      expect(response.headers.get("vary")).toBe("Authorization, Cookie, X-NuGet-ApiKey");
+      expect(response.headers.get("vary")).toBe("Authorization, Cookie, x-nuget-apikey");
     }
   });
 

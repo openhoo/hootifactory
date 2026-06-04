@@ -1,17 +1,7 @@
 /** Shared types and constants used across packages. */
 import { z } from "zod";
 
-export type PackageFormat =
-  | "npm"
-  | "docker"
-  | "oci"
-  | "pypi"
-  | "maven"
-  | "helm"
-  | "nuget"
-  | "go"
-  | "cargo"
-  | "generic";
+export type RegistryModuleId = string;
 
 export type RepoKind = "hosted" | "proxy" | "virtual";
 export type Visibility = "private" | "public";

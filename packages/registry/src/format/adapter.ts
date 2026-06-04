@@ -1,4 +1,4 @@
-import type { PackageFormat, RepoKind, Visibility } from "@hootifactory/types";
+import type { RegistryModuleId, RepoKind, Visibility } from "@hootifactory/types";
 import type { RegistryDataService } from "./data";
 
 export type Action = "read" | "write" | "delete" | "admin";
@@ -73,7 +73,7 @@ export interface ResolvedRepo {
   id: string;
   orgId: string;
   name: string;
-  format: PackageFormat;
+  moduleId: RegistryModuleId;
   kind: RepoKind;
   visibility: Visibility;
   mountPath: string;
@@ -225,6 +225,19 @@ export interface SearchResult {
   total: number;
 }
 
+export interface RegistryVirtualMemberResponse {
+  member: ResolvedRepo;
+  response: Response;
+}
+
+export interface RegistryVirtualSearchInput {
+  req: Request;
+  ctx: RegistryRequestContext;
+  collectMemberResponses(
+    requestForMember: (input: { req: Request; member: ResolvedRepo }) => Request | Promise<Request>,
+  ): Promise<RegistryVirtualMemberResponse[]>;
+}
+
 export interface FormatCapabilities {
   contentAddressable: boolean;
   resumableUploads: boolean;
@@ -232,13 +245,76 @@ export interface FormatCapabilities {
   virtualizable: boolean;
 }
 
+export type RegistryErrorResponseKind = "registry" | "singleError" | "cargo";
+
+export interface RegistryUsageSnippetInput {
+  baseUrl: string;
+  host: string;
+  mountPath: string;
+  packageName?: string;
+  version?: string;
+}
+
+export interface RegistryUsageSnippet {
+  title: string;
+  code: string;
+}
+
+export interface RegistryRepositoryNamePolicy {
+  validate(name: string): boolean;
+  invalidMessage?: string;
+}
+
+export interface RegistryDependencyScanInput {
+  metadata: Record<string, unknown>;
+}
+
+export interface RegistryDependencyScanResult {
+  deps: Record<string, string>;
+  osvEcosystem?: string;
+  purlType?: string;
+}
+
+export interface RegistryContentAddressableManifestRow {
+  raw: string;
+}
+
+export interface RegistryContentAddressableManifestRefs {
+  blobs: string[];
+  manifests: string[];
+}
+
+export interface RegistryContentAddressableManifestGraph {
+  noPayloadReason?: string;
+  references(raw: string): RegistryContentAddressableManifestRefs;
+}
+
+export interface RegistryScanProvider {
+  defaultOsvEcosystem?: string;
+  dependencyGraph?(input: RegistryDependencyScanInput): RegistryDependencyScanResult;
+  contentAddressableManifestGraph?: RegistryContentAddressableManifestGraph;
+}
+
+export interface RegistryModuleDescriptor {
+  readonly id: RegistryModuleId;
+  readonly displayName: string;
+  readonly mountSegment: string;
+  readonly repositoryNamePolicy?: RegistryRepositoryNamePolicy;
+  readonly acceptsRegistryBearerToken?: boolean;
+  readonly apiKeyHeaders: ReadonlySet<string>;
+  readonly errorResponseKind: RegistryErrorResponseKind;
+  readonly compressibleHandlers: ReadonlySet<string>;
+  readonly compressibleContentTypes: ReadonlySet<string>;
+  readonly scan?: RegistryScanProvider;
+  usageSnippets?(input: RegistryUsageSnippetInput): RegistryUsageSnippet[];
+}
+
 /**
- * A registry-format plugin. The registry application owns HTTP, routing,
- * repository resolution, auth decisions, CAS lifecycle, and scanning. Protocol
- * implementations live behind this interface.
+ * A registry module. The platform owns HTTP, route resolution, auth decisions,
+ * CAS lifecycle, and scan execution; module implementations provide all
+ * protocol-specific behavior behind this interface.
  */
-export interface RegistryPlugin {
-  readonly format: PackageFormat;
+export interface RegistryPlugin extends RegistryModuleDescriptor {
   readonly capabilities: FormatCapabilities;
 
   /** Declarative routes, mounted under the repo's mount path. */
@@ -264,6 +340,7 @@ export interface RegistryPlugin {
   generateMetadata?(pkg: string, ctx: RegistryRequestContext): Promise<FormatMetadata | null>;
   mergeMetadata?(parts: FormatMetadata[], ctx: RegistryRequestContext): Promise<FormatMetadata>;
   search?(query: SearchQuery, ctx: RegistryRequestContext): Promise<SearchResult>;
+  virtualSearch?(input: RegistryVirtualSearchInput): Promise<Response>;
 
   // ── optional, for proxy repos (Phase 2) ──────────────────────────────────
   /** Mirror an item from an upstream into this repo's CAS. Returns true on success. */

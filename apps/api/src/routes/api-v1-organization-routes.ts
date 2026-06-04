@@ -168,7 +168,8 @@ export function registerApiV1OrganizationRoutes(apiV1Router: Hono<AppEnv>) {
           orgId: params.data.orgId,
           orgSlug: org.slug,
           name: resolvedRequest.request.name,
-          format: resolvedRequest.request.format,
+          moduleId: resolvedRequest.request.moduleId,
+          module: resolvedRequest.request.module,
           kind: resolvedRequest.request.kind,
           visibility: resolvedRequest.request.visibility,
           description: resolvedRequest.request.description,
@@ -180,7 +181,7 @@ export function registerApiV1OrganizationRoutes(apiV1Router: Hono<AppEnv>) {
           resourceType: "repository",
           resourceId: repo.id,
           principal: c.get("principal"),
-          detail: { name: repo.name, format: repo.format, kind: repo.kind },
+          detail: { name: repo.name, moduleId: repo.moduleId, kind: repo.kind },
         });
         return dataResponse(c, repositoryDto(repo), 201);
       } catch (err) {

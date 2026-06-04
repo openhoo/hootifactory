@@ -12,6 +12,19 @@ const TEXT_BODY = JSON.stringify({
   readme: "repeatable metadata ".repeat(256),
 });
 
+const npmModule = {
+  compressibleHandlers: new Set(["packument"]),
+  compressibleContentTypes: new Set<string>(),
+};
+const goModule = {
+  compressibleHandlers: new Set(["file", "list"]),
+  compressibleContentTypes: new Set<string>(),
+};
+const dockerModule = {
+  compressibleHandlers: new Set<string>(),
+  compressibleContentTypes: new Set<string>(),
+};
+
 function gzipRequest(headers: Record<string, string> = {}): Request {
   return new Request("https://registry.test/npm/pkg", {
     headers: { "accept-encoding": "br, gzip", ...headers },
@@ -32,7 +45,7 @@ describe("registry response compression", () => {
     clearCompressedResponseCacheForTest();
 
     const compressed = await compressRegistryResponse(gzipRequest(), textResponse(), {
-      format: "npm",
+      module: npmModule,
       handlerId: "packument",
     });
 
@@ -48,7 +61,7 @@ describe("registry response compression", () => {
   test("reuses cached gzip bytes for the same etag and content type", async () => {
     clearCompressedResponseCacheForTest();
 
-    const opts = { format: "npm", handlerId: "packument" };
+    const opts = { module: npmModule, handlerId: "packument" };
     await compressRegistryResponse(gzipRequest(), textResponse(), opts);
     expect(compressedResponseCacheSizeForTest()).toBe(1);
 
@@ -69,14 +82,14 @@ describe("registry response compression", () => {
         headers: { "accept-encoding": "gzip" },
       }),
       textResponse(),
-      { format: "npm", handlerId: "packument" },
+      { module: npmModule, handlerId: "packument" },
     );
     expect(head.headers.get("content-encoding")).toBeNull();
 
     const noEtag = await compressRegistryResponse(
       gzipRequest(),
       new Response(TEXT_BODY, { headers: { "content-type": "application/json" } }),
-      { format: "npm", handlerId: "packument" },
+      { module: npmModule, handlerId: "packument" },
     );
     expect(noEtag.headers.get("content-encoding")).toBeNull();
 
@@ -85,14 +98,14 @@ describe("registry response compression", () => {
       new Response(TEXT_BODY, {
         headers: { "content-type": "application/octet-stream", etag: '"blob"' },
       }),
-      { format: "npm", handlerId: "packument" },
+      { module: npmModule, handlerId: "packument" },
     );
     expect(binary.headers.get("content-encoding")).toBeNull();
   });
 
   test("preserves small responses when gzip would be larger", async () => {
     const response = await compressRegistryResponse(gzipRequest(), textResponse("v1.0.0\n"), {
-      format: "go",
+      module: goModule,
       handlerId: "list",
     });
 
@@ -102,12 +115,12 @@ describe("registry response compression", () => {
   });
 
   test("only opts in known registry metadata handlers", async () => {
-    expect(registryHandlerSupportsCompression("npm", "packument")).toBe(true);
-    expect(registryHandlerSupportsCompression("go", "file")).toBe(true);
-    expect(registryHandlerSupportsCompression("docker", "getManifest")).toBe(false);
+    expect(registryHandlerSupportsCompression(npmModule, "packument")).toBe(true);
+    expect(registryHandlerSupportsCompression(goModule, "file")).toBe(true);
+    expect(registryHandlerSupportsCompression(dockerModule, "getManifest")).toBe(false);
 
     const response = await compressRegistryResponse(gzipRequest(), textResponse(), {
-      format: "npm",
+      module: npmModule,
       handlerId: "tarball",
     });
     expect(response.headers.get("content-encoding")).toBeNull();

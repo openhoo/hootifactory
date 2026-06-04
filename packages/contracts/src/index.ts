@@ -1,4 +1,4 @@
-import type { PackageFormat, RepoKind, Visibility } from "@hootifactory/types";
+import type { RegistryModuleId, RepoKind, Visibility } from "@hootifactory/types";
 
 export * from "./api-v1";
 
@@ -15,13 +15,25 @@ export interface RepositoryDto {
   id: string;
   orgId?: string;
   name: string;
-  format: PackageFormat | string;
+  moduleId: RegistryModuleId;
   kind: RepoKind | string;
   visibility: Visibility | string;
   mountPath: string;
   description: string | null;
   createdAt?: WireTimestamp;
   updatedAt?: WireTimestamp;
+}
+
+export interface RegistryModuleDto {
+  id: string;
+  displayName: string;
+  mountSegment: string;
+  capabilities: {
+    contentAddressable: boolean;
+    resumableUploads: boolean;
+    proxyable: boolean;
+    virtualizable: boolean;
+  };
 }
 
 export interface PackageDto {
@@ -125,6 +137,7 @@ export interface HootifactoryApiClient {
   orgs(): Promise<{ orgs: OrgDto[] }>;
   createOrg(slug: string, displayName: string): Promise<{ org: OrgDto }>;
   repos(orgId: string): Promise<{ repositories: RepositoryDto[] }>;
+  registryModules(): Promise<{ modules: RegistryModuleDto[] }>;
   createRepo(orgId: string, data: Record<string, unknown>): Promise<{ repository: RepositoryDto }>;
   repo(repoId: string): Promise<{ repository: RepositoryDto; packageCount: number }>;
   packages(

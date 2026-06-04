@@ -45,14 +45,14 @@ test.describe("audit log coverage", () => {
     const owner = await setupOwner(baseURL!);
     const hosted = (
       await (
-        await createRepo(owner.ctx, owner.orgId, { name: uniq("audit-hosted"), format: "npm" })
+        await createRepo(owner.ctx, owner.orgId, { name: uniq("audit-hosted"), moduleId: "npm" })
       ).json()
     ).repository as { id: string };
     const virtual = (
       await (
         await createRepo(owner.ctx, owner.orgId, {
           name: uniq("audit-virtual"),
-          format: "npm",
+          moduleId: "npm",
           kind: "virtual",
         })
       ).json()
@@ -61,7 +61,7 @@ test.describe("audit log coverage", () => {
       await (
         await createRepo(owner.ctx, owner.orgId, {
           name: uniq("audit-proxy"),
-          format: "npm",
+          moduleId: "npm",
           kind: "proxy",
         })
       ).json()

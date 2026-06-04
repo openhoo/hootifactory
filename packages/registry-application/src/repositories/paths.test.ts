@@ -2,21 +2,27 @@ import { describe, expect, test } from "bun:test";
 import {
   computeMountPath,
   isValidRepositoryName,
-  isValidRepositoryNameForFormat,
+  isValidRepositoryNameForModule,
   mountSegment,
 } from "./paths";
 
+const npmModule = { mountSegment: "npm", repositoryNamePolicy: undefined };
+const ociModule = {
+  mountSegment: "v2",
+  repositoryNamePolicy: {
+    validate: (name: string) => /^[a-z0-9]+(?:(?:\.|_|__|-+)[a-z0-9]+)*$/.test(name),
+  },
+};
+
 describe("repository path helpers", () => {
-  test("maps OCI-family formats to the shared v2 mount segment", () => {
-    expect(mountSegment("docker")).toBe("v2");
-    expect(mountSegment("oci")).toBe("v2");
-    expect(mountSegment("helm")).toBe("v2");
-    expect(mountSegment("npm")).toBe("npm");
+  test("reads mount segments from registry modules", () => {
+    expect(mountSegment(ociModule)).toBe("v2");
+    expect(mountSegment(npmModule)).toBe("npm");
   });
 
-  test("computes public mount paths from format, org slug, and repo name", () => {
-    expect(computeMountPath("docker", "acme", "containers")).toBe("v2/acme/containers");
-    expect(computeMountPath("pypi", "acme", "python")).toBe("pypi/acme/python");
+  test("computes public mount paths from module, org slug, and repo name", () => {
+    expect(computeMountPath(ociModule, "acme", "containers")).toBe("v2/acme/containers");
+    expect(computeMountPath({ mountSegment: "pypi" }, "acme", "python")).toBe("pypi/acme/python");
   });
 
   test("validates repository names conservatively", () => {
@@ -28,12 +34,12 @@ describe("repository path helpers", () => {
     expect(isValidRepositoryName("x".repeat(257))).toBe(false);
   });
 
-  test("requires OCI-family repository names to satisfy lowercase OCI grammar", () => {
-    expect(isValidRepositoryNameForFormat("docker", "containers")).toBe(true);
-    expect(isValidRepositoryNameForFormat("oci", "artifacts")).toBe(true);
-    expect(isValidRepositoryNameForFormat("helm", "charts")).toBe(true);
-    expect(isValidRepositoryNameForFormat("docker", "Containers")).toBe(false);
-    expect(isValidRepositoryNameForFormat("oci", "bad..name")).toBe(false);
-    expect(isValidRepositoryNameForFormat("npm", "MixedCase")).toBe(true);
+  test("uses module repository name policies when present", () => {
+    expect(isValidRepositoryNameForModule(ociModule, "containers")).toBe(true);
+    expect(isValidRepositoryNameForModule(ociModule, "artifacts")).toBe(true);
+    expect(isValidRepositoryNameForModule(ociModule, "charts")).toBe(true);
+    expect(isValidRepositoryNameForModule(ociModule, "Containers")).toBe(false);
+    expect(isValidRepositoryNameForModule(ociModule, "bad..name")).toBe(false);
+    expect(isValidRepositoryNameForModule(npmModule, "MixedCase")).toBe(true);
   });
 });

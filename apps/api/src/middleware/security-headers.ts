@@ -1,4 +1,5 @@
 import { env } from "@hootifactory/config";
+import { registryPlugins } from "@hootifactory/registry";
 import type { MiddlewareHandler } from "hono";
 import type { AppEnv } from "../types";
 
@@ -14,10 +15,16 @@ const CONTENT_SECURITY_POLICY = [
   "connect-src 'self'",
 ].join("; ");
 
-const SENSITIVE_CACHE_HEADERS = {
-  "cache-control": "no-store",
-  vary: "Authorization, Cookie, X-NuGet-ApiKey",
-};
+function registryApiKeyHeaders(): string[] {
+  return registryPlugins.all().flatMap((plugin) => [...plugin.apiKeyHeaders]);
+}
+
+function sensitiveCacheHeaders(): Record<string, string> {
+  return {
+    "cache-control": "no-store",
+    vary: ["Authorization", "Cookie", ...registryApiKeyHeaders()].join(", "),
+  };
+}
 
 function isApiOrTokenPath(pathname: string): boolean {
   return (
@@ -29,11 +36,21 @@ function isApiOrTokenPath(pathname: string): boolean {
 }
 
 function hasRequestCredentials(headers: Headers): boolean {
-  return headers.has("authorization") || headers.has("cookie") || headers.has("x-nuget-apikey");
+  return (
+    headers.has("authorization") ||
+    headers.has("cookie") ||
+    registryApiKeyHeaders().some((header) => headers.has(header))
+  );
 }
 
-function isImmutableOciBlobPath(pathname: string): boolean {
-  return pathname.startsWith("/v2/") && /\/blobs\/sha256:[a-fA-F0-9]{64}$/.test(pathname);
+function isImmutableContentAddressableBlobPath(pathname: string): boolean {
+  return registryPlugins
+    .all()
+    .filter((plugin) => plugin.capabilities.contentAddressable)
+    .some((plugin) => {
+      const prefix = `/${plugin.mountSegment}/`;
+      return pathname.startsWith(prefix) && /\/blobs\/sha256:[a-fA-F0-9]{64}$/.test(pathname);
+    });
 }
 
 function isImmutableCacheControl(value: string | null): boolean {
@@ -59,10 +76,10 @@ export function securityHeadersForRequest(
 ): Record<string, string> {
   const shouldForceNoStore =
     isApiOrTokenPath(pathname) ||
-    (hasRequestCredentials(request.headers) && !isImmutableOciBlobPath(pathname));
+    (hasRequestCredentials(request.headers) && !isImmutableContentAddressableBlobPath(pathname));
   return {
     ...securityHeadersForNodeEnv(nodeEnv),
-    ...(shouldForceNoStore ? SENSITIVE_CACHE_HEADERS : {}),
+    ...(shouldForceNoStore ? sensitiveCacheHeaders() : {}),
   };
 }
 

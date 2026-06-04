@@ -94,7 +94,7 @@ describe("Cargo adapter", () => {
 
   test("sparse index serializes stored index entries without strict metadata revalidation", async () => {
     const ctx = createTestRegistryContext();
-    ctx.repo = { ...ctx.repo, format: "cargo", mountPath: "cargo/private" };
+    ctx.repo = { ...ctx.repo, moduleId: "cargo", mountPath: "cargo/private" };
     ctx.data.packages.findByName = async (name) => {
       expect(name).toBe(pkg.name);
       return pkg;

@@ -33,7 +33,7 @@ async function registryToken(
 function insertLegacyRepository(input: {
   orgId: string;
   name: string;
-  format: "npm";
+  moduleId: "npm";
   mountPath: string;
   storagePrefix: string;
 }): void {
@@ -46,7 +46,7 @@ function insertLegacyRepository(input: {
         "await db.insert(repositories).values({",
         "  orgId: process.env.ORG_ID,",
         "  name: process.env.REPOSITORY_NAME,",
-        "  format: process.env.FORMAT,",
+        "  moduleId: process.env.MODULE_ID,",
         "  mountPath: process.env.MOUNT_PATH,",
         "  storagePrefix: process.env.STORAGE_PREFIX,",
         "});",
@@ -58,7 +58,7 @@ function insertLegacyRepository(input: {
         DATABASE_URL: TEST_DATABASE_URL,
         ORG_ID: input.orgId,
         REPOSITORY_NAME: input.name,
-        FORMAT: input.format,
+        MODULE_ID: input.moduleId,
         MOUNT_PATH: input.mountPath,
         STORAGE_PREFIX: input.storagePrefix,
       },
@@ -290,19 +290,21 @@ async function putReferrer(
 }
 
 test.describe("docker registry protocol authorization", () => {
-  test("OCI bearer JWTs cannot authorize non-OCI repository formats", async ({ baseURL }) => {
+  test("OCI bearer JWTs cannot authorize non-OCI registry modules", async ({ baseURL }) => {
     const owner = await setupOwner(baseURL!);
     expect(
-      (await createRepo(owner.ctx, owner.orgId, { name: "containers", format: "docker" })).status(),
+      (
+        await createRepo(owner.ctx, owner.orgId, { name: "containers", moduleId: "docker" })
+      ).status(),
     ).toBe(201);
     const imageName = `${owner.orgSlug}/containers/app`;
     const legacyMount = `npm/${owner.orgSlug}/${imageName}`;
     insertLegacyRepository({
       orgId: owner.orgId,
       name: imageName,
-      format: "npm",
+      moduleId: "npm",
       mountPath: legacyMount,
-      storagePrefix: `${owner.orgId}/legacy-cross-format`,
+      storagePrefix: `${owner.orgId}/legacy-cross-module`,
     });
 
     const secret = (
@@ -326,7 +328,7 @@ test.describe("docker registry protocol authorization", () => {
     const owner = await setupOwner(baseURL!);
     const repo = (
       await (
-        await createRepo(owner.ctx, owner.orgId, { name: "containers", format: "docker" })
+        await createRepo(owner.ctx, owner.orgId, { name: "containers", moduleId: "docker" })
       ).json()
     ).repository as { mountPath: string };
 
@@ -478,7 +480,7 @@ test.describe("docker registry protocol authorization", () => {
     const owner = await setupOwner(baseURL!);
     const repo = (
       await (
-        await createRepo(owner.ctx, owner.orgId, { name: "containers", format: "docker" })
+        await createRepo(owner.ctx, owner.orgId, { name: "containers", moduleId: "docker" })
       ).json()
     ).repository as { mountPath: string };
 
@@ -584,7 +586,7 @@ test.describe("docker registry protocol authorization", () => {
     const owner = await setupOwner(baseURL!);
     const repo = (
       await (
-        await createRepo(owner.ctx, owner.orgId, { name: "containers", format: "docker" })
+        await createRepo(owner.ctx, owner.orgId, { name: "containers", moduleId: "docker" })
       ).json()
     ).repository as { mountPath: string };
 
@@ -746,7 +748,9 @@ test.describe("docker registry protocol authorization", () => {
   }) => {
     const owner = await setupOwner(baseURL!);
     const repo = (
-      await (await createRepo(owner.ctx, owner.orgId, { name: "artifacts", format: "oci" })).json()
+      await (
+        await createRepo(owner.ctx, owner.orgId, { name: "artifacts", moduleId: "oci" })
+      ).json()
     ).repository as { mountPath: string };
 
     const payload = Buffer.from("artifact payload");
@@ -787,7 +791,7 @@ test.describe("docker registry protocol authorization", () => {
     const owner = await setupOwner(baseURL!);
     const repo = (
       await (
-        await createRepo(owner.ctx, owner.orgId, { name: "containers", format: "docker" })
+        await createRepo(owner.ctx, owner.orgId, { name: "containers", moduleId: "docker" })
       ).json()
     ).repository as { mountPath: string };
 
@@ -849,7 +853,7 @@ test.describe("docker registry protocol authorization", () => {
     const owner = await setupOwner(baseURL!);
     const repo = (
       await (
-        await createRepo(owner.ctx, owner.orgId, { name: "containers", format: "docker" })
+        await createRepo(owner.ctx, owner.orgId, { name: "containers", moduleId: "docker" })
       ).json()
     ).repository as { mountPath: string };
 
@@ -960,7 +964,7 @@ test.describe("docker registry protocol authorization", () => {
       await (
         await createRepo(owner.ctx, owner.orgId, {
           name: "quota-patch-containers",
-          format: "docker",
+          moduleId: "docker",
         })
       ).json()
     ).repository as { mountPath: string };
@@ -988,7 +992,7 @@ test.describe("docker registry protocol authorization", () => {
       await (
         await createRepo(owner.ctx, owner.orgId, {
           name: "reaped-containers",
-          format: "docker",
+          moduleId: "docker",
         })
       ).json()
     ).repository as { mountPath: string };
@@ -1026,7 +1030,7 @@ test.describe("docker registry protocol authorization", () => {
     const owner = await setupOwner(baseURL!);
     const repo = (
       await (
-        await createRepo(owner.ctx, owner.orgId, { name: "quota-containers", format: "docker" })
+        await createRepo(owner.ctx, owner.orgId, { name: "quota-containers", moduleId: "docker" })
       ).json()
     ).repository as { mountPath: string };
     await owner.ctx.post(`/api/orgs/${owner.orgId}/quota`, { data: { maxStorageBytes: 1 } });

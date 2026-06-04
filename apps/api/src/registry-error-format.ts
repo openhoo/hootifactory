@@ -1,4 +1,4 @@
 export {
-  registryErrorResponseForFormat,
-  registryErrorToFormatResponse,
+  registryErrorResponseForModule,
+  registryErrorToModuleResponse,
 } from "@hootifactory/registry";

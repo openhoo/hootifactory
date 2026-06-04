@@ -12,7 +12,7 @@ import {
   varchar,
 } from "drizzle-orm/pg-core";
 import { primaryId, timestamps } from "./_helpers";
-import { blobRefKindEnum, blobStateEnum, uploadStateEnum } from "./enums";
+import { blobStateEnum, uploadStateEnum } from "./enums";
 import { packages, packageVersions } from "./packages";
 import { repositories } from "./repositories";
 import { organizations } from "./tenancy";
@@ -50,7 +50,7 @@ export const blobRefs = pgTable(
     digest: varchar({ length: 80 })
       .notNull()
       .references(() => blobs.digest, { onDelete: "restrict" }),
-    kind: blobRefKindEnum().notNull(),
+    kind: text().notNull(),
     repositoryId: uuid()
       .notNull()
       .references(() => repositories.id, { onDelete: "cascade" }),
@@ -93,7 +93,7 @@ export const ociManifests = pgTable(
 );
 
 /**
- * Normalized registry asset catalog. This is the format-agnostic ownership row
+ * Normalized registry asset catalog. This is the module-agnostic ownership row
  * for payloads exposed by packages/versions/manifests. Protocol metadata may
  * still snapshot digests, but asset rows are the durable data-management truth.
  */

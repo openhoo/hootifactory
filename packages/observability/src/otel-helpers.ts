@@ -47,11 +47,8 @@ export function defaultHttpRoute(pathname: string): string {
   if (pathname === "/v2" || pathname === "/v2/" || pathname.startsWith("/v2/")) return "/v2/*";
   if (pathname.startsWith("/api/auth")) return "/api/auth/*";
   if (pathname.startsWith("/api/")) return "/api/*";
-  if (pathname.startsWith("/npm/")) return "/npm/*";
-  if (pathname.startsWith("/pypi/")) return "/pypi/*";
-  if (pathname.startsWith("/go/")) return "/go/*";
-  if (pathname.startsWith("/cargo/")) return "/cargo/*";
-  if (pathname.startsWith("/nuget/")) return "/nuget/*";
+  const [, mount, org, repo] = pathname.split("/", 4);
+  if (mount && org && repo) return `/${mount}/*`;
   return pathname === "/" ? "/" : "/*";
 }
 

@@ -5,6 +5,7 @@ import {
 } from "@hootifactory/auth";
 import { env } from "@hootifactory/config";
 import { isUniqueViolation } from "@hootifactory/core";
+import { registryPlugins } from "@hootifactory/registry";
 import { createRepository, listRepositoriesForOrg } from "@hootifactory/registry-application";
 import { Hono } from "hono";
 import type { AppEnv } from "../types";
@@ -32,6 +33,17 @@ uiRouter.get("/orgs", async (c) => {
   if (p.kind !== "user") return c.json({ orgs: [] });
   return c.json({ orgs: await listAccessibleOrgs(p.userId) });
 });
+
+uiRouter.get("/registry-modules", (c) =>
+  c.json({
+    modules: registryPlugins.all().map((module) => ({
+      id: module.id,
+      displayName: module.displayName,
+      mountSegment: module.mountSegment,
+      capabilities: module.capabilities,
+    })),
+  }),
+);
 
 uiRouter.post("/orgs", async (c) => {
   if (!env.AUTH_ALLOW_ORG_CREATION) {
@@ -106,7 +118,8 @@ uiRouter.post("/orgs/:orgId/repositories", async (c) => {
       orgId,
       orgSlug: org.slug,
       name: request.name,
-      format: request.format,
+      moduleId: request.moduleId,
+      module: request.module,
       kind: request.kind,
       visibility: request.visibility,
       description: request.description,
@@ -118,7 +131,7 @@ uiRouter.post("/orgs/:orgId/repositories", async (c) => {
       resourceType: "repository",
       resourceId: repo.id,
       principal: c.get("principal"),
-      detail: { name: repo.name, format: repo.format, kind: repo.kind },
+      detail: { name: repo.name, moduleId: repo.moduleId, kind: repo.kind },
     });
     return c.json({ repository: repositoryDto(repo) }, 201);
   } catch (err) {

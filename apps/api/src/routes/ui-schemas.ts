@@ -12,7 +12,12 @@ export const VisibilitySchema = z.enum(["private", "public"]);
 const PolicyModeSchema = z.enum(["audit", "enforce"]);
 const TokenTypeSchema = z.enum(["personal", "robot"]);
 const SeveritySchema = z.enum(Object.keys(SEVERITY_ORDER) as [Severity, ...Severity[]]);
-const RepositoryFormatSchema = z.string().trim().min(1).max(64);
+const RegistryModuleIdSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(128)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/);
 const OptionalDescriptionSchema = z.string().trim().max(2048).optional();
 const TokenActionsSchema = z
   .array(ActionSchema)
@@ -72,7 +77,7 @@ export const RetentionBodySchema = z.strictObject({
 
 export const CreateRepositoryBodySchema = z.strictObject({
   name: z.string().trim().min(1).max(256),
-  format: RepositoryFormatSchema,
+  moduleId: RegistryModuleIdSchema,
   kind: z.unknown().optional(),
   visibility: z.unknown().optional(),
   description: OptionalDescriptionSchema,

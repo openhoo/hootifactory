@@ -81,7 +81,7 @@ async function enqueueArtifactScan(repo: ResolvedRepo, input: EnqueueScanInput):
   );
 }
 
-/** Assemble the per-request RegistryRequestContext injected into a format adapter. */
+/** Assemble the per-request RegistryRequestContext injected into a registry module. */
 export function buildRegistryRequestContext(
   repo: ResolvedRepo,
   principal: Principal,

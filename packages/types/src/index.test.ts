@@ -4,7 +4,7 @@ import {
   type OciManifest,
   ociManifestReferences,
   ociManifestReferencesFromValue,
-  type PackageFormat,
+  type RegistryModuleId,
 } from "./index";
 
 describe("shared type constants", () => {
@@ -18,15 +18,15 @@ describe("shared type constants", () => {
     );
   });
 
-  test("supports package format and manifest shapes used across adapters", () => {
-    const format: PackageFormat = "cargo";
+  test("supports registry module ids and manifest shapes used across adapters", () => {
+    const moduleId: RegistryModuleId = "cargo";
     const manifest: OciManifest = {
       schemaVersion: 2,
       config: { mediaType: OCI_MEDIA_TYPES.configV1, digest: "sha256:test", size: 2 },
       layers: [{ mediaType: OCI_MEDIA_TYPES.layerTarGzip, digest: "sha256:layer", size: 10 }],
     };
 
-    expect(format).toBe("cargo");
+    expect(moduleId).toBe("cargo");
     expect(manifest.layers?.[0]?.mediaType).toBe(OCI_MEDIA_TYPES.layerTarGzip);
   });
 

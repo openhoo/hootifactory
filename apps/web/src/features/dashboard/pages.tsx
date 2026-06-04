@@ -1,7 +1,7 @@
 import { Link } from "@tanstack/react-router";
 import { Boxes, Building2, ChevronRight, Layers, Plus, ShieldCheck } from "lucide-react";
 import { useMemo } from "react";
-import { EmptyState, FormatBadge, PageTitle, StatCard, VisibilityPill } from "@/components/common";
+import { EmptyState, ModuleBadge, PageTitle, StatCard, VisibilityPill } from "@/components/common";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useOrg, useRepos } from "@/features/orgs/context";
@@ -11,15 +11,15 @@ export function DashboardPage() {
   const { selected } = useOrg();
   const repos = useRepos();
   const list = repos.data?.repositories ?? [];
-  const byFormat = useMemo(
+  const byModule = useMemo(
     () =>
       list.reduce<Record<string, number>>((acc, r) => {
-        acc[r.format] = (acc[r.format] ?? 0) + 1;
+        acc[r.moduleId] = (acc[r.moduleId] ?? 0) + 1;
         return acc;
       }, {}),
     [list],
   );
-  const formats = Object.entries(byFormat);
+  const modules = Object.entries(byModule);
 
   return (
     <div>
@@ -31,12 +31,12 @@ export function DashboardPage() {
         <StatCard label="Repositories" icon={<Boxes className="size-4" />}>
           <div className="font-heading text-3xl font-semibold tabular-nums">{list.length}</div>
         </StatCard>
-        <StatCard label="Formats in use" icon={<Layers className="size-4" />}>
+        <StatCard label="Modules in use" icon={<Layers className="size-4" />}>
           <div className="flex flex-wrap items-center gap-1.5">
-            {formats.length ? (
-              formats.map(([f, n]) => (
-                <span key={f} className="inline-flex items-center gap-1">
-                  <FormatBadge format={f} />
+            {modules.length ? (
+              modules.map(([id, n]) => (
+                <span key={id} className="inline-flex items-center gap-1">
+                  <ModuleBadge moduleId={id} />
                   <span className="font-mono text-xs tabular-nums text-muted-foreground">{n}</span>
                 </span>
               ))
@@ -85,7 +85,7 @@ export function DashboardPage() {
                       {r.name}
                     </Link>
                     <div className="flex shrink-0 items-center gap-2">
-                      <FormatBadge format={r.format} />
+                      <ModuleBadge moduleId={r.moduleId} />
                       <VisibilityPill visibility={r.visibility} />
                     </div>
                   </li>
@@ -116,7 +116,7 @@ export function DashboardPage() {
           <CardContent>
             <ol className="space-y-3.5">
               {[
-                { t: "Create a repository", d: "Pick a format like npm, docker or pypi." },
+                { t: "Create a repository", d: "Pick a registry module." },
                 { t: "Mint an API token", d: "Authenticate your client or CI pipeline." },
                 { t: "Publish & pull", d: "Use the copy-paste snippets on each repo." },
               ].map((step, i) => (

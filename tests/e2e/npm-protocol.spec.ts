@@ -31,7 +31,7 @@ test.describe("npm protocol publish validation", () => {
     const owner = await setupOwner(baseURL!);
     const repo = (
       await (
-        await createRepo(owner.ctx, owner.orgId, { name: uniq("npm-proto"), format: "npm" })
+        await createRepo(owner.ctx, owner.orgId, { name: uniq("npm-proto"), moduleId: "npm" })
       ).json()
     ).repository as { mountPath: string };
     const pkg = `badpub${Date.now().toString(36)}`;
@@ -96,7 +96,7 @@ test.describe("npm protocol publish validation", () => {
     const owner = await setupOwner(baseURL!);
     const repo = (
       await (
-        await createRepo(owner.ctx, owner.orgId, { name: uniq("npm-default-tag"), format: "npm" })
+        await createRepo(owner.ctx, owner.orgId, { name: uniq("npm-default-tag"), moduleId: "npm" })
       ).json()
     ).repository as { id: string; mountPath: string };
     const pkg = `defaulttag${Date.now().toString(36)}`;
@@ -154,7 +154,7 @@ test.describe("npm protocol publish validation", () => {
     const owner = await setupOwner(baseURL!);
     const repo = (
       await (
-        await createRepo(owner.ctx, owner.orgId, { name: uniq("npm-deprecate"), format: "npm" })
+        await createRepo(owner.ctx, owner.orgId, { name: uniq("npm-deprecate"), moduleId: "npm" })
       ).json()
     ).repository as { mountPath: string };
     const pkg = `deprecate${Date.now().toString(36)}`;
@@ -205,7 +205,7 @@ test.describe("npm protocol publish validation", () => {
     const owner = await setupOwner(baseURL!);
     const repo = (
       await (
-        await createRepo(owner.ctx, owner.orgId, { name: uniq("npm-latest-tag"), format: "npm" })
+        await createRepo(owner.ctx, owner.orgId, { name: uniq("npm-latest-tag"), moduleId: "npm" })
       ).json()
     ).repository as { id: string; mountPath: string };
     const pkg = `latesttag${Date.now().toString(36)}`;

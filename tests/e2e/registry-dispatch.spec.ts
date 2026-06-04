@@ -13,7 +13,7 @@ test.describe("registry dispatch", () => {
   }) => {
     const owner = await setupOwner(baseURL!);
     const name = uniq("containers");
-    await createRepo(owner.ctx, owner.orgId, { name, format: "docker" });
+    await createRepo(owner.ctx, owner.orgId, { name, moduleId: "docker" });
 
     const anon = await anonContext(baseURL!);
     const r = await anon.get(`/v2/${owner.orgSlug}/${name}/img/tags/list`);
@@ -21,28 +21,31 @@ test.describe("registry dispatch", () => {
     expect(r.headers()["www-authenticate"]).toContain("Bearer");
   });
 
-  test("non-OCI private repo auth denials use format-native error envelopes", async ({
+  test("non-OCI private repo auth denials use module-native error envelopes", async ({
     baseURL,
   }) => {
     const owner = await setupOwner(baseURL!);
     const anon = await anonContext(baseURL!);
     const cases = [
-      { format: "npm", path: (mountPath: string) => `/${mountPath}/left-pad` },
-      { format: "pypi", path: (mountPath: string) => `/${mountPath}/simple/` },
-      { format: "cargo", path: (mountPath: string) => `/${mountPath}/config.json` },
-      { format: "nuget", path: (mountPath: string) => `/${mountPath}/v3/index.json` },
+      { moduleId: "npm", path: (mountPath: string) => `/${mountPath}/left-pad` },
+      { moduleId: "pypi", path: (mountPath: string) => `/${mountPath}/simple/` },
+      { moduleId: "cargo", path: (mountPath: string) => `/${mountPath}/config.json` },
+      { moduleId: "nuget", path: (mountPath: string) => `/${mountPath}/v3/index.json` },
     ] as const;
 
     for (const item of cases) {
       const repo = (
         await (
-          await createRepo(owner.ctx, owner.orgId, { name: uniq(item.format), format: item.format })
+          await createRepo(owner.ctx, owner.orgId, {
+            name: uniq(item.moduleId),
+            moduleId: item.moduleId,
+          })
         ).json()
       ).repository as { mountPath: string };
       const res = await anon.get(item.path(repo.mountPath));
       expect(res.status()).toBe(401);
       const body = await res.json();
-      if (item.format === "cargo") {
+      if (item.moduleId === "cargo") {
         expect(body.errors[0]).toEqual({ detail: "authentication required" });
       } else {
         expect(body).toEqual({ error: "authentication required" });

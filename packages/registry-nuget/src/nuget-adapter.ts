@@ -12,6 +12,7 @@ import {
   type RegistryPackageVersionRow,
   type RegistryPlugin,
   type RegistryRequestContext,
+  type RegistryVirtualSearchInput,
   type RouteMatch,
   readWritePermission,
   registryCapabilities,
@@ -91,13 +92,35 @@ function registrationResponse(
  * the nuspec when clients do not provide query parameters.
  */
 export class NugetAdapter implements RegistryPlugin {
-  readonly format = "nuget" as const;
+  readonly id = "nuget" as const;
   readonly capabilities = registryCapabilities("virtualizable");
   authChallenge = basicAuthChallenge;
 
-  private readonly plugin = registryPlugin(this.format)
+  private readonly plugin = registryPlugin(this.id)
+    .module({
+      displayName: "NuGet",
+      mountSegment: "nuget",
+      errorResponseKind: "singleError",
+      apiKeyHeaders: ["x-nuget-apikey"],
+      compressibleHandlers: [
+        "serviceIndex",
+        "search",
+        "versions",
+        "registration",
+        "registrationLeaf",
+      ],
+      scan: {
+        defaultOsvEcosystem: "NuGet",
+        dependencyGraph: ({ metadata }) => ({
+          deps: nugetDependencyGraph(metadata),
+          osvEcosystem: "NuGet",
+          purlType: "nuget",
+        }),
+      },
+    })
     .capabilities(this.capabilities)
     .authChallenge(this.authChallenge)
+    .virtualSearch((input) => this.handleVirtualSearch(input))
     .routes((route) => [
       route.get("/v3/index.json", "serviceIndex", ({ req, ctx }) => this.serviceIndex(req, ctx)),
       route.get("/v3/query", "search", ({ req, ctx }) =>
@@ -128,6 +151,37 @@ export class NugetAdapter implements RegistryPlugin {
   private readonly registrationCache = new BoundedLruCache<string, NugetRegistrationCacheEntry>(
     NUGET_REGISTRATION_CACHE_LIMIT,
   );
+
+  get displayName() {
+    return this.plugin.displayName;
+  }
+  get mountSegment() {
+    return this.plugin.mountSegment;
+  }
+  get repositoryNamePolicy() {
+    return this.plugin.repositoryNamePolicy;
+  }
+  get acceptsRegistryBearerToken() {
+    return this.plugin.acceptsRegistryBearerToken;
+  }
+  get apiKeyHeaders() {
+    return this.plugin.apiKeyHeaders;
+  }
+  get errorResponseKind() {
+    return this.plugin.errorResponseKind;
+  }
+  get compressibleHandlers() {
+    return this.plugin.compressibleHandlers;
+  }
+  get compressibleContentTypes() {
+    return this.plugin.compressibleContentTypes;
+  }
+  get scan() {
+    return this.plugin.scan;
+  }
+  get virtualSearch() {
+    return this.plugin.virtualSearch;
+  }
 
   routes = this.delegate.routes;
 
@@ -376,6 +430,20 @@ export class NugetAdapter implements RegistryPlugin {
     return handleNugetPublish(req, ctx);
   }
 
+  private async handleVirtualSearch(input: RegistryVirtualSearchInput): Promise<Response> {
+    const bodies = await input.collectMemberResponses(({ req }) =>
+      allNugetSearchResultsRequest(req),
+    );
+    const parsed = await Promise.all(
+      bodies.map(async ({ member, response }) =>
+        response.status >= 400
+          ? null
+          : parseNugetSearchBody(await response.text(), member.mountPath, input.ctx.repo.mountPath),
+      ),
+    );
+    return Response.json(mergeNugetSearchBodies(parsed, nugetSearchWindow(input.req)));
+  }
+
   private registrationCacheKey(pkg: RegistryPackageHandle, base: string): string {
     return `${pkg.id}\0${base}`;
   }
@@ -388,6 +456,97 @@ export class NugetAdapter implements RegistryPlugin {
     const prefix = `${packageId}\0`;
     this.registrationCache.deleteWhere((key) => key.startsWith(prefix));
   }
+}
+
+interface NugetSearchBody {
+  data?: Array<{ id?: unknown; [key: string]: unknown }>;
+  totalHits?: number;
+  [key: string]: unknown;
+}
+
+export function nugetSearchWindow(req: Request): { skip: number; take: number } {
+  const url = new URL(req.url);
+  return {
+    skip: boundedSearchInteger(url.searchParams.get("skip"), { fallback: 0, min: 0, max: 10_000 }),
+    take: boundedSearchInteger(url.searchParams.get("take"), { fallback: 20, min: 0, max: 100 }),
+  };
+}
+
+export function allNugetSearchResultsRequest(req: Request): Request {
+  const url = new URL(req.url);
+  url.searchParams.set("skip", "0");
+  url.searchParams.set("take", "100");
+  return new Request(url.toString(), { method: req.method, headers: req.headers });
+}
+
+export function parseNugetSearchBody(
+  text: string,
+  memberMountPath: string,
+  virtualMountPath: string,
+): NugetSearchBody | null {
+  const rewritten =
+    memberMountPath === virtualMountPath
+      ? text
+      : text.replaceAll(`/${memberMountPath}/`, `/${virtualMountPath}/`);
+  try {
+    const body = JSON.parse(rewritten) as NugetSearchBody;
+    if (!Array.isArray(body.data)) return null;
+    if (body.totalHits !== undefined && typeof body.totalHits !== "number") return null;
+    return body;
+  } catch {
+    return null;
+  }
+}
+
+export function mergeNugetSearchBodies(
+  bodies: Iterable<NugetSearchBody | null>,
+  window: { skip: number; take: number },
+): { data: NonNullable<NugetSearchBody["data"]>; totalHits: number } {
+  const seen = new Set<string>();
+  const data: NonNullable<NugetSearchBody["data"]> = [];
+  for (const body of bodies) {
+    for (const item of body?.data ?? []) {
+      const id = item.id;
+      if (typeof id !== "string") continue;
+      const key = id.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      data.push(item);
+    }
+  }
+  return {
+    totalHits: data.length,
+    data: data.slice(window.skip, window.skip + window.take),
+  };
+}
+
+function boundedSearchInteger(
+  value: string | null,
+  opts: { fallback: number; min: number; max: number },
+): number {
+  if (value === null) return opts.fallback;
+  const parsed = Number(value ?? opts.fallback);
+  if (
+    !Number.isFinite(parsed) ||
+    !Number.isInteger(parsed) ||
+    parsed < opts.min ||
+    parsed > opts.max
+  ) {
+    throw Errors.paginationNumberInvalid();
+  }
+  return parsed;
+}
+
+function nugetDependencyGraph(metadata: Record<string, unknown>): Record<string, string> {
+  const parsed = parseNugetVersionMeta(metadata);
+  if (!parsed?.dependencyGroups) return {};
+  const entries: [string, string][] = [];
+  for (const group of parsed.dependencyGroups) {
+    for (const dependency of group.dependencies ?? []) {
+      entries.push([dependency.id, dependency.range]);
+    }
+  }
+  return Object.fromEntries(entries);
 }
 
 export const nugetRegistryPlugin: RegistryPlugin = new NugetAdapter();

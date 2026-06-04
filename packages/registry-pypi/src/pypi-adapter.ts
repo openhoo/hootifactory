@@ -38,12 +38,20 @@ interface SimpleRootCacheEntry {
 }
 
 export class PypiAdapter implements RegistryPlugin {
-  readonly format = "pypi" as const;
+  readonly id = "pypi" as const;
   readonly capabilities = registryCapabilities("virtualizable");
   authChallenge = basicAuthChallenge;
   private readonly simpleRootCache = new Map<string, SimpleRootCacheEntry>();
 
-  private readonly plugin = registryPlugin(this.format)
+  private readonly plugin = registryPlugin(this.id)
+    .module({
+      displayName: "PyPI",
+      mountSegment: "pypi",
+      errorResponseKind: "singleError",
+      compressibleHandlers: ["simpleRoot", "simpleProject"],
+      compressibleContentTypes: ["application/vnd.pypi.simple.v1+json"],
+      scan: { defaultOsvEcosystem: "PyPI" },
+    })
     .capabilities(this.capabilities)
     .authChallenge(this.authChallenge)
     .routes((route) => [
@@ -59,6 +67,34 @@ export class PypiAdapter implements RegistryPlugin {
     ])
     .build();
   private readonly delegate = delegateRegistryPlugin(this.plugin);
+
+  get displayName() {
+    return this.plugin.displayName;
+  }
+  get mountSegment() {
+    return this.plugin.mountSegment;
+  }
+  get repositoryNamePolicy() {
+    return this.plugin.repositoryNamePolicy;
+  }
+  get acceptsRegistryBearerToken() {
+    return this.plugin.acceptsRegistryBearerToken;
+  }
+  get apiKeyHeaders() {
+    return this.plugin.apiKeyHeaders;
+  }
+  get errorResponseKind() {
+    return this.plugin.errorResponseKind;
+  }
+  get compressibleHandlers() {
+    return this.plugin.compressibleHandlers;
+  }
+  get compressibleContentTypes() {
+    return this.plugin.compressibleContentTypes;
+  }
+  get scan() {
+    return this.plugin.scan;
+  }
 
   routes = this.delegate.routes;
 

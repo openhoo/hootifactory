@@ -22,7 +22,7 @@ import {
 import { repositories } from "./repositories";
 import { organizations } from "./tenancy";
 
-/** A scannable artifact (an OCI image/blob, npm tarball, pypi file) keyed by digest. */
+/** A scannable registry artifact keyed by digest. */
 export const artifacts = pgTable(
   "artifacts",
   {

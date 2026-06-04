@@ -29,7 +29,7 @@ export async function dispatchVirtual(
   return withSpan(
     "registry.virtual.dispatch",
     {
-      "registry.format": adapter.format,
+      "registry.module.id": adapter.id,
       "registry.repository.id": ctx.repo.id,
       "registry.repository.name": ctx.repo.name,
       "registry.handler": match.entry.handlerId,

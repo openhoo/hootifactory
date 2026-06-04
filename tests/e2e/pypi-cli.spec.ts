@@ -107,7 +107,7 @@ test.describe("pypi registry (Dockerized real pip/twine)", () => {
     const owner = await setupOwner(baseURL!);
     const repo = "pypirepo";
     expect(
-      (await createRepo(owner.ctx, owner.orgId, { name: repo, format: "pypi" })).status(),
+      (await createRepo(owner.ctx, owner.orgId, { name: repo, moduleId: "pypi" })).status(),
     ).toBe(201);
     const secret = (await (await createToken(owner.ctx, owner.orgId, { name: "pypi" })).json())
       .secret as string;
@@ -189,7 +189,7 @@ test.describe("pypi registry (Dockerized real pip/twine)", () => {
     const owner = await setupOwner(baseURL!);
     const repo = "pypitwine";
     expect(
-      (await createRepo(owner.ctx, owner.orgId, { name: repo, format: "pypi" })).status(),
+      (await createRepo(owner.ctx, owner.orgId, { name: repo, moduleId: "pypi" })).status(),
     ).toBe(201);
     const secret = (await (await createToken(owner.ctx, owner.orgId, { name: "twine" })).json())
       .secret as string;
@@ -311,7 +311,7 @@ test.describe("pypi registry extended scenarios (Dockerized real pip/twine)", ()
     const owner = await setupOwner(baseURL!);
     const repo = "pypi-sdist";
     expect(
-      (await createRepo(owner.ctx, owner.orgId, { name: repo, format: "pypi" })).status(),
+      (await createRepo(owner.ctx, owner.orgId, { name: repo, moduleId: "pypi" })).status(),
     ).toBe(201);
     const secret = (
       await (await createToken(owner.ctx, owner.orgId, { name: "pypi-sdist" })).json()
@@ -394,7 +394,7 @@ where = ["src"]
     const owner = await setupOwner(baseURL!);
     const repo = "pypi-specifier";
     expect(
-      (await createRepo(owner.ctx, owner.orgId, { name: repo, format: "pypi" })).status(),
+      (await createRepo(owner.ctx, owner.orgId, { name: repo, moduleId: "pypi" })).status(),
     ).toBe(201);
     const secret = (
       await (await createToken(owner.ctx, owner.orgId, { name: "pypi-specifier" })).json()
@@ -439,7 +439,7 @@ where = ["src"]
     const owner = await setupOwner(baseURL!);
     const repo = "pypi-skip-existing";
     expect(
-      (await createRepo(owner.ctx, owner.orgId, { name: repo, format: "pypi" })).status(),
+      (await createRepo(owner.ctx, owner.orgId, { name: repo, moduleId: "pypi" })).status(),
     ).toBe(201);
     const secret = (
       await (await createToken(owner.ctx, owner.orgId, { name: "pypi-skip-existing" })).json()
@@ -514,7 +514,7 @@ where = ["src"]
     const owner = await setupOwner(baseURL!);
     const repo = "pypi-deptree";
     expect(
-      (await createRepo(owner.ctx, owner.orgId, { name: repo, format: "pypi" })).status(),
+      (await createRepo(owner.ctx, owner.orgId, { name: repo, moduleId: "pypi" })).status(),
     ).toBe(201);
     const secret = (
       await (await createToken(owner.ctx, owner.orgId, { name: "pypi-deptree" })).json()
@@ -565,15 +565,15 @@ where = ["src"]
 
     const repoA = await createRepoReturning(owner.ctx, owner.orgId, {
       name: "pypi-virtual-a",
-      format: "pypi",
+      moduleId: "pypi",
     });
     const repoB = await createRepoReturning(owner.ctx, owner.orgId, {
       name: "pypi-virtual-b",
-      format: "pypi",
+      moduleId: "pypi",
     });
     const virtual = await createRepoReturning(owner.ctx, owner.orgId, {
       name: "pypi-virtual",
-      format: "pypi",
+      moduleId: "pypi",
       kind: "virtual",
     });
     expect((await addMember(owner.ctx, virtual.id, repoA.id, 0)).status()).toBe(201);
@@ -650,7 +650,7 @@ test.describe("pypi registry error and edge scenarios (Dockerized real pip/twine
     const owner = await setupOwner(baseURL!);
     const repo = `pypi-missing-pkg-${Date.now().toString(36)}${randomUUID().slice(0, 8)}`;
     expect(
-      (await createRepo(owner.ctx, owner.orgId, { name: repo, format: "pypi" })).status(),
+      (await createRepo(owner.ctx, owner.orgId, { name: repo, moduleId: "pypi" })).status(),
     ).toBe(201);
     const secret = (
       await (await createToken(owner.ctx, owner.orgId, { name: "pypi-missing-pkg" })).json()
@@ -696,7 +696,7 @@ test.describe("pypi registry error and edge scenarios (Dockerized real pip/twine
     const owner = await setupOwner(baseURL!);
     const repo = `pypi-missing-ver-${Date.now().toString(36)}${randomUUID().slice(0, 8)}`;
     expect(
-      (await createRepo(owner.ctx, owner.orgId, { name: repo, format: "pypi" })).status(),
+      (await createRepo(owner.ctx, owner.orgId, { name: repo, moduleId: "pypi" })).status(),
     ).toBe(201);
     const secret = (
       await (await createToken(owner.ctx, owner.orgId, { name: "pypi-missing-ver" })).json()
@@ -749,7 +749,7 @@ test.describe("pypi registry error and edge scenarios (Dockerized real pip/twine
     const owner = await setupOwner(baseURL!);
     const repo = `pypi-bad-token-${Date.now().toString(36)}${randomUUID().slice(0, 8)}`;
     expect(
-      (await createRepo(owner.ctx, owner.orgId, { name: repo, format: "pypi" })).status(),
+      (await createRepo(owner.ctx, owner.orgId, { name: repo, moduleId: "pypi" })).status(),
     ).toBe(201);
 
     const pkg = `hootbadtok${Date.now().toString(36)}${randomUUID().slice(0, 8)}`;
@@ -802,7 +802,7 @@ test.describe("pypi registry error and edge scenarios (Dockerized real pip/twine
     const owner = await setupOwner(baseURL!);
     const repo = `pypi-require-hashes-${Date.now().toString(36)}${randomUUID().slice(0, 8)}`;
     expect(
-      (await createRepo(owner.ctx, owner.orgId, { name: repo, format: "pypi" })).status(),
+      (await createRepo(owner.ctx, owner.orgId, { name: repo, moduleId: "pypi" })).status(),
     ).toBe(201);
     const secret = (
       await (await createToken(owner.ctx, owner.orgId, { name: "pypi-require-hashes" })).json()
@@ -886,7 +886,7 @@ test.describe("pypi registry error and edge scenarios (Dockerized real pip/twine
     // Private repo is the default (visibility omitted).
     const repo = `pypi-private-${Date.now().toString(36)}${randomUUID().slice(0, 8)}`;
     expect(
-      (await createRepo(owner.ctx, owner.orgId, { name: repo, format: "pypi" })).status(),
+      (await createRepo(owner.ctx, owner.orgId, { name: repo, moduleId: "pypi" })).status(),
     ).toBe(201);
     const secret = (
       await (await createToken(owner.ctx, owner.orgId, { name: "pypi-private" })).json()

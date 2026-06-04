@@ -7,7 +7,6 @@ import {
   type ResolvedRepo,
   type RouteMatch,
 } from "@hootifactory/registry";
-import { mountSegment } from "../repositories/paths";
 
 export interface RegistryRouteMatchResolution {
   match: RouteMatch;
@@ -17,7 +16,8 @@ export interface RegistryRouteMatchResolution {
 }
 
 export function registryHttpRouteTemplate(repo: ResolvedRepo, match: RouteMatch): string {
-  return `/${mountSegment(repo.format)}/:org/:repository${match.entry.pattern}`;
+  const mount = repo.mountPath.split("/", 1)[0] ?? repo.moduleId;
+  return `/${mount}/:org/:repository${match.entry.pattern}`;
 }
 
 export function registryRouteSpanAttributes(
@@ -44,7 +44,7 @@ export function resolveRegistryRouteMatch(
     fellBackToGet = Boolean(match);
   }
   if (!match) {
-    logger.debug("registry route not found", { repo: repo.name, format: repo.format, rest });
+    logger.debug("registry route not found", { repo: repo.name, moduleId: repo.moduleId, rest });
     if (repo.mountPath.startsWith("v2/")) throw Errors.nameUnknown({ path: rest });
     throw Errors.notFound({ path: rest });
   }

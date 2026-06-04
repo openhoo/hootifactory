@@ -2,7 +2,7 @@ import { TOKEN_PREFIX } from "@hootifactory/auth";
 import { z } from "@hootifactory/core";
 
 const AuthorizationHeaderSchema = z.string().trim().min(1).max(16_384);
-const NugetApiKeyHeaderSchema = z.string().trim().min(1).max(4096);
+const RegistryApiKeyHeaderSchema = z.string().trim().min(1).max(4096);
 const basicAuthDecoder = new TextDecoder("utf-8", { fatal: true });
 
 export type ParsedAuthorizationHeader =
@@ -11,7 +11,7 @@ export type ParsedAuthorizationHeader =
   | { kind: "bareToken"; token: string }
   | { kind: "invalid" };
 
-export type ParsedNugetApiKeyHeader = { kind: "token"; token: string } | { kind: "invalid" };
+export type ParsedRegistryApiKeyHeader = { kind: "token"; token: string } | { kind: "invalid" };
 
 export function decodeBasicCredentials(value: string): string | null {
   try {
@@ -53,11 +53,11 @@ export function parseAuthorizationHeader(
   return { kind: "invalid" };
 }
 
-export function parseNugetApiKeyHeader(
+export function parseRegistryApiKeyHeader(
   rawApiKey: string | null | undefined,
-): ParsedNugetApiKeyHeader | null {
+): ParsedRegistryApiKeyHeader | null {
   if (rawApiKey == null) return null;
-  const parsedApiKey = NugetApiKeyHeaderSchema.safeParse(rawApiKey);
+  const parsedApiKey = RegistryApiKeyHeaderSchema.safeParse(rawApiKey);
   if (!parsedApiKey.success) return { kind: "invalid" };
   const apiKey = parsedApiKey.data;
   if (!apiKey.startsWith(TOKEN_PREFIX)) return { kind: "invalid" };

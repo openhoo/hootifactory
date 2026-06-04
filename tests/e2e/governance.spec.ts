@@ -107,7 +107,9 @@ test.describe("governance: quotas + retention", () => {
     test.setTimeout(120_000);
     const owner = await setupOwner(baseURL!);
     const repo = (
-      await (await createRepo(owner.ctx, owner.orgId, { name: "quota-npm", format: "npm" })).json()
+      await (
+        await createRepo(owner.ctx, owner.orgId, { name: "quota-npm", moduleId: "npm" })
+      ).json()
     ).repository as { mountPath: string };
     const token = (await (await createToken(owner.ctx, owner.orgId, { name: "t" })).json())
       .secret as string;
@@ -134,12 +136,12 @@ test.describe("governance: quotas + retention", () => {
     const second = await setupOwner(baseURL!);
     const firstRepo = (
       await (
-        await createRepo(first.ctx, first.orgId, { name: "quota-oci", format: "docker" })
+        await createRepo(first.ctx, first.orgId, { name: "quota-oci", moduleId: "docker" })
       ).json()
     ).repository as { mountPath: string };
     const secondRepo = (
       await (
-        await createRepo(second.ctx, second.orgId, { name: "quota-oci", format: "docker" })
+        await createRepo(second.ctx, second.orgId, { name: "quota-oci", moduleId: "docker" })
       ).json()
     ).repository as { mountPath: string };
     const bytes = Buffer.from("shared quota payload that is larger than ten bytes");
@@ -176,12 +178,12 @@ test.describe("governance: quotas + retention", () => {
     const targetRepoName = uniq("target-oci");
     const sourceRepo = (
       await (
-        await createRepo(owner.ctx, owner.orgId, { name: sourceRepoName, format: "docker" })
+        await createRepo(owner.ctx, owner.orgId, { name: sourceRepoName, moduleId: "docker" })
       ).json()
     ).repository as { mountPath: string };
     const targetRepo = (
       await (
-        await createRepo(owner.ctx, targetOrg.id, { name: targetRepoName, format: "docker" })
+        await createRepo(owner.ctx, targetOrg.id, { name: targetRepoName, moduleId: "docker" })
       ).json()
     ).repository as { mountPath: string };
     const bytes = Buffer.from("mounted payload that must be charged to target org");
@@ -220,7 +222,7 @@ test.describe("governance: quotas + retention", () => {
     test.setTimeout(120_000);
     const owner = await setupOwner(baseURL!);
     const repoRes = await (
-      await createRepo(owner.ctx, owner.orgId, { name: "ret-npm", format: "npm" })
+      await createRepo(owner.ctx, owner.orgId, { name: "ret-npm", moduleId: "npm" })
     ).json();
     const repo = repoRes.repository as { id: string; mountPath: string };
     const token = (await (await createToken(owner.ctx, owner.orgId, { name: "t" })).json())
@@ -289,7 +291,7 @@ test.describe("governance: quotas + retention", () => {
       await (
         await createRepo(owner.ctx, owner.orgId, {
           name: uniq("quota-oci-retention"),
-          format: "docker",
+          moduleId: "docker",
         })
       ).json()
     ).repository as { id: string; mountPath: string };
@@ -381,7 +383,7 @@ test.describe("governance: quotas + retention", () => {
       await (
         await createRepo(owner.ctx, owner.orgId, {
           name: uniq("quota-oci-delete"),
-          format: "docker",
+          moduleId: "docker",
         })
       ).json()
     ).repository as { mountPath: string };

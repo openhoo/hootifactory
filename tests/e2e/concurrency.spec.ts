@@ -155,7 +155,7 @@ test.describe("concurrent publishes", () => {
     const owner = await setupOwner(baseURL!);
     const repo = (
       await (
-        await createRepo(owner.ctx, owner.orgId, { name: uniq("concurrent-npm"), format: "npm" })
+        await createRepo(owner.ctx, owner.orgId, { name: uniq("concurrent-npm"), moduleId: "npm" })
       ).json()
     ).repository as { id: string; mountPath: string };
     const pkg = `pkg-${Date.now().toString(36)}`;
@@ -191,7 +191,7 @@ test.describe("concurrent publishes", () => {
       await (
         await createRepo(owner.ctx, owner.orgId, {
           name: uniq("concurrent-pypi"),
-          format: "pypi",
+          moduleId: "pypi",
           visibility: "public",
         })
       ).json()
@@ -246,7 +246,7 @@ test.describe("concurrent publishes", () => {
       await (
         await createRepo(owner.ctx, owner.orgId, {
           name: uniq("concurrent-pypi"),
-          format: "pypi",
+          moduleId: "pypi",
           visibility: "public",
         })
       ).json()

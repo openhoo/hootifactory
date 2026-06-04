@@ -1,16 +1,15 @@
-import type { PackageFormat } from "@hootifactory/types";
+import type { RegistryModuleDescriptor } from "@hootifactory/registry";
 
-const V2_FORMATS = new Set<PackageFormat>(["docker", "oci", "helm"]);
-const OCI_REPOSITORY_NAME_RE =
-  /^[a-z0-9]+(?:(?:\.|_|__|-+)[a-z0-9]+)*(?:\/[a-z0-9]+(?:(?:\.|_|__|-+)[a-z0-9]+)*)*$/;
-
-/** First URL segment for a format: "v2" for OCI-based, else the format name. */
-export function mountSegment(format: PackageFormat): string {
-  return V2_FORMATS.has(format) ? "v2" : format;
+export function mountSegment(module: Pick<RegistryModuleDescriptor, "mountSegment">): string {
+  return module.mountSegment;
 }
 
-export function computeMountPath(format: PackageFormat, orgSlug: string, repoName: string): string {
-  return `${mountSegment(format)}/${orgSlug}/${repoName}`;
+export function computeMountPath(
+  module: Pick<RegistryModuleDescriptor, "mountSegment">,
+  orgSlug: string,
+  repoName: string,
+): string {
+  return `${mountSegment(module)}/${orgSlug}/${repoName}`;
 }
 
 export function isValidRepositoryName(name: string): boolean {
@@ -19,7 +18,10 @@ export function isValidRepositoryName(name: string): boolean {
   return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name);
 }
 
-export function isValidRepositoryNameForFormat(format: PackageFormat, name: string): boolean {
+export function isValidRepositoryNameForModule(
+  module: Pick<RegistryModuleDescriptor, "repositoryNamePolicy">,
+  name: string,
+): boolean {
   if (!isValidRepositoryName(name)) return false;
-  return V2_FORMATS.has(format) ? OCI_REPOSITORY_NAME_RE.test(name) : true;
+  return module.repositoryNamePolicy?.validate(name) ?? true;
 }

@@ -38,7 +38,10 @@ const EICAR_BYTES = new TextEncoder().encode(EICAR);
 const EICAR_TAIL_BYTES = Math.max(0, EICAR_BYTES.byteLength - 1);
 
 /** Heuristic dependency scan against the built-in advisory DB. */
-export function scanDependencies(deps: Record<string, string> | undefined): NormalizedFinding[] {
+export function scanDependencies(
+  deps: Record<string, string> | undefined,
+  opts: { purlType?: string } = {},
+): NormalizedFinding[] {
   const out: NormalizedFinding[] = [];
   for (const [name, version] of Object.entries(deps ?? {})) {
     const adv = ADVISORIES[name];
@@ -51,7 +54,7 @@ export function scanDependencies(deps: Record<string, string> | undefined): Norm
         packageVersion: version,
         fixedVersion: adv.fixedVersion,
         title: adv.summary,
-        purl: `pkg:npm/${name}@${version}`,
+        purl: opts.purlType ? `pkg:${opts.purlType}/${name}@${version}` : undefined,
       });
     }
   }

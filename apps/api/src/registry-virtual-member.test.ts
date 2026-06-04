@@ -23,7 +23,7 @@ const publicMember = {
   orgId: "org_1",
   name: "member",
   kind: "hosted",
-  format: "npm",
+  moduleId: "npm",
   visibility: "public",
   mountPath: "member",
 } as ResolvedRepo;
@@ -44,7 +44,13 @@ function fakeSpan() {
 
 function fakeAdapter(repositoryName?: string): RegistryPlugin {
   return {
-    format: "npm",
+    id: "npm",
+    displayName: "npm",
+    mountSegment: "npm",
+    apiKeyHeaders: new Set(),
+    errorResponseKind: "singleError",
+    compressibleHandlers: new Set(),
+    compressibleContentTypes: new Set(),
     capabilities: {
       contentAddressable: false,
       proxyable: false,

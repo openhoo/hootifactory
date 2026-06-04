@@ -16,13 +16,7 @@ import {
 } from "../governance/quota";
 import { rowsFromExecute, stringField } from "../runtime/raw-rows";
 
-export type BlobRefKind =
-  | "oci_layer"
-  | "oci_config"
-  | "oci_manifest"
-  | "npm_tarball"
-  | "pypi_file"
-  | "generic_file";
+export type BlobRefKind = string;
 
 export interface StoredBlob {
   digest: string;

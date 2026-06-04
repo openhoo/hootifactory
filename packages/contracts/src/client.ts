@@ -10,6 +10,7 @@ import type {
   PackageVersionDto,
   PaginationMeta,
   PaginationQuery,
+  RegistryModuleDto,
   RepositoryDto,
 } from "./index";
 
@@ -111,6 +112,8 @@ export function createHootifactoryClient(
       request<{ org: OrgDto }>("POST", "/api/orgs", { slug, displayName }),
     repos: (orgId: string) =>
       request<{ repositories: RepositoryDto[] }>("GET", `/api/orgs/${orgId}/repositories`),
+    registryModules: () =>
+      request<{ modules: RegistryModuleDto[] }>("GET", "/api/registry-modules"),
     createRepo: (orgId: string, data: Record<string, unknown>) =>
       request<{ repository: RepositoryDto }>("POST", `/api/orgs/${orgId}/repositories`, data),
     repo: (repoId: string) =>

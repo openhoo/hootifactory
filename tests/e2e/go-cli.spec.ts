@@ -77,7 +77,7 @@ test.describe("go module proxy (Dockerized real go)", () => {
       await (
         await createRepo(owner.ctx, owner.orgId, {
           name: "gomods",
-          format: "go",
+          moduleId: "go",
           visibility: "public",
         })
       ).json()
@@ -113,7 +113,7 @@ test.describe("go module proxy (Dockerized real go)", () => {
       await (
         await createRepo(owner.ctx, owner.orgId, {
           name: "gomods-latest",
-          format: "go",
+          moduleId: "go",
           visibility: "public",
         })
       ).json()
@@ -207,7 +207,7 @@ test.describe("go module proxy extended scenarios (Dockerized real go)", () => {
     const owner = await setupOwner(baseURL!);
     const repo = await createRepoReturning(owner.ctx, owner.orgId, {
       name: `gomods-build-${Date.now().toString(36)}`,
-      format: "go",
+      moduleId: "go",
       visibility: "public",
     });
 
@@ -239,7 +239,7 @@ test.describe("go module proxy extended scenarios (Dockerized real go)", () => {
     const owner = await setupOwner(baseURL!);
     const repo = await createRepoReturning(owner.ctx, owner.orgId, {
       name: `gomods-transitive-${Date.now().toString(36)}`,
-      format: "go",
+      moduleId: "go",
       visibility: "public",
     });
 
@@ -287,7 +287,7 @@ test.describe("go module proxy extended scenarios (Dockerized real go)", () => {
     const owner = await setupOwner(baseURL!);
     const repo = await createRepoReturning(owner.ctx, owner.orgId, {
       name: `gomods-majors-${Date.now().toString(36)}`,
-      format: "go",
+      moduleId: "go",
       visibility: "public",
     });
 
@@ -329,7 +329,7 @@ test.describe("go module proxy extended scenarios (Dockerized real go)", () => {
     const owner = await setupOwner(baseURL!);
     const repo = await createRepoReturning(owner.ctx, owner.orgId, {
       name: `gomods-versions-${Date.now().toString(36)}`,
-      format: "go",
+      moduleId: "go",
       visibility: "public",
     });
 
@@ -364,12 +364,12 @@ test.describe("go module proxy extended scenarios (Dockerized real go)", () => {
 
     const member = await createRepoReturning(owner.ctx, owner.orgId, {
       name: `gomods-member-${id}`,
-      format: "go",
+      moduleId: "go",
       visibility: "public",
     });
     const virtual = await createRepoReturning(owner.ctx, owner.orgId, {
       name: `gomods-virtual-${id}`,
-      format: "go",
+      moduleId: "go",
       kind: "virtual",
       visibility: "public",
     });
@@ -404,7 +404,7 @@ test.describe("go module proxy error and edge scenarios (Dockerized real go)", (
     const owner = await setupOwner(baseURL!);
     const repo = await createRepoReturning(owner.ctx, owner.orgId, {
       name: `gomods-missing-${Date.now().toString(36)}`,
-      format: "go",
+      moduleId: "go",
       visibility: "public",
     });
 
@@ -433,7 +433,7 @@ test.describe("go module proxy error and edge scenarios (Dockerized real go)", (
     const owner = await setupOwner(baseURL!);
     const repo = await createRepoReturning(owner.ctx, owner.orgId, {
       name: `gomods-badver-${Date.now().toString(36)}`,
-      format: "go",
+      moduleId: "go",
       visibility: "public",
     });
 
@@ -463,7 +463,7 @@ test.describe("go module proxy error and edge scenarios (Dockerized real go)", (
     const owner = await setupOwner(baseURL!);
     const repo = await createRepoReturning(owner.ctx, owner.orgId, {
       name: `gomods-unknown-${Date.now().toString(36)}`,
-      format: "go",
+      moduleId: "go",
     });
 
     const id = `${Date.now().toString(36)}${randomUUID().slice(0, 8)}`;

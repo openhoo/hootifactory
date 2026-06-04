@@ -14,13 +14,13 @@ const routes = compileRoutes([
 
 const npmRepo = {
   name: "packages",
-  format: "npm",
+  moduleId: "npm",
   mountPath: "npm/acme/packages",
 } as ResolvedRepo;
 
 const dockerRepo = {
   name: "containers",
-  format: "docker",
+  moduleId: "docker",
   mountPath: "v2/acme/containers",
 } as ResolvedRepo;
 

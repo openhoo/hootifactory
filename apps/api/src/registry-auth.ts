@@ -8,7 +8,7 @@ import type {
   ResolvedRepo,
   RouteMatch,
 } from "@hootifactory/registry";
-import type { registryErrorResponseForFormat } from "./registry-error-format";
+import type { registryErrorResponseForModule } from "./registry-error-format";
 import type { RegistryAuthFailure } from "./types";
 
 export interface RouteAuthorization {
@@ -39,7 +39,7 @@ export function appendBearerChallengeError(
   return error ? `${header},error="${error}"` : header;
 }
 
-type RegistryErrorResponseInput = Parameters<typeof registryErrorResponseForFormat>[1];
+type RegistryErrorResponseInput = Parameters<typeof registryErrorResponseForModule>[1];
 
 export interface RegistryAuthorizationDenialInput {
   repo: ResolvedRepo;
@@ -70,7 +70,7 @@ export function registryAuthorizationDeniedResponse({
       : undefined);
   logger.debug("registry authorization denied", {
     repo: repo.name,
-    format: repo.format,
+    moduleId: repo.moduleId,
     action: permission.action,
     status,
     reason: decision.reason ?? decision.code,

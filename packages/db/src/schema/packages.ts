@@ -14,7 +14,7 @@ import { apiTokens } from "./auth";
 import { repositories } from "./repositories";
 import { organizations, users } from "./tenancy";
 
-/** Format-agnostic package (npm name, pypi project, docker image, ...). */
+/** Module-agnostic package identity. */
 export const packages = pgTable(
   "packages",
   {
@@ -25,7 +25,7 @@ export const packages = pgTable(
     repositoryId: uuid()
       .notNull()
       .references(() => repositories.id, { onDelete: "cascade" }),
-    /** Normalized package name (e.g. PEP 503 normalized, npm full name incl. scope). */
+    /** Normalized package name as defined by the registry module. */
     name: text().notNull(),
     namespace: text(),
     metadata: jsonb().$type<Record<string, unknown>>().notNull().default({}),

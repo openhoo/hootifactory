@@ -6,6 +6,6 @@ import { logger } from "./lib/logger";
 export function registerAdapters(): void {
   registerBuiltInRegistryPlugins(registryPlugins);
   logger.info("registry plugins registered", {
-    formats: registryPlugins.all().map((plugin) => plugin.format),
+    modules: registryPlugins.all().map((plugin) => plugin.id),
   });
 }

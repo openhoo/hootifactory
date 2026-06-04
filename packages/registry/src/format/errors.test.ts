@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { RegistryError } from "@hootifactory/core";
-import { registryErrorResponseForFormat, registryErrorToFormatResponse } from "./errors";
+import { registryErrorResponseForKind, registryErrorToModuleResponse } from "./errors";
 
 describe("registry error formatting", () => {
   test("formats npm-style object errors", async () => {
-    const res = registryErrorResponseForFormat("npm", {
+    const res = registryErrorResponseForKind("singleError", {
       status: 403,
       message: "access denied",
     });
@@ -14,7 +14,7 @@ describe("registry error formatting", () => {
   });
 
   test("formats cargo error arrays", async () => {
-    const res = registryErrorResponseForFormat("cargo", {
+    const res = registryErrorResponseForKind("cargo", {
       status: 401,
       message: "authentication required",
     });
@@ -24,8 +24,8 @@ describe("registry error formatting", () => {
   });
 
   test("formats OCI registry errors", async () => {
-    const res = registryErrorToFormatResponse(
-      "docker",
+    const res = registryErrorToModuleResponse(
+      { errorResponseKind: "registry" },
       new RegistryError(404, "MANIFEST_UNKNOWN", "manifest unknown", { reference: "latest" }),
     );
 

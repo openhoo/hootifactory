@@ -183,7 +183,7 @@ test.describe("cargo sparse registry (protocol)", () => {
       await (
         await createRepo(owner.ctx, owner.orgId, {
           name: "crates",
-          format: "cargo",
+          moduleId: "cargo",
           visibility: "public",
         })
       ).json()
@@ -252,7 +252,7 @@ test.describe("cargo sparse registry (protocol)", () => {
       await (
         await createRepo(owner.ctx, owner.orgId, {
           name: "crates-ret",
-          format: "cargo",
+          moduleId: "cargo",
           visibility: "public",
         })
       ).json()
@@ -339,7 +339,7 @@ test.describe("cargo sparse registry (protocol)", () => {
       await (
         await createRepo(owner.ctx, owner.orgId, {
           name: "crates-bad",
-          format: "cargo",
+          moduleId: "cargo",
           visibility: "public",
         })
       ).json()
@@ -383,7 +383,7 @@ test.describe("go module proxy (protocol)", () => {
       await (
         await createRepo(owner.ctx, owner.orgId, {
           name: "gomods-ret",
-          format: "go",
+          moduleId: "go",
           visibility: "public",
         })
       ).json()
@@ -460,7 +460,7 @@ test.describe("nuget v3 (protocol)", () => {
       await (
         await createRepo(owner.ctx, owner.orgId, {
           name: "nugets",
-          format: "nuget",
+          moduleId: "nuget",
           visibility: "public",
         })
       ).json()
@@ -617,7 +617,7 @@ test.describe("nuget v3 (protocol)", () => {
       await (
         await createRepo(owner.ctx, owner.orgId, {
           name: "nugets-search",
-          format: "nuget",
+          moduleId: "nuget",
           visibility: "public",
         })
       ).json()
@@ -664,7 +664,7 @@ test.describe("nuget v3 (protocol)", () => {
       await (
         await createRepo(owner.ctx, owner.orgId, {
           name: "nuget-virtual-a",
-          format: "nuget",
+          moduleId: "nuget",
           visibility: "public",
         })
       ).json()
@@ -673,7 +673,7 @@ test.describe("nuget v3 (protocol)", () => {
       await (
         await createRepo(owner.ctx, owner.orgId, {
           name: "nuget-virtual-b",
-          format: "nuget",
+          moduleId: "nuget",
           visibility: "public",
         })
       ).json()
@@ -682,7 +682,7 @@ test.describe("nuget v3 (protocol)", () => {
       await (
         await createRepo(owner.ctx, owner.orgId, {
           name: "nuget-virtual",
-          format: "nuget",
+          moduleId: "nuget",
           kind: "virtual",
           visibility: "public",
         })
@@ -732,7 +732,7 @@ test.describe("pypi simple API (protocol)", () => {
       await (
         await createRepo(owner.ctx, owner.orgId, {
           name: "pypi-name-check",
-          format: "pypi",
+          moduleId: "pypi",
           visibility: "public",
         })
       ).json()
@@ -806,7 +806,7 @@ test.describe("pypi simple API (protocol)", () => {
       await (
         await createRepo(owner.ctx, owner.orgId, {
           name: "pypi-simple-json",
-          format: "pypi",
+          moduleId: "pypi",
           visibility: "public",
         })
       ).json()
@@ -879,7 +879,7 @@ test.describe("pypi simple API (protocol)", () => {
       await (
         await createRepo(owner.ctx, owner.orgId, {
           name: "pypi-quota-files",
-          format: "pypi",
+          moduleId: "pypi",
           visibility: "public",
         })
       ).json()
@@ -933,7 +933,7 @@ test.describe("pypi simple API (protocol)", () => {
       await (
         await createRepo(owner.ctx, owner.orgId, {
           name: "pypi-ret",
-          format: "pypi",
+          moduleId: "pypi",
           visibility: "public",
         })
       ).json()
@@ -1004,7 +1004,7 @@ test.describe("pypi simple API (protocol)", () => {
       await (
         await createRepo(owner.ctx, owner.orgId, {
           name: "pypi-member",
-          format: "pypi",
+          moduleId: "pypi",
           visibility: "public",
         })
       ).json()
@@ -1013,7 +1013,7 @@ test.describe("pypi simple API (protocol)", () => {
       await (
         await createRepo(owner.ctx, owner.orgId, {
           name: "pypi-virtual",
-          format: "pypi",
+          moduleId: "pypi",
           kind: "virtual",
           visibility: "public",
         })

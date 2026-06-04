@@ -1,10 +1,8 @@
 import type { OciErrorCode, RegistryError } from "@hootifactory/core";
-import type { PackageFormat } from "@hootifactory/types";
+import type { RegistryErrorResponseKind, RegistryPlugin } from "./adapter";
 
-const NON_OCI_ERROR_OBJECT_FORMATS = new Set<PackageFormat>(["go", "npm", "nuget", "pypi"]);
-
-export function registryErrorResponseForFormat(
-  format: PackageFormat,
+export function registryErrorResponseForKind(
+  kind: RegistryErrorResponseKind,
   input: {
     status: number;
     code?: OciErrorCode;
@@ -13,13 +11,13 @@ export function registryErrorResponseForFormat(
     headers?: Record<string, string>;
   },
 ): Response {
-  if (format === "cargo") {
+  if (kind === "cargo") {
     return Response.json(
       { errors: [{ detail: input.message }] },
       { status: input.status, headers: input.headers },
     );
   }
-  if (NON_OCI_ERROR_OBJECT_FORMATS.has(format)) {
+  if (kind === "singleError") {
     return Response.json(
       { error: input.message },
       { status: input.status, headers: input.headers },
@@ -39,8 +37,18 @@ export function registryErrorResponseForFormat(
   );
 }
 
-export function registryErrorToFormatResponse(format: PackageFormat, err: RegistryError): Response {
-  return registryErrorResponseForFormat(format, {
+export function registryErrorResponseForModule(
+  module: Pick<RegistryPlugin, "errorResponseKind">,
+  input: Parameters<typeof registryErrorResponseForKind>[1],
+): Response {
+  return registryErrorResponseForKind(module.errorResponseKind, input);
+}
+
+export function registryErrorToModuleResponse(
+  module: Pick<RegistryPlugin, "errorResponseKind">,
+  err: RegistryError,
+): Response {
+  return registryErrorResponseForModule(module, {
     status: err.status,
     code: err.code,
     message: err.message,

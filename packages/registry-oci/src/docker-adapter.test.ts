@@ -186,7 +186,7 @@ describe("Docker adapter contract", () => {
 
   test("passes tag cursor pagination to the data service", async () => {
     const ctx = createTestRegistryContext({ baseUrl: "https://registry.test" });
-    ctx.repo = { ...ctx.repo, format: "docker", mountPath: "v2/acme/containers" };
+    ctx.repo = { ...ctx.repo, moduleId: "docker", mountPath: "v2/acme/containers" };
     ctx.data.packages.findByName = async (name) => {
       expect(name).toBe(pkg.name);
       return pkg;
@@ -218,7 +218,7 @@ describe("Docker adapter contract", () => {
 
   test("filters referrers through one package-scoped batch lookup", async () => {
     const ctx = createTestRegistryContext({ baseUrl: "https://registry.test" });
-    ctx.repo = { ...ctx.repo, format: "docker", mountPath: "v2/acme/containers" };
+    ctx.repo = { ...ctx.repo, moduleId: "docker", mountPath: "v2/acme/containers" };
     let packageLookups = 0;
     let subjectLookups = 0;
     let batchLookups = 0;
@@ -270,7 +270,7 @@ describe("Docker adapter contract", () => {
 
   test("commits uploaded blobs after streaming outside the locked session", async () => {
     const ctx = createTestRegistryContext({ baseUrl: "https://registry.test" });
-    ctx.repo = { ...ctx.repo, format: "docker", mountPath: "v2/acme/containers" };
+    ctx.repo = { ...ctx.repo, moduleId: "docker", mountPath: "v2/acme/containers" };
     const calls: string[] = [];
     let lockDepth = 0;
     let committedOffset = 0;
@@ -377,7 +377,7 @@ describe("Docker adapter contract", () => {
 
   test("stages PATCH chunks outside the locked session", async () => {
     const ctx = createTestRegistryContext({ baseUrl: "https://registry.test" });
-    ctx.repo = { ...ctx.repo, format: "docker", mountPath: "v2/acme/containers" };
+    ctx.repo = { ...ctx.repo, moduleId: "docker", mountPath: "v2/acme/containers" };
     const calls: string[] = [];
     let lockDepth = 0;
     let session = uploadSession();
@@ -466,7 +466,7 @@ describe("Docker adapter contract", () => {
 
   test("streams monolithic digest uploads through the blob stream path", async () => {
     const ctx = createTestRegistryContext({ baseUrl: "https://registry.test" });
-    ctx.repo = { ...ctx.repo, format: "docker", mountPath: "v2/acme/containers" };
+    ctx.repo = { ...ctx.repo, moduleId: "docker", mountPath: "v2/acme/containers" };
     let streamStores = 0;
     ctx.data.content.storeBlobWithRef = async () => {
       throw new Error("monolithic digest uploads should not use the buffered blob path");
@@ -515,7 +515,7 @@ describe("Docker adapter contract", () => {
 
   test("digest-pinned manifests use principal-aware immutable validators and honor If-None-Match", async () => {
     const ctx = createTestRegistryContext();
-    ctx.repo = { ...ctx.repo, format: "docker", mountPath: "v2/acme/containers" };
+    ctx.repo = { ...ctx.repo, moduleId: "docker", mountPath: "v2/acme/containers" };
     let blockChecks = 0;
     ctx.data.packages.findByName = async (name) => {
       expect(name).toBe(pkg.name);

@@ -74,7 +74,7 @@ describe("NuGet adapter registration cache", () => {
     let versions = [versionRow("1.0.0", new Date("2026-01-01T00:00:00.000Z"))];
     let versionLoads = 0;
     const ctx = createTestRegistryContext();
-    ctx.repo = { ...ctx.repo, format: "nuget", mountPath: "nuget/private" };
+    ctx.repo = { ...ctx.repo, moduleId: "nuget", mountPath: "nuget/private" };
     ctx.data.packages.findByName = async () => pkg;
     ctx.data.versions.listLiveFingerprints = async () => fingerprintRows(versions);
     ctx.data.versions.listLive = async () => {
@@ -125,7 +125,7 @@ describe("NuGet adapter search", () => {
   test("uses paged package search and batched version reads", async () => {
     const adapter = new NugetAdapter();
     const ctx = createTestRegistryContext();
-    ctx.repo = { ...ctx.repo, format: "nuget", mountPath: "nuget/private" };
+    ctx.repo = { ...ctx.repo, moduleId: "nuget", mountPath: "nuget/private" };
     let packageSearches = 0;
     let batchedVersionReads = 0;
     ctx.data.packages.list = async () => {

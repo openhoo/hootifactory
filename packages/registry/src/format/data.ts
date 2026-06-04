@@ -1,22 +1,8 @@
 import type { RegistryRequestContext } from "./adapter";
 
-export type RegistryBlobRefKind =
-  | "oci_layer"
-  | "oci_config"
-  | "oci_manifest"
-  | "npm_tarball"
-  | "pypi_file"
-  | "generic_file";
+export type RegistryBlobRefKind = string;
 
-export type RegistryAssetRole =
-  | "npm_tarball"
-  | "pypi_file"
-  | "cargo_crate"
-  | "go_zip"
-  | "nuget_package"
-  | "oci_layer"
-  | "oci_config"
-  | "oci_manifest";
+export type RegistryAssetRole = string;
 
 export interface RegistryPackageRow {
   id: string;

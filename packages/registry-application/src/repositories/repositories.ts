@@ -1,13 +1,14 @@
 import { count, db, eq, repositories } from "@hootifactory/db";
-import type { ResolvedRepo } from "@hootifactory/registry";
-import type { PackageFormat, Visibility } from "@hootifactory/types";
+import type { RegistryModuleDescriptor, ResolvedRepo } from "@hootifactory/registry";
+import type { RegistryModuleId, Visibility } from "@hootifactory/types";
 import { computeMountPath } from "./paths";
 
 export interface CreateRepositoryInput {
   orgId: string;
   orgSlug: string;
   name: string;
-  format: PackageFormat;
+  moduleId: RegistryModuleId;
+  module: Pick<RegistryModuleDescriptor, "mountSegment">;
   kind?: "hosted" | "proxy" | "virtual";
   visibility?: Visibility;
   description?: string;
@@ -15,13 +16,13 @@ export interface CreateRepositoryInput {
 }
 
 export async function createRepository(input: CreateRepositoryInput): Promise<ResolvedRepo> {
-  const mountPath = computeMountPath(input.format, input.orgSlug, input.name);
+  const mountPath = computeMountPath(input.module, input.orgSlug, input.name);
   const [row] = await db
     .insert(repositories)
     .values({
       orgId: input.orgId,
       name: input.name,
-      format: input.format,
+      moduleId: input.moduleId,
       kind: input.kind ?? "hosted",
       visibility: input.visibility ?? "private",
       mountPath,

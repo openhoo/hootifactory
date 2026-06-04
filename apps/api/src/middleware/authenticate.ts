@@ -8,6 +8,7 @@ import {
 } from "@hootifactory/auth";
 import { Errors, HttpError } from "@hootifactory/core";
 import { logger, withSpan } from "@hootifactory/observability";
+import { registryPlugins } from "@hootifactory/registry";
 import { REGISTRY_TOKEN_SERVICE } from "@hootifactory/registry-application";
 import type { Context } from "hono";
 import { getCookie } from "hono/cookie";
@@ -17,7 +18,7 @@ import type { AppEnv, AuthSource } from "../types";
 import {
   type ParsedAuthorizationHeader,
   parseAuthorizationHeader,
-  parseNugetApiKeyHeader,
+  parseRegistryApiKeyHeader,
 } from "./auth-credentials";
 
 export const SESSION_COOKIE = "hoot_session";
@@ -26,9 +27,15 @@ function invalidCredentials(): never {
   throw Errors.unauthorized("invalid authorization credentials");
 }
 
-function isRegistryPath(url: string): boolean {
+function isRegistryBearerPath(url: string): boolean {
   const pathname = new URL(url).pathname;
-  return pathname === "/v2" || pathname === "/v2/" || pathname.startsWith("/v2/");
+  return registryPlugins
+    .all()
+    .filter((plugin) => plugin.acceptsRegistryBearerToken)
+    .some((plugin) => {
+      const prefix = `/${plugin.mountSegment}`;
+      return pathname === prefix || pathname === `${prefix}/` || pathname.startsWith(`${prefix}/`);
+    });
 }
 
 function sourcedPrincipal(c: Context<AppEnv>, source: AuthSource, principal: Principal): Principal {
@@ -61,7 +68,7 @@ async function authenticateBearer(c: Context<AppEnv>, token: string): Promise<Pr
       access: verified.access,
     });
   } catch {
-    if (isRegistryPath(c.req.url)) {
+    if (isRegistryBearerPath(c.req.url)) {
       c.set("authSource", "authorization");
       c.set("registryAuthFailure", "invalid_token");
       return { kind: "anonymous" };
@@ -104,7 +111,7 @@ async function authenticateAuthorization(
   invalidCredentials();
 }
 
-async function authenticateNugetApiKey(c: Context<AppEnv>, token: string): Promise<Principal> {
+async function authenticateRegistryApiKey(c: Context<AppEnv>, token: string): Promise<Principal> {
   const principal = await resolveHootToken(c, token, "nugetApiKey");
   if (principal) return principal;
   invalidCredentials();
@@ -132,11 +139,11 @@ async function authenticateInner(c: Context<AppEnv>): Promise<Principal> {
     return authenticateAuthorization(c, authz);
   }
 
-  // NuGet clients (dotnet/nuget push) send the credential as an API key header,
-  // never in Authorization. Treat it as a Hootifactory scoped token.
-  const apiKey = parseNugetApiKeyHeader(c.req.header("x-nuget-apikey"));
-  if (apiKey?.kind === "invalid") invalidCredentials();
-  if (apiKey) return authenticateNugetApiKey(c, apiKey.token);
+  for (const header of registryPlugins.all().flatMap((plugin) => [...plugin.apiKeyHeaders])) {
+    const apiKey = parseRegistryApiKeyHeader(c.req.header(header));
+    if (apiKey?.kind === "invalid") invalidCredentials();
+    if (apiKey) return authenticateRegistryApiKey(c, apiKey.token);
+  }
 
   const sessionPrincipal = await authenticateSession(c);
   if (sessionPrincipal) return sessionPrincipal;
@@ -146,11 +153,14 @@ async function authenticateInner(c: Context<AppEnv>): Promise<Principal> {
 }
 
 export async function authenticate(c: Context<AppEnv>): Promise<Principal> {
+  const hasRegistryApiKeyHeader = registryPlugins
+    .all()
+    .some((plugin) => [...plugin.apiKeyHeaders].some((header) => Boolean(c.req.header(header))));
   return withSpan(
     "auth.authenticate",
     {
       "auth.has_authorization_header": Boolean(c.req.header("authorization")),
-      "auth.has_nuget_api_key": Boolean(c.req.header("x-nuget-apikey")),
+      "auth.has_registry_api_key": hasRegistryApiKeyHeader,
       "auth.has_session_cookie": Boolean(getCookie(c, SESSION_COOKIE)),
     },
     async (span) => {
@@ -167,7 +177,7 @@ export async function authenticate(c: Context<AppEnv>): Promise<Principal> {
           method: c.req.method,
           path: new URL(c.req.url).pathname,
           authScheme: c.req.header("authorization")?.split(/\s+/, 1)[0] ?? "none",
-          hasNugetApiKey: Boolean(c.req.header("x-nuget-apikey")),
+          hasRegistryApiKey: hasRegistryApiKeyHeader,
         });
         throw err;
       }

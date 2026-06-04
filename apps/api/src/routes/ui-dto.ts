@@ -17,7 +17,7 @@ export function repositoryDto(repo: RepositoryRow): RepositoryDto {
     id: repo.id,
     orgId: repo.orgId,
     name: repo.name,
-    format: repo.format,
+    moduleId: repo.moduleId,
     kind: repo.kind,
     visibility: repo.visibility,
     mountPath: repo.mountPath,

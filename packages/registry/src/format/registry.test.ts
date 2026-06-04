@@ -1,26 +1,17 @@
 import { describe, expect, test } from "bun:test";
-import type { RegistryPlugin } from "./adapter";
-import { FormatRegistry } from "./registry";
+import { registryPlugin } from "./plugin";
+import { RegistryPluginRegistry } from "./registry";
 
-const adapter = {
-  format: "npm",
-  capabilities: {
-    contentAddressable: false,
-    resumableUploads: false,
-    proxyable: true,
-    virtualizable: true,
-  },
-  routes: () => [
-    { method: "GET", pattern: "/:pkg+", handlerId: "packument" },
-    { method: "PUT", pattern: "/:pkg+", handlerId: "publish" },
-  ],
-  requiredPermission: () => ({ action: "read" }),
-  handle: async () => Response.json({ ok: true }),
-} satisfies RegistryPlugin;
+const adapter = registryPlugin("npm")
+  .module({ displayName: "npm", mountSegment: "npm" })
+  .capabilities({ proxyable: true, virtualizable: true })
+  .get("/:pkg+", "packument", () => Response.json({ ok: true }))
+  .put("/:pkg+", "publish", () => Response.json({ ok: true }))
+  .build();
 
-describe("FormatRegistry", () => {
+describe("RegistryPluginRegistry", () => {
   test("registers adapters and compiles their route tables", () => {
-    const registry = new FormatRegistry();
+    const registry = new RegistryPluginRegistry();
 
     registry.register(adapter);
 
@@ -30,12 +21,13 @@ describe("FormatRegistry", () => {
     expect(registry.all()).toEqual([adapter]);
   });
 
-  test("can register one adapter under an alias format", () => {
-    const registry = new FormatRegistry();
+  test("can register one adapter under an alias module id", () => {
+    const registry = new RegistryPluginRegistry();
 
     registry.registerAs("helm", adapter);
 
-    expect(registry.lookup("helm")).toBe(adapter);
+    expect(registry.lookup("helm")?.id).toBe("helm");
+    expect(registry.lookup("helm")?.routes()).toEqual(adapter.routes());
     expect(registry.has("npm")).toBe(false);
   });
 });

@@ -2,19 +2,6 @@ import { pgEnum } from "drizzle-orm/pg-core";
 
 export const repoKindEnum = pgEnum("repo_kind", ["hosted", "proxy", "virtual"]);
 
-export const packageFormatEnum = pgEnum("package_format", [
-  "npm",
-  "docker",
-  "oci",
-  "pypi",
-  "maven",
-  "helm",
-  "nuget",
-  "go",
-  "cargo",
-  "generic",
-]);
-
 export const visibilityEnum = pgEnum("visibility", ["private", "public"]);
 
 /** Fixed RBAC role matrix (resolved to permissions in code). */
@@ -28,15 +15,6 @@ export const authEmailTokenPurposeEnum = pgEnum("auth_email_token_purpose", [
 ]);
 
 export const blobStateEnum = pgEnum("blob_state", ["active", "pending_delete"]);
-
-export const blobRefKindEnum = pgEnum("blob_ref_kind", [
-  "oci_layer",
-  "oci_config",
-  "oci_manifest",
-  "npm_tarball",
-  "pypi_file",
-  "generic_file",
-]);
 
 export const uploadStateEnum = pgEnum("upload_state", ["open", "closed", "committed", "aborted"]);
 

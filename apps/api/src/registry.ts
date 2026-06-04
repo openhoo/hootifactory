@@ -9,20 +9,18 @@ import { Errors, type HttpMethod, registryPlugins } from "@hootifactory/registry
 import {
   buildRegistryRequestContext,
   dispatchByRepoKind,
-  repoFormatSpanAttributes,
+  repoModuleSpanAttributes,
   resolveRegistryRouteMatch,
   resolveRepository,
   serveWebFallback,
 } from "@hootifactory/registry-application";
 import type { Context } from "hono";
 import { authorizeRoute, registryAuthorizationDeniedResponse } from "./registry-auth";
-import { registryErrorResponseForFormat } from "./registry-error-format";
+import { registryErrorResponseForModule } from "./registry-error-format";
 import { stripBodyForFallbackHead } from "./registry-utils";
 import { dispatchVirtual } from "./registry-virtual";
 import { compressRegistryResponse } from "./response-compression";
 import type { AppEnv } from "./types";
-
-const OCI_BEARER_FORMATS = new Set(["docker", "oci", "helm"]);
 
 /**
  * Catch-all registry dispatch: resolve repo -> adapter -> route -> authorize ->
@@ -38,7 +36,7 @@ export async function handleRegistryRequest(c: Context<AppEnv>): Promise<Respons
       const resolved = await resolveRepository(url.pathname);
       span.setAttribute("registry.repository.resolved", Boolean(resolved));
       if (resolved) {
-        span.setAttributes(repoFormatSpanAttributes(resolved.repo, resolved.repo));
+        span.setAttributes(repoModuleSpanAttributes({ id: resolved.repo.moduleId }, resolved.repo));
       }
       return resolved;
     },
@@ -46,7 +44,9 @@ export async function handleRegistryRequest(c: Context<AppEnv>): Promise<Respons
   if (!resolution) {
     if (c.req.method === "GET") {
       const web = await withSpan("web.spa_fallback", { "url.path": url.pathname }, () =>
-        serveWebFallback(url.pathname),
+        serveWebFallback(url.pathname, {
+          registryMountSegments: registryPlugins.all().map((plugin) => plugin.mountSegment),
+        }),
       );
       if (web) return web;
     }
@@ -57,18 +57,18 @@ export async function handleRegistryRequest(c: Context<AppEnv>): Promise<Respons
   const { repo, rest } = resolution;
   return await withLogAttributes(
     {
-      "registry.format": repo.format,
       "registry.repository.kind": repo.kind,
       "registry.repository": repo.name,
+      "registry.module.id": repo.moduleId,
     },
     async () => {
-      setActiveSpanAttributes(repoFormatSpanAttributes(repo, repo));
-      const adapter = registryPlugins.lookup(repo.format);
-      if (!adapter) throw Errors.unsupported({ format: repo.format });
+      const adapter = registryPlugins.lookup(repo.moduleId);
+      if (!adapter) throw Errors.unsupported({ moduleId: repo.moduleId });
+      setActiveSpanAttributes(repoModuleSpanAttributes(adapter, repo));
 
       const { match, fellBackToGet, httpRoute, spanAttributes } = resolveRegistryRouteMatch(
         repo,
-        registryPlugins.routesFor(repo.format),
+        registryPlugins.routesFor(repo.moduleId),
         method,
         rest,
       );
@@ -77,15 +77,15 @@ export async function handleRegistryRequest(c: Context<AppEnv>): Promise<Respons
       const recordOutcome = (statusCode: number, outcome: "ok" | "denied" | "error") =>
         recordRegistryRequest({
           method,
-          format: repo.format,
+          moduleId: repo.moduleId,
           repoKind: repo.kind,
           handler: match.entry.handlerId,
           route: match.entry.pattern,
           statusCode,
           outcome,
         });
-      const deny = (input: Parameters<typeof registryErrorResponseForFormat>[1]) => {
-        const response = registryErrorResponseForFormat(repo.format, input);
+      const deny = (input: Parameters<typeof registryErrorResponseForModule>[1]) => {
+        const response = registryErrorResponseForModule(adapter, input);
         recordOutcome(response.status, "denied");
         return response;
       };
@@ -97,15 +97,15 @@ export async function handleRegistryRequest(c: Context<AppEnv>): Promise<Respons
         },
         async () => {
           const principal = c.get("principal");
-          if (principal.kind === "registryToken" && !OCI_BEARER_FORMATS.has(repo.format)) {
-            logger.debug("registry token rejected for non-OCI format", {
+          if (principal.kind === "registryToken" && !adapter.acceptsRegistryBearerToken) {
+            logger.debug("registry token rejected for module", {
               repo: repo.name,
-              format: repo.format,
+              moduleId: repo.moduleId,
             });
             return deny({
               status: 403,
               code: "DENIED",
-              message: "OCI registry bearer tokens are only valid for OCI repositories",
+              message: "registry bearer tokens are not valid for this registry module",
             });
           }
           const ctx = buildRegistryRequestContext(repo, principal);
@@ -149,12 +149,12 @@ export async function handleRegistryRequest(c: Context<AppEnv>): Promise<Respons
           recordOutcome(res.status, res.status < 400 ? "ok" : "error");
           logger.debug("registry request completed", {
             repo: repo.name,
-            format: repo.format,
+            moduleId: repo.moduleId,
             handler: match.entry.handlerId,
             status: res.status,
           });
           return compressRegistryResponse(c.req.raw, stripBodyForFallbackHead(fellBackToGet, res), {
-            format: repo.format,
+            module: adapter,
             handlerId: match.entry.handlerId,
           });
         },

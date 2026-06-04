@@ -9,7 +9,7 @@ import {
   type RouteMatch,
 } from "@hootifactory/registry";
 import { loadVirtualMembers, repoSpanAttributes } from "@hootifactory/registry-application";
-import { registryErrorToFormatResponse } from "./registry-error-format";
+import { registryErrorToModuleResponse } from "./registry-error-format";
 import { authorizeVirtualMembers } from "./registry-virtual-member";
 import { virtualNotFound } from "./registry-virtual-response";
 import {
@@ -32,7 +32,7 @@ export async function dispatchVirtualMetadata(
   return withSpan(
     "registry.virtual.metadata",
     {
-      "registry.format": adapter.format,
+      "registry.module.id": adapter.id,
       "registry.repository.id": ctx.repo.id,
       "registry.repository.name": ctx.repo.name,
     },
@@ -71,7 +71,7 @@ export async function dispatchVirtualMetadata(
                 };
               } catch (err) {
                 if (!(err instanceof RegistryError)) throw err;
-                const res = registryErrorToFormatResponse(adapter.format, err);
+                const res = registryErrorToModuleResponse(adapter, err);
                 memberSpan.setAttribute("http.response.status_code", res.status);
                 return { part: null, last: res };
               }

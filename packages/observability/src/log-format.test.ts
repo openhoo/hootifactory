@@ -25,7 +25,7 @@ describe("log formatting helpers", () => {
 
   test("extracts bounded OpenTelemetry attributes from scalar and structured metadata", () => {
     const attrs = attributesForMeta({
-      format: "npm",
+      moduleId: "npm",
       durationMs: 12.5,
       ok: true,
       nested: { value: "kept" },
@@ -35,7 +35,7 @@ describe("log formatting helpers", () => {
     expect(attrs).toMatchObject({
       "exception.type": "Error",
       "exception.message": "broken",
-      "meta.format": "npm",
+      "meta.moduleId": "npm",
       "meta.durationMs": 12.5,
       "meta.ok": true,
       "meta.nested": '{"value":"kept"}',

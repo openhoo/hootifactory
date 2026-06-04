@@ -1,26 +1,14 @@
 import { promisify } from "node:util";
 import { gzip } from "node:zlib";
 import { BoundedLruCache, createAsyncLimiter } from "@hootifactory/core";
+import type { RegistryPlugin } from "@hootifactory/registry";
 
 const COMPRESSED_RESPONSE_CACHE_MAX_ENTRIES = 512;
 const COMPRESSED_RESPONSE_MAX_BYTES = 8 * 1024 * 1024;
 const COMPRESSED_RESPONSE_CONCURRENCY = 2;
 const gzipAsync = promisify(gzip);
 
-const COMPRESSIBLE_TEXT_TYPES = [
-  "application/json",
-  "application/vnd.pypi.simple.v1+json",
-  "text/html",
-  "text/plain",
-];
-
-const COMPRESSIBLE_REGISTRY_HANDLERS: Record<string, Set<string>> = {
-  cargo: new Set(["config", "index", "ownersList"]),
-  go: new Set(["list", "latest", "file"]),
-  npm: new Set(["packument", "search", "distTagsList"]),
-  nuget: new Set(["serviceIndex", "search", "versions", "registration", "registrationLeaf"]),
-  pypi: new Set(["simpleRoot", "simpleProject"]),
-};
+const COMPRESSIBLE_TEXT_TYPES = ["application/json", "text/html", "text/plain"];
 
 const compressedResponseCache = new BoundedLruCache<string, Uint8Array>(
   COMPRESSED_RESPONSE_CACHE_MAX_ENTRIES,
@@ -65,26 +53,37 @@ function appendVary(headers: Headers, value: string): void {
   if (!parts.includes(value.toLowerCase())) headers.set("vary", `${current}, ${value}`);
 }
 
-function contentTypeIsCompressible(contentType: string | null): boolean {
+function contentTypeIsCompressible(
+  module: Pick<RegistryPlugin, "compressibleContentTypes">,
+  contentType: string | null,
+): boolean {
   if (!contentType) return false;
   const normalized = contentType.split(";", 1)[0]?.trim().toLowerCase() ?? "";
-  return COMPRESSIBLE_TEXT_TYPES.includes(normalized);
+  return (
+    COMPRESSIBLE_TEXT_TYPES.includes(normalized) || module.compressibleContentTypes.has(normalized)
+  );
 }
 
-export function registryHandlerSupportsCompression(format: string, handlerId: string): boolean {
-  return COMPRESSIBLE_REGISTRY_HANDLERS[format]?.has(handlerId) ?? false;
+export function registryHandlerSupportsCompression(
+  module: Pick<RegistryPlugin, "compressibleHandlers">,
+  handlerId: string,
+): boolean {
+  return module.compressibleHandlers.has(handlerId);
 }
 
 export async function compressRegistryResponse(
   req: Request,
   res: Response,
-  opts: { format: string; handlerId: string },
+  opts: {
+    module: Pick<RegistryPlugin, "compressibleContentTypes" | "compressibleHandlers">;
+    handlerId: string;
+  },
 ): Promise<Response> {
   if (req.method === "HEAD" || res.status !== 200 || !res.body) return res;
-  if (!registryHandlerSupportsCompression(opts.format, opts.handlerId)) return res;
+  if (!registryHandlerSupportsCompression(opts.module, opts.handlerId)) return res;
   if (gzipPreference(req.headers.get("accept-encoding")) <= 0) return res;
   if (res.headers.has("content-encoding")) return res;
-  if (!contentTypeIsCompressible(res.headers.get("content-type"))) return res;
+  if (!contentTypeIsCompressible(opts.module, res.headers.get("content-type"))) return res;
 
   const etag = res.headers.get("etag");
   if (!etag) return res;

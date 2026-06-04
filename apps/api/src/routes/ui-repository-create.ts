@@ -1,27 +1,28 @@
-import { registryPlugins } from "@hootifactory/registry";
+import { type RegistryPlugin, registryPlugins } from "@hootifactory/registry";
 import {
   isValidRepositoryName,
-  isValidRepositoryNameForFormat,
+  isValidRepositoryNameForModule,
 } from "@hootifactory/registry-application";
-import type { PackageFormat, RepoKind, Visibility } from "@hootifactory/types";
+import type { RegistryModuleId, RepoKind, Visibility } from "@hootifactory/types";
 import { type CreateRepositoryBody, RepoKindSchema, VisibilitySchema } from "./ui-schemas";
 
 export type CreateRepositoryRequest = {
   name: string;
-  format: PackageFormat;
+  moduleId: RegistryModuleId;
+  module: Pick<RegistryPlugin, "mountSegment">;
   kind: RepoKind;
   visibility: Visibility;
   description?: string;
 };
 
-export type RepositoryCapabilityAdapter = {
-  capabilities: { virtualizable: boolean };
-  proxyIngest?: unknown;
-};
+export type RepositoryCapabilityAdapter = Pick<
+  RegistryPlugin,
+  "capabilities" | "proxyIngest" | "repositoryNamePolicy" | "mountSegment"
+>;
 
 export type RepositoryCapabilityRegistry = {
-  has(format: PackageFormat): boolean;
-  lookup(format: PackageFormat): RepositoryCapabilityAdapter | undefined;
+  has(moduleId: RegistryModuleId): boolean;
+  lookup(moduleId: RegistryModuleId): RepositoryCapabilityAdapter | undefined;
 };
 
 type RepositoryCreateResolution =
@@ -39,15 +40,20 @@ export function resolveCreateRepositoryRequest(
     };
   }
 
-  const format = body.format as PackageFormat;
-  if (!registry.has(format)) {
-    return { ok: false, error: `unsupported repository format '${body.format}'` };
+  const moduleId = body.moduleId;
+  if (!registry.has(moduleId)) {
+    return { ok: false, error: `unsupported registry module '${body.moduleId}'` };
   }
-  if (!isValidRepositoryNameForFormat(format, body.name)) {
+  const adapter = registry.lookup(moduleId);
+  if (!adapter) {
+    return { ok: false, error: `unsupported registry module '${body.moduleId}'` };
+  }
+  if (!isValidRepositoryNameForModule(adapter, body.name)) {
     return {
       ok: false,
       error:
-        "repository name is invalid for this format; OCI-family repositories must be lowercase",
+        adapter.repositoryNamePolicy?.invalidMessage ??
+        "repository name is invalid for this registry module",
     };
   }
 
@@ -66,17 +72,16 @@ export function resolveCreateRepositoryRequest(
   }
   const visibility = parsedVisibility.data;
 
-  const adapter = registry.lookup(format);
   if (kind === "proxy" && !adapter?.proxyIngest) {
     return {
       ok: false,
-      error: `proxy repositories are not supported for format '${body.format}'`,
+      error: `proxy repositories are not supported for registry module '${body.moduleId}'`,
     };
   }
   if (kind === "virtual" && !adapter?.capabilities.virtualizable) {
     return {
       ok: false,
-      error: `virtual repositories are not supported for format '${body.format}'`,
+      error: `virtual repositories are not supported for registry module '${body.moduleId}'`,
     };
   }
 
@@ -84,7 +89,8 @@ export function resolveCreateRepositoryRequest(
     ok: true,
     request: {
       name: body.name,
-      format,
+      moduleId,
+      module: adapter,
       kind,
       visibility,
       description: body.description,

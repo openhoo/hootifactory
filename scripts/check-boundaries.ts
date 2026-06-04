@@ -2,6 +2,7 @@ interface BoundaryRule {
   name: string;
   roots: string[];
   forbidden: RegExp[];
+  ignoreTests?: boolean;
 }
 
 interface PackageJson {
@@ -89,6 +90,28 @@ const rules: BoundaryRule[] = [
       /@hootifactory\/registry\b/,
       registryPluginPackagePattern,
       /@hootifactory\/storage\b/,
+    ],
+  },
+  {
+    name: "non-module runtime uses module descriptors instead of concrete registry ids",
+    roots: [
+      "apps/api/src",
+      "apps/scan-worker/src",
+      "apps/web/src",
+      "packages/contracts/src",
+      "packages/observability/src",
+      "packages/registry-application/src",
+      "packages/scanning/src",
+    ],
+    ignoreTests: true,
+    forbidden: [
+      /\bPackageFormat\b/,
+      /\bpackageFormatEnum\b/,
+      /\brepoFormatSpanAttributes\b/,
+      /\bformatRegistry\b/,
+      /\bregistryErrorResponseForFormat\b/,
+      /\bregistryErrorToFormatResponse\b/,
+      /\b(?:format|moduleId)\s*[:=]\s*["'](?:npm|pypi|cargo|nuget|oci|helm|maven|generic)["']/,
     ],
   },
   {
@@ -210,6 +233,7 @@ async function checkBoundaryRules(): Promise<void> {
   for (const rule of rules) {
     for (const root of rule.roots) {
       for (const file of await filesUnder(pathJoin(repoRoot, root))) {
+        if (rule.ignoreTests && isTestFile(file)) continue;
         const content = await Bun.file(file).text();
         for (const pattern of rule.forbidden) {
           if (pattern.test(content)) {
@@ -219,6 +243,10 @@ async function checkBoundaryRules(): Promise<void> {
       }
     }
   }
+}
+
+function isTestFile(path: string): boolean {
+  return /\.test\.[cm]?[tj]sx?$/.test(path);
 }
 
 async function checkWorkspaceShape(): Promise<void> {

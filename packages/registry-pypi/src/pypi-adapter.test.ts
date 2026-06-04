@@ -51,7 +51,7 @@ function versionRow(metadata: unknown): RegistryPackageVersionRow {
 describe("PyPI adapter", () => {
   test("simple root index emits an ETag and honors If-None-Match", async () => {
     const ctx = createTestRegistryContext();
-    ctx.repo = { ...ctx.repo, format: "pypi", mountPath: "pypi/private" };
+    ctx.repo = { ...ctx.repo, moduleId: "pypi", mountPath: "pypi/private" };
     let listReads = 0;
     ctx.data.packages.listNames = async () => {
       listReads += 1;
@@ -87,7 +87,7 @@ describe("PyPI adapter", () => {
 
   test("simple project JSON emits an ETag and honors If-None-Match", async () => {
     const ctx = createTestRegistryContext();
-    ctx.repo = { ...ctx.repo, format: "pypi", mountPath: "pypi/private" };
+    ctx.repo = { ...ctx.repo, moduleId: "pypi", mountPath: "pypi/private" };
     ctx.data.packages.findByName = async (name) => {
       expect(name).toBe(pkg.name);
       return pkg;

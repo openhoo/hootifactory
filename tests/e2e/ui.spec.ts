@@ -26,8 +26,8 @@ test.describe("web UI (browser)", () => {
     // create a repository
     await page.getByRole("link", { name: "Repositories" }).click();
     await page.getByTestId("new-repo").click();
-    await expect(page.getByTestId("repo-format")).toBeVisible();
-    expect(await page.getByTestId("repo-format").locator("option").allTextContents()).toEqual([
+    await expect(page.getByTestId("repo-module")).toBeVisible();
+    expect(await page.getByTestId("repo-module").locator("option").allTextContents()).toEqual([
       "npm",
       "docker",
       "oci",
@@ -38,7 +38,7 @@ test.describe("web UI (browser)", () => {
       "cargo",
     ]);
     await page.getByTestId("repo-name").fill("uirepo");
-    await page.getByTestId("repo-format").selectOption("docker");
+    await page.getByTestId("repo-module").selectOption("docker");
     await page.getByTestId("repo-create").click();
 
     // it appears in the table

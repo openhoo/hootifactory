@@ -30,12 +30,7 @@ const VersionDigestFieldsSchema = z.looseObject({
   files: z.unknown().optional(),
 });
 
-/**
- * Extract the CAS blob digests a stored version references, across formats
- * (npm dist, pypi files, cargo crate, go zip, nuget nupkg). Docker layer refs
- * are scoped to the image (not the version) and are reclaimed via the adapter's
- * delete path, so they are intentionally not covered here.
- */
+/** Extract the CAS blob digests a stored version references across module metadata shapes. */
 export function versionBlobDigests(metadata: unknown): string[] {
   const out = new Set<string>();
   const parsed = VersionDigestFieldsSchema.safeParse(metadata ?? {});
@@ -47,15 +42,15 @@ export function versionBlobDigests(metadata: unknown): string[] {
   };
 
   const dist = DigestObjectSchema.safeParse(m.dist);
-  if (dist.success) add(dist.data.blobDigest); // npm
-  add(m.crateDigest); // cargo
-  add(m.zipDigest); // go
-  add(m.nupkgDigest); // nuget
+  if (dist.success) add(dist.data.blobDigest);
+  add(m.crateDigest);
+  add(m.zipDigest);
+  add(m.nupkgDigest);
   const files = z.array(z.unknown()).safeParse(m.files);
   if (files.success) {
     for (const file of files.data) {
       const parsedFile = DigestObjectSchema.safeParse(file);
-      if (parsedFile.success) add(parsedFile.data.blobDigest); // pypi
+      if (parsedFile.success) add(parsedFile.data.blobDigest);
     }
   }
   return [...out];

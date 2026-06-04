@@ -245,10 +245,9 @@ export async function createPackageVersion(
 }
 
 /**
- * Shared publish tail for blob-backed formats: create the package version, and
+ * Shared publish tail for blob-backed registry modules: create the package version, and
  * if the version already exists (conflict) release the just-created blob ref and
- * report the conflict; otherwise enqueue a scan for the stored blob. Used by the
- * cargo/go/nuget adapters, whose only divergence is the 409 / success response.
+ * report the conflict; otherwise enqueue a scan for the stored blob.
  */
 export async function commitVersionOrReleaseBlob(
   ctx: RegistryRequestContext,

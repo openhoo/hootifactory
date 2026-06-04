@@ -13,6 +13,7 @@ import {
   registryCapabilities,
   registryPlugin,
 } from "@hootifactory/registry";
+import { ociManifestReferences } from "@hootifactory/types";
 import { buildOciBlobResponse } from "./oci-blobs";
 import {
   deleteOciBlobReference,
@@ -38,9 +39,11 @@ const UPLOAD_CONTROL_HANDLERS = new Set([
   "cancelUpload",
 ]);
 const REGISTRY_TOKEN_SERVICE = "hootifactory";
+const OCI_REPOSITORY_NAME_RE =
+  /^[a-z0-9]+(?:(?:\.|_|__|-+)[a-z0-9]+)*(?:\/[a-z0-9]+(?:(?:\.|_|__|-+)[a-z0-9]+)*)*$/;
 
 export class DockerAdapter implements RegistryPlugin {
-  readonly format = "docker" as const;
+  readonly id = "docker" as const;
   readonly capabilities = registryCapabilities(
     "contentAddressable",
     "resumableUploads",
@@ -49,7 +52,23 @@ export class DockerAdapter implements RegistryPlugin {
   authChallenge = (perm: Permission, ctx: RegistryRequestContext) =>
     registryBearerAuthChallenge({ ctx, permission: perm, service: REGISTRY_TOKEN_SERVICE });
 
-  private readonly plugin = registryPlugin(this.format)
+  private readonly plugin = registryPlugin(this.id)
+    .module({
+      displayName: "OCI",
+      mountSegment: "v2",
+      acceptsRegistryBearerToken: true,
+      repositoryNamePolicy: {
+        validate: (name) => OCI_REPOSITORY_NAME_RE.test(name),
+        invalidMessage:
+          "repository name is invalid for this registry module; OCI repositories must be lowercase",
+      },
+      scan: {
+        contentAddressableManifestGraph: {
+          noPayloadReason: "oci_manifest_no_scannable_payload",
+          references: (raw) => ociManifestReferences(raw),
+        },
+      },
+    })
     .capabilities(this.capabilities)
     .authChallenge(this.authChallenge)
     .defaultPermission(({ method, match, ctx }) => this.routePermission(method, match, ctx))
@@ -104,6 +123,34 @@ export class DockerAdapter implements RegistryPlugin {
       assertImageName(this.fullName(ctx, image));
     },
   });
+
+  get displayName() {
+    return this.plugin.displayName;
+  }
+  get mountSegment() {
+    return this.plugin.mountSegment;
+  }
+  get repositoryNamePolicy() {
+    return this.plugin.repositoryNamePolicy;
+  }
+  get acceptsRegistryBearerToken() {
+    return this.plugin.acceptsRegistryBearerToken;
+  }
+  get apiKeyHeaders() {
+    return this.plugin.apiKeyHeaders;
+  }
+  get errorResponseKind() {
+    return this.plugin.errorResponseKind;
+  }
+  get compressibleHandlers() {
+    return this.plugin.compressibleHandlers;
+  }
+  get compressibleContentTypes() {
+    return this.plugin.compressibleContentTypes;
+  }
+  get scan() {
+    return this.plugin.scan;
+  }
 
   routes = this.delegate.routes;
 

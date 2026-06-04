@@ -9,9 +9,8 @@ export interface RepoResolution {
 
 /**
  * Resolve an incoming request path to a repository via longest mount-path
- * prefix match. mountPath conventions:
- *   npm/pypi/...:  "<format>/<org>/<repo>"   (e.g. "npm/acme/internal")
- *   docker/oci/helm: "v2/<org>/<repo>"        (Docker forces the /v2/ prefix)
+ * prefix match. Module mount paths are stored with the repository, so the
+ * resolver does not need to know registry-specific URL conventions.
  *
  * Returns null for unmatched paths (e.g. the global "/v2/" version check, which
  * the API handles before repo resolution). Note: a global "/v2/_catalog" endpoint

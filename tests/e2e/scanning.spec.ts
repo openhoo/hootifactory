@@ -320,12 +320,12 @@ test.describe("scanning + policy gates", () => {
 
     const exactRepo = (
       await (
-        await createRepo(owner.ctx, owner.orgId, { name: exactRepoName, format: "npm" })
+        await createRepo(owner.ctx, owner.orgId, { name: exactRepoName, moduleId: "npm" })
       ).json()
     ).repository as { id: string; mountPath: string };
     const targetRepo = (
       await (
-        await createRepo(owner.ctx, owner.orgId, { name: targetRepoName, format: "npm" })
+        await createRepo(owner.ctx, owner.orgId, { name: targetRepoName, moduleId: "npm" })
       ).json()
     ).repository as { id: string; mountPath: string };
 
@@ -355,7 +355,7 @@ test.describe("scanning + policy gates", () => {
     test.setTimeout(120_000);
     const owner = await setupOwner(baseURL!);
     const repo = (
-      await (await createRepo(owner.ctx, owner.orgId, { name: "scanrepo", format: "npm" })).json()
+      await (await createRepo(owner.ctx, owner.orgId, { name: "scanrepo", moduleId: "npm" })).json()
     ).repository as { id: string; mountPath: string };
 
     await owner.ctx.post(`/api/orgs/${owner.orgId}/scan-policies`, {
@@ -407,7 +407,7 @@ test.describe("scanning + policy gates", () => {
       await (
         await createRepo(owner.ctx, owner.orgId, {
           name: "public-scanrepo",
-          format: "npm",
+          moduleId: "npm",
           visibility: "public",
         })
       ).json()
@@ -455,7 +455,7 @@ test.describe("scanning + policy gates", () => {
     const owner = await setupOwner(baseURL!);
     const repo = (
       await (
-        await createRepo(owner.ctx, owner.orgId, { name: "pending-npm", format: "npm" })
+        await createRepo(owner.ctx, owner.orgId, { name: "pending-npm", moduleId: "npm" })
       ).json()
     ).repository as { id: string; mountPath: string };
     await owner.ctx.post(`/api/orgs/${owner.orgId}/scan-policies`, {
@@ -481,7 +481,7 @@ test.describe("scanning + policy gates", () => {
     const owner = await setupOwner(baseURL!);
     const repo = (
       await (
-        await createRepo(owner.ctx, owner.orgId, { name: "failure-npm", format: "npm" })
+        await createRepo(owner.ctx, owner.orgId, { name: "failure-npm", moduleId: "npm" })
       ).json()
     ).repository as { id: string; mountPath: string };
 
@@ -517,7 +517,7 @@ test.describe("scanning + policy gates", () => {
     const owner = await setupOwner(baseURL!);
     const repo = (
       await (
-        await createRepo(owner.ctx, owner.orgId, { name: "scan-containers", format: "docker" })
+        await createRepo(owner.ctx, owner.orgId, { name: "scan-containers", moduleId: "docker" })
       ).json()
     ).repository as { id: string; mountPath: string };
     await owner.ctx.post(`/api/orgs/${owner.orgId}/scan-policies`, {
@@ -568,7 +568,7 @@ test.describe("scanning + policy gates", () => {
     const owner = await setupOwner(baseURL!);
     const repo = (
       await (
-        await createRepo(owner.ctx, owner.orgId, { name: "scan-shared", format: "docker" })
+        await createRepo(owner.ctx, owner.orgId, { name: "scan-shared", moduleId: "docker" })
       ).json()
     ).repository as { id: string; mountPath: string };
     await owner.ctx.post(`/api/orgs/${owner.orgId}/scan-policies`, {
@@ -629,7 +629,7 @@ test.describe("scanning + policy gates", () => {
   test("enforce policy blocks OCI artifact manifest blobs", async ({ baseURL }) => {
     const owner = await setupOwner(baseURL!);
     const repo = (
-      await (await createRepo(owner.ctx, owner.orgId, { name: "scan-oci", format: "oci" })).json()
+      await (await createRepo(owner.ctx, owner.orgId, { name: "scan-oci", moduleId: "oci" })).json()
     ).repository as { id: string; mountPath: string };
     await owner.ctx.post(`/api/orgs/${owner.orgId}/scan-policies`, {
       data: { repositoryPattern: "scan-oci", mode: "enforce", blockOnSeverity: "high" },
@@ -660,12 +660,12 @@ test.describe("scanning + policy gates", () => {
     const owner = await setupOwner(baseURL!);
     const firstRepo = (
       await (
-        await createRepo(owner.ctx, owner.orgId, { name: "dedupe-a", format: "docker" })
+        await createRepo(owner.ctx, owner.orgId, { name: "dedupe-a", moduleId: "docker" })
       ).json()
     ).repository as { id: string; mountPath: string };
     const secondRepo = (
       await (
-        await createRepo(owner.ctx, owner.orgId, { name: "dedupe-b", format: "docker" })
+        await createRepo(owner.ctx, owner.orgId, { name: "dedupe-b", moduleId: "docker" })
       ).json()
     ).repository as { id: string; mountPath: string };
 

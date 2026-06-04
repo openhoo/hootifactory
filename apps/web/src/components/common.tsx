@@ -165,8 +165,7 @@ export function EmptyState({
   );
 }
 
-/** Amber, monospaced tag for a registry format (npm, docker, …). */
-export function FormatBadge({ format, className }: { format: string; className?: string }) {
+export function ModuleBadge({ moduleId, className }: { moduleId: string; className?: string }) {
   return (
     <span
       className={cn(
@@ -174,7 +173,7 @@ export function FormatBadge({ format, className }: { format: string; className?:
         className,
       )}
     >
-      {format}
+      {moduleId}
     </span>
   );
 }

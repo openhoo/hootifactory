@@ -7,10 +7,10 @@ import {
   type RegistryPlugin,
   type RegistryRequestContext,
   type RouteMatch,
-  registryErrorToFormatResponse,
+  registryErrorToModuleResponse,
 } from "@hootifactory/registry";
 import { loadUpstream } from "../repositories/upstreams";
-import { isReadMethod, repoFormatSpanAttributes } from "./telemetry";
+import { isReadMethod, repoModuleSpanAttributes } from "./telemetry";
 
 const PROXY_REFRESH_FRESHNESS_CACHE_LIMIT = 2048;
 const REGISTRY_MISS_CODES = new Set<OciErrorCode>([
@@ -49,7 +49,7 @@ export async function adapterResponse(
   return withSpan(
     "registry.adapter.handle",
     {
-      ...repoFormatSpanAttributes(adapter, ctx.repo, match.entry.handlerId),
+      ...repoModuleSpanAttributes(adapter, ctx.repo, match.entry.handlerId),
       "registry.route": match.entry.pattern,
       "http.request.method": req.method,
     },
@@ -58,18 +58,18 @@ export async function adapterResponse(
         const response = await adapter.handle(match, req, ctx);
         span.setAttribute("http.response.status_code", response.status);
         logger.debug("registry adapter handled request", {
-          format: adapter.format,
+          moduleId: adapter.id,
           repo: ctx.repo.name,
           handler: match.entry.handlerId,
           status: response.status,
         });
         return response;
       } catch (err) {
-        if (err instanceof RegistryError && !["docker", "helm", "oci"].includes(adapter.format)) {
-          const response = registryErrorToFormatResponse(adapter.format, err);
+        if (err instanceof RegistryError) {
+          const response = registryErrorToModuleResponse(adapter, err);
           span.setAttribute("http.response.status_code", response.status);
           logger.debug("registry adapter error", {
-            format: adapter.format,
+            moduleId: adapter.id,
             repo: ctx.repo.name,
             handler: match.entry.handlerId,
             code: err.code,
@@ -77,17 +77,14 @@ export async function adapterResponse(
           return response;
         }
         if (isRegistryMiss(err)) {
-          const response =
-            adapter.format === "npm"
-              ? Response.json({ error: err.message }, { status: err.status })
-              : err.toResponse();
+          const response = registryErrorToModuleResponse(adapter, err);
           span.setAttribute("http.response.status_code", response.status);
           span.addEvent("registry.adapter.miss", {
             "registry.error.code": err.code,
             "registry.error.message": err.message,
           });
           logger.debug("registry adapter miss", {
-            format: adapter.format,
+            moduleId: adapter.id,
             repo: ctx.repo.name,
             handler: match.entry.handlerId,
             code: err.code,
@@ -110,7 +107,7 @@ export async function adapterResponseOrRegistryError(
     return await adapterResponse(adapter, match, req, ctx);
   } catch (err) {
     if (err instanceof RegistryError) {
-      return registryErrorToFormatResponse(adapter.format, err);
+      return registryErrorToModuleResponse(adapter, err);
     }
     throw err;
   }
@@ -161,7 +158,7 @@ export async function dispatchProxy(
   return withSpan(
     "registry.proxy.dispatch",
     {
-      "registry.format": adapter.format,
+      "registry.module.id": adapter.id,
       "registry.repository.id": ctx.repo.id,
       "registry.repository.name": ctx.repo.name,
       "registry.handler": match.entry.handlerId,
@@ -204,7 +201,7 @@ export async function dispatchProxy(
       if (local.status < 400) return local;
       if (!upstream) return proxyError(local);
 
-      // Format-aware mirror (npm packument -> ingest tarballs), then retry locally.
+      // Module-aware mirror, then retry locally.
       // Do not fall back to transparent passthrough: returning upstream bytes
       // directly would bypass local artifact records, scan policy, quotas, and
       // retention semantics.

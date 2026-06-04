@@ -1,4 +1,4 @@
-import { and, artifacts, db, eq, inArray } from "@hootifactory/db";
+import { and, artifacts, db, eq, inArray, ociManifests } from "@hootifactory/db";
 import {
   immutableRegistryBlobCacheControl,
   type RegistryRequestContext,
@@ -74,10 +74,24 @@ export function invalidateScanPolicyCache(orgId?: string): void {
   invalidateRegistryScanPolicyCache(orgId);
 }
 
+export async function loadContentAddressableManifestRaw(input: {
+  repositoryId: string;
+  digest: string;
+}): Promise<{ raw: string } | null> {
+  const [manifest] = await db
+    .select({ raw: ociManifests.raw })
+    .from(ociManifests)
+    .where(
+      and(eq(ociManifests.repositoryId, input.repositoryId), eq(ociManifests.digest, input.digest)),
+    )
+    .limit(1);
+  return manifest ?? null;
+}
+
 /**
  * Serve a CAS blob's bytes unless scan policy blocks it. The caller supplies the
  * content-type, any extra response headers (e.g. etag), and a `blocked` factory
- * that builds the format-specific 403 response.
+ * that builds the module-specific 403 response.
  *
  * The scan-policy block check ALWAYS runs first. A conditional-GET caller must
  * pass its 304 short-circuit via `notModified` (evaluated only after the block

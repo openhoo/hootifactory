@@ -14,13 +14,13 @@ export function repoSpanAttributes(repo: {
   };
 }
 
-export function repoFormatSpanAttributes(
-  formatSource: { format: string },
+export function repoModuleSpanAttributes(
+  moduleSource: { id: string },
   repo: { id: string; name: string; kind: string },
   handlerId?: string,
 ): Record<string, string> {
   return {
-    "registry.format": formatSource.format,
+    "registry.module.id": moduleSource.id,
     ...repoSpanAttributes(repo),
     ...(handlerId !== undefined ? { "registry.handler": handlerId } : {}),
   };

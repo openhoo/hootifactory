@@ -66,9 +66,9 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
         <HexPattern className="text-primary/[0.07]" />
         <div className="relative space-y-0.5">
           <p className="font-heading text-xs font-semibold text-sidebar-foreground">
-            Multi-format registry
+            Module-based registry
           </p>
-          <p className="text-xs text-muted-foreground">npm · docker · pypi · helm · go · cargo …</p>
+          <p className="text-xs text-muted-foreground">Install modules, create repositories.</p>
         </div>
       </div>
     </div>

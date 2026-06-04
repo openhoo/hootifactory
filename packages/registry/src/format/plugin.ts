@@ -1,8 +1,14 @@
 import {
   type HttpMethod,
   type Permission,
+  type RegistryErrorResponseKind,
+  type RegistryModuleDescriptor,
   type RegistryPlugin,
+  type RegistryRepositoryNamePolicy,
   type RegistryRequestContext,
+  type RegistryScanProvider,
+  type RegistryUsageSnippet,
+  type RegistryUsageSnippetInput,
   type RouteEntry,
   type RouteMatch,
   readWritePermission,
@@ -121,7 +127,17 @@ export type RegistryRouteList =
   | ((route: RegistryRouteDsl) => readonly AnyRegistryRouteSpec[]);
 
 export interface DefineRegistryPluginInput {
-  format: RegistryPlugin["format"];
+  id: RegistryPlugin["id"];
+  displayName?: string;
+  mountSegment?: string;
+  repositoryNamePolicy?: RegistryRepositoryNamePolicy;
+  acceptsRegistryBearerToken?: boolean;
+  apiKeyHeaders?: Iterable<string>;
+  errorResponseKind?: RegistryErrorResponseKind;
+  compressibleHandlers?: Iterable<string>;
+  compressibleContentTypes?: Iterable<string>;
+  scan?: RegistryScanProvider;
+  usageSnippets?: (input: RegistryUsageSnippetInput) => RegistryUsageSnippet[];
   capabilities: RegistryPlugin["capabilities"];
   routes: RegistryRouteList;
   defaultPermission?: (input: RegistryPermissionInput) => Permission;
@@ -129,6 +145,7 @@ export interface DefineRegistryPluginInput {
   generateMetadata?: RegistryPlugin["generateMetadata"];
   mergeMetadata?: RegistryPlugin["mergeMetadata"];
   search?: (query: SearchQuery, ctx: RegistryRequestContext) => Promise<SearchResult>;
+  virtualSearch?: RegistryPlugin["virtualSearch"];
   proxyIngest?: RegistryPlugin["proxyIngest"];
 }
 
@@ -145,12 +162,23 @@ function resolveRoutePermission(
 }
 
 class DefinedRegistryPlugin implements RegistryPlugin {
-  readonly format: RegistryPlugin["format"];
+  readonly id: RegistryPlugin["id"];
+  readonly displayName: RegistryModuleDescriptor["displayName"];
+  readonly mountSegment: RegistryModuleDescriptor["mountSegment"];
+  readonly repositoryNamePolicy?: RegistryModuleDescriptor["repositoryNamePolicy"];
+  readonly acceptsRegistryBearerToken: boolean;
+  readonly apiKeyHeaders: RegistryModuleDescriptor["apiKeyHeaders"];
+  readonly errorResponseKind: RegistryModuleDescriptor["errorResponseKind"];
+  readonly compressibleHandlers: RegistryModuleDescriptor["compressibleHandlers"];
+  readonly compressibleContentTypes: RegistryModuleDescriptor["compressibleContentTypes"];
+  readonly scan?: RegistryModuleDescriptor["scan"];
+  readonly usageSnippets?: RegistryModuleDescriptor["usageSnippets"];
   readonly capabilities: RegistryPlugin["capabilities"];
   readonly authChallenge?: RegistryPlugin["authChallenge"];
   readonly generateMetadata?: RegistryPlugin["generateMetadata"];
   readonly mergeMetadata?: RegistryPlugin["mergeMetadata"];
   readonly search?: RegistryPlugin["search"];
+  readonly virtualSearch?: RegistryPlugin["virtualSearch"];
   readonly proxyIngest?: RegistryPlugin["proxyIngest"];
 
   private readonly entries: RouteEntry[];
@@ -159,12 +187,23 @@ class DefinedRegistryPlugin implements RegistryPlugin {
 
   constructor(private readonly input: DefineRegistryPluginInput) {
     const routes = resolveRegistryRoutes(input.routes);
-    this.format = input.format;
+    this.id = input.id;
+    this.displayName = input.displayName ?? input.id;
+    this.mountSegment = input.mountSegment ?? input.id;
+    this.repositoryNamePolicy = input.repositoryNamePolicy;
+    this.acceptsRegistryBearerToken = input.acceptsRegistryBearerToken ?? false;
+    this.apiKeyHeaders = new Set(input.apiKeyHeaders ?? []);
+    this.errorResponseKind = input.errorResponseKind ?? "registry";
+    this.compressibleHandlers = new Set(input.compressibleHandlers ?? []);
+    this.compressibleContentTypes = new Set(input.compressibleContentTypes ?? []);
+    this.scan = input.scan;
+    this.usageSnippets = input.usageSnippets;
     this.capabilities = input.capabilities;
     this.authChallenge = input.authChallenge;
     this.generateMetadata = input.generateMetadata;
     this.mergeMetadata = input.mergeMetadata;
     this.search = input.search;
+    this.virtualSearch = input.virtualSearch;
     this.proxyIngest = input.proxyIngest;
     this.entries = routes.map((spec) => ({
       method: spec.method,
@@ -252,15 +291,53 @@ export function defineRegistryPlugin(input: DefineRegistryPluginInput): Registry
 
 export class RegistryPluginBuilder {
   private capabilitiesValue?: RegistryCapabilities;
+  private displayNameValue?: string;
+  private mountSegmentValue?: string;
+  private repositoryNamePolicyValue?: RegistryRepositoryNamePolicy;
+  private acceptsRegistryBearerTokenValue?: boolean;
+  private apiKeyHeadersValue?: Iterable<string>;
+  private errorResponseKindValue?: RegistryErrorResponseKind;
+  private compressibleHandlersValue?: Iterable<string>;
+  private compressibleContentTypesValue?: Iterable<string>;
+  private scanValue?: RegistryScanProvider;
+  private usageSnippetsValue?: (input: RegistryUsageSnippetInput) => RegistryUsageSnippet[];
   private defaultPermissionValue?: DefineRegistryPluginInput["defaultPermission"];
   private authChallengeValue?: RegistryPlugin["authChallenge"];
   private generateMetadataValue?: RegistryPlugin["generateMetadata"];
   private mergeMetadataValue?: RegistryPlugin["mergeMetadata"];
   private searchValue?: RegistryPlugin["search"];
+  private virtualSearchValue?: RegistryPlugin["virtualSearch"];
   private proxyIngestValue?: RegistryPlugin["proxyIngest"];
   private readonly routeSpecs: AnyRegistryRouteSpec[] = [];
 
-  constructor(private readonly formatValue: RegistryPlugin["format"]) {}
+  constructor(private readonly idValue: RegistryPlugin["id"]) {}
+
+  module(input: {
+    displayName?: string;
+    mountSegment?: string;
+    repositoryNamePolicy?: RegistryRepositoryNamePolicy;
+    acceptsRegistryBearerToken?: boolean;
+    apiKeyHeaders?: Iterable<string>;
+    errorResponseKind?: RegistryErrorResponseKind;
+    compressibleHandlers?: Iterable<string>;
+    compressibleContentTypes?: Iterable<string>;
+    scan?: RegistryScanProvider;
+    usageSnippets?: (input: RegistryUsageSnippetInput) => RegistryUsageSnippet[];
+  }): this {
+    this.displayNameValue = input.displayName ?? this.displayNameValue;
+    this.mountSegmentValue = input.mountSegment ?? this.mountSegmentValue;
+    this.repositoryNamePolicyValue = input.repositoryNamePolicy ?? this.repositoryNamePolicyValue;
+    this.acceptsRegistryBearerTokenValue =
+      input.acceptsRegistryBearerToken ?? this.acceptsRegistryBearerTokenValue;
+    this.apiKeyHeadersValue = input.apiKeyHeaders ?? this.apiKeyHeadersValue;
+    this.errorResponseKindValue = input.errorResponseKind ?? this.errorResponseKindValue;
+    this.compressibleHandlersValue = input.compressibleHandlers ?? this.compressibleHandlersValue;
+    this.compressibleContentTypesValue =
+      input.compressibleContentTypes ?? this.compressibleContentTypesValue;
+    this.scanValue = input.scan ?? this.scanValue;
+    this.usageSnippetsValue = input.usageSnippets ?? this.usageSnippetsValue;
+    return this;
+  }
 
   capabilities(capabilities: Partial<RegistryCapabilities>): this;
   capabilities(...flags: RegistryCapabilityFlag[]): this;
@@ -306,6 +383,11 @@ export class RegistryPluginBuilder {
 
   search(handler: NonNullable<RegistryPlugin["search"]>): this {
     this.searchValue = handler;
+    return this;
+  }
+
+  virtualSearch(handler: NonNullable<RegistryPlugin["virtualSearch"]>): this {
+    this.virtualSearchValue = handler;
     return this;
   }
 
@@ -454,10 +536,20 @@ export class RegistryPluginBuilder {
 
   build(): RegistryPlugin {
     if (!this.capabilitiesValue) {
-      throw new Error(`registry plugin ${this.formatValue} is missing capabilities`);
+      throw new Error(`registry module ${this.idValue} is missing capabilities`);
     }
     return defineRegistryPlugin({
-      format: this.formatValue,
+      id: this.idValue,
+      displayName: this.displayNameValue,
+      mountSegment: this.mountSegmentValue,
+      repositoryNamePolicy: this.repositoryNamePolicyValue,
+      acceptsRegistryBearerToken: this.acceptsRegistryBearerTokenValue,
+      apiKeyHeaders: this.apiKeyHeadersValue,
+      errorResponseKind: this.errorResponseKindValue,
+      compressibleHandlers: this.compressibleHandlersValue,
+      compressibleContentTypes: this.compressibleContentTypesValue,
+      scan: this.scanValue,
+      usageSnippets: this.usageSnippetsValue,
       capabilities: this.capabilitiesValue,
       routes: this.routeSpecs,
       defaultPermission: this.defaultPermissionValue,
@@ -465,13 +557,14 @@ export class RegistryPluginBuilder {
       generateMetadata: this.generateMetadataValue,
       mergeMetadata: this.mergeMetadataValue,
       search: this.searchValue,
+      virtualSearch: this.virtualSearchValue,
       proxyIngest: this.proxyIngestValue,
     });
   }
 }
 
-export function registryPlugin(format: RegistryPlugin["format"]): RegistryPluginBuilder {
-  return new RegistryPluginBuilder(format);
+export function registryPlugin(id: RegistryPlugin["id"]): RegistryPluginBuilder {
+  return new RegistryPluginBuilder(id);
 }
 
 export interface DelegateRegistryPluginOptions {

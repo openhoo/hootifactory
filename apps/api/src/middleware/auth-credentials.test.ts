@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   decodeBasicCredentials,
   parseAuthorizationHeader,
-  parseNugetApiKeyHeader,
+  parseRegistryApiKeyHeader,
 } from "./auth-credentials";
 
 function basic(value: string): string {
@@ -41,13 +41,13 @@ describe("authentication credential parsing", () => {
     expect(decodeBasicCredentials("//")).toBeNull();
   });
 
-  test("parses only Hootifactory tokens from NuGet API-key headers", () => {
-    expect(parseNugetApiKeyHeader(undefined)).toBeNull();
-    expect(parseNugetApiKeyHeader(" hoot_secret ")).toEqual({
+  test("parses only Hootifactory tokens from registry API-key headers", () => {
+    expect(parseRegistryApiKeyHeader(undefined)).toBeNull();
+    expect(parseRegistryApiKeyHeader(" hoot_secret ")).toEqual({
       kind: "token",
       token: "hoot_secret",
     });
-    expect(parseNugetApiKeyHeader("not-a-hoot-token")).toEqual({ kind: "invalid" });
-    expect(parseNugetApiKeyHeader("")).toEqual({ kind: "invalid" });
+    expect(parseRegistryApiKeyHeader("not-a-hoot-token")).toEqual({ kind: "invalid" });
+    expect(parseRegistryApiKeyHeader("")).toEqual({ kind: "invalid" });
   });
 });

@@ -27,11 +27,25 @@ import {
 
 /** Go module proxy (GOPROXY protocol) + a custom upload endpoint for hosted modules. */
 export class GoAdapter implements RegistryPlugin {
-  readonly format = "go" as const;
+  readonly id = "go" as const;
   readonly capabilities = registryCapabilities("virtualizable");
   authChallenge = basicAuthChallenge;
 
-  private readonly plugin = registryPlugin(this.format)
+  private readonly plugin = registryPlugin(this.id)
+    .module({
+      displayName: "Go",
+      mountSegment: "go",
+      errorResponseKind: "singleError",
+      compressibleHandlers: ["list", "latest", "file"],
+      scan: {
+        defaultOsvEcosystem: "Go",
+        dependencyGraph: ({ metadata }) => ({
+          deps: goDependencyGraph(metadata),
+          osvEcosystem: "Go",
+          purlType: "golang",
+        }),
+      },
+    })
     .capabilities(this.capabilities)
     .authChallenge(this.authChallenge)
     .routes((route) => [
@@ -50,6 +64,34 @@ export class GoAdapter implements RegistryPlugin {
     ])
     .build();
   private readonly delegate = delegateRegistryPlugin(this.plugin);
+
+  get displayName() {
+    return this.plugin.displayName;
+  }
+  get mountSegment() {
+    return this.plugin.mountSegment;
+  }
+  get repositoryNamePolicy() {
+    return this.plugin.repositoryNamePolicy;
+  }
+  get acceptsRegistryBearerToken() {
+    return this.plugin.acceptsRegistryBearerToken;
+  }
+  get apiKeyHeaders() {
+    return this.plugin.apiKeyHeaders;
+  }
+  get errorResponseKind() {
+    return this.plugin.errorResponseKind;
+  }
+  get compressibleHandlers() {
+    return this.plugin.compressibleHandlers;
+  }
+  get compressibleContentTypes() {
+    return this.plugin.compressibleContentTypes;
+  }
+  get scan() {
+    return this.plugin.scan;
+  }
 
   routes = this.delegate.routes;
 
@@ -191,6 +233,30 @@ export class GoAdapter implements RegistryPlugin {
   ): Promise<Response> {
     return handleGoUpload(moduleName, versionRaw, req, ctx);
   }
+}
+
+function goDependencyGraph(metadata: Record<string, unknown>): Record<string, string> {
+  const parsed = parseGoVersionMeta(metadata);
+  const mod = parsed?.mod ?? "";
+  const entries: [string, string][] = [];
+  let inRequireBlock = false;
+  for (const rawLine of mod.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("//")) continue;
+    if (line === "require (") {
+      inRequireBlock = true;
+      continue;
+    }
+    if (inRequireBlock && line === ")") {
+      inRequireBlock = false;
+      continue;
+    }
+    const match = inRequireBlock
+      ? line.match(/^([^\s]+)\s+([^\s]+)/)
+      : line.match(/^require\s+([^\s]+)\s+([^\s]+)/);
+    if (match?.[1] && match[2]) entries.push([match[1], match[2]]);
+  }
+  return Object.fromEntries(entries);
 }
 
 export const goRegistryPlugin: RegistryPlugin = new GoAdapter();

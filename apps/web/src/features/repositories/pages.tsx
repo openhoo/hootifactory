@@ -6,7 +6,7 @@ import {
   Code,
   EmptyState,
   Field,
-  FormatBadge,
+  ModuleBadge,
   PageTitle,
   Pill,
   SubmitButton,
@@ -27,9 +27,8 @@ import {
 import { useOrg, useRepos } from "@/features/orgs/context";
 import { Loading } from "@/layout/app-shell";
 import { api, apiErrorMessage } from "@/lib/api";
-import { snippetsFor } from "@/lib/format";
+import { snippetsFor } from "@/lib/module";
 
-const FORMATS = ["npm", "docker", "oci", "pypi", "helm", "nuget", "go", "cargo"];
 const PACKAGE_PAGE_SIZE = 50;
 
 export function ReposPage() {
@@ -37,14 +36,20 @@ export function ReposPage() {
   const qc = useQueryClient();
   const [showCreate, setShowCreate] = useState(false);
   const [name, setName] = useState("");
-  const [format, setFormat] = useState("npm");
+  const modules = useQuery({
+    queryKey: ["registry-modules"],
+    queryFn: () => api.registryModules(),
+  });
+  const moduleOptions = modules.data?.modules ?? [];
+  const [moduleId, setModuleId] = useState("");
   const [query, setQuery] = useState("");
   const [error, setError] = useState("");
 
   const repos = useRepos();
 
   const create = useMutation({
-    mutationFn: () => api.createRepo(selected!.id, { name, format }),
+    mutationFn: () =>
+      api.createRepo(selected!.id, { name, moduleId: moduleId || moduleOptions[0]?.id }),
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ["repos", selected?.id] });
       setShowCreate(false);
@@ -63,7 +68,7 @@ export function ReposPage() {
   return (
     <div>
       <PageTitle
-        description="Hosted, proxy and virtual repositories across every supported format."
+        description="Hosted, proxy and virtual repositories across every installed module."
         action={
           <div className="flex items-center gap-2">
             <div className="relative hidden sm:block">
@@ -106,16 +111,16 @@ export function ReposPage() {
                   />
                 </Field>
               </div>
-              <Field label="Format">
+              <Field label="Module">
                 <NativeSelect
                   className="[&>select]:h-9"
-                  value={format}
-                  onChange={(e) => setFormat(e.target.value)}
-                  data-testid="repo-format"
+                  value={moduleId || moduleOptions[0]?.id || ""}
+                  onChange={(e) => setModuleId(e.target.value)}
+                  data-testid="repo-module"
                 >
-                  {FORMATS.map((f) => (
-                    <NativeSelectOption key={f} value={f}>
-                      {f}
+                  {moduleOptions.map((module) => (
+                    <NativeSelectOption key={module.id} value={module.id}>
+                      {module.displayName}
                     </NativeSelectOption>
                   ))}
                 </NativeSelect>
@@ -137,7 +142,7 @@ export function ReposPage() {
             <TableHeader>
               <TableRow className="hover:bg-transparent">
                 <TableHead className="pl-4">Name</TableHead>
-                <TableHead>Format</TableHead>
+                <TableHead>Module</TableHead>
                 <TableHead>Kind</TableHead>
                 <TableHead className="pr-4">Visibility</TableHead>
               </TableRow>
@@ -155,7 +160,7 @@ export function ReposPage() {
                     </Link>
                   </TableCell>
                   <TableCell>
-                    <FormatBadge format={r.format} />
+                    <ModuleBadge moduleId={r.moduleId} />
                   </TableCell>
                   <TableCell className="text-muted-foreground capitalize">{r.kind}</TableCell>
                   <TableCell className="pr-4">
@@ -227,7 +232,7 @@ export function RepoDetailPage({ repoId }: { repoId: string }) {
             </code>
           </span>
         }
-        action={<FormatBadge format={repo.format} className="px-2 py-1 text-xs" />}
+        action={<ModuleBadge moduleId={repo.moduleId} className="px-2 py-1 text-xs" />}
       >
         {repo.name}
       </PageTitle>

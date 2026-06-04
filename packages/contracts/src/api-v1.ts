@@ -8,7 +8,7 @@ export const V1WireTimestampSchema = z.iso
   .describe("ISO 8601 timestamp serialized in UTC.");
 export const V1JsonObjectSchema = z
   .record(z.string(), z.unknown())
-  .describe("Format-specific JSON metadata.");
+  .describe("Module-specific JSON metadata.");
 export const V1DigestSchema = z
   .string()
   .regex(SHA256_DIGEST_PATTERN)
@@ -93,9 +93,13 @@ export const V1RepoKindSchema = z
   .enum(["hosted", "proxy", "virtual"])
   .describe("Repository behavior mode.");
 export const V1VisibilitySchema = z.enum(["private", "public"]).describe("Repository visibility.");
-export const V1PackageFormatSchema = z
-  .enum(["npm", "docker", "oci", "pypi", "maven", "helm", "nuget", "go", "cargo", "generic"])
-  .describe("Registry package format.");
+export const V1RegistryModuleIdSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(128)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/)
+  .describe("Registry module identifier.");
 export const V1PolicyModeSchema = z
   .enum(["audit", "enforce"])
   .describe("Scan policy enforcement mode.");
@@ -196,7 +200,7 @@ export const V1CreateRepositoryRequestSchema = z
       .min(1)
       .max(256)
       .describe("Repository name unique within the organization."),
-    format: V1PackageFormatSchema,
+    moduleId: V1RegistryModuleIdSchema,
     kind: V1RepoKindSchema.default("hosted").optional(),
     visibility: V1VisibilitySchema.default("private").optional(),
     description: z
@@ -315,7 +319,7 @@ export const V1RepositorySchema = z
     id: V1UuidSchema.describe("Repository identifier."),
     orgId: V1UuidSchema.describe("Owning organization identifier.").optional(),
     name: z.string().describe("Repository name."),
-    format: V1PackageFormatSchema,
+    moduleId: V1RegistryModuleIdSchema,
     kind: V1RepoKindSchema,
     visibility: V1VisibilitySchema,
     mountPath: z.string().describe("Registry URL path prefix."),
@@ -328,7 +332,7 @@ export const V1RepositorySchema = z
 export const V1PackageSummarySchema = z
   .strictObject({
     id: V1UuidSchema.describe("Package identifier."),
-    name: z.string().describe("Package name in its registry format."),
+    name: z.string().describe("Package name in its registry module."),
     latestVersion: z.string().nullable().describe("Latest live version, if known."),
   })
   .describe("Package summary.");

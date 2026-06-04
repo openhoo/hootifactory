@@ -19,7 +19,7 @@ test.describe("npm registry (Dockerized real CLI)", () => {
     const owner = await setupOwner(baseURL!);
     const repoName = "npmrepo";
     expect(
-      (await createRepo(owner.ctx, owner.orgId, { name: repoName, format: "npm" })).status(),
+      (await createRepo(owner.ctx, owner.orgId, { name: repoName, moduleId: "npm" })).status(),
     ).toBe(201);
     const secret = (await (await createToken(owner.ctx, owner.orgId, { name: "npm" })).json())
       .secret as string;
@@ -63,7 +63,7 @@ test.describe("npm registry (Dockerized real CLI)", () => {
     const owner = await setupOwner(baseURL!);
     const repoName = "npmrepo-tags";
     expect(
-      (await createRepo(owner.ctx, owner.orgId, { name: repoName, format: "npm" })).status(),
+      (await createRepo(owner.ctx, owner.orgId, { name: repoName, moduleId: "npm" })).status(),
     ).toBe(201);
     const secret = (await (await createToken(owner.ctx, owner.orgId, { name: "npm-tags" })).json())
       .secret as string;
@@ -120,7 +120,7 @@ test.describe("npm registry (Dockerized real CLI)", () => {
     const owner = await setupOwner(baseURL!);
     const repoName = "npmrepo-scope-config";
     expect(
-      (await createRepo(owner.ctx, owner.orgId, { name: repoName, format: "npm" })).status(),
+      (await createRepo(owner.ctx, owner.orgId, { name: repoName, moduleId: "npm" })).status(),
     ).toBe(201);
     const secret = (
       await (await createToken(owner.ctx, owner.orgId, { name: "npm-scope-config" })).json()
@@ -218,7 +218,7 @@ test.describe("npm registry (Dockerized real CLI)", () => {
     const owner = await setupOwner(baseURL!);
     const repoName = "npmrepo-publish-tag";
     expect(
-      (await createRepo(owner.ctx, owner.orgId, { name: repoName, format: "npm" })).status(),
+      (await createRepo(owner.ctx, owner.orgId, { name: repoName, moduleId: "npm" })).status(),
     ).toBe(201);
     const secret = (await (await createToken(owner.ctx, owner.orgId, { name: "npm-tag" })).json())
       .secret as string;
@@ -383,7 +383,7 @@ test.describe("npm registry extended scenarios (Dockerized real CLI)", () => {
     const owner = await setupOwner(baseURL!);
     const repoName = "npm-semver";
     expect(
-      (await createRepo(owner.ctx, owner.orgId, { name: repoName, format: "npm" })).status(),
+      (await createRepo(owner.ctx, owner.orgId, { name: repoName, moduleId: "npm" })).status(),
     ).toBe(201);
     const secret = (
       await (await createToken(owner.ctx, owner.orgId, { name: "npm-semver" })).json()
@@ -419,7 +419,7 @@ test.describe("npm registry extended scenarios (Dockerized real CLI)", () => {
     const owner = await setupOwner(baseURL!);
     const repoName = "npm-deptree";
     expect(
-      (await createRepo(owner.ctx, owner.orgId, { name: repoName, format: "npm" })).status(),
+      (await createRepo(owner.ctx, owner.orgId, { name: repoName, moduleId: "npm" })).status(),
     ).toBe(201);
     const secret = (
       await (await createToken(owner.ctx, owner.orgId, { name: "npm-deptree" })).json()
@@ -445,7 +445,7 @@ test.describe("npm registry extended scenarios (Dockerized real CLI)", () => {
     const owner = await setupOwner(baseURL!);
     const repoName = "npm-ci-audit";
     expect(
-      (await createRepo(owner.ctx, owner.orgId, { name: repoName, format: "npm" })).status(),
+      (await createRepo(owner.ctx, owner.orgId, { name: repoName, moduleId: "npm" })).status(),
     ).toBe(201);
     const secret = (
       await (await createToken(owner.ctx, owner.orgId, { name: "npm-ci-audit" })).json()
@@ -477,7 +477,7 @@ test.describe("npm registry extended scenarios (Dockerized real CLI)", () => {
     const owner = await setupOwner(baseURL!);
     const repoName = "npm-search-cli";
     expect(
-      (await createRepo(owner.ctx, owner.orgId, { name: repoName, format: "npm" })).status(),
+      (await createRepo(owner.ctx, owner.orgId, { name: repoName, moduleId: "npm" })).status(),
     ).toBe(201);
     const secret = (
       await (await createToken(owner.ctx, owner.orgId, { name: "npm-search-cli" })).json()
@@ -517,12 +517,12 @@ test.describe("npm registry extended scenarios (Dockerized real CLI)", () => {
     const suffix = `${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
     const upstream = await createRepoReturning(owner.ctx, owner.orgId, {
       name: `npm-proxy-up-${suffix}`,
-      format: "npm",
+      moduleId: "npm",
       visibility: "public",
     });
     const proxy = await createRepoReturning(owner.ctx, owner.orgId, {
       name: `npm-proxy-cli-${suffix}`,
-      format: "npm",
+      moduleId: "npm",
       kind: "proxy",
     });
     expect(
@@ -563,7 +563,7 @@ test.describe("npm registry extended scenarios (Dockerized real CLI)", () => {
     const owner = await setupOwner(baseURL!);
     const repoName = "npm-prerelease";
     expect(
-      (await createRepo(owner.ctx, owner.orgId, { name: repoName, format: "npm" })).status(),
+      (await createRepo(owner.ctx, owner.orgId, { name: repoName, moduleId: "npm" })).status(),
     ).toBe(201);
     const secret = (
       await (await createToken(owner.ctx, owner.orgId, { name: "npm-prerelease" })).json()
@@ -597,7 +597,7 @@ test.describe("npm registry error and edge scenarios (Dockerized real CLI)", () 
     const suffix = `${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
     const repoName = `npm-err-republish-${suffix}`;
     expect(
-      (await createRepo(owner.ctx, owner.orgId, { name: repoName, format: "npm" })).status(),
+      (await createRepo(owner.ctx, owner.orgId, { name: repoName, moduleId: "npm" })).status(),
     ).toBe(201);
     const secret = (
       await (await createToken(owner.ctx, owner.orgId, { name: `npm-republish-${suffix}` })).json()
@@ -628,7 +628,7 @@ test.describe("npm registry error and edge scenarios (Dockerized real CLI)", () 
     const suffix = `${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
     const repoName = `npm-err-missing-pkg-${suffix}`;
     expect(
-      (await createRepo(owner.ctx, owner.orgId, { name: repoName, format: "npm" })).status(),
+      (await createRepo(owner.ctx, owner.orgId, { name: repoName, moduleId: "npm" })).status(),
     ).toBe(201);
     const secret = (
       await (
@@ -661,7 +661,7 @@ test.describe("npm registry error and edge scenarios (Dockerized real CLI)", () 
     const suffix = `${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
     const repoName = `npm-err-missing-ver-${suffix}`;
     expect(
-      (await createRepo(owner.ctx, owner.orgId, { name: repoName, format: "npm" })).status(),
+      (await createRepo(owner.ctx, owner.orgId, { name: repoName, moduleId: "npm" })).status(),
     ).toBe(201);
     const secret = (
       await (
@@ -693,7 +693,7 @@ test.describe("npm registry error and edge scenarios (Dockerized real CLI)", () 
     const suffix = `${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
     const repoName = `npm-err-bad-token-${suffix}`;
     expect(
-      (await createRepo(owner.ctx, owner.orgId, { name: repoName, format: "npm" })).status(),
+      (await createRepo(owner.ctx, owner.orgId, { name: repoName, moduleId: "npm" })).status(),
     ).toBe(201);
 
     // build an .npmrc whose _authToken is deliberately wrong
@@ -732,7 +732,7 @@ test.describe("npm registry error and edge scenarios (Dockerized real CLI)", () 
     // private is the default (visibility omitted)
     const repoName = `npm-err-private-${suffix}`;
     expect(
-      (await createRepo(owner.ctx, owner.orgId, { name: repoName, format: "npm" })).status(),
+      (await createRepo(owner.ctx, owner.orgId, { name: repoName, moduleId: "npm" })).status(),
     ).toBe(201);
     const secret = (
       await (await createToken(owner.ctx, owner.orgId, { name: `npm-private-${suffix}` })).json()
@@ -771,7 +771,7 @@ test.describe("npm registry error and edge scenarios (Dockerized real CLI)", () 
     const suffix = `${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
     const repoName = `npm-err-view-missing-${suffix}`;
     expect(
-      (await createRepo(owner.ctx, owner.orgId, { name: repoName, format: "npm" })).status(),
+      (await createRepo(owner.ctx, owner.orgId, { name: repoName, moduleId: "npm" })).status(),
     ).toBe(201);
     const secret = (
       await (

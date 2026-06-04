@@ -1,14 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import type { RegistryPlugin, RegistryRequestContext, ResolvedRepo } from "@hootifactory/registry";
 import { appendBearerChallengeError, registryAuthorizationDeniedResponse } from "./registry-auth";
-import type { registryErrorResponseForFormat } from "./registry-error-format";
+import type { registryErrorResponseForModule } from "./registry-error-format";
 
-type RegistryErrorInput = Parameters<typeof registryErrorResponseForFormat>[1];
+type RegistryErrorInput = Parameters<typeof registryErrorResponseForModule>[1];
 
 const repo = {
   id: "repo_1",
   name: "containers",
-  format: "docker",
+  moduleId: "docker",
   kind: "hosted",
   mountPath: "v2/acme/containers",
 } as ResolvedRepo;
@@ -21,7 +21,13 @@ const ctx = {
 
 function adapter(challenge?: RegistryPlugin["authChallenge"]): RegistryPlugin {
   return {
-    format: "docker",
+    id: "docker",
+    displayName: "OCI",
+    mountSegment: "v2",
+    apiKeyHeaders: new Set(),
+    errorResponseKind: "registry",
+    compressibleHandlers: new Set(),
+    compressibleContentTypes: new Set(),
     capabilities: {
       contentAddressable: true,
       proxyable: false,

@@ -3,19 +3,7 @@ import { join, relative, sep } from "node:path";
 import { env } from "@hootifactory/config";
 
 /** Reserved server path segments that must never fall back to the SPA index.html. */
-const RESERVED_SEGMENTS = [
-  "api",
-  "v2",
-  "token",
-  "healthz",
-  "readyz",
-  "npm",
-  "pypi",
-  "go",
-  "cargo",
-  "nuget",
-];
-const RESERVED_SEGMENTS_SET = new Set(RESERVED_SEGMENTS);
+const RESERVED_SERVER_SEGMENTS = new Set(["api", "v2", "token", "healthz", "readyz"]);
 const IMMUTABLE_ASSET_CACHE_CONTROL = "public, max-age=31536000, immutable";
 const INDEX_CACHE_CONTROL = "no-cache";
 
@@ -52,9 +40,12 @@ function webDistFiles(root: string): Set<string> {
   return webDistCache.files;
 }
 
-export function isReservedWebPath(cleanPath: string): boolean {
+export function isReservedWebPath(
+  cleanPath: string,
+  registryMountSegments: Iterable<string> = [],
+): boolean {
   const first = cleanPath.split("/", 1)[0] ?? "";
-  return RESERVED_SEGMENTS_SET.has(first);
+  return RESERVED_SERVER_SEGMENTS.has(first) || new Set(registryMountSegments).has(first);
 }
 
 export function webCacheHeaders(cleanPath: string): Record<string, string> {
@@ -64,11 +55,14 @@ export function webCacheHeaders(cleanPath: string): Record<string, string> {
 }
 
 /** Serve the built SPA (assets + index.html fallback) for single-container deploys. */
-export async function serveWebFallback(pathname: string): Promise<Response | null> {
+export async function serveWebFallback(
+  pathname: string,
+  opts: { registryMountSegments?: Iterable<string> } = {},
+): Promise<Response | null> {
   if (!env.WEB_DIST) return null;
   const clean = pathname.replace(/^\/+/, "");
   // API/registry routes must return their real JSON 404, not the SPA shell.
-  if (isReservedWebPath(clean)) return null;
+  if (isReservedWebPath(clean, opts.registryMountSegments)) return null;
   const files = webDistFiles(env.WEB_DIST);
   if (clean && !clean.includes("..")) {
     if (files.has(clean)) {

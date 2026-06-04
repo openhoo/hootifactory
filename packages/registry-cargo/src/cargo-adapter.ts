@@ -46,11 +46,25 @@ function parseCrateVersion(version: string): string {
 
 /** Cargo sparse registry: config.json, sharded index, publish + download. */
 export class CargoAdapter implements RegistryPlugin {
-  readonly format = "cargo" as const;
+  readonly id = "cargo" as const;
   readonly capabilities = registryCapabilities("virtualizable");
   authChallenge = () => bearerAuthChallenge();
 
-  private readonly plugin = registryPlugin(this.format)
+  private readonly plugin = registryPlugin(this.id)
+    .module({
+      displayName: "Cargo",
+      mountSegment: "cargo",
+      errorResponseKind: "cargo",
+      compressibleHandlers: ["config", "index", "ownersList"],
+      scan: {
+        defaultOsvEcosystem: "crates.io",
+        dependencyGraph: ({ metadata }) => ({
+          deps: cargoDependencyGraph(metadata),
+          osvEcosystem: "crates.io",
+          purlType: "cargo",
+        }),
+      },
+    })
     .capabilities(this.capabilities)
     .authChallenge(this.authChallenge)
     .routes((route) => [
@@ -83,6 +97,34 @@ export class CargoAdapter implements RegistryPlugin {
     ])
     .build();
   private readonly delegate = delegateRegistryPlugin(this.plugin);
+
+  get displayName() {
+    return this.plugin.displayName;
+  }
+  get mountSegment() {
+    return this.plugin.mountSegment;
+  }
+  get repositoryNamePolicy() {
+    return this.plugin.repositoryNamePolicy;
+  }
+  get acceptsRegistryBearerToken() {
+    return this.plugin.acceptsRegistryBearerToken;
+  }
+  get apiKeyHeaders() {
+    return this.plugin.apiKeyHeaders;
+  }
+  get errorResponseKind() {
+    return this.plugin.errorResponseKind;
+  }
+  get compressibleHandlers() {
+    return this.plugin.compressibleHandlers;
+  }
+  get compressibleContentTypes() {
+    return this.plugin.compressibleContentTypes;
+  }
+  get scan() {
+    return this.plugin.scan;
+  }
 
   routes = this.delegate.routes;
 
@@ -201,6 +243,12 @@ export class CargoAdapter implements RegistryPlugin {
   private async publish(req: Request, ctx: RegistryRequestContext): Promise<Response> {
     return handleCargoPublish(req, ctx);
   }
+}
+
+function cargoDependencyGraph(metadata: Record<string, unknown>): Record<string, string> {
+  const parsed = parseCargoVersionMeta(metadata);
+  if (!parsed) return {};
+  return Object.fromEntries(parsed.index.deps.map((dep) => [dep.name, dep.req]));
 }
 
 export const cargoRegistryPlugin: RegistryPlugin = new CargoAdapter();

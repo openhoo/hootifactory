@@ -26,7 +26,7 @@ test.describe("helm registry (Dockerized real CLI, OCI)", () => {
     const host = new URL(dockerReachableUrl(baseURL!)).host;
     const owner = await setupOwner(baseURL!);
     expect(
-      (await createRepo(owner.ctx, owner.orgId, { name: "charts", format: "helm" })).status(),
+      (await createRepo(owner.ctx, owner.orgId, { name: "charts", moduleId: "helm" })).status(),
     ).toBe(201);
 
     const work = mkdtempSync(join(tmpdir(), "hoot-helm-"));
@@ -110,7 +110,7 @@ test.describe("helm registry extended scenarios (Dockerized real CLI, OCI)", () 
     const owner = await setupOwner(baseURL!);
     const repo = "charts-showchart";
     expect(
-      (await createRepo(owner.ctx, owner.orgId, { name: repo, format: "helm" })).status(),
+      (await createRepo(owner.ctx, owner.orgId, { name: repo, moduleId: "helm" })).status(),
     ).toBe(201);
 
     const work = mkdtempSync(join(tmpdir(), "hoot-helm-showchart-"));
@@ -153,7 +153,7 @@ test.describe("helm registry extended scenarios (Dockerized real CLI, OCI)", () 
     const owner = await setupOwner(baseURL!);
     const repo = "charts-showvalues";
     expect(
-      (await createRepo(owner.ctx, owner.orgId, { name: repo, format: "helm" })).status(),
+      (await createRepo(owner.ctx, owner.orgId, { name: repo, moduleId: "helm" })).status(),
     ).toBe(201);
 
     const work = mkdtempSync(join(tmpdir(), "hoot-helm-showvalues-"));
@@ -196,7 +196,7 @@ test.describe("helm registry extended scenarios (Dockerized real CLI, OCI)", () 
     const owner = await setupOwner(baseURL!);
     const repo = "charts-multiver";
     expect(
-      (await createRepo(owner.ctx, owner.orgId, { name: repo, format: "helm" })).status(),
+      (await createRepo(owner.ctx, owner.orgId, { name: repo, moduleId: "helm" })).status(),
     ).toBe(201);
 
     const work = mkdtempSync(join(tmpdir(), "hoot-helm-multiver-"));
@@ -273,7 +273,7 @@ test.describe("helm registry extended scenarios (Dockerized real CLI, OCI)", () 
     const owner = await setupOwner(baseURL!);
     const repo = "charts-untar";
     expect(
-      (await createRepo(owner.ctx, owner.orgId, { name: repo, format: "helm" })).status(),
+      (await createRepo(owner.ctx, owner.orgId, { name: repo, moduleId: "helm" })).status(),
     ).toBe(201);
 
     const work = mkdtempSync(join(tmpdir(), "hoot-helm-untar-"));
@@ -326,7 +326,7 @@ test.describe("helm registry extended scenarios (Dockerized real CLI, OCI)", () 
     const virtualName = "charts-virtual";
     await createRepoReturning(owner.ctx, owner.orgId, {
       name: virtualName,
-      format: "helm",
+      moduleId: "helm",
       kind: "virtual",
     });
 
@@ -370,7 +370,7 @@ test.describe("helm registry error and edge scenarios (Dockerized real CLI, OCI)
     const owner = await setupOwner(baseURL!);
     const repo = "charts-pull-missing-chart";
     expect(
-      (await createRepo(owner.ctx, owner.orgId, { name: repo, format: "helm" })).status(),
+      (await createRepo(owner.ctx, owner.orgId, { name: repo, moduleId: "helm" })).status(),
     ).toBe(201);
 
     const work = mkdtempSync(join(tmpdir(), "hoot-helm-pull-missing-chart-"));
@@ -420,7 +420,7 @@ test.describe("helm registry error and edge scenarios (Dockerized real CLI, OCI)
     const owner = await setupOwner(baseURL!);
     const repo = "charts-pull-missing-version";
     expect(
-      (await createRepo(owner.ctx, owner.orgId, { name: repo, format: "helm" })).status(),
+      (await createRepo(owner.ctx, owner.orgId, { name: repo, moduleId: "helm" })).status(),
     ).toBe(201);
 
     const work = mkdtempSync(join(tmpdir(), "hoot-helm-pull-missing-version-"));
@@ -474,7 +474,7 @@ test.describe("helm registry error and edge scenarios (Dockerized real CLI, OCI)
     // Private repo is the default (visibility omitted).
     const repo = "charts-push-noauth";
     expect(
-      (await createRepo(owner.ctx, owner.orgId, { name: repo, format: "helm" })).status(),
+      (await createRepo(owner.ctx, owner.orgId, { name: repo, moduleId: "helm" })).status(),
     ).toBe(201);
 
     const work = mkdtempSync(join(tmpdir(), "hoot-helm-push-noauth-"));
@@ -505,7 +505,7 @@ test.describe("helm registry error and edge scenarios (Dockerized real CLI, OCI)
     const owner = await setupOwner(baseURL!);
     const repo = "charts-show-missing";
     expect(
-      (await createRepo(owner.ctx, owner.orgId, { name: repo, format: "helm" })).status(),
+      (await createRepo(owner.ctx, owner.orgId, { name: repo, moduleId: "helm" })).status(),
     ).toBe(201);
 
     const work = mkdtempSync(join(tmpdir(), "hoot-helm-show-missing-"));

@@ -27,7 +27,7 @@ export function instruments(): MetricInstruments {
       unit: "s",
     }),
     registryRequests: meter.createCounter("registry.server.requests", {
-      description: "Registry dispatch requests by package format and outcome.",
+      description: "Registry dispatch requests by registry module and outcome.",
       unit: "{request}",
     }),
     queueActiveJobs: meter.createUpDownCounter("queue.jobs.active", {
@@ -64,7 +64,7 @@ export function resetInstruments(): void {
 
 export function recordRegistryRequest(attributes: {
   method: string;
-  format: string;
+  moduleId: string;
   repoKind: string;
   handler?: string;
   route?: string;
@@ -74,7 +74,7 @@ export function recordRegistryRequest(attributes: {
   instruments().registryRequests.add(1, {
     [ATTR_HTTP_REQUEST_METHOD]: attributes.method,
     [ATTR_HTTP_RESPONSE_STATUS_CODE]: attributes.statusCode,
-    "registry.format": attributes.format,
+    "registry.module.id": attributes.moduleId,
     "registry.repository.kind": attributes.repoKind,
     ...(attributes.handler ? { "registry.handler": attributes.handler } : {}),
     ...(attributes.route ? { "registry.route": attributes.route } : {}),

@@ -9,11 +9,11 @@ import {
   varchar,
 } from "drizzle-orm/pg-core";
 import { primaryId, timestamps } from "./_helpers";
-import { packageFormatEnum, repoKindEnum, visibilityEnum } from "./enums";
+import { repoKindEnum, visibilityEnum } from "./enums";
 import { organizations } from "./tenancy";
 
 /**
- * A repository binds an org + package format + kind (hosted/proxy/virtual).
+ * A repository binds an org + registry module + kind (hosted/proxy/virtual).
  * `mountPath` is the globally-unique URL prefix used to resolve incoming
  * registry requests to this repo (longest-prefix match in core).
  */
@@ -25,7 +25,7 @@ export const repositories = pgTable(
       .notNull()
       .references(() => organizations.id, { onDelete: "cascade" }),
     name: varchar({ length: 256 }).notNull(),
-    format: packageFormatEnum().notNull(),
+    moduleId: text("module_id").notNull(),
     kind: repoKindEnum().notNull().default("hosted"),
     visibility: visibilityEnum().notNull().default("private"),
     /** URL path prefix, e.g. "npm/acme-internal" or "acme/containers". Globally unique. */
@@ -40,7 +40,7 @@ export const repositories = pgTable(
     uniqueIndex("repositories_org_name_uq").on(t.orgId, t.name),
     uniqueIndex("repositories_mount_path_uq").on(t.mountPath),
     index("repositories_org_idx").on(t.orgId),
-    index("repositories_format_idx").on(t.format),
+    index("repositories_module_id_idx").on(t.moduleId),
   ],
 );
 

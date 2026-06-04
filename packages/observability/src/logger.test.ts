@@ -34,7 +34,7 @@ describe("correlated logger", () => {
         traceId,
         spanId,
       },
-      () => logger.info("hello", { format: "npm", count: 2 }),
+      () => logger.info("hello", { moduleId: "npm", count: 2 }),
     );
 
     expect(lines).toHaveLength(1);
@@ -45,7 +45,7 @@ describe("correlated logger", () => {
       correlation_id: "corr-1",
       trace_id: traceId,
       span_id: spanId,
-      meta: { format: "npm", count: 2 },
+      meta: { moduleId: "npm", count: 2 },
     });
   });
 
@@ -116,16 +116,19 @@ describe("correlated logger", () => {
     await withSpan("test.scoped", {}, async () => {
       addSpanEvent("test.event", { "test.value": 1 });
       await withCorrelationContext({ requestId: "req-scoped" }, async () => {
-        await withLogAttributes({ "registry.format": "npm", "registry.handler": "publish" }, () => {
-          logger.info("scoped message");
-        });
+        await withLogAttributes(
+          { "registry.module.id": "npm", "registry.handler": "publish" },
+          () => {
+            logger.info("scoped message");
+          },
+        );
       });
     });
 
     expect(JSON.parse(lines[0] ?? "{}")).toMatchObject({
       msg: "scoped message",
       request_id: "req-scoped",
-      "registry.format": "npm",
+      "registry.module.id": "npm",
       "registry.handler": "publish",
     });
   });
