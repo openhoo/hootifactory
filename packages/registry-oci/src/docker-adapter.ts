@@ -231,10 +231,23 @@ export class DockerAdapter implements RegistryPlugin {
       message: "invalid subject digest",
     });
     const { artifactType: artifactTypeFilter } = parseOciReferrersQuery(req.url);
+    const pkg = await ctx.data.packages.findByName(image);
+    if (!pkg) return buildOciReferrersResponse({ manifests: [], artifactTypeFilter });
+
     const rows = await ctx.data.oci.listSubjectManifests(digest);
+    const referrerDigests = [...new Set(rows.map((row) => row.digest))];
+    const associatedDigests =
+      referrerDigests.length > 0
+        ? new Set(
+            await ctx.data.oci.listExistingManifestDigests({
+              package: pkg,
+              digests: referrerDigests,
+            }),
+          )
+        : new Set<string>();
     const manifests = [];
     for (const m of rows) {
-      if (!(await resolveOciManifestForImage(ctx, image, m.digest))) continue;
+      if (!associatedDigests.has(m.digest)) continue;
       const descriptor = buildOciReferrerDescriptor(m);
       if (artifactTypeFilter && descriptor.artifactType !== artifactTypeFilter) continue;
       manifests.push(descriptor);

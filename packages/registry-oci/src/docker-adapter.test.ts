@@ -9,6 +9,10 @@ import { createTestRegistryContext } from "@hootifactory/registry/testing";
 import { DockerAdapter } from "./docker-adapter";
 
 const DIGEST = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const REFERRER_DIGEST = "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+const OTHER_REFERRER_DIGEST =
+  "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+const REFERRER_ARTIFACT_TYPE = "application/vnd.hootifactory.test.referrer";
 const RAW_MANIFEST = JSON.stringify({ schemaVersion: 2 });
 
 const ctx = {
@@ -53,6 +57,26 @@ function manifestRow(): RegistryOciManifestRow {
     configDigest: null,
     createdAt: new Date("2026-01-02T00:00:00.000Z"),
     updatedAt: new Date("2026-01-02T00:00:00.000Z"),
+  };
+}
+
+function referrerRow(digest: string): RegistryOciManifestRow {
+  const raw = JSON.stringify({
+    schemaVersion: 2,
+    artifactType: REFERRER_ARTIFACT_TYPE,
+  });
+  return {
+    id: `manifest_${digest.slice(7, 15)}`,
+    repositoryId: "repo_1",
+    digest,
+    mediaType: "application/vnd.oci.artifact.manifest.v1+json",
+    artifactType: REFERRER_ARTIFACT_TYPE,
+    subjectDigest: DIGEST,
+    raw,
+    sizeBytes: raw.length,
+    configDigest: null,
+    createdAt: new Date("2026-01-03T00:00:00.000Z"),
+    updatedAt: new Date("2026-01-03T00:00:00.000Z"),
   };
 }
 
@@ -148,6 +172,58 @@ describe("Docker adapter contract", () => {
       name: "acme/containers/team/api",
       tags: ["v1"],
     });
+  });
+
+  test("filters referrers through one package-scoped batch lookup", async () => {
+    const ctx = createTestRegistryContext({ baseUrl: "https://registry.test" });
+    ctx.repo = { ...ctx.repo, format: "docker", mountPath: "v2/acme/containers" };
+    let packageLookups = 0;
+    let subjectLookups = 0;
+    let batchLookups = 0;
+    ctx.data.packages.findByName = async (name) => {
+      packageLookups += 1;
+      expect(name).toBe(pkg.name);
+      return pkg;
+    };
+    ctx.data.oci.listSubjectManifests = async (subjectDigest) => {
+      subjectLookups += 1;
+      expect(subjectDigest).toBe(DIGEST);
+      return [referrerRow(REFERRER_DIGEST), referrerRow(OTHER_REFERRER_DIGEST)];
+    };
+    ctx.data.oci.listExistingManifestDigests = async (input) => {
+      batchLookups += 1;
+      expect(input.package.id).toBe(pkg.id);
+      expect(input.digests).toEqual([REFERRER_DIGEST, OTHER_REFERRER_DIGEST]);
+      return [REFERRER_DIGEST];
+    };
+    ctx.data.oci.resolveManifest = async () => {
+      throw new Error("referrers should not resolve manifests one at a time");
+    };
+
+    const response = await new DockerAdapter().handle(
+      {
+        entry: { method: "GET", pattern: "/:name+/referrers/:digest", handlerId: "referrers" },
+        params: { name: pkg.name, digest: DIGEST },
+        path: `/team/api/referrers/${DIGEST}`,
+      },
+      new Request(
+        `https://registry.test/v2/acme/containers/team/api/referrers/${DIGEST}?artifactType=${encodeURIComponent(
+          REFERRER_ARTIFACT_TYPE,
+        )}`,
+      ),
+      ctx,
+    );
+
+    expect(packageLookups).toBe(1);
+    expect(subjectLookups).toBe(1);
+    expect(batchLookups).toBe(1);
+    expect(response.headers.get("oci-filters-applied")).toBe("artifactType");
+    const body = (await response.json()) as {
+      manifests: Array<{ digest: string; artifactType?: string }>;
+    };
+    expect(body.manifests.map(({ digest, artifactType }) => ({ digest, artifactType }))).toEqual([
+      { digest: REFERRER_DIGEST, artifactType: REFERRER_ARTIFACT_TYPE },
+    ]);
   });
 
   test("digest-pinned manifests emit immutable validators and honor If-None-Match", async () => {
