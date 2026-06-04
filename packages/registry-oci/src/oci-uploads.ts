@@ -100,7 +100,7 @@ export async function patchUpload(
 ): Promise<Response> {
   const parsedUuid = parseUploadUuid(uuid);
   const chunk = await bodyBytes(req);
-  const offset = await ctx.data.oci.withLockedUploadSession({
+  const pending = await ctx.data.oci.withLockedUploadSession({
     scope: image,
     uuid: parsedUuid,
     run: async (session, mutations) => {
@@ -112,17 +112,53 @@ export async function patchUpload(
         mutations,
       });
       validateContentRange(req, openSession.offsetBytes, chunk.length);
-      const next = await appendUploadChunk(openSession, chunk, ctx, (nextOffsetBytes) =>
-        mutations.assertStagingBudget({
-          nextOffsetBytes,
-          maxStagedUploadBytes: ctx.limits.maxStagedUploadBytes,
-        }),
-      );
-      await mutations.updateOpen({ offsetBytes: next.offset, multipart: next.multipart });
-      return next.offset;
+      const next = planUploadChunk(openSession, chunk);
+      await mutations.assertStagingBudget({
+        nextOffsetBytes: next.offset,
+        maxStagedUploadBytes: ctx.limits.maxStagedUploadBytes,
+      });
+      return next;
     },
   });
-  return buildOciUploadAcceptedResponse({ ctx, image, uuid, offset });
+
+  let stagedKey = pending.key;
+  try {
+    if (stagedKey) await ctx.data.content.staging.putKey(stagedKey, chunk);
+
+    const offset = await ctx.data.oci.withLockedUploadSession({
+      scope: image,
+      uuid: parsedUuid,
+      run: async (session, mutations) => {
+        const openSession = await assertLoadedOpenSession({
+          image,
+          uuid: parsedUuid,
+          ctx,
+          session,
+          mutations,
+        });
+        validateContentRange(req, openSession.offsetBytes, chunk.length);
+        const next = planUploadChunk(openSession, chunk, stagedKey);
+        if (next.startOffset !== pending.startOffset || next.offset !== pending.offset) {
+          throw Errors.blobUploadInvalid({
+            reason: "upload offset changed while staging chunk",
+            expected: pending.startOffset,
+            actual: next.startOffset,
+          });
+        }
+        await mutations.assertStagingBudget({
+          nextOffsetBytes: next.offset,
+          maxStagedUploadBytes: ctx.limits.maxStagedUploadBytes,
+        });
+        await mutations.updateOpen({ offsetBytes: next.offset, multipart: next.multipart });
+        return next.offset;
+      },
+    });
+    stagedKey = undefined;
+    return buildOciUploadAcceptedResponse({ ctx, image, uuid, offset });
+  } catch (err) {
+    if (stagedKey) await ctx.data.content.staging.deleteKey(stagedKey).catch(() => {});
+    throw err;
+  }
 }
 
 export async function putUpload(
@@ -342,25 +378,25 @@ async function assertOpenSession(input: {
   throw Errors.blobUploadUnknown({ uuid: input.uuid, reason: "expired" });
 }
 
-async function appendUploadChunk(
+function planUploadChunk(
   session: { storageKey: string; offsetBytes: number; multipart: string | null },
   chunk: Uint8Array,
-  ctx: RegistryRequestContext,
-  assertStagingBudget: (nextOffsetBytes: number) => Promise<void>,
-): Promise<{ offset: number; multipart: string }> {
+  stagedKey?: string,
+): { startOffset: number; offset: number; key?: string; multipart: string } {
   const state = uploadMultipartState(session.multipart);
   const existing = state.chunks.reduce((sum, part) => sum + part.size, 0);
   assertUploadOffset(existing, session.offsetBytes);
   const nextOffset = existing + chunk.length;
-  await assertStagingBudget(nextOffset);
+  let key: string | undefined;
   if (chunk.length > 0) {
-    const key = `${session.storageKey}/chunks/${state.chunks.length}`;
-    await ctx.data.content.staging.putKey(key, chunk);
+    key = stagedKey ?? `${session.storageKey}/chunks/${state.chunks.length}-${crypto.randomUUID()}`;
     state.chunks.push({ key, size: chunk.length });
   }
   return {
+    startOffset: existing,
     offset: nextOffset,
     multipart: JSON.stringify(state),
+    key,
   };
 }
 

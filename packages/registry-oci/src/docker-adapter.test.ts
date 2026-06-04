@@ -104,7 +104,9 @@ async function readStreamText(stream: ReadableStream<Uint8Array>): Promise<strin
   return new TextDecoder().decode(bytes);
 }
 
-function uploadSession(): RegistryOciUploadSessionRow {
+function uploadSession(
+  overrides: Partial<RegistryOciUploadSessionRow> = {},
+): RegistryOciUploadSessionRow {
   return {
     id: UPLOAD_UUID,
     repositoryId: "repo_1",
@@ -116,6 +118,7 @@ function uploadSession(): RegistryOciUploadSessionRow {
     expiresAt: new Date("2026-07-04T00:00:00.000Z"),
     createdAt: new Date("2026-01-03T00:00:00.000Z"),
     updatedAt: new Date("2026-01-03T00:00:00.000Z"),
+    ...overrides,
   };
 }
 
@@ -368,6 +371,95 @@ describe("Docker adapter contract", () => {
       "commit",
       "lock:end",
       "asset",
+    ]);
+  });
+
+  test("stages PATCH chunks outside the locked session", async () => {
+    const ctx = createTestRegistryContext({ baseUrl: "https://registry.test" });
+    ctx.repo = { ...ctx.repo, format: "docker", mountPath: "v2/acme/containers" };
+    const calls: string[] = [];
+    let lockDepth = 0;
+    let session = uploadSession();
+
+    ctx.data.oci.withLockedUploadSession = async ({ scope, uuid, run }) => {
+      expect(scope).toBe(pkg.name);
+      expect(uuid).toBe(UPLOAD_UUID);
+      calls.push("lock:start");
+      lockDepth += 1;
+      const mutations: RegistryOciUploadSessionMutations = {
+        assertStagingBudget: async (input) => {
+          calls.push("budget");
+          expect(lockDepth).toBe(1);
+          expect(input.nextOffsetBytes).toBe(5);
+        },
+        updateOpen: async (patch) => {
+          calls.push("updateOpen");
+          expect(lockDepth).toBe(1);
+          session = uploadSession({
+            offsetBytes: patch.offsetBytes,
+            multipart: patch.multipart,
+          });
+          const parsed = JSON.parse(patch.multipart) as {
+            chunks: Array<{ key: string; size: number }>;
+          };
+          expect(parsed.chunks).toHaveLength(1);
+          expect(parsed.chunks[0]?.size).toBe(5);
+        },
+        commitBlobWithRef: async () => {
+          throw new Error("PATCH should not commit blobs");
+        },
+        commit: async () => {
+          throw new Error("PATCH should not commit sessions");
+        },
+        markAborted: async () => {},
+        deleteSession: async () => {},
+      };
+      try {
+        return await run(session, mutations);
+      } finally {
+        lockDepth -= 1;
+        calls.push("lock:end");
+      }
+    };
+    ctx.data.content.staging.putKey = async (key, data) => {
+      calls.push("putKey");
+      expect(lockDepth).toBe(0);
+      expect(key).toStartWith("oci/uploads/upload_1/chunks/0-");
+      expect(new TextDecoder().decode(data)).toBe("layer");
+    };
+
+    const response = await new DockerAdapter().handle(
+      {
+        entry: {
+          method: "PATCH",
+          pattern: "/:name+/blobs/uploads/:uuid",
+          handlerId: "patchUpload",
+        },
+        params: { name: pkg.name, uuid: UPLOAD_UUID },
+        path: `/team/api/blobs/uploads/${UPLOAD_UUID}`,
+      },
+      new Request(
+        `https://registry.test/v2/acme/containers/team/api/blobs/uploads/${UPLOAD_UUID}`,
+        {
+          method: "PATCH",
+          body: "layer",
+        },
+      ),
+      ctx,
+    );
+
+    expect(response.status).toBe(202);
+    expect(response.headers.get("range")).toBe("0-4");
+    expect(session.offsetBytes).toBe(5);
+    expect(calls).toEqual([
+      "lock:start",
+      "budget",
+      "lock:end",
+      "putKey",
+      "lock:start",
+      "budget",
+      "updateOpen",
+      "lock:end",
     ]);
   });
 
