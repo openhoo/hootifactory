@@ -58,7 +58,7 @@ describe("virtual registry search helpers", () => {
     expect(npm.method).toBe("HEAD");
     expect(npm.headers.get("authorization")).toBe("Bearer token");
     expect(new URL(npm.url).searchParams.get("from")).toBe("0");
-    expect(new URL(npm.url).searchParams.get("size")).toBe("10000");
+    expect(new URL(npm.url).searchParams.get("size")).toBe("250");
     expect(new URL(npm.url).searchParams.get("text")).toBe("foo");
     expect(nuget.headers.get("x-request-id")).toBe("req-1");
     expect(new URL(nuget.url).searchParams.get("skip")).toBe("0");

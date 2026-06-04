@@ -36,6 +36,7 @@ export const packages = pgTable(
     uniqueIndex("packages_repo_name_uq").on(t.repositoryId, t.name),
     index("packages_org_idx").on(t.orgId),
     index("packages_name_idx").on(t.name),
+    index("packages_name_trgm_idx").using("gin", sql`${t.name} gin_trgm_ops`),
   ],
 );
 

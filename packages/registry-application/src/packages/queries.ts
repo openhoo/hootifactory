@@ -77,6 +77,13 @@ export function packageSearchLikePattern(text: string): string {
   return `%${text.replace(/[\\%_]/g, "\\$&")}%`;
 }
 
+function numericTotal(value: unknown): number {
+  if (typeof value === "number") return value;
+  if (typeof value !== "string" || !/^\d+$/.test(value)) return 0;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) ? parsed : 0;
+}
+
 export async function listRepositoryPackageNames(
   ctx: RegistryRequestContext,
 ): Promise<PackageNameRow[]> {
@@ -109,24 +116,32 @@ export async function searchRepositoryPackages(
   const where = and(
     eq(packages.repositoryId, ctx.repo.id),
     opts.text
-      ? sql`${packages.name} like ${packageSearchLikePattern(opts.text)} escape '\\'`
+      ? sql`${packages.name} ilike ${packageSearchLikePattern(opts.text)} escape '\\'`
       : sql`true`,
   );
-  const totalRows = (await db.select({ value: count() }).from(packages).where(where)) as Array<{
-    value: number;
-  }>;
   const rows = (await db
     .select({
       id: packages.id,
       orgId: packages.orgId,
       repositoryId: packages.repositoryId,
       name: packages.name,
+      total: sql<number>`count(*) over()`,
     })
     .from(packages)
     .where(where)
+    .orderBy(packages.name, packages.id)
     .limit(opts.size)
-    .offset(opts.from)) as PackageSummaryRow[];
-  return { packages: rows, total: totalRows[0]?.value ?? 0 };
+    .offset(opts.from)) as Array<PackageSummaryRow & { total: number | string }>;
+  if (rows.length > 0) {
+    return {
+      packages: rows.map(({ total: _total, ...row }) => row),
+      total: numericTotal(rows[0]?.total),
+    };
+  }
+  const totalRows = (await db.select({ value: count() }).from(packages).where(where)) as Array<{
+    value: number;
+  }>;
+  return { packages: [], total: totalRows[0]?.value ?? 0 };
 }
 
 export async function listLivePackageVersions(

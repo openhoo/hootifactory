@@ -10,6 +10,8 @@ const NugetSearchWindowSchema = z.strictObject({
   take: z.coerce.number().int().min(0).max(100).default(20),
 });
 
+const NPM_MEMBER_SEARCH_SIZE = 250;
+
 export interface NpmSearchWindow {
   from: number;
   size: number;
@@ -65,7 +67,7 @@ export function nugetSearchWindow(req: Request): NugetSearchWindow {
 export function allNpmSearchResultsRequest(req: Request): Request {
   const url = new URL(req.url);
   url.searchParams.set("from", "0");
-  url.searchParams.set("size", "10000");
+  url.searchParams.set("size", String(NPM_MEMBER_SEARCH_SIZE));
   return new Request(url.toString(), { method: req.method, headers: req.headers });
 }
 
