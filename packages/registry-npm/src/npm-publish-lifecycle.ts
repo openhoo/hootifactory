@@ -84,12 +84,19 @@ async function publishNpmTarballs(
       namespace: scope,
     }));
   const versionRows = new Map<string, { id: string; packageId: string; version: string }>();
-  // Any version row, including a retention tombstone, reserves the npm version.
-  const used = await ctx.data.versions.listNames(pkg);
-  const usedSet = new Set(used.map((v) => v.version));
+  const reservedVersions = new Set(
+    (
+      await Promise.all(
+        plan.versions.map(async ({ version }) =>
+          (await ctx.data.versions.exists(pkg, version)) ? version : null,
+        ),
+      )
+    ).filter((version): version is string => version !== null),
+  );
 
   for (const { version, manifest, tarball } of plan.versions) {
-    if (usedSet.has(version)) {
+    // Any version row, including a retention tombstone, reserves the npm version.
+    if (reservedVersions.has(version)) {
       return Response.json(
         { error: `cannot publish over the previously published version ${version}` },
         { status: 403 },
