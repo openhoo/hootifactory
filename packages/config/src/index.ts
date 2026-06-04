@@ -136,6 +136,7 @@ const DEV_DEFAULT_SECRETS = {
   S3_SECRET_ACCESS_KEY: "hootifactory",
 } as const;
 const DEV_DEFAULT_DATABASE_CREDENTIAL = "hootifactory";
+const DEV_DEFAULT_SESSION_SECRET_PREFIX = "dev-session-secret-change-me";
 
 /**
  * Environment schema. Dev defaults mirror docker-compose so the stack boots and
@@ -245,8 +246,8 @@ const EnvSchema = z
     // Fail fast (never silently boot) when a production deployment still carries a
     // well-known dev-default secret.
     if (v.NODE_ENV === "production") {
-      for (const [key, devValue] of Object.entries(DEV_DEFAULT_SECRETS)) {
-        if (v[key as keyof typeof DEV_DEFAULT_SECRETS] === devValue) {
+      for (const key of Object.keys(DEV_DEFAULT_SECRETS) as (keyof typeof DEV_DEFAULT_SECRETS)[]) {
+        if (isDevDefaultSecret(key, v[key])) {
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
             path: [key],
@@ -359,6 +360,11 @@ function databaseUrlUsesDevDefaultCredentials(value: string): boolean {
   } catch {
     return false;
   }
+}
+
+function isDevDefaultSecret(key: keyof typeof DEV_DEFAULT_SECRETS, value: string): boolean {
+  if (key === "SESSION_SECRET") return value.startsWith(DEV_DEFAULT_SESSION_SECRET_PREFIX);
+  return value === DEV_DEFAULT_SECRETS[key];
 }
 
 /** The validated, frozen runtime environment. */

@@ -66,6 +66,28 @@ describe("environment auth creation defaults", () => {
     ).toThrow(/DATABASE_URL must not use the dev-default database username or password/);
   });
 
+  test("production rejects dev-default secrets from the template", async () => {
+    const example = await Bun.file(new URL("../../../.env.example", import.meta.url)).text();
+    const sessionSecret = /^SESSION_SECRET=(.+)$/m.exec(example)?.[1];
+    expect(sessionSecret).toBeTruthy();
+
+    expect(() => loadEnv({ ...prodSource, SESSION_SECRET: sessionSecret! })).toThrow(
+      /SESSION_SECRET must be overridden in production/,
+    );
+    expect(() =>
+      loadEnv({
+        ...prodSource,
+        SESSION_SECRET: "dev-session-secret-change-me-please-32+chars",
+      }),
+    ).toThrow(/SESSION_SECRET must be overridden in production/);
+    expect(() => loadEnv({ ...prodSource, S3_ACCESS_KEY_ID: "hootifactory" })).toThrow(
+      /S3_ACCESS_KEY_ID must be overridden in production/,
+    );
+    expect(() => loadEnv({ ...prodSource, S3_SECRET_ACCESS_KEY: "hootifactory" })).toThrow(
+      /S3_SECRET_ACCESS_KEY must be overridden in production/,
+    );
+  });
+
   test("production can explicitly opt into self-service creation", () => {
     const env = loadEnv({
       ...prodSource,
