@@ -1,9 +1,10 @@
 import { and, authEmailTokens, db, eq, gt, isNull, sessions, users } from "@hootifactory/db";
+import { AUTH_EMAIL_TOKEN_PURPOSE, type AuthEmailTokenPurpose } from "@hootifactory/types";
 import { hashPassword } from "./password";
 import { randomSecret, sha256hex } from "./secret";
 import { activeSessionsForUser } from "./sessions";
 
-export type AuthEmailTokenPurpose = "password_reset" | "oidc_link";
+export type { AuthEmailTokenPurpose } from "@hootifactory/types";
 
 export function hashAuthEmailToken(secret: string): string {
   return sha256hex(secret);
@@ -87,7 +88,7 @@ export async function resetPasswordWithToken(
       .set({ consumedAt: now })
       .where(
         and(
-          eq(authEmailTokens.purpose, "password_reset"),
+          eq(authEmailTokens.purpose, AUTH_EMAIL_TOKEN_PURPOSE.passwordReset),
           eq(authEmailTokens.tokenHash, sha256hex(secret)),
           isNull(authEmailTokens.consumedAt),
           gt(authEmailTokens.expiresAt, now),

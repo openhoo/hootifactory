@@ -15,6 +15,7 @@
   "dependencies": {
     "@hootifactory/config": "workspace:*",
     "@hootifactory/observability": "workspace:*",
+    "@hootifactory/types": "workspace:*",
     "nodemailer": "^8.0.10"
   },
   "devDependencies": {

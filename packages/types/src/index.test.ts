@@ -1,7 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import {
   ACTIONS,
+  AUTH_EMAIL_TOKEN_PURPOSE,
+  AUTH_EMAIL_TOKEN_PURPOSES,
+  EMAIL_TEMPLATE,
+  EMAIL_TEMPLATES,
   isAction,
+  isAuthEmailTokenPurpose,
+  isEmailTemplate,
   isLogLevel,
   isPolicyName,
   isRepoKind,
@@ -35,6 +41,11 @@ describe("shared type constants", () => {
     expect(TOKEN_TARGETS).toEqual(["self", "org"]);
     expect(LOG_LEVELS).toEqual(["debug", "info", "warn", "error", "silent"]);
     expect(SCANNER_CLI_RUNTIMES).toEqual(["auto", "docker", "host", "disabled"]);
+    expect(AUTH_EMAIL_TOKEN_PURPOSES).toEqual(["password_reset", "oidc_link"]);
+    expect(AUTH_EMAIL_TOKEN_PURPOSE.passwordReset).toBe("password_reset");
+    expect(AUTH_EMAIL_TOKEN_PURPOSE.oidcLink).toBe("oidc_link");
+    expect(EMAIL_TEMPLATES).toBe(AUTH_EMAIL_TOKEN_PURPOSES);
+    expect(EMAIL_TEMPLATE).toBe(AUTH_EMAIL_TOKEN_PURPOSE);
   });
 
   test("narrows shared enum values through canonical guards", () => {
@@ -54,6 +65,10 @@ describe("shared type constants", () => {
     expect(isLogLevel("verbose")).toBe(false);
     expect(isScannerCliRuntime("docker")).toBe(true);
     expect(isScannerCliRuntime("local")).toBe(false);
+    expect(isAuthEmailTokenPurpose("password_reset")).toBe(true);
+    expect(isAuthEmailTokenPurpose("invite")).toBe(false);
+    expect(isEmailTemplate("oidc_link")).toBe(true);
+    expect(isEmailTemplate("newsletter")).toBe(false);
   });
 
   test("keeps OCI and Docker media type constants stable", () => {

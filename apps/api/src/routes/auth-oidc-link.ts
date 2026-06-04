@@ -1,5 +1,6 @@
 import { createAuthEmailToken, type OidcCallbackClaims } from "@hootifactory/auth";
 import type { EmailJob } from "@hootifactory/email";
+import { AUTH_EMAIL_TOKEN_PURPOSE, EMAIL_TEMPLATE } from "@hootifactory/types";
 
 type PublicUrlBuilder = (path: string) => string;
 
@@ -21,7 +22,7 @@ export function buildOidcLinkEmailJob({
   publicUrl,
 }: OidcLinkEmailJobInput): EmailJob {
   return {
-    template: "oidc_link",
+    template: EMAIL_TEMPLATE.oidcLink,
     to: email,
     linkUrl: publicUrl(`/api/auth/oidc/link/confirm?token=${encodeURIComponent(secret)}`),
     providerName,
@@ -40,7 +41,7 @@ export async function createOidcLinkEmail(input: {
   publicUrl: PublicUrlBuilder;
 }): Promise<{ job: EmailJob }> {
   const { token, secret } = await createAuthEmailToken({
-    purpose: "oidc_link",
+    purpose: AUTH_EMAIL_TOKEN_PURPOSE.oidcLink,
     userId: input.userId,
     email: input.email,
     ttlSeconds: input.ttlSeconds,

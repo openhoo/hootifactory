@@ -13,6 +13,7 @@ import {
 import { env } from "@hootifactory/config";
 import { parseJsonWithSchema, z } from "@hootifactory/core";
 import { addSpanEvent, logger, setActiveSpanAttributes } from "@hootifactory/observability";
+import { AUTH_EMAIL_TOKEN_PURPOSE } from "@hootifactory/types";
 import type { Context, Hono } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import type { AppEnv } from "../types";
@@ -172,7 +173,7 @@ async function parseConfirmLinkBody(c: Context<AppEnv>) {
 }
 
 async function confirmOidcLink(c: Context<AppEnv>, tokenSecret: string): Promise<Response> {
-  const token = await consumeAuthEmailToken("oidc_link", tokenSecret);
+  const token = await consumeAuthEmailToken(AUTH_EMAIL_TOKEN_PURPOSE.oidcLink, tokenSecret);
   if (!token) return c.redirect(loginRedirect("sso_link_invalid"));
 
   const metadata = OidcLinkMetadataSchema.safeParse(token.metadata);

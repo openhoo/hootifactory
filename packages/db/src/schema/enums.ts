@@ -1,5 +1,11 @@
 import { ARTIFACT_STATES, FINDING_TYPES, POLICY_MODES, SEVERITIES } from "@hootifactory/scan-core";
-import { REPO_KINDS, ROLE_NAMES, TOKEN_TYPES, VISIBILITIES } from "@hootifactory/types";
+import {
+  AUTH_EMAIL_TOKEN_PURPOSES,
+  REPO_KINDS,
+  ROLE_NAMES,
+  TOKEN_TYPES,
+  VISIBILITIES,
+} from "@hootifactory/types";
 import { pgEnum } from "drizzle-orm/pg-core";
 
 export const repoKindEnum = pgEnum("repo_kind", REPO_KINDS);
@@ -11,10 +17,10 @@ export const roleNameEnum = pgEnum("role_name", ROLE_NAMES);
 
 export const tokenTypeEnum = pgEnum("token_type", TOKEN_TYPES);
 
-export const authEmailTokenPurposeEnum = pgEnum("auth_email_token_purpose", [
-  "password_reset",
-  "oidc_link",
-]);
+export const authEmailTokenPurposeEnum = pgEnum(
+  "auth_email_token_purpose",
+  AUTH_EMAIL_TOKEN_PURPOSES,
+);
 
 export const blobStateEnum = pgEnum("blob_state", ["active", "pending_delete"]);
 

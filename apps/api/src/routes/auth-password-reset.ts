@@ -1,5 +1,6 @@
 import { createAuthEmailToken } from "@hootifactory/auth";
 import type { EmailJob } from "@hootifactory/email";
+import { AUTH_EMAIL_TOKEN_PURPOSE, EMAIL_TEMPLATE } from "@hootifactory/types";
 
 type PublicUrlBuilder = (path: string) => string;
 
@@ -19,7 +20,7 @@ export function buildPasswordResetEmailJob({
   publicUrl,
 }: PasswordResetEmailJobInput): EmailJob {
   return {
-    template: "password_reset",
+    template: EMAIL_TEMPLATE.passwordReset,
     to: email,
     resetUrl: publicUrl(`/reset-password?token=${encodeURIComponent(secret)}`),
     expiresAt: expiresAt.toISOString(),
@@ -34,7 +35,7 @@ export async function createPasswordResetEmail(input: {
   publicUrl: PublicUrlBuilder;
 }): Promise<{ job: EmailJob }> {
   const { token, secret } = await createAuthEmailToken({
-    purpose: "password_reset",
+    purpose: AUTH_EMAIL_TOKEN_PURPOSE.passwordReset,
     userId: input.userId,
     email: input.email,
     ttlSeconds: input.ttlSeconds,

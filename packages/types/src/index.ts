@@ -23,6 +23,18 @@ export const LOG_LEVELS = ["debug", "info", "warn", "error", "silent"] as const;
 export type LogLevel = (typeof LOG_LEVELS)[number];
 export const SCANNER_CLI_RUNTIMES = ["auto", "docker", "host", "disabled"] as const;
 export type ScannerCliRuntime = (typeof SCANNER_CLI_RUNTIMES)[number];
+export const AUTH_EMAIL_TOKEN_PURPOSE = {
+  passwordReset: "password_reset",
+  oidcLink: "oidc_link",
+} as const;
+export const AUTH_EMAIL_TOKEN_PURPOSES = [
+  AUTH_EMAIL_TOKEN_PURPOSE.passwordReset,
+  AUTH_EMAIL_TOKEN_PURPOSE.oidcLink,
+] as const;
+export type AuthEmailTokenPurpose = (typeof AUTH_EMAIL_TOKEN_PURPOSES)[number];
+export const EMAIL_TEMPLATE = AUTH_EMAIL_TOKEN_PURPOSE;
+export const EMAIL_TEMPLATES = AUTH_EMAIL_TOKEN_PURPOSES;
+export type EmailTemplate = AuthEmailTokenPurpose;
 export type DenialCode =
   | "unauthenticated"
   | "cross_org"
@@ -65,6 +77,14 @@ export function isLogLevel(value: unknown): value is LogLevel {
 
 export function isScannerCliRuntime(value: unknown): value is ScannerCliRuntime {
   return isOneOf(SCANNER_CLI_RUNTIMES, value);
+}
+
+export function isAuthEmailTokenPurpose(value: unknown): value is AuthEmailTokenPurpose {
+  return isOneOf(AUTH_EMAIL_TOKEN_PURPOSES, value);
+}
+
+export function isEmailTemplate(value: unknown): value is EmailTemplate {
+  return isOneOf(EMAIL_TEMPLATES, value);
 }
 
 /** Legacy repository-scope token shape accepted by pre-v1 UI/API callers. */

@@ -1,17 +1,18 @@
 import { env } from "@hootifactory/config";
 import { logger, withSpan } from "@hootifactory/observability";
+import { EMAIL_TEMPLATE } from "@hootifactory/types";
 import nodemailer, { type Transporter } from "nodemailer";
 
 export type EmailJob =
   | {
-      template: "password_reset";
+      template: typeof EMAIL_TEMPLATE.passwordReset;
       to: string;
       resetUrl: string;
       expiresAt: string;
       deliveryKey?: string;
     }
   | {
-      template: "oidc_link";
+      template: typeof EMAIL_TEMPLATE.oidcLink;
       to: string;
       linkUrl: string;
       providerName: string;
@@ -70,7 +71,7 @@ function expiryText(expiresAt: string): string {
 }
 
 export function renderEmail(job: EmailJob): RenderedEmail {
-  if (job.template === "password_reset") {
+  if (job.template === EMAIL_TEMPLATE.passwordReset) {
     const expires = expiryText(job.expiresAt);
     return {
       to: job.to,
