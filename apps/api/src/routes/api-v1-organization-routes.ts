@@ -114,15 +114,15 @@ export function registerApiV1OrganizationRoutes(apiV1Router: Hono<AppEnv>) {
       if (!params.ok) return params.response;
       const pagination = validatePagination(c);
       if (!pagination.ok) return pagination.response;
-      const rows = await listAccessibleRepositories(params.data.orgId, c);
-      const page = rows.slice(
-        pagination.data.offset,
-        pagination.data.offset + pagination.data.limit,
+      const { rows, total } = await listAccessibleRepositories(
+        params.data.orgId,
+        c,
+        pagination.data,
       );
-      return listResponse(c, page.map(repositoryDto), {
+      return listResponse(c, rows.map(repositoryDto), {
         limit: pagination.data.limit,
         offset: pagination.data.offset,
-        total: rows.length,
+        total,
       });
     },
   );

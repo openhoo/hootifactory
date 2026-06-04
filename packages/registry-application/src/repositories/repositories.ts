@@ -1,4 +1,4 @@
-import { db, eq, repositories } from "@hootifactory/db";
+import { count, db, eq, repositories } from "@hootifactory/db";
 import type { ResolvedRepo } from "@hootifactory/registry";
 import type { PackageFormat, Visibility } from "@hootifactory/types";
 import { computeMountPath } from "./paths";
@@ -39,6 +39,19 @@ export async function getRepositoryById(id: string): Promise<ResolvedRepo | null
   return row ?? null;
 }
 
-export async function listRepositoriesForOrg(orgId: string): Promise<ResolvedRepo[]> {
-  return db.select().from(repositories).where(eq(repositories.orgId, orgId));
+export async function countRepositoriesForOrg(orgId: string): Promise<number> {
+  const rows = (await db
+    .select({ value: count() })
+    .from(repositories)
+    .where(eq(repositories.orgId, orgId))) as Array<{ value: number }>;
+  return rows[0]?.value ?? 0;
+}
+
+export async function listRepositoriesForOrg(
+  orgId: string,
+  page?: { limit: number; offset: number },
+): Promise<ResolvedRepo[]> {
+  const query = () =>
+    db.select().from(repositories).where(eq(repositories.orgId, orgId)).orderBy(repositories.name);
+  return page ? query().limit(page.limit).offset(page.offset) : query();
 }

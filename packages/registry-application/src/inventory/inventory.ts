@@ -27,6 +27,11 @@ export interface ArtifactWithRepositoryRow {
   repo: InventoryRepositoryRow;
 }
 
+export interface InventoryPageInput {
+  limit: number;
+  offset: number;
+}
+
 export interface PackageListRow {
   id: string;
   name: string;
@@ -59,12 +64,15 @@ export async function countRepositoryPackages(repositoryId: string): Promise<num
 
 export async function listRepositoryPackageSummaries(
   repositoryId: string,
+  page?: InventoryPageInput,
 ): Promise<PackageListRow[]> {
-  return db
-    .select({ id: packages.id, name: packages.name, latestVersion: packages.latestVersion })
-    .from(packages)
-    .where(eq(packages.repositoryId, repositoryId))
-    .orderBy(packages.name);
+  const query = () =>
+    db
+      .select({ id: packages.id, name: packages.name, latestVersion: packages.latestVersion })
+      .from(packages)
+      .where(eq(packages.repositoryId, repositoryId))
+      .orderBy(packages.name);
+  return page ? query().limit(page.limit).offset(page.offset) : query();
 }
 
 export async function getPackageWithRepository(
@@ -95,20 +103,31 @@ export async function listLivePackageVersionSummaries(
 
 export async function listRepositoryArtifactSummaries(
   repositoryId: string,
+  page?: InventoryPageInput,
 ): Promise<ArtifactListRow[]> {
-  return db
-    .select({
-      id: artifacts.id,
-      digest: artifacts.digest,
-      name: artifacts.name,
-      version: artifacts.version,
-      state: artifacts.state,
-      policyDecision: artifacts.policyDecision,
-      createdAt: artifacts.createdAt,
-    })
+  const query = () =>
+    db
+      .select({
+        id: artifacts.id,
+        digest: artifacts.digest,
+        name: artifacts.name,
+        version: artifacts.version,
+        state: artifacts.state,
+        policyDecision: artifacts.policyDecision,
+        createdAt: artifacts.createdAt,
+      })
+      .from(artifacts)
+      .where(eq(artifacts.repositoryId, repositoryId))
+      .orderBy(desc(artifacts.createdAt));
+  return page ? query().limit(page.limit).offset(page.offset) : query();
+}
+
+export async function countRepositoryArtifacts(repositoryId: string): Promise<number> {
+  const rows = (await db
+    .select({ value: count() })
     .from(artifacts)
-    .where(eq(artifacts.repositoryId, repositoryId))
-    .orderBy(desc(artifacts.createdAt));
+    .where(eq(artifacts.repositoryId, repositoryId))) as Array<{ value: number }>;
+  return rows[0]?.value ?? 0;
 }
 
 export async function getArtifactWithRepository(

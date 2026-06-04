@@ -1,4 +1,3 @@
-import { authorize } from "@hootifactory/auth";
 import {
   V1ArtifactFindingsResponseSchema,
   V1ArtifactListResponseSchema,
@@ -9,6 +8,7 @@ import {
   V1RepositoryDetailResponseSchema,
 } from "@hootifactory/contracts";
 import {
+  countRepositoryArtifacts,
   countRepositoryPackages,
   findLiveVersion,
   listArtifactFindings,
@@ -82,27 +82,14 @@ export function registerApiV1ContentRoutes(apiV1Router: Hono<AppEnv>) {
       const access = await requireRepository(c, params.data.repoId, "read");
       if (!access.ok) return access.response;
       const repo = access.repo;
-      const rows = await listRepositoryPackageSummaries(repo.id);
-      const accessible = [];
-      for (const pkg of rows) {
-        const decision = await authorize(c.get("principal"), "read", {
-          type: "package",
-          orgId: repo.orgId,
-          repositoryId: repo.id,
-          repositoryName: repo.name,
-          packageName: pkg.name,
-          visibility: repo.visibility,
-        });
-        if (decision.allowed) accessible.push(pkg);
-      }
-      const page = accessible.slice(
-        pagination.data.offset,
-        pagination.data.offset + pagination.data.limit,
-      );
+      const [total, page] = await Promise.all([
+        countRepositoryPackages(repo.id),
+        listRepositoryPackageSummaries(repo.id, pagination.data),
+      ]);
       return listResponse(c, page, {
         limit: pagination.data.limit,
         offset: pagination.data.offset,
-        total: accessible.length,
+        total,
       });
     },
   );
@@ -211,27 +198,14 @@ export function registerApiV1ContentRoutes(apiV1Router: Hono<AppEnv>) {
       const access = await requireRepository(c, params.data.repoId, "read");
       if (!access.ok) return access.response;
       const repo = access.repo;
-      const rows = await listRepositoryArtifactSummaries(repo.id);
-      const accessible = [];
-      for (const art of rows) {
-        const decision = await authorize(c.get("principal"), "read", {
-          type: "artifact",
-          orgId: repo.orgId,
-          repositoryId: repo.id,
-          repositoryName: repo.name,
-          artifactRef: art.digest,
-          visibility: repo.visibility,
-        });
-        if (decision.allowed) accessible.push(art);
-      }
-      const page = accessible.slice(
-        pagination.data.offset,
-        pagination.data.offset + pagination.data.limit,
-      );
+      const [total, page] = await Promise.all([
+        countRepositoryArtifacts(repo.id),
+        listRepositoryArtifactSummaries(repo.id, pagination.data),
+      ]);
       return listResponse(c, page, {
         limit: pagination.data.limit,
         offset: pagination.data.offset,
-        total: accessible.length,
+        total,
       });
     },
   );

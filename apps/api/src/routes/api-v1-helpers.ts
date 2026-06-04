@@ -1,6 +1,7 @@
 import {
   type ApiTokenRow,
   authorize,
+  createRequestAuthorizer,
   type Decision,
   httpStatusForDenial,
   type Principal,
@@ -21,6 +22,7 @@ import { z, zodIssueTree } from "@hootifactory/core";
 import type { ResolvedRepo } from "@hootifactory/registry";
 import {
   type ArtifactWithRepositoryRow,
+  countRepositoriesForOrg,
   getArtifactWithRepository,
   getPackageWithRepository,
   getRepositoryById,
@@ -250,14 +252,37 @@ export async function tokenResource(c: Context<AppEnv>, token: ApiTokenRow, acti
   return authorizationDenied(c, decision);
 }
 
-export async function listAccessibleRepositories(orgId: string, c: Context<AppEnv>) {
+export async function listAccessibleRepositories(
+  orgId: string,
+  c: Context<AppEnv>,
+  pagination: { limit: number; offset: number },
+) {
+  const requestAuthorize = createRequestAuthorizer(c.get("principal"));
+  const orgDecision = await requestAuthorize("read", { type: "org", orgId });
+  if (orgDecision.allowed) {
+    const [total, rows] = await Promise.all([
+      countRepositoriesForOrg(orgId),
+      listRepositoriesForOrg(orgId, pagination),
+    ]);
+    return { rows, total };
+  }
+
   const rows = await listRepositoriesForOrg(orgId);
   const accessible = [];
   for (const repo of rows) {
-    const response = await authorizeRepository(c, repo, "read");
-    if (!response) accessible.push(repo);
+    const decision = await requestAuthorize("read", {
+      type: "repository",
+      orgId: repo.orgId,
+      repositoryId: repo.id,
+      repositoryName: repo.name,
+      visibility: repo.visibility,
+    });
+    if (decision.allowed) accessible.push(repo);
   }
-  return accessible;
+  return {
+    rows: accessible.slice(pagination.offset, pagination.offset + pagination.limit),
+    total: accessible.length,
+  };
 }
 
 type OpenApiSchemaObject = Record<string, unknown>;
