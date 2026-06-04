@@ -146,7 +146,7 @@ const DEV_DEFAULT_SESSION_SECRET_PREFIX = "dev-session-secret-change-me";
 const EnvSchema = z
   .object({
     NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
-    LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
+    LOG_LEVEL: z.enum(["debug", "info", "warn", "error", "silent"]).default("info"),
 
     // OpenTelemetry (logs, traces, metrics)
     OTEL_SDK_DISABLED: boolish.default(false),

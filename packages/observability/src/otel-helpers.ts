@@ -70,6 +70,8 @@ export function severityNumberFor(level: LogLevel): SeverityNumber {
       return SeverityNumber.WARN;
     case "error":
       return SeverityNumber.ERROR;
+    case "silent":
+      return SeverityNumber.UNSPECIFIED;
   }
 }
 

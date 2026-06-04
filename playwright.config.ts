@@ -54,7 +54,7 @@ export default defineConfig({
         API_TRUSTED_ORIGINS: WEB_URL,
         DATABASE_URL: TEST_DATABASE_URL,
         NODE_ENV: "test",
-        LOG_LEVEL: "warn",
+        LOG_LEVEL: "silent",
         SCANNER_ENABLED: "true",
         SCANNER_CLI_RUNTIME: "disabled",
         AUTH_OIDC_ENABLED: "true",
@@ -80,7 +80,7 @@ export default defineConfig({
         SCANNER_ENABLED: "true",
         SCANNER_CLI_RUNTIME: "disabled",
         NODE_ENV: "test",
-        LOG_LEVEL: "warn",
+        LOG_LEVEL: "silent",
       },
     },
     {

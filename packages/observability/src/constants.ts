@@ -7,4 +7,5 @@ export const LOG_LEVELS = {
   info: 20,
   warn: 30,
   error: 40,
+  silent: 50,
 } satisfies Record<LogLevel, number>;
