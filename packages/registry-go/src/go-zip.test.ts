@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { deflateRawSync } from "node:zlib";
-import { decodeModuleDirective, readZipEntryText, validateGoModuleZip } from "./go-zip";
+import {
+  decodeModuleDirective,
+  readZipEntryText,
+  validateGoModuleZip,
+  validateGoModuleZipResult,
+} from "./go-zip";
 
 function u16(value: number): number[] {
   return [value & 0xff, (value >> 8) & 0xff];
@@ -91,6 +96,10 @@ describe("Go module zip helpers", () => {
     });
 
     expect(validateGoModuleZip(zip, "example.com/hoot", "v1.2.3")).toBeNull();
+    expect(validateGoModuleZipResult(zip, "example.com/hoot", "v1.2.3")).toEqual({
+      ok: true,
+      goMod: "module example.com/hoot\n",
+    });
     expect(readZipEntryText(zip, "example.com/hoot@v1.2.3/go.mod")).toBe(
       "module example.com/hoot\n",
     );

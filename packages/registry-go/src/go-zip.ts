@@ -47,6 +47,10 @@ interface ZipEntry {
   nextPos: number;
 }
 
+export type GoModuleZipValidationResult =
+  | { ok: true; goMod: string }
+  | { ok: false; error: string };
+
 function readCentralEntry(
   bytes: Uint8Array,
   view: DataView,
@@ -128,68 +132,90 @@ export function validateGoModuleZip(
   moduleName: string,
   version: string,
 ): string | null {
-  if (bytes.byteLength < 22) return "zip payload is too short";
-  if (bytes.byteLength > MAX_ZIP_FILE_BYTES) return "zip file is too large";
+  const result = validateGoModuleZipResult(bytes, moduleName, version);
+  return result.ok ? null : result.error;
+}
+
+export function validateGoModuleZipResult(
+  bytes: Uint8Array,
+  moduleName: string,
+  version: string,
+): GoModuleZipValidationResult {
+  if (bytes.byteLength < 22) return { ok: false, error: "zip payload is too short" };
+  if (bytes.byteLength > MAX_ZIP_FILE_BYTES) return { ok: false, error: "zip file is too large" };
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const eocd = findZipEndOfCentralDirectory(view);
-  if (eocd < 0) return "zip end of central directory not found";
+  if (eocd < 0) return { ok: false, error: "zip end of central directory not found" };
 
   const entries = readU16(view, eocd + 10);
   const centralSize = readU32(view, eocd + 12);
   const centralOffset = readU32(view, eocd + 16);
-  if (entries < 1) return "zip has no entries";
-  if (centralOffset + centralSize > bytes.byteLength) return "zip central directory is truncated";
+  if (entries < 1) return { ok: false, error: "zip has no entries" };
+  if (centralOffset + centralSize > bytes.byteLength) {
+    return { ok: false, error: "zip central directory is truncated" };
+  }
 
   const prefix = `${moduleName}@${version}/`;
   const decoder = new TextDecoder();
   let pos = centralOffset;
-  let hasGoMod = false;
+  let goMod: string | null = null;
   let totalUncompressed = 0;
   const foldedNames = new Set<string>();
   for (let i = 0; i < entries; i++) {
     const entry = readCentralEntry(bytes, view, pos, decoder);
-    if (typeof entry === "string") return entry;
-    if (hasUnsafeZipPath(entry.name)) return "zip contains an unsafe path";
-    if (!entry.name.startsWith(prefix)) return "zip entries must be rooted at module@version";
+    if (typeof entry === "string") return { ok: false, error: entry };
+    if (hasUnsafeZipPath(entry.name)) {
+      return { ok: false, error: "zip contains an unsafe path" };
+    }
+    if (!entry.name.startsWith(prefix)) {
+      return { ok: false, error: "zip entries must be rooted at module@version" };
+    }
 
     const folded = entry.name.toLowerCase();
-    if (foldedNames.has(folded)) return "zip contains case-insensitive path collision";
+    if (foldedNames.has(folded)) {
+      return { ok: false, error: "zip contains case-insensitive path collision" };
+    }
     foldedNames.add(folded);
 
     if (entry.uncompressedSize > MAX_ZIP_CONTENT_BYTES - totalUncompressed) {
-      return "zip contents are too large";
+      return { ok: false, error: "zip contents are too large" };
     }
 
     const relative = entry.name.slice(prefix.length);
     const basename = relative.split("/").at(-1) ?? "";
     if (basename.toLowerCase() === "go.mod" && entry.name !== `${prefix}go.mod`) {
-      return "go.mod file not in module root directory";
+      return { ok: false, error: "go.mod file not in module root directory" };
     }
-    if (entry.name === `${prefix}go.mod`) {
-      if (entry.uncompressedSize > MAX_GO_MOD_BYTES) return "go.mod is too large";
-      hasGoMod = true;
+    const isRootGoMod = entry.name === `${prefix}go.mod`;
+    if (isRootGoMod) {
+      if (entry.uncompressedSize > MAX_GO_MOD_BYTES) {
+        return { ok: false, error: "go.mod is too large" };
+      }
     }
     if (entry.name === `${prefix}LICENSE` && entry.uncompressedSize > MAX_LICENSE_BYTES) {
-      return "LICENSE is too large";
+      return { ok: false, error: "LICENSE is too large" };
     }
 
     const data = readEntryData(bytes, view, entry, decoder);
-    if (typeof data === "string") return data;
+    if (typeof data === "string") return { ok: false, error: data };
     const inflated = inflateEntryData(
       data,
       entry.method,
       Math.min(entry.uncompressedSize + 1, MAX_ZIP_CONTENT_BYTES - totalUncompressed + 1),
     );
-    if (typeof inflated === "string") return inflated;
+    if (typeof inflated === "string") return { ok: false, error: inflated };
     if (inflated.byteLength !== entry.uncompressedSize) {
-      return "zip entry size does not match header";
+      return { ok: false, error: "zip entry size does not match header" };
     }
+    if (isRootGoMod) goMod = decoder.decode(inflated);
     totalUncompressed += inflated.byteLength;
     pos = entry.nextPos;
   }
-  if (pos > centralOffset + centralSize) return "zip central directory exceeds declared size";
-  if (!hasGoMod) return "zip is missing go.mod";
-  return null;
+  if (pos > centralOffset + centralSize) {
+    return { ok: false, error: "zip central directory exceeds declared size" };
+  }
+  if (goMod === null) return { ok: false, error: "zip is missing go.mod" };
+  return { ok: true, goMod };
 }
 
 export function readZipEntryText(bytes: Uint8Array, entryName: string): string | null {

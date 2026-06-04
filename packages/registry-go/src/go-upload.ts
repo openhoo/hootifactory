@@ -5,7 +5,7 @@ import {
   type GoVersionMeta,
   GoVersionSchema,
 } from "./go-validation";
-import { decodeModuleDirective, readZipEntryText, validateGoModuleZip } from "./go-zip";
+import { decodeModuleDirective, validateGoModuleZipResult } from "./go-zip";
 
 type GoUploadMetadata = Omit<GoVersionMeta, "zipDigest">;
 
@@ -61,17 +61,16 @@ export async function parseGoUploadRequest(
 
 export function validateGoUploadPlan(moduleName: string, plan: GoUploadPlan): GoUploadError | null {
   const { mod, version, zipBytes } = plan;
-  const zipError = validateGoModuleZip(zipBytes, moduleName, version);
-  if (zipError) {
+  const zipResult = validateGoModuleZipResult(zipBytes, moduleName, version);
+  if (!zipResult.ok) {
     return {
-      body: { error: `invalid module zip: ${zipError}` },
+      body: { error: `invalid module zip: ${zipResult.error}` },
       status: 400,
     };
   }
 
-  const zipMod = readZipEntryText(zipBytes, `${moduleName}@${version}/go.mod`);
   const declaredModule = decodeModuleDirective(mod);
-  const zipModule = zipMod ? decodeModuleDirective(zipMod) : null;
+  const zipModule = decodeModuleDirective(zipResult.goMod);
   if (declaredModule !== moduleName || zipModule !== moduleName) {
     return {
       body: { error: "go.mod module path does not match upload URL" },
