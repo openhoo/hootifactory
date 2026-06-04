@@ -77,6 +77,13 @@ export interface RegistryPackageVersionFingerprintRow {
   updatedAt: Date;
 }
 
+export interface RegistryPackageSearchVersionRow {
+  packageId: string;
+  version: string;
+  metadata: unknown;
+  createdAt: Date;
+}
+
 export interface RegistryVersionMetadataRow {
   version: string;
   metadata: unknown;
@@ -295,6 +302,10 @@ export interface RegistryDataService {
       pkgs: RegistryPackageHandle[],
       opts?: { orderByCreated?: "asc" | "desc" },
     ): Promise<Map<string, RegistryPackageVersionRow[]>>;
+    listSearchVersionsForPackages(
+      pkgs: RegistryPackageHandle[],
+      preferredVersionsByPackageId: Map<string, string>,
+    ): Promise<Map<string, RegistryPackageSearchVersionRow>>;
     listLiveFingerprints(
       pkg: RegistryPackageHandle,
     ): Promise<RegistryPackageVersionFingerprintRow[]>;

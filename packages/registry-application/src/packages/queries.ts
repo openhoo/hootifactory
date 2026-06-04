@@ -38,6 +38,13 @@ export interface PackageVersionFingerprintRow {
   updatedAt: Date;
 }
 
+export interface PackageSearchVersionRow {
+  packageId: string;
+  version: string;
+  metadata: unknown;
+  createdAt: Date;
+}
+
 export interface DistTagVersionRow {
   tag: string;
   version: string;
@@ -50,6 +57,71 @@ export interface DistTagVersionPackageRow extends DistTagVersionRow {
 export interface PackageSearchResult {
   packages: PackageSummaryRow[];
   total: number;
+}
+
+function rowsFromExecute(result: unknown): unknown[] {
+  if (Array.isArray(result)) return result;
+  if (
+    result &&
+    typeof result === "object" &&
+    Array.isArray((result as { rows?: unknown[] }).rows)
+  ) {
+    return (result as { rows: unknown[] }).rows;
+  }
+  return [];
+}
+
+function stringField(row: unknown, field: string): string | null {
+  if (!row || typeof row !== "object") return null;
+  const value = (row as Record<string, unknown>)[field];
+  return typeof value === "string" ? value : null;
+}
+
+function dateField(row: unknown, field: string): Date | null {
+  if (!row || typeof row !== "object") return null;
+  const value = (row as Record<string, unknown>)[field];
+  if (value instanceof Date) return value;
+  if (typeof value !== "string") return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function metadataField(row: unknown): unknown {
+  if (!row || typeof row !== "object") return null;
+  const value = (row as Record<string, unknown>).metadata;
+  if (typeof value !== "string") return value ?? null;
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+function uuidValueRows(values: string[]) {
+  return sql.join(
+    values.map((value) => sql`(${value}::uuid)`),
+    sql`, `,
+  );
+}
+
+function packageVersionValueRows(entries: Array<[packageId: string, version: string]>) {
+  return sql.join(
+    entries.map(([packageId, version]) => sql`(${packageId}::uuid, ${version}::text)`),
+    sql`, `,
+  );
+}
+
+function packageSearchVersionRow(row: unknown): PackageSearchVersionRow | null {
+  const packageId = stringField(row, "packageId");
+  const version = stringField(row, "version");
+  const createdAt = dateField(row, "createdAt");
+  if (!packageId || !version || !createdAt) return null;
+  return {
+    packageId,
+    version,
+    createdAt,
+    metadata: metadataField(row),
+  };
 }
 
 export interface VersionMetadataRow {
@@ -191,6 +263,66 @@ export async function listLivePackageVersionsForPackages(
         : await query;
   for (const row of rows as PackageVersionReadRow[]) {
     byPackageId.get(row.packageId)?.push(row);
+  }
+  return byPackageId;
+}
+
+export async function listSearchPackageVersionsForPackages(
+  packageIds: string[],
+  preferredVersionsByPackageId: Map<string, string>,
+): Promise<Map<string, PackageSearchVersionRow>> {
+  const ids = [...new Set(packageIds)];
+  const byPackageId = new Map<string, PackageSearchVersionRow>();
+  if (ids.length === 0) return byPackageId;
+
+  const preferredEntries = ids.flatMap((id) => {
+    const version = preferredVersionsByPackageId.get(id);
+    return version ? ([[id, version]] as Array<[string, string]>) : [];
+  });
+  if (preferredEntries.length > 0) {
+    const preferredRows = rowsFromExecute(
+      await db.execute(sql`
+        with preferred(package_id, version) as (
+          values ${packageVersionValueRows(preferredEntries)}
+        )
+        select
+          pv.package_id as "packageId",
+          pv.version,
+          pv.metadata,
+          pv.created_at as "createdAt"
+        from package_versions pv
+        inner join preferred p on p.package_id = pv.package_id and p.version = pv.version
+        where pv.deleted_at is null
+      `),
+    );
+    for (const rawRow of preferredRows) {
+      const row = packageSearchVersionRow(rawRow);
+      if (row) byPackageId.set(row.packageId, row);
+    }
+  }
+
+  const missingIds = ids.filter((id) => !byPackageId.has(id));
+  if (missingIds.length === 0) return byPackageId;
+
+  const fallbackRows = rowsFromExecute(
+    await db.execute(sql`
+      with requested(package_id) as (
+        values ${uuidValueRows(missingIds)}
+      )
+      select distinct on (pv.package_id)
+        pv.package_id as "packageId",
+        pv.version,
+        pv.metadata,
+        pv.created_at as "createdAt"
+      from package_versions pv
+      inner join requested r on r.package_id = pv.package_id
+      where pv.deleted_at is null
+      order by pv.package_id, pv.created_at desc, pv.id desc
+    `),
+  );
+  for (const rawRow of fallbackRows) {
+    const row = packageSearchVersionRow(rawRow);
+    if (row) byPackageId.set(row.packageId, row);
   }
   return byPackageId;
 }

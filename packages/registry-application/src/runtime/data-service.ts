@@ -65,6 +65,7 @@ import {
   listRepositoryPackageNames,
   listRepositoryPackages,
   listRepositoryVersionMetadata,
+  listSearchPackageVersionsForPackages,
   packageVersionExists,
   patchPackageVersion,
   replaceDistTags,
@@ -210,6 +211,11 @@ export function createRegistryDataService(ctx: RegistryRequestContext): Registry
         listLivePackageVersionsForPackages(
           pkgs.map((pkg) => packageId(ctx, pkg)),
           opts,
+        ),
+      listSearchVersionsForPackages: (pkgs, preferredVersionsByPackageId) =>
+        listSearchPackageVersionsForPackages(
+          pkgs.map((pkg) => packageId(ctx, pkg)),
+          preferredVersionsByPackageId,
         ),
       listLiveFingerprints: (pkg) => listLivePackageVersionFingerprints(packageId(ctx, pkg)),
       listRepositoryMetadata: (opts) =>

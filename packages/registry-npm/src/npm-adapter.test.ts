@@ -110,7 +110,7 @@ describe("npm adapter contract", () => {
     const packages = [packageRow("pkg_1", "alpha"), packageRow("pkg_2", "beta")];
     let perPackageVersionReads = 0;
     let perPackageTagReads = 0;
-    let batchedVersionReads = 0;
+    let searchVersionReads = 0;
     let batchedTagReads = 0;
     const ctx = createTestRegistryContext();
     ctx.data.packages.search = async (input) => {
@@ -125,19 +125,16 @@ describe("npm adapter contract", () => {
       perPackageTagReads += 1;
       return {};
     };
-    ctx.data.versions.listLiveForPackages = async (pkgs, opts) => {
-      batchedVersionReads += 1;
+    ctx.data.versions.listSearchVersionsForPackages = async (
+      pkgs,
+      preferredVersionsByPackageId,
+    ) => {
+      searchVersionReads += 1;
       expect(pkgs.map((pkg) => pkg.id)).toEqual(["pkg_1", "pkg_2"]);
-      expect(opts).toEqual({ orderByCreated: "desc" });
+      expect([...preferredVersionsByPackageId]).toEqual([["pkg_1", "1.0.0"]]);
       return new Map([
-        [
-          "pkg_1",
-          [
-            versionRow("pkg_1", "2.0.0", new Date("2026-01-03T00:00:00.000Z")),
-            versionRow("pkg_1", "1.0.0", new Date("2026-01-02T00:00:00.000Z")),
-          ],
-        ],
-        ["pkg_2", [versionRow("pkg_2", "0.1.0", new Date("2026-01-01T00:00:00.000Z"))]],
+        ["pkg_1", versionRow("pkg_1", "1.0.0", new Date("2026-01-02T00:00:00.000Z"))],
+        ["pkg_2", versionRow("pkg_2", "0.1.0", new Date("2026-01-01T00:00:00.000Z"))],
       ]);
     };
     ctx.data.tags.listLiveForPackages = async (pkgs) => {
@@ -164,7 +161,7 @@ describe("npm adapter contract", () => {
     ]);
     expect(perPackageVersionReads).toBe(0);
     expect(perPackageTagReads).toBe(0);
-    expect(batchedVersionReads).toBe(1);
+    expect(searchVersionReads).toBe(1);
     expect(batchedTagReads).toBe(1);
   });
 

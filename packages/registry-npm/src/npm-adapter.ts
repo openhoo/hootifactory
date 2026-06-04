@@ -292,19 +292,22 @@ export class NpmAdapter implements RegistryPlugin {
   private async searchHandler(req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const { text, from, size } = parseNpmSearchQuery(req.url);
     const { packages: rows, total } = await ctx.data.packages.search({ text, from, size });
-    const versionsByPackageId = await ctx.data.versions.listLiveForPackages(rows, {
-      orderByCreated: "desc",
-    });
     const tagsByPackageId = await ctx.data.tags.listLiveForPackages(rows);
+    const preferredVersionsByPackageId = new Map(
+      rows.flatMap((row) => {
+        const latest = tagsByPackageId.get(row.id)?.latest;
+        return latest ? [[row.id, latest] as const] : [];
+      }),
+    );
+    const versionsByPackageId = await ctx.data.versions.listSearchVersionsForPackages(
+      rows,
+      preferredVersionsByPackageId,
+    );
 
     const objects: NpmSearchObject[] = [];
     for (const p of rows) {
-      const versions = versionsByPackageId.get(p.id) ?? [];
-      if (versions.length === 0) continue;
-
-      const tags = tagsByPackageId.get(p.id) ?? {};
-      const version = tags.latest ?? versions[0]!.version;
-      const selected = versions.find((v) => v.version === version) ?? versions[0]!;
+      const selected = versionsByPackageId.get(p.id);
+      if (!selected) continue;
       objects.push(
         buildNpmSearchObject({
           packageName: p.name,
