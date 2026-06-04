@@ -6,13 +6,18 @@ import {
   withSpan,
 } from "@hootifactory/observability";
 import { Errors, type HttpMethod, registryPlugins } from "@hootifactory/registry";
-import { buildRegistryRequestContext, resolveRepository } from "@hootifactory/registry-application";
+import {
+  buildRegistryRequestContext,
+  dispatchByRepoKind,
+  repoFormatSpanAttributes,
+  resolveRegistryRouteMatch,
+  resolveRepository,
+} from "@hootifactory/registry-application";
 import type { Context } from "hono";
 import { authorizeRoute, registryAuthorizationDeniedResponse } from "./registry-auth";
-import { dispatchByRepoKind } from "./registry-dispatch";
 import { registryErrorResponseForFormat } from "./registry-error-format";
-import { resolveRegistryRouteMatch } from "./registry-route-match";
-import { repoFormatSpanAttributes, stripBodyForFallbackHead } from "./registry-utils";
+import { stripBodyForFallbackHead } from "./registry-utils";
+import { dispatchVirtual } from "./registry-virtual";
 import { serveWebFallback } from "./registry-web";
 import { compressRegistryResponse } from "./response-compression";
 import type { AppEnv } from "./types";
@@ -138,7 +143,9 @@ export async function handleRegistryRequest(c: Context<AppEnv>): Promise<Respons
             });
           }
 
-          const res = await dispatchByRepoKind(repo.kind, adapter, match, c.req.raw, ctx);
+          const res = await dispatchByRepoKind(repo.kind, adapter, match, c.req.raw, ctx, {
+            dispatchVirtual,
+          });
           recordOutcome(res.status, res.status < 400 ? "ok" : "error");
           logger.debug("registry request completed", {
             repo: repo.name,

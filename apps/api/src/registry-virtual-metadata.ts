@@ -8,9 +8,8 @@ import {
   type RegistryRequestContext,
   type RouteMatch,
 } from "@hootifactory/registry";
-import { loadVirtualMembers } from "@hootifactory/registry-application";
+import { loadVirtualMembers, repoSpanAttributes } from "@hootifactory/registry-application";
 import { registryErrorToFormatResponse } from "./registry-error-format";
-import { repoSpanAttributes } from "./registry-utils";
 import { authorizeVirtualMembers } from "./registry-virtual-member";
 import { virtualNotFound } from "./registry-virtual-response";
 import {

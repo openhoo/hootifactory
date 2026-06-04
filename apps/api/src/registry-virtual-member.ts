@@ -6,9 +6,11 @@ import type {
   ResolvedRepo,
   RouteMatch,
 } from "@hootifactory/registry";
-import { buildRegistryRequestContext } from "@hootifactory/registry-application";
+import {
+  buildRegistryRequestContext,
+  repoSpanAttributes,
+} from "@hootifactory/registry-application";
 import { authorizeRoute, type RouteAuthorization } from "./registry-auth";
-import { repoSpanAttributes } from "./registry-utils";
 
 export interface AuthAttributeSpan {
   setAttributes(attributes: Record<string, string>): void;

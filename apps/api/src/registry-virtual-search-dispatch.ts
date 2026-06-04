@@ -6,9 +6,11 @@ import {
   type RegistryRequestContext,
   type RouteMatch,
 } from "@hootifactory/registry";
-import { loadVirtualMembers } from "@hootifactory/registry-application";
-import { adapterResponseOrRegistryError } from "./registry-adapter";
-import { repoSpanAttributes } from "./registry-utils";
+import {
+  adapterResponseOrRegistryError,
+  loadVirtualMembers,
+  repoSpanAttributes,
+} from "@hootifactory/registry-application";
 import { authorizeVirtualMembers } from "./registry-virtual-member";
 import {
   allNpmSearchResultsRequest,

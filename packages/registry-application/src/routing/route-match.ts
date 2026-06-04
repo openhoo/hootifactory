@@ -7,7 +7,7 @@ import {
   type ResolvedRepo,
   type RouteMatch,
 } from "@hootifactory/registry";
-import { mountSegment } from "@hootifactory/registry-application";
+import { mountSegment } from "../repositories/paths";
 
 export interface RegistryRouteMatchResolution {
   match: RouteMatch;

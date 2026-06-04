@@ -2,19 +2,119 @@ import { BoundedLruCache, InFlightDeduper } from "@hootifactory/core";
 import { logger, withSpan } from "@hootifactory/observability";
 import {
   Errors,
+  type OciErrorCode,
+  RegistryError,
   type RegistryPlugin,
   type RegistryRequestContext,
   type RouteMatch,
+  registryErrorToFormatResponse,
 } from "@hootifactory/registry";
-import { loadUpstream } from "@hootifactory/registry-application";
-import { adapterResponse } from "./registry-adapter";
-import { isReadMethod } from "./registry-utils";
+import { loadUpstream } from "../repositories/upstreams";
+import { isReadMethod, repoFormatSpanAttributes } from "./telemetry";
 
 const PROXY_REFRESH_FRESHNESS_CACHE_LIMIT = 2048;
+const REGISTRY_MISS_CODES = new Set<OciErrorCode>([
+  "BLOB_UNKNOWN",
+  "MANIFEST_UNKNOWN",
+  "NAME_UNKNOWN",
+  "NOT_FOUND",
+]);
+
 const proxyRefreshFreshUntil = new BoundedLruCache<string, number>(
   PROXY_REFRESH_FRESHNESS_CACHE_LIMIT,
 );
 const proxyRefreshInFlight = new InFlightDeduper<string, boolean>();
+
+type VirtualRegistryDispatch = (
+  adapter: RegistryPlugin,
+  match: RouteMatch,
+  req: Request,
+  ctx: RegistryRequestContext,
+) => Promise<Response>;
+
+export interface RegistryKindDispatchOptions {
+  dispatchVirtual?: VirtualRegistryDispatch;
+}
+
+function isRegistryMiss(err: unknown): err is RegistryError {
+  return err instanceof RegistryError && err.status === 404 && REGISTRY_MISS_CODES.has(err.code);
+}
+
+export async function adapterResponse(
+  adapter: RegistryPlugin,
+  match: RouteMatch,
+  req: Request,
+  ctx: RegistryRequestContext,
+): Promise<Response> {
+  return withSpan(
+    "registry.adapter.handle",
+    {
+      ...repoFormatSpanAttributes(adapter, ctx.repo, match.entry.handlerId),
+      "registry.route": match.entry.pattern,
+      "http.request.method": req.method,
+    },
+    async (span) => {
+      try {
+        const response = await adapter.handle(match, req, ctx);
+        span.setAttribute("http.response.status_code", response.status);
+        logger.debug("registry adapter handled request", {
+          format: adapter.format,
+          repo: ctx.repo.name,
+          handler: match.entry.handlerId,
+          status: response.status,
+        });
+        return response;
+      } catch (err) {
+        if (err instanceof RegistryError && !["docker", "helm", "oci"].includes(adapter.format)) {
+          const response = registryErrorToFormatResponse(adapter.format, err);
+          span.setAttribute("http.response.status_code", response.status);
+          logger.debug("registry adapter error", {
+            format: adapter.format,
+            repo: ctx.repo.name,
+            handler: match.entry.handlerId,
+            code: err.code,
+          });
+          return response;
+        }
+        if (isRegistryMiss(err)) {
+          const response =
+            adapter.format === "npm"
+              ? Response.json({ error: err.message }, { status: err.status })
+              : err.toResponse();
+          span.setAttribute("http.response.status_code", response.status);
+          span.addEvent("registry.adapter.miss", {
+            "registry.error.code": err.code,
+            "registry.error.message": err.message,
+          });
+          logger.debug("registry adapter miss", {
+            format: adapter.format,
+            repo: ctx.repo.name,
+            handler: match.entry.handlerId,
+            code: err.code,
+          });
+          return response;
+        }
+        throw err;
+      }
+    },
+  );
+}
+
+export async function adapterResponseOrRegistryError(
+  adapter: RegistryPlugin,
+  match: RouteMatch,
+  req: Request,
+  ctx: RegistryRequestContext,
+): Promise<Response> {
+  try {
+    return await adapterResponse(adapter, match, req, ctx);
+  } catch (err) {
+    if (err instanceof RegistryError) {
+      return registryErrorToFormatResponse(adapter.format, err);
+    }
+    throw err;
+  }
+}
 
 async function proxyError(response: Response): Promise<Response> {
   return new Response(await response.text(), {
@@ -126,4 +226,24 @@ export async function dispatchProxy(
       return proxyError(local);
     },
   );
+}
+
+/** Route a matched request to the virtual/proxy/hosted dispatch path by repo kind. */
+export function dispatchByRepoKind(
+  kind: string,
+  adapter: RegistryPlugin,
+  match: RouteMatch,
+  req: Request,
+  ctx: RegistryRequestContext,
+  opts: RegistryKindDispatchOptions = {},
+): Promise<Response> {
+  if (kind === "virtual") {
+    if (!opts.dispatchVirtual) {
+      throw Errors.unsupported({ reason: "virtual repository dispatch is not configured" });
+    }
+    return opts.dispatchVirtual(adapter, match, req, ctx);
+  }
+  return kind === "proxy"
+    ? dispatchProxy(adapter, match, req, ctx)
+    : adapterResponse(adapter, match, req, ctx);
 }

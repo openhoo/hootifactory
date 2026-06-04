@@ -5,7 +5,7 @@ import {
   type ResolvedRepo,
   type RouteEntry,
 } from "@hootifactory/registry";
-import { resolveRegistryRouteMatch } from "./registry-route-match";
+import { resolveRegistryRouteMatch } from "./route-match";
 
 const routes = compileRoutes([
   { method: "GET", pattern: "/:pkg+", handlerId: "packument" },
