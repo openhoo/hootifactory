@@ -374,4 +374,62 @@ test.describe("governance: quotas + retention", () => {
     expect(blocked.status()).toBe(403);
     expect((await blocked.json()).errors[0].message).toBe("storage quota exceeded");
   });
+
+  test("artifact quota credits OCI manifest digest deletes", async ({ baseURL }) => {
+    const owner = await setupOwner(baseURL!);
+    const repo = (
+      await (
+        await createRepo(owner.ctx, owner.orgId, {
+          name: uniq("quota-oci-delete"),
+          format: "docker",
+        })
+      ).json()
+    ).repository as { mountPath: string };
+    const image = uniq("quota-delete");
+    const config = Buffer.from("{}");
+    const layer = Buffer.from("quota delete layer");
+    const configDigest = sha256(config);
+    const layerDigest = sha256(layer);
+    const quotaState = async (): Promise<{ usedArtifacts: number }> => {
+      const res = await owner.ctx.get(`/api/v1/orgs/${owner.orgId}/quota`);
+      expect(res.status()).toBe(200);
+      return ((await res.json()) as { data: { usedArtifacts: number } }).data;
+    };
+
+    expect((await uploadOciBlob(owner.ctx, repo.mountPath, image, config)).status()).toBe(201);
+    expect((await uploadOciBlob(owner.ctx, repo.mountPath, image, layer)).status()).toBe(201);
+    await owner.ctx.post(`/api/orgs/${owner.orgId}/quota`, { data: { maxArtifacts: 1 } });
+
+    const pushed = await putOciManifest(
+      owner.ctx,
+      repo.mountPath,
+      image,
+      "v1",
+      configDigest,
+      layerDigest,
+      layer.byteLength,
+    );
+    expect(pushed.status()).toBe(201);
+    const digest = pushed.headers()["docker-content-digest"];
+    expect(digest).toMatch(/^sha256:/);
+    expect((await quotaState()).usedArtifacts).toBe(1);
+
+    const deleted = await owner.ctx.delete(`/${repo.mountPath}/${image}/manifests/${digest}`);
+    expect(deleted.status()).toBe(202);
+    expect((await quotaState()).usedArtifacts).toBe(0);
+
+    expect((await uploadOciBlob(owner.ctx, repo.mountPath, image, config)).status()).toBe(201);
+    expect((await uploadOciBlob(owner.ctx, repo.mountPath, image, layer)).status()).toBe(201);
+    const secondPush = await putOciManifest(
+      owner.ctx,
+      repo.mountPath,
+      image,
+      "v2",
+      configDigest,
+      layerDigest,
+      layer.byteLength,
+    );
+    expect(secondPush.status()).toBe(201);
+    expect((await quotaState()).usedArtifacts).toBe(1);
+  });
 });

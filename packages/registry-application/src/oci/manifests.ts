@@ -12,6 +12,7 @@ import {
   sql,
 } from "@hootifactory/db";
 import type { RegistryRequestContext } from "@hootifactory/registry";
+import { adjustArtifactsUsedTx } from "../governance/quota";
 
 export type OciManifestRow = typeof ociManifests.$inferSelect;
 
@@ -227,19 +228,27 @@ export async function deleteOciTagsForManifest(opts: {
 }
 
 export async function markOciPackageVersionsDeletedByDigest(opts: {
+  orgId: string;
   packageId: string;
   digest: string;
-}): Promise<void> {
-  await db
-    .update(packageVersions)
-    .set({ deletedAt: new Date() })
-    .where(
-      and(
-        eq(packageVersions.packageId, opts.packageId),
-        isNull(packageVersions.deletedAt),
-        packageVersionDigestEquals(opts.digest),
-      ),
-    );
+}): Promise<number> {
+  return db.transaction(async (tx) => {
+    const deleted = await tx
+      .update(packageVersions)
+      .set({ deletedAt: new Date() })
+      .where(
+        and(
+          eq(packageVersions.packageId, opts.packageId),
+          isNull(packageVersions.deletedAt),
+          packageVersionDigestEquals(opts.digest),
+        ),
+      )
+      .returning({ id: packageVersions.id });
+    if (deleted.length > 0) {
+      await adjustArtifactsUsedTx(tx, opts.orgId, -deleted.length);
+    }
+    return deleted.length;
+  });
 }
 
 export async function deleteOciManifestIfUnassociated(

@@ -400,6 +400,7 @@ export function createRegistryDataService(ctx: RegistryRequestContext): Registry
       },
       markPackageVersionsDeletedByDigest: (input) =>
         markOciPackageVersionsDeletedByDigest({
+          orgId: ctx.repo.orgId,
           packageId: packageId(ctx, input.package),
           digest: input.digest,
         }),

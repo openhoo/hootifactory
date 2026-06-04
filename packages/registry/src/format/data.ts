@@ -408,7 +408,7 @@ export interface RegistryDataService {
     markPackageVersionsDeletedByDigest(input: {
       package: RegistryPackageHandle;
       digest: string;
-    }): Promise<void>;
+    }): Promise<number>;
     deleteManifestIfUnassociated(input: {
       manifest: RegistryOciManifestHandle;
       digest: string;
