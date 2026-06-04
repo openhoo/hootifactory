@@ -1,0 +1,1 @@
+CREATE INDEX "package_versions_live_created_idx" ON "package_versions" USING btree ("package_id","created_at","id") WHERE "package_versions"."deleted_at" is null;
