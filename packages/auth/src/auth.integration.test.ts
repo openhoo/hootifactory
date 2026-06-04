@@ -10,7 +10,7 @@ import {
   roleBindings,
   users,
 } from "@hootifactory/db";
-import { authorize, effectiveRoleFor, resolveUserRole } from "./authorize";
+import { authorize, createRequestAuthorizer, effectiveRoleFor, resolveUserRole } from "./authorize";
 import {
   consumeAuthEmailToken,
   createAuthEmailToken,
@@ -210,6 +210,40 @@ describe("api tokens (DB)", () => {
     });
     expect(decision.allowed).toBe(false);
     expect(decision.code).toBe("insufficient_role");
+  });
+
+  test("request authorizer memoizes effective roles by principal and repository", async () => {
+    const [repo] = await db
+      .insert(repositories)
+      .values({
+        orgId,
+        name: `repo-${crypto.randomUUID().slice(0, 8)}`,
+        format: "npm",
+        mountPath: `npm/test-${crypto.randomUUID().slice(0, 8)}`,
+        storagePrefix: `${orgId}/auth-test`,
+      })
+      .returning();
+    const principal: Principal = { kind: "user", userId, username: "alice" };
+    const resource = {
+      type: "repository" as const,
+      orgId,
+      repositoryId: repo!.id,
+      repositoryName: repo!.name,
+    };
+    const requestAuthorize = createRequestAuthorizer(principal);
+
+    await expect(requestAuthorize("write", resource)).resolves.toMatchObject({ allowed: true });
+    await db.insert(roleBindings).values({
+      orgId,
+      userId,
+      repositoryId: repo!.id,
+      role: "viewer",
+    });
+    await expect(requestAuthorize("write", resource)).resolves.toMatchObject({ allowed: true });
+    await expect(authorize(principal, "write", resource)).resolves.toMatchObject({
+      allowed: false,
+      code: "insufficient_role",
+    });
   });
 
   test("token-scoped repo bindings override a token's org role", async () => {

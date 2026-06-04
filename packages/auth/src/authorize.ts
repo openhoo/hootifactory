@@ -8,6 +8,7 @@ import {
   roleBindings,
 } from "@hootifactory/db";
 import { can } from "./can";
+import { memoizeByKey } from "./memo";
 import { type Action, maxRole, minRole, type RoleName } from "./permissions";
 import type { Decision, Principal, ResourceRef } from "./principal";
 
@@ -92,21 +93,30 @@ export async function effectiveRoleFor(
     if (!resource.orgId) return principal.role;
 
     let role: RoleName | null = null;
+    let ownerRole: RoleName | null = null;
     if (principal.tokenId) {
       const tokenId = principal.tokenId;
-      role =
-        (resource.repositoryId
-          ? await roleBindingRole({ tokenId }, resource.orgId, resource.repositoryId)
-          : null) ?? (await roleBindingRole({ tokenId }, resource.orgId));
-    }
-
-    role ??= principal.role;
-    if (principal.ownerUserId) {
-      const ownerRole = await resolveUserRole(
+      const [repoBindingRole, orgBindingRole, resolvedOwnerRole] = await Promise.all([
+        resource.repositoryId
+          ? roleBindingRole({ tokenId }, resource.orgId, resource.repositoryId)
+          : Promise.resolve(null),
+        roleBindingRole({ tokenId }, resource.orgId),
+        principal.ownerUserId
+          ? resolveUserRole(principal.ownerUserId, resource.orgId, resource.repositoryId)
+          : Promise.resolve(null),
+      ]);
+      role = repoBindingRole ?? orgBindingRole;
+      ownerRole = resolvedOwnerRole;
+    } else if (principal.ownerUserId) {
+      ownerRole = await resolveUserRole(
         principal.ownerUserId,
         resource.orgId,
         resource.repositoryId,
       );
+    }
+
+    role ??= principal.role;
+    if (principal.ownerUserId) {
       if (!role) return ownerRole;
       return ownerRole ? minRole(role, ownerRole) : null;
     }
@@ -123,4 +133,37 @@ export async function authorize(
 ): Promise<Decision> {
   const effectiveRole = await effectiveRoleFor(principal, resource);
   return can({ principal, action, resource, effectiveRole });
+}
+
+function principalRoleCacheKey(principal: Principal): string {
+  if (principal.kind === "user") return `user:${principal.userId}`;
+  if (principal.kind === "token") {
+    return `token:${principal.tokenId ?? ""}:${principal.ownerUserId ?? ""}:${principal.role ?? ""}`;
+  }
+  if (principal.kind === "registryToken") return `registry:${principal.subject}`;
+  return principal.kind;
+}
+
+function resourceRoleCacheKey(principal: Principal, resource: ResourceRef): string {
+  return [principalRoleCacheKey(principal), resource.orgId ?? "", resource.repositoryId ?? ""].join(
+    "\0",
+  );
+}
+
+export function createRequestAuthorizer(
+  principal: Principal,
+): (action: Action, resource: ResourceRef) => Promise<Decision> {
+  const resourcesByKey = new Map<string, ResourceRef>();
+  const effectiveRoleByKey = memoizeByKey((key: string) => {
+    const resource = resourcesByKey.get(key);
+    if (!resource) throw new Error("missing authorization resource cache entry");
+    return effectiveRoleFor(principal, resource);
+  });
+
+  return async (action: Action, resource: ResourceRef) => {
+    const key = resourceRoleCacheKey(principal, resource);
+    resourcesByKey.set(key, resource);
+    const effectiveRole = await effectiveRoleByKey(key);
+    return can({ principal, action, resource, effectiveRole });
+  };
 }

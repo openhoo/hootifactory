@@ -1,4 +1,9 @@
-import { type Action, authorize, type Principal, type ResourceRef } from "@hootifactory/auth";
+import {
+  type Action,
+  createRequestAuthorizer,
+  type Principal,
+  type ResourceRef,
+} from "@hootifactory/auth";
 import { env } from "@hootifactory/config";
 import { artifacts, db, scanOutbox } from "@hootifactory/db";
 import { addSpanEvent, logger, withSpan } from "@hootifactory/observability";
@@ -81,6 +86,7 @@ export function buildRegistryRequestContext(
   repo: ResolvedRepo,
   principal: Principal,
 ): RegistryRequestContext {
+  const authorize = createRequestAuthorizer(principal);
   const ctx: RegistryRequestContext = {
     repo,
     principal,
@@ -93,7 +99,7 @@ export function buildRegistryRequestContext(
     },
     log: logger,
     authorize: (action: Action, resource?: Partial<ResourceRef>) =>
-      authorize(principal, action, {
+      authorize(action, {
         type: "repository",
         orgId: repo.orgId,
         repositoryId: repo.id,
