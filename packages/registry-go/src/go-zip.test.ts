@@ -182,7 +182,7 @@ describe("Go module zip helpers", () => {
     ).toBe("zip entry size does not match header");
   });
 
-  test("bounds deflated zip entries by declared and cumulative sizes", () => {
+  test("bounds the consumed go.mod entry without inflating every deflated file", () => {
     const bomb = deflateRawSync(Buffer.alloc(1024 * 1024));
     expect(
       validateGoModuleZip(
@@ -190,6 +190,21 @@ describe("Go module zip helpers", () => {
           { name: "example.com/hoot@v1.2.3/go.mod", data: "module example.com/hoot\n" },
           {
             name: "example.com/hoot@v1.2.3/bomb.bin",
+            data: bomb,
+            method: 8,
+            declaredUncompressedSize: 1,
+          },
+        ]),
+        "example.com/hoot",
+        "v1.2.3",
+      ),
+    ).toBeNull();
+
+    expect(
+      validateGoModuleZip(
+        makeStoredZip([
+          {
+            name: "example.com/hoot@v1.2.3/go.mod",
             data: bomb,
             method: 8,
             declaredUncompressedSize: 1,

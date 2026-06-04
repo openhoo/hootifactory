@@ -195,20 +195,28 @@ export function validateGoModuleZipResult(
     if (entry.name === `${prefix}LICENSE` && entry.uncompressedSize > MAX_LICENSE_BYTES) {
       return { ok: false, error: "LICENSE is too large" };
     }
+    if (entry.method !== 0 && entry.method !== 8) {
+      return { ok: false, error: "zip entry uses an unsupported compression method" };
+    }
 
     const data = readEntryData(bytes, view, entry, decoder);
     if (typeof data === "string") return { ok: false, error: data };
-    const inflated = inflateEntryData(
-      data,
-      entry.method,
-      Math.min(entry.uncompressedSize + 1, MAX_ZIP_CONTENT_BYTES - totalUncompressed + 1),
-    );
-    if (typeof inflated === "string") return { ok: false, error: inflated };
-    if (inflated.byteLength !== entry.uncompressedSize) {
+    if (entry.method === 0 && data.byteLength !== entry.uncompressedSize) {
       return { ok: false, error: "zip entry size does not match header" };
     }
-    if (isRootGoMod) goMod = decoder.decode(inflated);
-    totalUncompressed += inflated.byteLength;
+    if (isRootGoMod) {
+      const inflated = inflateEntryData(
+        data,
+        entry.method,
+        Math.min(entry.uncompressedSize + 1, MAX_GO_MOD_BYTES + 1),
+      );
+      if (typeof inflated === "string") return { ok: false, error: inflated };
+      if (inflated.byteLength !== entry.uncompressedSize) {
+        return { ok: false, error: "zip entry size does not match header" };
+      }
+      goMod = decoder.decode(inflated);
+    }
+    totalUncompressed += entry.uncompressedSize;
     pos = entry.nextPos;
   }
   if (pos > centralOffset + centralSize) {
