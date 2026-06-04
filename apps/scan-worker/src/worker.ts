@@ -1,3 +1,4 @@
+import { mapWithBoundedConcurrency } from "@hootifactory/core";
 import { db, eq, scanOutbox, sql } from "@hootifactory/db";
 import {
   initializeObservability,
@@ -6,7 +7,7 @@ import {
   shutdownObservability,
   withSpan,
 } from "@hootifactory/observability";
-import { intEnv } from "@hootifactory/queue";
+import { createMaintenanceScheduler, intEnv } from "@hootifactory/queue";
 import {
   reapExpiredOciUploadSessions,
   sweepUnreferencedCasBlobs,
@@ -113,21 +114,6 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function runWithConcurrency<T>(
-  items: T[],
-  concurrency: number,
-  worker: (item: T) => Promise<void>,
-): Promise<void> {
-  let next = 0;
-  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
-    while (next < items.length) {
-      const item = items[next++];
-      if (item !== undefined) await worker(item);
-    }
-  });
-  await Promise.all(workers);
-}
-
 let ready = false;
 let healthServer: ReturnType<typeof Bun.serve> | null = null;
 if (process.env.WORKER_PORT) {
@@ -187,13 +173,7 @@ logger.info("scan worker starting", {
 });
 ready = true;
 
-let nextUploadReapAt = 0;
-let nextBlobGcAt = 0;
-
-async function reapExpiredUploadsIfDue(): Promise<void> {
-  const now = Date.now();
-  if (now < nextUploadReapAt) return;
-  nextUploadReapAt = now + uploadReaperIntervalSeconds * 1000;
+async function reapExpiredUploads(): Promise<void> {
   try {
     const result = await withSpan(
       "oci.upload_sessions.reap_expired",
@@ -208,10 +188,7 @@ async function reapExpiredUploadsIfDue(): Promise<void> {
   }
 }
 
-async function sweepBlobsIfDue(): Promise<void> {
-  const now = Date.now();
-  if (now < nextBlobGcAt) return;
-  nextBlobGcAt = now + blobGcIntervalSeconds * 1000;
+async function sweepBlobs(): Promise<void> {
   try {
     const result = await withSpan(
       "blob_gc.sweep",
@@ -233,9 +210,21 @@ async function sweepBlobsIfDue(): Promise<void> {
   }
 }
 
+const maintenance = createMaintenanceScheduler([
+  {
+    name: "oci.upload_sessions.reap_expired",
+    intervalMs: uploadReaperIntervalSeconds * 1000,
+    run: reapExpiredUploads,
+  },
+  {
+    name: "blob_gc.sweep",
+    intervalMs: blobGcIntervalSeconds * 1000,
+    run: sweepBlobs,
+  },
+]);
+
 while (!shuttingDown) {
-  await reapExpiredUploadsIfDue();
-  await sweepBlobsIfDue();
+  await maintenance.runDue();
   const intents = await withSpan(
     "scan.outbox.claim",
     { "worker.batch_size": workerBatchSize },
@@ -245,7 +234,7 @@ while (!shuttingDown) {
     await sleep(pollingIntervalSeconds * 1000);
     continue;
   }
-  await runWithConcurrency(intents, workerConcurrency, async (intent) => {
+  await mapWithBoundedConcurrency(intents, workerConcurrency, async (intent) => {
     return withSpan(
       "scan.outbox.process",
       {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isReservedWebPath, webCacheHeaders } from "./registry-web";
+import { isReservedWebPath, webCacheHeaders } from "./web-fallback";
 
 describe("web fallback helpers", () => {
   test("detects reserved server path segments without prefix collisions", () => {

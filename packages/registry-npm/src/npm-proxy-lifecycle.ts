@@ -1,4 +1,8 @@
-import { type RegistryRequestContext, safeFetch } from "@hootifactory/registry";
+import {
+  mapWithBoundedConcurrency,
+  type RegistryRequestContext,
+  safeFetch,
+} from "@hootifactory/registry";
 import { responseJson } from "./npm-http";
 import {
   type NpmTarballDigests,
@@ -54,7 +58,7 @@ export async function handleNpmProxyIngest(
     isValidNpmVersion(version),
   );
 
-  await runWithConcurrency(
+  await mapWithBoundedConcurrency(
     versionEntries,
     NPM_PROXY_MIRROR_CONCURRENCY,
     async ([version, manifestRaw]) => {
@@ -205,23 +209,6 @@ async function fetchVerifiedNpmTarball(input: {
   return upstreamDistMatchesDigests(input.upstreamDist, result.digests, result.tarball)
     ? result
     : null;
-}
-
-async function runWithConcurrency<T>(
-  items: T[],
-  limit: number,
-  run: (item: T) => Promise<void>,
-): Promise<void> {
-  let next = 0;
-  const workerCount = Math.min(limit, items.length);
-  await Promise.all(
-    Array.from({ length: workerCount }, async () => {
-      while (next < items.length) {
-        const item = items[next++];
-        if (item !== undefined) await run(item);
-      }
-    }),
-  );
 }
 
 async function responseBytesWithDigests(

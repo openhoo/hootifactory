@@ -12,13 +12,13 @@ import {
   repoFormatSpanAttributes,
   resolveRegistryRouteMatch,
   resolveRepository,
+  serveWebFallback,
 } from "@hootifactory/registry-application";
 import type { Context } from "hono";
 import { authorizeRoute, registryAuthorizationDeniedResponse } from "./registry-auth";
 import { registryErrorResponseForFormat } from "./registry-error-format";
 import { stripBodyForFallbackHead } from "./registry-utils";
 import { dispatchVirtual } from "./registry-virtual";
-import { serveWebFallback } from "./registry-web";
 import { compressRegistryResponse } from "./response-compression";
 import type { AppEnv } from "./types";
 

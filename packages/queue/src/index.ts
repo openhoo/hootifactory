@@ -69,5 +69,10 @@ export async function stopBoss(): Promise<void> {
   }
 }
 
+export {
+  createMaintenanceScheduler,
+  type MaintenanceScheduler,
+  type MaintenanceTask,
+} from "./maintenance";
 export { intEnv, type RunWorkerConfig, runWorker } from "./runtime";
 export type { PgBoss };
