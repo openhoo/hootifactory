@@ -216,7 +216,7 @@ export async function storeBlobWithRef(
     .where(and(eq(repositories.orgId, ctx.repo.orgId), eq(blobRefs.digest, digest)))
     .limit(1);
   if (!existingOrgRef) await assertStorageQuota(ctx, opts.data.byteLength);
-  const put = await blobStore.put(opts.data);
+  const put = await blobStore.put(opts.data, digest);
   try {
     return await db.transaction((tx) => commitUploadedBlobRefTx(tx, ctx, put, opts));
   } catch (err) {

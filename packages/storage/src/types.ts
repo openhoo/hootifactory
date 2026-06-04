@@ -31,8 +31,11 @@ export interface BlobStore {
   getRange(digest: string, start: number, end?: number): ReadableStream<Uint8Array>;
   /** Read the whole blob into memory (small blobs only — manifests, metadata). */
   getBytes(digest: string): Promise<Uint8Array>;
-  /** Hash + dedup + store in-memory data. */
-  put(data: Exclude<BlobData, ReadableStream<Uint8Array>>): Promise<PutResult>;
+  /** Hash + dedup + store in-memory data. `knownDigest` may be supplied by callers that already hashed the same bytes. */
+  put(
+    data: Exclude<BlobData, ReadableStream<Uint8Array>>,
+    knownDigest?: string,
+  ): Promise<PutResult>;
   /** Hash + dedup + store streaming data without retaining the full payload in memory. */
   putStream(data: ReadableStream<Uint8Array>, expectedDigest?: string): Promise<PutResult>;
   /** GC only — removes bytes from the CAS. */

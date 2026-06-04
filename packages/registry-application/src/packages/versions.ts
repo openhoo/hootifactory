@@ -130,7 +130,7 @@ export async function upsertPackageVersionWithBlobRef(
         tx,
         [digest, previousDigestInput].filter((d): d is string => !!d),
       );
-      const rawPut = await blobStore.put(opts.blob.data);
+      const rawPut = await blobStore.put(opts.blob.data, digest);
       const put = { ...rawPut, refCreated: false };
       putForCleanup = put;
       const quota = await lockOrgQuotaTx(tx, ctx.repo.orgId);

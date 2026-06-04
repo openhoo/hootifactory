@@ -33,7 +33,7 @@ describe("S3BlobStore (MinIO integration)", () => {
     expect(head).toEqual(payload.slice(0, 5));
 
     // put again — deduped, no rewrite
-    const second = await store.put(payload);
+    const second = await store.put(payload, expectedDigest);
     expect(second.deduped).toBe(true);
     expect(second.digest).toBe(expectedDigest);
 

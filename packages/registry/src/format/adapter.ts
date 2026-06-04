@@ -105,7 +105,10 @@ export interface BlobStore {
   get(digest: string): ReadableStream<Uint8Array>;
   getRange(digest: string, start: number, end?: number): ReadableStream<Uint8Array>;
   getBytes(digest: string): Promise<Uint8Array>;
-  put(data: Exclude<BlobData, ReadableStream<Uint8Array>>): Promise<PutResult>;
+  put(
+    data: Exclude<BlobData, ReadableStream<Uint8Array>>,
+    knownDigest?: string,
+  ): Promise<PutResult>;
   putStream(data: ReadableStream<Uint8Array>, expectedDigest?: string): Promise<PutResult>;
   delete(digest: string): Promise<void>;
   presignGet(digest: string, expiresIn?: number): string;

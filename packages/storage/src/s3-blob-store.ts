@@ -127,9 +127,12 @@ export class S3BlobStore implements BlobStore {
     return new Uint8Array(await this.file(this.blobKey(digest)).arrayBuffer());
   }
 
-  async put(data: Exclude<BlobData, ReadableStream<Uint8Array>>): Promise<PutResult> {
+  async put(
+    data: Exclude<BlobData, ReadableStream<Uint8Array>>,
+    knownDigest?: string,
+  ): Promise<PutResult> {
     const bytes = await toBytes(data);
-    const digest = computeDigest(bytes);
+    const digest = knownDigest ?? computeDigest(bytes);
     const key = this.blobKey(digest);
     if (await this.existsKey(key)) {
       return { digest, size: bytes.byteLength, deduped: true };
