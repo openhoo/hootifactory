@@ -1,6 +1,3 @@
-import { createWriteStream } from "node:fs";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
-import { join } from "node:path";
 import { env } from "@hootifactory/config";
 import { createAsyncLimiter, mapWithBoundedConcurrency } from "@hootifactory/core";
 import { and, artifacts, db, eq, packages, packageVersions, repositories } from "@hootifactory/db";
@@ -14,63 +11,23 @@ import {
 import { type RegistryPlugin, registryPlugins } from "@hootifactory/registry";
 import { loadContentAddressableManifestRaw } from "@hootifactory/registry-application/content";
 import type { NormalizedFinding } from "@hootifactory/scan-core";
-import {
-  type AvailableScanners,
-  createMalwareScanner,
-  detectScanners,
-  osvScanDependencies,
-  runExternalScanners,
-  type ScannerRuntimeOptions,
-  scanDependencies,
-  scannerOptionsFromEnv,
-} from "@hootifactory/scanning";
-import { blobStore } from "@hootifactory/storage";
+import { osvScanDependencies, scanDependencies } from "@hootifactory/scanning";
+import { scanStoredBytes } from "./scan-bytes";
 import { collectPackageDependencies } from "./scan-dependencies";
 import { dedupeFindings } from "./scan-policy";
 import { applyPolicyDecision, markSkippedClean, persistScanResult } from "./scan-results";
+import { type ScannerRuntime, scannerRuntimeFromEnv } from "./scan-runtime";
 
 export { dedupeFindings } from "./scan-policy";
 export { recordScanFailure } from "./scan-results";
+export {
+  externalContentScannerRequired,
+  scannerRuntimeFromEnv,
+  shouldFailForMissingExternalScanner,
+} from "./scan-runtime";
 export { mapWithBoundedConcurrency };
 
 const MANIFEST_REFERENCE_SCAN_CONCURRENCY = 3;
-
-export function externalContentScannerRequired(options: ScannerRuntimeOptions): boolean {
-  return (
-    Boolean(options.clamavRestUrl) ||
-    Boolean(options.trivyServerUrl) ||
-    (options.cliRuntime ?? "docker") !== "disabled"
-  );
-}
-
-export function externalContentScannerAvailable(scanners: AvailableScanners): boolean {
-  return scanners.grype || scanners.trivy || scanners.clamav;
-}
-
-export function shouldFailForMissingExternalScanner(
-  options: ScannerRuntimeOptions,
-  scanners: AvailableScanners,
-): boolean {
-  return externalContentScannerRequired(options) && !externalContentScannerAvailable(scanners);
-}
-
-export interface ScannerRuntime {
-  scannerOptions: ScannerRuntimeOptions;
-  scanners: AvailableScanners;
-}
-
-export function scannerRuntimeFromEnv(): ScannerRuntime {
-  const scannerOptions = scannerOptionsFromEnv();
-  return { scannerOptions, scanners: detectScanners(scannerOptions) };
-}
-
-function unavailableExternalScannerMessage(options: ScannerRuntimeOptions): string {
-  return [
-    "external scanner runtime is configured but no content scanner is available",
-    `(SCANNER_CLI_RUNTIME=${options.cliRuntime ?? "docker"})`,
-    "set SCANNER_CLI_RUNTIME=disabled for heuristic-only scanning or configure Grype, Trivy, or ClamAV",
-  ].join("; ");
-}
 
 /** Run the scan pipeline for one artifact and apply the policy decision. */
 export async function processScan(
@@ -161,135 +118,19 @@ async function processScanInner(artifactId: string, scannerRuntime: ScannerRunti
   });
 
   let scannedBytePayload = false;
-  async function scanStoredByteStream(digest: string, path?: string): Promise<NormalizedFinding[]> {
-    const scanner = createMalwareScanner();
-    const reader = blobStore.get(digest).getReader();
-    const out = path ? createWriteStream(path, { flags: "wx" }) : null;
-    let size = 0;
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        size += value.byteLength;
-        if (size > env.SCAN_MAX_BYTES) {
-          addSpanEvent("scan.bytes_too_large", { "artifact.size": size });
-          throw new Error(
-            `blob ${digest} exceeds SCAN_MAX_BYTES (${size} > ${env.SCAN_MAX_BYTES})`,
-          );
-        }
-        scanner.scan(value);
-        if (out) {
-          await new Promise<void>((resolve, reject) => {
-            out.write(value, (err) => (err ? reject(err) : resolve()));
-          });
-        }
-      }
-      if (out) {
-        await new Promise<void>((resolve, reject) => {
-          out.end((err?: Error | null) => (err ? reject(err) : resolve()));
-        });
-      }
-      return scanner.findings();
-    } catch (err) {
-      out?.destroy();
-      throw err;
-    } finally {
-      reader.releaseLock();
-    }
-  }
-
-  async function scanStoredBytes(
+  async function scanArtifactBytes(
     digest: string,
     opts: { allowMissing?: boolean } = {},
   ): Promise<boolean> {
-    if (scannedBlobDigests.has(digest)) return true;
-    scannedBlobDigests.add(digest);
-    return withSpan("scan.bytes", { "artifact.digest": digest }, async (span) => {
-      const stat = await blobStore.stat(digest);
-      if (!stat) {
-        span.setAttribute("scan.bytes.available", false);
-        addSpanEvent("scan.bytes_missing", { "artifact.digest": digest });
-        if (opts.allowMissing) return false;
-        throw new Error(`blob bytes missing for artifact ${digest}`);
-      }
-      span.setAttributes({
-        "scan.bytes.available": true,
-        "artifact.size": stat.size,
-        "scan.max_bytes": env.SCAN_MAX_BYTES,
-      });
-      if (stat.size > env.SCAN_MAX_BYTES) {
-        addSpanEvent("scan.bytes_too_large", { "artifact.size": stat.size });
-        throw new Error(
-          `blob ${digest} exceeds SCAN_MAX_BYTES (${stat.size} > ${env.SCAN_MAX_BYTES})`,
-        );
-      }
-
-      span.setAttributes({
-        "scan.external.grype": Boolean(scannerRuntime.scanners.grype),
-        "scan.external.trivy": Boolean(scannerRuntime.scanners.trivy),
-        "scan.external.clamav": Boolean(scannerRuntime.scanners.clamav),
-      });
-      if (
-        shouldFailForMissingExternalScanner(scannerRuntime.scannerOptions, scannerRuntime.scanners)
-      ) {
-        const message = unavailableExternalScannerMessage(scannerRuntime.scannerOptions);
-        addSpanEvent("scan.external_unavailable", {
-          "scan.cli_runtime": scannerRuntime.scannerOptions.cliRuntime ?? "docker",
-        });
-        logger.warn("external scanner runtime unavailable", {
-          cliRuntime: scannerRuntime.scannerOptions.cliRuntime ?? "docker",
-          scanners: scannerRuntime.scanners,
-        });
-        throw new Error(message);
-      }
-      const shouldRunExternalScanners =
-        scannerRuntime.scanners.grype ||
-        scannerRuntime.scanners.trivy ||
-        scannerRuntime.scanners.clamav;
-      let dir: string | null = null;
-      try {
-        let path: string | undefined;
-        if (shouldRunExternalScanners) {
-          const base = env.SCAN_SCRATCH_DIR.replace(/\/+$/, "");
-          await mkdir(base, { recursive: true });
-          dir = await mkdtemp(join(base, "scan-"));
-          path = join(dir, digest.replace(/[^a-z0-9]/gi, "_"));
-        }
-
-        let malwareFindings: NormalizedFinding[];
-        try {
-          malwareFindings = await scanStoredByteStream(digest, path);
-        } catch (err) {
-          addSpanEvent("scan.bytes_read_failed", { "artifact.digest": digest });
-          throw err;
-        }
-        scannedBytePayload = true;
-        found.push(...malwareFindings);
-        span.setAttribute("scan.malware.findings", malwareFindings.length);
-
-        if (shouldRunExternalScanners && path) {
-          const bytesForRestClamAv = scannerRuntime.scannerOptions.clamavRestUrl
-            ? () => Bun.file(path).bytes()
-            : undefined;
-          const externalFindings = await runExternalScanners(
-            path,
-            bytesForRestClamAv,
-            scannerRuntime.scannerOptions,
-            scannerRuntime.scanners,
-          );
-          found.push(...externalFindings);
-          span.setAttribute("scan.external.findings", externalFindings.length);
-        }
-      } catch (err) {
-        if (err instanceof Error && err.message.includes("SCAN_MAX_BYTES")) throw err;
-        addSpanEvent("scan.external_failed", { "error.message": String(err) });
-        logger.error("external scanner failed", { error: err });
-        throw err;
-      } finally {
-        if (dir) await rm(dir, { recursive: true, force: true }).catch(() => {});
-      }
-      return true;
+    const result = await scanStoredBytes({
+      digest,
+      scannerRuntime,
+      scannedBlobDigests,
+      allowMissing: opts.allowMissing,
     });
+    found.push(...result.findings);
+    if (result.scannedPayload) scannedBytePayload = true;
+    return result.available;
   }
 
   async function scanContentAddressableManifestReferences(digest: string): Promise<number | null> {
@@ -331,7 +172,7 @@ async function processScanInner(artifactId: string, scannerRuntime: ScannerRunti
           await mapWithBoundedConcurrency(
             refs.blobs,
             MANIFEST_REFERENCE_SCAN_CONCURRENCY,
-            (blobDigest) => scanReferencedBytes(() => scanStoredBytes(blobDigest)),
+            (blobDigest) => scanReferencedBytes(() => scanArtifactBytes(blobDigest)),
           );
           for (const childDigest of refs.manifests) {
             if (!seen.has(childDigest)) queue.push(childDigest);
@@ -385,7 +226,7 @@ async function processScanInner(artifactId: string, scannerRuntime: ScannerRunti
   }
 
   const scansManifestGraph = Boolean(manifestGraph);
-  const scannedDirectBytes = await scanStoredBytes(art.digest, {
+  const scannedDirectBytes = await scanArtifactBytes(art.digest, {
     allowMissing: scansManifestGraph,
   });
   let scannedManifestGraph = false;
