@@ -1,4 +1,12 @@
-import { db, eq, repositories, type TokenGrant } from "@hootifactory/db";
+import {
+  and,
+  db,
+  eq,
+  isNotNull,
+  repositories,
+  roleBindings,
+  type TokenGrant,
+} from "@hootifactory/db";
 import { resolveUserRole } from "./authorize";
 import { type RoleName, roleAllows, roleOutranks } from "./permissions";
 import { scopeMayTargetRepo } from "./scope";
@@ -34,10 +42,29 @@ export async function validateTokenGrant({
           .from(repositories)
           .where(eq(repositories.orgId, orgId))
       : [];
+  const repoRoleById =
+    orgRepos.length > 0
+      ? new Map(
+          (
+            await db
+              .select({ repositoryId: roleBindings.repositoryId, role: roleBindings.role })
+              .from(roleBindings)
+              .where(
+                and(
+                  eq(roleBindings.userId, userId),
+                  eq(roleBindings.orgId, orgId),
+                  isNotNull(roleBindings.repositoryId),
+                ),
+              )
+          ).flatMap((row) => (row.repositoryId ? [[row.repositoryId, row.role] as const] : [])),
+        )
+      : new Map<string, RoleName>();
+  const effectiveRepoRole = (repoId: string): RoleName | null =>
+    repoRoleById.get(repoId) ?? creatorRole;
 
   if (requestedRole) {
     for (const repo of orgRepos) {
-      const repoRole = await resolveUserRole(userId, orgId, repo.id);
+      const repoRole = effectiveRepoRole(repo.id);
       if (!repoRole || roleOutranks(requestedRole, repoRole)) {
         return {
           ok: false,
@@ -56,7 +83,7 @@ export async function validateTokenGrant({
     if (!("repository" in grant) || !grant.repository) continue;
     for (const repo of orgRepos) {
       if (!scopeMayTargetRepo(grant.repository, repo)) continue;
-      const repoRole = await resolveUserRole(userId, orgId, repo.id);
+      const repoRole = effectiveRepoRole(repo.id);
       for (const action of grant.actions) {
         if (!repoRole || !roleAllows(repoRole, action)) {
           return {
