@@ -51,12 +51,6 @@ export function cargoBlobScope(name: string, version: string): string {
   return `${name}@${version}.crate`;
 }
 
-export function digestCargoCrate(bytes: Uint8Array): string {
-  const h = new Bun.CryptoHasher("sha256");
-  h.update(bytes);
-  return h.digest("hex");
-}
-
 export function buildCargoIndexEntry(
   metadata: CargoPublishMetadata,
   checksum: string,

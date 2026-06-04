@@ -1,10 +1,9 @@
-import { publishImmutableVersionBlob, type RegistryRequestContext } from "@hootifactory/registry";
 import {
-  buildCargoIndexEntry,
-  cargoBlobScope,
-  digestCargoCrate,
-  parseCargoPublishBody,
-} from "./cargo-publish";
+  digestHex,
+  publishImmutableVersionBlob,
+  type RegistryRequestContext,
+} from "@hootifactory/registry";
+import { buildCargoIndexEntry, cargoBlobScope, parseCargoPublishBody } from "./cargo-publish";
 import {
   type CargoIndexEntry,
   type CargoVersionMeta,
@@ -45,7 +44,6 @@ export async function handleCargoPublish(
   );
 
   const name = meta.name.toLowerCase();
-  const cksum = digestCargoCrate(crateBytes);
   const scope = cargoBlobScope(name, meta.vers);
   const result = await publishImmutableVersionBlob(ctx, {
     package: { name },
@@ -59,19 +57,22 @@ export async function handleCargoPublish(
       mediaType: "application/octet-stream",
     },
     metadata: (stored) =>
-      buildCargoPublishedMetadata(buildCargoIndexEntry(meta, cksum), stored.digest),
+      buildCargoPublishedMetadata(
+        buildCargoIndexEntry(meta, digestHex(stored.digest)),
+        stored.digest,
+      ),
     sizeBytes: crateBytes.length,
     scan: {
       name,
       version: meta.vers,
       mediaType: "application/octet-stream",
     },
-    asset: () => ({
+    asset: (stored) => ({
       role: "cargo_crate",
       scope,
       path: `${name}-${meta.vers}.crate`,
       mediaType: "application/octet-stream",
-      metadata: { checksum: cksum },
+      metadata: { checksum: digestHex(stored.digest) },
     }),
     versionConflict: async (pkg) =>
       cargoVersionAlreadyPublished(await ctx.data.versions.listNames(pkg), meta.vers),
