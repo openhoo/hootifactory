@@ -1,6 +1,11 @@
 import { type RegistryRequestContext, safeFetch } from "@hootifactory/registry";
 import { responseBytes, responseJson } from "./npm-http";
-import { upstreamDistMatchesBytes, upstreamDistMatchesStored } from "./npm-integrity";
+import {
+  computeNpmTarballDigests,
+  type NpmTarballDigests,
+  upstreamDistMatchesDigests,
+  upstreamDistMatchesStored,
+} from "./npm-integrity";
 import {
   buildNpmMirroredDist,
   isNpmTarballUrlOnUpstreamHost,
@@ -80,13 +85,14 @@ export async function handleNpmProxyIngest(
         return;
       }
 
-      const tarball = await fetchVerifiedNpmTarball({
+      const verified = await fetchVerifiedNpmTarball({
         tarballUrl,
         upstreamHost,
         upstreamDist,
         ctx,
       });
-      if (!tarball) return;
+      if (!verified) return;
+      const { digests, tarball } = verified;
 
       const targetPkg = await ensurePackage();
       const previousDigest = existingDist?.blobDigest;
@@ -95,6 +101,7 @@ export async function handleNpmProxyIngest(
         version,
         upstreamDist,
         tarball,
+        digests,
         baseUrl: ctx.baseUrl,
         mountPath: ctx.repo.mountPath,
       });
@@ -162,9 +169,9 @@ async function fetchNpmUpstreamPackument(
 async function fetchVerifiedNpmTarball(input: {
   tarballUrl: string;
   upstreamHost: string;
-  upstreamDist: Parameters<typeof upstreamDistMatchesBytes>[0];
+  upstreamDist: Parameters<typeof upstreamDistMatchesDigests>[0];
   ctx: RegistryRequestContext;
-}): Promise<Uint8Array | null> {
+}): Promise<{ tarball: Uint8Array; digests: NpmTarballDigests } | null> {
   let response: Response | null = null;
   try {
     // Upstream packument JSON is untrusted; tarballs must stay on the configured host.
@@ -179,7 +186,10 @@ async function fetchVerifiedNpmTarball(input: {
   if (!response?.ok) return null;
   const tarball = await responseBytes(response, input.ctx.limits.maxUploadBytes);
   if (!tarball) return null;
-  return upstreamDistMatchesBytes(input.upstreamDist, tarball) ? tarball : null;
+  const digests = computeNpmTarballDigests(tarball);
+  return upstreamDistMatchesDigests(input.upstreamDist, digests, tarball)
+    ? { tarball, digests }
+    : null;
 }
 
 async function runWithConcurrency<T>(

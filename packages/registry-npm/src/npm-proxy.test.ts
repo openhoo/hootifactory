@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { computeDigest } from "@hootifactory/registry";
+import { computeNpmTarballDigests } from "./npm-integrity";
 import {
   buildNpmLocalTarballUrl,
   buildNpmMirroredDist,
@@ -117,11 +117,13 @@ describe("npm proxy helpers", () => {
 
   test("builds mirrored dist metadata from tarball bytes", () => {
     const tarball = Buffer.from("tarball bytes");
+    const digests = computeNpmTarballDigests(tarball);
     const mirrored = buildNpmMirroredDist({
       packageName: "pkg",
       version: "1.0.0",
       upstreamDist: { tarball: "https://registry.npmjs.org/pkg/-/pkg-1.0.0.tgz" },
       tarball,
+      digests,
       baseUrl: "https://repo.test",
       mountPath: "npm",
     });
@@ -131,9 +133,9 @@ describe("npm proxy helpers", () => {
     expect(mirrored.manifestDist.integrity).toBe(mirrored.dist.integrity);
     expect(mirrored.dist).toEqual({
       filename: "pkg-1.0.0.tgz",
-      blobDigest: computeDigest(tarball),
-      shasum: mirrored.dist.shasum,
-      integrity: mirrored.dist.integrity,
+      blobDigest: digests.blobDigest,
+      shasum: digests.shasum,
+      integrity: digests.integrity,
       size: tarball.length,
     });
   });

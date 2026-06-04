@@ -1,6 +1,5 @@
-import { asJsonRecord, computeDigest, jsonRecordOrEmpty, z } from "@hootifactory/registry";
-import type { NpmDist } from "./npm-integrity";
-import { sha1hex, sha512b64 } from "./npm-integrity";
+import { asJsonRecord, jsonRecordOrEmpty, z } from "@hootifactory/registry";
+import type { NpmDist, NpmTarballDigests } from "./npm-integrity";
 import { basename, packagePath } from "./npm-validation";
 
 const NpmUpstreamDistSchema = z.looseObject({
@@ -121,11 +120,10 @@ export function buildNpmMirroredDist(input: {
   version: string;
   upstreamDist: NpmUpstreamDist;
   tarball: Uint8Array;
+  digests: NpmTarballDigests;
   baseUrl: string;
   mountPath: string;
 }): { manifestDist: NpmUpstreamDist; dist: NpmDist } {
-  const shasum = sha1hex(input.tarball);
-  const integrity = `sha512-${sha512b64(input.tarball)}`;
   const filename = `${basename(input.packageName)}-${input.version}.tgz`;
   return {
     manifestDist: {
@@ -136,14 +134,14 @@ export function buildNpmMirroredDist(input: {
         packageName: input.packageName,
         filename,
       }),
-      shasum,
-      integrity,
+      shasum: input.digests.shasum,
+      integrity: input.digests.integrity,
     },
     dist: {
       filename,
-      blobDigest: computeDigest(input.tarball),
-      shasum,
-      integrity,
+      blobDigest: input.digests.blobDigest,
+      shasum: input.digests.shasum,
+      integrity: input.digests.integrity,
       size: input.tarball.length,
     },
   };
