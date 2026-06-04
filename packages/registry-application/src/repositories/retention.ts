@@ -1,20 +1,17 @@
 import {
   and,
   db,
-  desc,
   eq,
-  inArray,
   isNull,
   packages,
   packageVersions,
-  registryAssets,
   repositories,
-  versionTags,
+  sql,
 } from "@hootifactory/db";
 import { z } from "@hootifactory/registry";
 import { blobStore } from "@hootifactory/storage";
-import { deleteUnreferencedCasBlob, releaseRepoDigestTx } from "../content";
-import { adjustArtifactsUsedTx } from "../governance/quota";
+import { deleteUnreferencedCasBlob } from "../content";
+import { adjustArtifactsUsedTx, adjustStorageUsedTx } from "../governance/quota";
 
 const DigestRefSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 const DigestObjectSchema = z.looseObject({ blobDigest: DigestRefSchema });
@@ -64,6 +61,55 @@ function collectVersionDigests(rows: { metadata: unknown }[]): Set<string> {
   return out;
 }
 
+function rowsFromExecute(result: unknown): unknown[] {
+  if (Array.isArray(result)) return result;
+  if (
+    result &&
+    typeof result === "object" &&
+    Array.isArray((result as { rows?: unknown[] }).rows)
+  ) {
+    return (result as { rows: unknown[] }).rows;
+  }
+  return [];
+}
+
+function stringField(row: unknown, field: string): string | null {
+  if (!row || typeof row !== "object") return null;
+  const value = (row as Record<string, unknown>)[field];
+  return typeof value === "string" ? value : null;
+}
+
+function numberField(row: unknown, field: string): number | null {
+  if (!row || typeof row !== "object") return null;
+  const value = (row as Record<string, unknown>)[field];
+  if (typeof value === "number") return value;
+  if (typeof value !== "string" || !/^-?\d+$/.test(value)) return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) ? parsed : null;
+}
+
+function booleanField(row: unknown, field: string): boolean {
+  return Boolean(row && typeof row === "object" && (row as Record<string, unknown>)[field]);
+}
+
+function metadataField(row: unknown): unknown {
+  return row && typeof row === "object" ? (row as Record<string, unknown>).metadata : null;
+}
+
+function uuidValueRows(values: string[]) {
+  return sql.join(
+    values.map((value) => sql`(${value}::uuid)`),
+    sql`, `,
+  );
+}
+
+function textValueRows(values: string[]) {
+  return sql.join(
+    values.map((value) => sql`(${value}::text)`),
+    sql`, `,
+  );
+}
+
 /**
  * Soft-delete versions beyond the newest `keepLastN` per package, atomically,
  * and reclaim blob references (and CAS bytes/quota) for any digest no surviving
@@ -79,77 +125,160 @@ export async function applyRetention(repositoryId: string, keepLastN: number): P
 
   const casToDelete: string[] = [];
   const pruned = await db.transaction(async (tx) => {
-    const pkgs = await tx
-      .select({ id: packages.id })
-      .from(packages)
-      .where(eq(packages.repositoryId, repositoryId));
-
-    const prunedDigests = new Set<string>();
-    let count = 0;
-    for (const p of pkgs) {
-      const vers = await tx
-        .select({
-          id: packageVersions.id,
-          version: packageVersions.version,
-          metadata: packageVersions.metadata,
-        })
-        .from(packageVersions)
-        .where(and(eq(packageVersions.packageId, p.id), isNull(packageVersions.deletedAt)))
-        // Deterministic ordering with an id tie-break so equal timestamps prune stably.
-        .orderBy(desc(packageVersions.createdAt), desc(packageVersions.id));
-      const survivors = vers.slice(0, keepLastN);
-      const toPrune = vers.slice(keepLastN);
-      if (toPrune.length === 0) continue;
-      const prunedIds = toPrune.map((v) => v.id);
-      await tx
-        .update(packageVersions)
-        .set({ deletedAt: new Date() })
-        .where(inArray(packageVersions.id, prunedIds));
-      count += toPrune.length;
-      await adjustArtifactsUsedTx(tx, repo.orgId, -toPrune.length);
-      for (const d of collectVersionDigests(toPrune)) prunedDigests.add(d);
-      const prunedAssets = await tx
-        .update(registryAssets)
-        .set({ deletedAt: new Date(), updatedAt: new Date() })
-        .where(
-          and(
-            eq(registryAssets.repositoryId, repositoryId),
-            inArray(registryAssets.packageVersionId, prunedIds),
-            isNull(registryAssets.deletedAt),
-          ),
+    const now = new Date();
+    const prunedRows = rowsFromExecute(
+      await tx.execute(sql`
+        with ranked as (
+          select
+            pv.id,
+            pv.package_id as "packageId",
+            pv.metadata,
+            row_number() over (
+              partition by pv.package_id
+              order by pv.created_at desc, pv.id desc
+            ) as rn
+          from package_versions pv
+          inner join packages p on p.id = pv.package_id
+          where p.repository_id = ${repositoryId}
+            and pv.deleted_at is null
+        ),
+        prune_set as (
+          select id, "packageId", metadata
+          from ranked
+          where rn > ${keepLastN}
         )
-        .returning({ digest: registryAssets.digest });
-      for (const asset of prunedAssets) prunedDigests.add(asset.digest);
+        update package_versions pv
+        set deleted_at = ${now}, updated_at = ${now}
+        from prune_set
+        where pv.id = prune_set.id
+        returning pv.id, pv.package_id as "packageId", pv.metadata
+      `),
+    );
+    if (prunedRows.length === 0) return 0;
 
-      const deletedTags = await tx
-        .delete(versionTags)
-        .where(and(eq(versionTags.packageId, p.id), inArray(versionTags.versionId, prunedIds)))
-        .returning({ tag: versionTags.tag });
-      const latest = survivors[0] ?? null;
-      await tx
-        .update(packages)
-        .set({ latestVersion: latest?.version ?? null })
-        .where(eq(packages.id, p.id));
-      if (latest && deletedTags.some((t) => t.tag === "latest")) {
-        await tx
-          .insert(versionTags)
-          .values({ packageId: p.id, tag: "latest", versionId: latest.id })
-          .onConflictDoUpdate({
-            target: [versionTags.packageId, versionTags.tag],
-            set: { versionId: latest.id },
-          });
-      }
+    const prunedIds = prunedRows.flatMap((row) => {
+      const id = stringField(row, "id");
+      return id ? [id] : [];
+    });
+    const prunedPackageIds = [
+      ...new Set(
+        prunedRows.flatMap((row) => {
+          const id = stringField(row, "packageId");
+          return id ? [id] : [];
+        }),
+      ),
+    ];
+    const prunedDigests = new Set<string>();
+    for (const d of collectVersionDigests(
+      prunedRows.map((row) => ({ metadata: metadataField(row) })),
+    )) {
+      prunedDigests.add(d);
+    }
+
+    await adjustArtifactsUsedTx(tx, repo.orgId, -prunedRows.length);
+
+    const prunedAssets = rowsFromExecute(
+      await tx.execute(sql`
+        with pruned_ids(id) as (
+          values ${uuidValueRows(prunedIds)}
+        )
+        update registry_assets
+        set deleted_at = ${now}, updated_at = ${now}
+        where registry_assets.repository_id = ${repositoryId}
+          and registry_assets.package_version_id in (select id from pruned_ids)
+          and registry_assets.deleted_at is null
+        returning digest
+      `),
+    );
+    for (const asset of prunedAssets) {
+      const digest = stringField(asset, "digest");
+      if (digest) prunedDigests.add(digest);
+    }
+
+    const deletedTags = rowsFromExecute(
+      await tx.execute(sql`
+        with pruned_ids(id) as (
+          values ${uuidValueRows(prunedIds)}
+        )
+        delete from version_tags
+        where version_id in (select id from pruned_ids)
+        returning package_id as "packageId", tag
+      `),
+    );
+
+    await tx.execute(sql`
+      with affected(package_id) as (
+        values ${uuidValueRows(prunedPackageIds)}
+      ),
+      latest as (
+        select distinct on (pv.package_id)
+          pv.package_id,
+          pv.id,
+          pv.version
+        from package_versions pv
+        inner join affected a on a.package_id = pv.package_id
+        where pv.deleted_at is null
+        order by pv.package_id, pv.created_at desc, pv.id desc
+      )
+      update packages p
+      set latest_version = latest.version, updated_at = ${now}
+      from affected a
+      left join latest on latest.package_id = a.package_id
+      where p.id = a.package_id
+    `);
+
+    const latestTagPackageIds = [
+      ...new Set(
+        deletedTags.flatMap((row) => {
+          const tag = stringField(row, "tag");
+          const packageId = stringField(row, "packageId");
+          return tag === "latest" && packageId ? [packageId] : [];
+        }),
+      ),
+    ];
+    if (latestTagPackageIds.length > 0) {
+      await tx.execute(sql`
+        with affected(package_id) as (
+          values ${uuidValueRows(latestTagPackageIds)}
+        ),
+        latest as (
+          select distinct on (pv.package_id)
+            pv.package_id,
+            pv.id
+          from package_versions pv
+          inner join affected a on a.package_id = pv.package_id
+          where pv.deleted_at is null
+          order by pv.package_id, pv.created_at desc, pv.id desc
+        )
+        insert into version_tags (package_id, tag, version_id, created_at, updated_at)
+        select package_id, 'latest', id, ${now}, ${now}
+        from latest
+        on conflict (package_id, tag) do update
+          set version_id = excluded.version_id, updated_at = ${now}
+      `);
     }
 
     if (prunedDigests.size > 0) {
       // Digests still referenced by a surviving live asset/version must be kept.
-      const liveAssets = await tx
-        .select({ digest: registryAssets.digest })
-        .from(registryAssets)
-        .where(
-          and(eq(registryAssets.repositoryId, repositoryId), isNull(registryAssets.deletedAt)),
-        );
-      const liveDigests = new Set(liveAssets.map((asset) => asset.digest));
+      const prunedDigestList = [...prunedDigests];
+      const liveAssets = rowsFromExecute(
+        await tx.execute(sql`
+          with candidate_digests(digest) as (
+            values ${textValueRows(prunedDigestList)}
+          )
+          select distinct digest
+          from registry_assets
+          where repository_id = ${repositoryId}
+            and deleted_at is null
+            and digest in (select digest from candidate_digests)
+        `),
+      );
+      const liveDigests = new Set(
+        liveAssets.flatMap((asset) => {
+          const digest = stringField(asset, "digest");
+          return digest ? [digest] : [];
+        }),
+      );
       const liveVersions = await tx
         .select({ metadata: packageVersions.metadata })
         .from(packageVersions)
@@ -157,13 +286,72 @@ export async function applyRetention(repositoryId: string, keepLastN: number): P
         .where(and(eq(packages.repositoryId, repositoryId), isNull(packageVersions.deletedAt)));
       for (const digest of collectVersionDigests(liveVersions)) liveDigests.add(digest);
 
-      for (const digest of prunedDigests) {
-        if (liveDigests.has(digest)) continue;
-        const reaped = await releaseRepoDigestTx(tx, { repositoryId, orgId: repo.orgId, digest });
-        if (reaped) casToDelete.push(reaped);
+      const releaseDigests = prunedDigestList.filter((digest) => !liveDigests.has(digest)).sort();
+      if (releaseDigests.length > 0) {
+        await tx.execute(sql`
+          with candidate_digests(digest) as (
+            values ${textValueRows(releaseDigests)}
+          )
+          select pg_advisory_xact_lock(hashtextextended(digest, 0))
+          from candidate_digests
+          order by digest
+        `);
+        const deletedRefs = rowsFromExecute(
+          await tx.execute(sql`
+            with candidate_digests(digest) as (
+              values ${textValueRows(releaseDigests)}
+            )
+            delete from blob_refs br
+            using candidate_digests
+            where br.repository_id = ${repositoryId}
+              and br.digest = candidate_digests.digest
+            returning br.digest
+          `),
+        );
+        const releasedDigests = [
+          ...new Set(
+            deletedRefs.flatMap((row) => {
+              const digest = stringField(row, "digest");
+              return digest ? [digest] : [];
+            }),
+          ),
+        ];
+        if (releasedDigests.length > 0) {
+          const releasedBlobs = rowsFromExecute(
+            await tx.execute(sql`
+              with released_digests(digest) as (
+                values ${textValueRows(releasedDigests)}
+              )
+              select
+                b.digest,
+                b.ref_count as "refCount",
+                b.size_bytes as "sizeBytes",
+                exists (
+                  select 1
+                  from blob_refs br
+                  inner join repositories r on r.id = br.repository_id
+                  where r.org_id = ${repo.orgId}
+                    and br.digest = b.digest
+                ) as "stillReferencedByOrg"
+              from blobs b
+              inner join released_digests on released_digests.digest = b.digest
+            `),
+          );
+          let storageDelta = 0;
+          for (const row of releasedBlobs) {
+            if (!booleanField(row, "stillReferencedByOrg")) {
+              storageDelta -= numberField(row, "sizeBytes") ?? 0;
+            }
+            if ((numberField(row, "refCount") ?? 1) <= 0) {
+              const digest = stringField(row, "digest");
+              if (digest) casToDelete.push(digest);
+            }
+          }
+          if (storageDelta !== 0) await adjustStorageUsedTx(tx, repo.orgId, storageDelta);
+        }
       }
     }
-    return count;
+    return prunedRows.length;
   });
 
   // Delete reclaimed objects from the CAS only if no concurrent upload reactivated them.
