@@ -217,14 +217,14 @@ export async function authenticateUserPasswordWithThrottle(
     password: string,
   ) => Promise<Principal | null> = authenticateUserPassword,
 ): Promise<ThrottledPasswordAuthResult> {
+  const throttle = await consumeLoginAttempt(username, ip);
+  if (throttle.throttled) return { kind: "throttled", retryAfter: throttle.retryAfter };
+
   const principal = await verify(username, password);
   if (principal?.kind === "user") {
     await clearLoginFailureAttempt(username, ip);
     return { kind: "authenticated", principal };
   }
-
-  const throttle = await consumeLoginAttempt(username, ip);
-  if (throttle.throttled) return { kind: "throttled", retryAfter: throttle.retryAfter };
 
   return { kind: "invalid", failure: throttle.bucket };
 }
