@@ -88,6 +88,7 @@ describe("api tokens (DB)", () => {
     expect(principal?.kind).toBe("token");
     if (principal?.kind === "token") {
       expect(principal.orgId).toBe(orgId);
+      expect(principal.ownerUsername).not.toBeNull();
       expect(principal.scopes[0]?.repository).toBe("acme/*");
     }
 

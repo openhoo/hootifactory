@@ -122,20 +122,20 @@ export async function listOrgTokensOwnedBy(
 export async function resolveToken(secret: string): Promise<Principal | null> {
   if (!secret.startsWith(TOKEN_PREFIX)) return null;
   const hash = hashToken(secret);
-  const [row] = await db.select().from(apiTokens).where(eq(apiTokens.tokenHash, hash)).limit(1);
-  if (!row || row.revokedAt) return null;
-  if (row.expiresAt && row.expiresAt.getTime() < Date.now()) return null;
+  const [row] = await db
+    .select({ token: apiTokens, ownerIsActive: users.isActive, ownerUsername: users.username })
+    .from(apiTokens)
+    .leftJoin(users, eq(apiTokens.ownerUserId, users.id))
+    .where(eq(apiTokens.tokenHash, hash))
+    .limit(1);
+  if (!row || row.token.revokedAt) return null;
+  if (row.token.expiresAt && row.token.expiresAt.getTime() < Date.now()) return null;
   let ownerUsername: string | null = null;
-  if (row.ownerUserId) {
-    const [owner] = await db
-      .select({ isActive: users.isActive, username: users.username })
-      .from(users)
-      .where(eq(users.id, row.ownerUserId))
-      .limit(1);
-    if (!owner?.isActive) return null;
-    ownerUsername = owner.username;
+  if (row.token.ownerUserId) {
+    if (!row.ownerIsActive) return null;
+    ownerUsername = row.ownerUsername;
   }
-  const grants = row.grants ?? [];
+  const grants = row.token.grants ?? [];
 
   // best-effort last-used bookkeeping. `.catch()` both executes the lazy Drizzle
   // query (a bare `void db.update(...)` is never sent) and swallows transient
@@ -143,20 +143,20 @@ export async function resolveToken(secret: string): Promise<Principal | null> {
   void db
     .update(apiTokens)
     .set({ lastUsedAt: new Date() })
-    .where(eq(apiTokens.id, row.id))
+    .where(eq(apiTokens.id, row.token.id))
     .catch(() => {});
 
   return {
     kind: "token",
-    tokenId: row.id,
-    tokenName: row.name,
-    orgId: row.orgId,
-    ownerUserId: row.ownerUserId,
+    tokenId: row.token.id,
+    tokenName: row.token.name,
+    orgId: row.token.orgId,
+    ownerUserId: row.token.ownerUserId,
     ownerUsername,
     grants,
     scopes: repositoryGrantsAsScopes(grants),
-    role: row.role,
-    isRobot: row.type === "robot",
+    role: row.token.role,
+    isRobot: row.token.type === "robot",
   };
 }
 
