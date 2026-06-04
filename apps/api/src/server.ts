@@ -1,3 +1,4 @@
+import { sweepExpiredAuthThrottleBuckets } from "@hootifactory/auth";
 import { env } from "@hootifactory/config";
 import { shutdownObservability } from "@hootifactory/observability";
 import { stopBoss } from "@hootifactory/queue";
@@ -7,6 +8,17 @@ import { logger } from "./lib/logger";
 import { errorMessage } from "./validation";
 
 registerAdapters();
+
+const authThrottleSweepTimer = setInterval(() => {
+  void sweepExpiredAuthThrottleBuckets()
+    .then((deleted) => {
+      if (deleted > 0) logger.debug("expired auth throttle buckets swept", { deleted });
+    })
+    .catch((err) => {
+      logger.warn("expired auth throttle bucket sweep failed", { error: errorMessage(err) });
+    });
+}, env.AUTH_THROTTLE_SWEEP_INTERVAL_SECONDS * 1000);
+authThrottleSweepTimer.unref?.();
 
 const server = Bun.serve({
   port: env.API_PORT,
@@ -31,6 +43,7 @@ const shutdown = async (signal: string) => {
   shuttingDown = true;
   logger.info("shutting down", { signal });
   try {
+    clearInterval(authThrottleSweepTimer);
     await server.stop();
     await stopBoss();
     await shutdownObservability();

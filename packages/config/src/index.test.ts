@@ -23,6 +23,7 @@ describe("environment auth creation defaults", () => {
     expect(devEnv.AUTH_LOGIN_MAX_ATTEMPTS).toBe(5);
     expect(devEnv.AUTH_LOGIN_WINDOW_SECONDS).toBe(60);
     expect(devEnv.AUTH_THROTTLE_MAX_BUCKETS).toBe(10_000);
+    expect(devEnv.AUTH_THROTTLE_SWEEP_INTERVAL_SECONDS).toBe(5 * 60);
     expect(devEnv.AUTH_REGISTRATION_MAX_ATTEMPTS).toBe(3);
     expect(devEnv.AUTH_REGISTRATION_WINDOW_SECONDS).toBe(5 * 60);
     expect(devEnv.AUTH_PASSWORD_RESET_TTL_SECONDS).toBe(30 * 60);
@@ -168,9 +169,13 @@ describe("environment auth creation defaults", () => {
     expect(env.AUTH_REGISTRATION_MAX_ATTEMPTS).toBe(4);
     expect(env.AUTH_REGISTRATION_WINDOW_SECONDS).toBe(180);
     expect(loadEnv({ AUTH_THROTTLE_MAX_BUCKETS: "100" }).AUTH_THROTTLE_MAX_BUCKETS).toBe(100);
+    expect(
+      loadEnv({ AUTH_THROTTLE_SWEEP_INTERVAL_SECONDS: "600" }).AUTH_THROTTLE_SWEEP_INTERVAL_SECONDS,
+    ).toBe(600);
     expect(() => loadEnv({ AUTH_LOGIN_MAX_ATTEMPTS: "0" })).toThrow();
     expect(() => loadEnv({ AUTH_LOGIN_WINDOW_SECONDS: "-1" })).toThrow();
     expect(() => loadEnv({ AUTH_THROTTLE_MAX_BUCKETS: "0" })).toThrow();
+    expect(() => loadEnv({ AUTH_THROTTLE_SWEEP_INTERVAL_SECONDS: "0" })).toThrow();
     expect(() => loadEnv({ AUTH_REGISTRATION_MAX_ATTEMPTS: "0" })).toThrow();
     expect(() => loadEnv({ AUTH_REGISTRATION_WINDOW_SECONDS: "-1" })).toThrow();
   });
