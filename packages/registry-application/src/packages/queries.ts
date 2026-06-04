@@ -83,7 +83,8 @@ export async function listRepositoryPackageNames(
   return db
     .select({ name: packages.name })
     .from(packages)
-    .where(eq(packages.repositoryId, ctx.repo.id));
+    .where(eq(packages.repositoryId, ctx.repo.id))
+    .orderBy(packages.name);
 }
 
 export async function listRepositoryPackages(
@@ -97,7 +98,8 @@ export async function listRepositoryPackages(
       name: packages.name,
     })
     .from(packages)
-    .where(eq(packages.repositoryId, ctx.repo.id));
+    .where(eq(packages.repositoryId, ctx.repo.id))
+    .orderBy(packages.name);
 }
 
 export async function searchRepositoryPackages(

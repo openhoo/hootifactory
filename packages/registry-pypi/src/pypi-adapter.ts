@@ -83,7 +83,7 @@ export class PypiAdapter implements RegistryPlugin {
     if (redirect) return redirect;
 
     const rows = await ctx.data.packages.listNames();
-    const projects = rows.map((r) => r.name).sort();
+    const projects = rows.map((r) => r.name);
     if (preferredSimpleResponse(req.headers.get("accept")) === "json") {
       return Response.json(buildSimpleRootJson(projects), {
         headers: { "content-type": SIMPLE_JSON_CONTENT_TYPE },

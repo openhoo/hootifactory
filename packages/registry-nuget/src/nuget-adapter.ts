@@ -18,7 +18,6 @@ import {
 import { handleNugetPublish } from "./nuget-publish-lifecycle";
 import { buildNugetRegistrationIndex, buildNugetRegistrationItem } from "./nuget-registration";
 import {
-  buildNugetSearchResponse,
   buildNugetSearchResult,
   filterNugetSearchVersions,
   parseNugetSearchQuery,
@@ -37,6 +36,8 @@ import {
 type StoredNugetVersionRow = Omit<RegistryPackageVersionRow, "metadata"> & {
   metadata: NugetVersionMeta;
 };
+
+const NUGET_SEARCH_PACKAGE_BATCH_SIZE = 250;
 
 function parseNugetId(id: string): string {
   return parseRegistryInput(NugetIdSchema, id, {
@@ -215,21 +216,39 @@ export class NugetAdapter implements RegistryPlugin {
     ctx: RegistryRequestContext,
   ): Promise<Response> {
     const query = parseNugetSearchQuery(req.url);
-    const rows = await ctx.data.packages.list();
     const data = [];
-    for (const pkg of rows) {
-      if (query.q && !pkg.name.toLowerCase().includes(query.q)) continue;
-      const versions = filterNugetSearchVersions(
-        (await this.listVersions(ctx, pkg)).map((version) => ({
-          version: version.version,
-          metadata: version.metadata,
-        })),
-        query,
-      );
-      if (versions.length === 0) continue;
-      data.push(buildNugetSearchResult({ packageName: pkg.name, versions, base }));
-    }
-    return Response.json(buildNugetSearchResponse(data, query));
+    let totalHits = 0;
+    let offset = 0;
+    let totalPackages = 0;
+    do {
+      const { packages: rows, total } = await ctx.data.packages.search({
+        text: query.q,
+        from: offset,
+        size: NUGET_SEARCH_PACKAGE_BATCH_SIZE,
+      });
+      totalPackages = total;
+      offset += rows.length;
+      if (rows.length === 0) break;
+      const versionsByPackageId = await ctx.data.versions.listLiveForPackages(rows);
+      for (const pkg of rows) {
+        const versions = filterNugetSearchVersions(
+          (versionsByPackageId.get(pkg.id) ?? [])
+            .flatMap((version) => {
+              const metadata = parseNugetVersionMeta(version.metadata);
+              if (metadata?.listed === false) return [];
+              return metadata ? [{ version: version.version, metadata }] : [];
+            })
+            .sort((a, b) => compareNugetVersions(a.version, b.version)),
+          query,
+        );
+        if (versions.length === 0) continue;
+        if (totalHits >= query.skip && data.length < query.take) {
+          data.push(buildNugetSearchResult({ packageName: pkg.name, versions, base }));
+        }
+        totalHits += 1;
+      }
+    } while (offset < totalPackages);
+    return Response.json({ totalHits, data });
   }
 
   private async download(
