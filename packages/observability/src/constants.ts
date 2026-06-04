@@ -2,7 +2,7 @@ import type { LogLevel } from "./types";
 
 export const INSTRUMENTATION_NAME = "hootifactory";
 
-export const LOG_LEVELS = {
+export const LOG_LEVEL_PRIORITIES = {
   debug: 10,
   info: 20,
   warn: 30,

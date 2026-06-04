@@ -1,4 +1,4 @@
-import { ROLE_NAMES } from "@hootifactory/types";
+import { LOG_LEVELS, ROLE_NAMES, SCANNER_CLI_RUNTIMES } from "@hootifactory/types";
 import { z } from "zod";
 
 /**
@@ -147,7 +147,7 @@ const DEV_DEFAULT_SESSION_SECRET_PREFIX = "dev-session-secret-change-me";
 const EnvSchema = z
   .object({
     NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
-    LOG_LEVEL: z.enum(["debug", "info", "warn", "error", "silent"]).default("info"),
+    LOG_LEVEL: z.enum(LOG_LEVELS).default("info"),
 
     // OpenTelemetry (logs, traces, metrics)
     OTEL_SDK_DISABLED: boolish.default(false),
@@ -237,7 +237,7 @@ const EnvSchema = z
     SCANNER_ENABLED: boolish.default(false),
     SCANNER_OSV: boolish.default(false),
     SCANNER_TIMEOUT_MS: positiveInt(120_000),
-    SCANNER_CLI_RUNTIME: z.enum(["auto", "docker", "host", "disabled"]).default("docker"),
+    SCANNER_CLI_RUNTIME: z.enum(SCANNER_CLI_RUNTIMES).default("docker"),
     SCANNER_DOCKER_COMMAND: z.string().default("docker"),
     SCANNER_DOCKER_MEMORY: dockerSize.default("1g"),
     SCANNER_DOCKER_CPUS: dockerCpus.default("2"),

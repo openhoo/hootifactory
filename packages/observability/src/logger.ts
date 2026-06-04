@@ -1,7 +1,7 @@
 import { env } from "@hootifactory/config";
 import { context } from "@opentelemetry/api";
 import { logs } from "@opentelemetry/api-logs";
-import { INSTRUMENTATION_NAME, LOG_LEVELS } from "./constants";
+import { INSTRUMENTATION_NAME, LOG_LEVEL_PRIORITIES } from "./constants";
 import { currentCorrelationContext } from "./correlation";
 import {
   attributesForMeta,
@@ -26,7 +26,7 @@ export function resetOtelLogger(): void {
 }
 
 function emit(level: LogLevel, msg: string, meta?: unknown): void {
-  if (LOG_LEVELS[level] < LOG_LEVELS[env.LOG_LEVEL]) return;
+  if (LOG_LEVEL_PRIORITIES[level] < LOG_LEVEL_PRIORITIES[env.LOG_LEVEL]) return;
 
   const now = new Date();
   const current = currentCorrelationContext();

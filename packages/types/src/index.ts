@@ -19,6 +19,10 @@ export const POLICY_NAMES = ["scan", "quota", "retention", "*"] as const;
 export type PolicyName = (typeof POLICY_NAMES)[number];
 export const TOKEN_TARGETS = ["self", "org"] as const;
 export type TokenTarget = (typeof TOKEN_TARGETS)[number];
+export const LOG_LEVELS = ["debug", "info", "warn", "error", "silent"] as const;
+export type LogLevel = (typeof LOG_LEVELS)[number];
+export const SCANNER_CLI_RUNTIMES = ["auto", "docker", "host", "disabled"] as const;
+export type ScannerCliRuntime = (typeof SCANNER_CLI_RUNTIMES)[number];
 export type DenialCode =
   | "unauthenticated"
   | "cross_org"
@@ -53,6 +57,14 @@ export function isPolicyName(value: unknown): value is PolicyName {
 
 export function isTokenTarget(value: unknown): value is TokenTarget {
   return isOneOf(TOKEN_TARGETS, value);
+}
+
+export function isLogLevel(value: unknown): value is LogLevel {
+  return isOneOf(LOG_LEVELS, value);
+}
+
+export function isScannerCliRuntime(value: unknown): value is ScannerCliRuntime {
+  return isOneOf(SCANNER_CLI_RUNTIMES, value);
 }
 
 /** Legacy repository-scope token shape accepted by pre-v1 UI/API callers. */

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { env } from "@hootifactory/config";
 import { BoundedLruCache } from "@hootifactory/core";
+import type { ScannerCliRuntime } from "@hootifactory/types";
 
 export interface AvailableScanners {
   syft: boolean;
@@ -12,7 +13,7 @@ export interface AvailableScanners {
   clamav: boolean;
 }
 
-export type ScannerCliRuntime = "auto" | "docker" | "host" | "disabled";
+export type { ScannerCliRuntime } from "@hootifactory/types";
 
 export interface ScannerRuntimeOptions {
   trivyServerUrl?: string;

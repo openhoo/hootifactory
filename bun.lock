@@ -176,6 +176,7 @@
       "version": "0.0.0",
       "dependencies": {
         "@hootifactory/config": "workspace:*",
+        "@hootifactory/types": "workspace:*",
         "@opentelemetry/api": "^1.9.1",
         "@opentelemetry/api-logs": "^0.218.0",
         "@opentelemetry/core": "^2.7.1",
@@ -294,6 +295,7 @@
         "@hootifactory/config": "workspace:*",
         "@hootifactory/core": "workspace:*",
         "@hootifactory/scan-core": "workspace:*",
+        "@hootifactory/types": "workspace:*",
       },
     },
     "packages/storage": {

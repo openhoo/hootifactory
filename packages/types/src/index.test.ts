@@ -2,11 +2,14 @@ import { describe, expect, test } from "bun:test";
 import {
   ACTIONS,
   isAction,
+  isLogLevel,
   isPolicyName,
   isRepoKind,
   isRoleName,
+  isScannerCliRuntime,
   isTokenTarget,
   isVisibility,
+  LOG_LEVELS,
   OCI_MEDIA_TYPES,
   type OciManifest,
   ociManifestReferences,
@@ -15,6 +18,7 @@ import {
   REPO_KINDS,
   type RegistryModuleId,
   ROLE_NAMES,
+  SCANNER_CLI_RUNTIMES,
   TOKEN_TARGETS,
   TOKEN_TYPES,
   VISIBILITIES,
@@ -29,6 +33,8 @@ describe("shared type constants", () => {
     expect(TOKEN_TYPES).toEqual(["personal", "robot"]);
     expect(POLICY_NAMES).toEqual(["scan", "quota", "retention", "*"]);
     expect(TOKEN_TARGETS).toEqual(["self", "org"]);
+    expect(LOG_LEVELS).toEqual(["debug", "info", "warn", "error", "silent"]);
+    expect(SCANNER_CLI_RUNTIMES).toEqual(["auto", "docker", "host", "disabled"]);
   });
 
   test("narrows shared enum values through canonical guards", () => {
@@ -44,6 +50,10 @@ describe("shared type constants", () => {
     expect(isPolicyName("routing")).toBe(false);
     expect(isTokenTarget("org")).toBe(true);
     expect(isTokenTarget("repository")).toBe(false);
+    expect(isLogLevel("warn")).toBe(true);
+    expect(isLogLevel("verbose")).toBe(false);
+    expect(isScannerCliRuntime("docker")).toBe(true);
+    expect(isScannerCliRuntime("local")).toBe(false);
   });
 
   test("keeps OCI and Docker media type constants stable", () => {

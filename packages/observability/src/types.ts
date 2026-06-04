@@ -1,6 +1,6 @@
 import type { Attributes, Counter, Histogram, Span, UpDownCounter } from "@opentelemetry/api";
 
-export type LogLevel = "debug" | "info" | "warn" | "error" | "silent";
+export type { LogLevel } from "@hootifactory/types";
 export type LogAttributeValue = string | number | boolean;
 export type QueueWorkStatus = "succeeded" | "failed";
 export type Signal = "traces" | "metrics" | "logs";
