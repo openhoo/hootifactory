@@ -151,8 +151,12 @@
   * {
     @apply border-border outline-ring/50;
   }
+  html,
   body {
-    @apply bg-background text-foreground font-sans antialiased;
+    background-color: var(--background);
+  }
+  body {
+    @apply text-foreground font-sans antialiased;
     margin: 0;
     font-synthesis-weight: none;
     text-rendering: optimizeLegibility;

@@ -26,16 +26,24 @@ test.describe("web UI (browser)", () => {
     // create a repository
     await page.getByRole("link", { name: "Repositories" }).click();
     await page.getByTestId("new-repo").click();
-    await expect(page.getByTestId("repo-module")).toBeVisible();
-    expect(await page.getByTestId("repo-module").locator("option").allTextContents()).toEqual([
-      "npm",
-      "docker",
-      "oci",
-      "pypi",
-      "helm",
-      "nuget",
-      "go",
-      "cargo",
+    const moduleSelect = page.getByTestId("repo-module");
+    await expect(moduleSelect).toBeVisible();
+    expect(
+      await moduleSelect.locator("option").evaluateAll((options) =>
+        options.map((option) => ({
+          label: option.textContent?.trim() ?? "",
+          value: option.getAttribute("value") ?? "",
+        })),
+      ),
+    ).toEqual([
+      { label: "npm", value: "npm" },
+      { label: "OCI", value: "docker" },
+      { label: "PyPI", value: "pypi" },
+      { label: "Go", value: "go" },
+      { label: "Cargo", value: "cargo" },
+      { label: "NuGet", value: "nuget" },
+      { label: "oci", value: "oci" },
+      { label: "helm", value: "helm" },
     ]);
     await page.getByTestId("repo-name").fill("uirepo");
     await page.getByTestId("repo-module").selectOption("docker");
@@ -47,7 +55,7 @@ test.describe("web UI (browser)", () => {
     // open detail and see usage snippets
     await page.getByRole("link", { name: "uirepo" }).click();
     await expect(page.getByText("How to use")).toBeVisible();
-    await expect(page.getByText("docker pull", { exact: false })).toBeVisible();
+    await expect(page.getByText(`${WEB}/v2/uiorg-${id}/uirepo`)).toBeVisible();
 
     // create an API token
     await page.getByRole("link", { name: "API Tokens" }).click();

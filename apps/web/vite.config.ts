@@ -5,7 +5,13 @@ import { defineConfig } from "vite";
 
 const API = process.env.VITE_API_URL ?? "http://127.0.0.1:3000";
 const explicitProxyPaths = ["/api", "/v2", "/token"];
-const registryPathProxy = "^/[^/.][^/]*/[^/]+/[^/]+(?:/.*)?$";
+const registryMountSegments = ["npm", "pypi", "go", "cargo", "nuget"] as const;
+export const registryPathProxy = `^/(?:${registryMountSegments.join("|")})/[^/]+/[^/]+(?:/.*)?$`;
+export const registryPathProxyPattern = new RegExp(registryPathProxy);
+
+export function shouldProxyRegistryPath(pathname: string): boolean {
+  return registryPathProxyPattern.test(pathname);
+}
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
