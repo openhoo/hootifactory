@@ -47,6 +47,9 @@ export async function handleNpmProxyIngest(
     return pkg;
   };
   const ingestedVersions = new Map<string, { id: string; packageId: string; version: string }>();
+  const liveByVersion = new Map(
+    pkg ? (await ctx.data.versions.listLive(pkg)).map((row) => [row.version, row]) : [],
+  );
   const versionEntries = Object.entries(packument.versions ?? {}).filter(([version]) =>
     isValidNpmVersion(version),
   );
@@ -60,12 +63,18 @@ export async function handleNpmProxyIngest(
 
       let { manifest } = proxyManifest;
       const { tarballUrl, upstreamDist } = proxyManifest;
-      const existingVersion = pkg ? await ctx.data.versions.findLive(pkg, version) : null;
-      const existingDist = existingVersion
-        ? parseNpmStoredVersionMetadata(existingVersion.metadata).dist
-        : undefined;
+      const existingVersion = liveByVersion.get(version) ?? null;
+      const existingMetadata = existingVersion
+        ? parseNpmStoredVersionMetadata(existingVersion.metadata)
+        : null;
+      const existingDist = existingMetadata?.dist;
 
-      if (pkg && existingDist && upstreamDistMatchesStored(upstreamDist, existingDist)) {
+      if (
+        pkg &&
+        existingVersion &&
+        existingDist &&
+        upstreamDistMatchesStored(upstreamDist, existingDist)
+      ) {
         manifest = rewriteNpmProxyManifestForExistingDist({
           manifest,
           upstreamDist,
@@ -74,6 +83,14 @@ export async function handleNpmProxyIngest(
           mountPath: ctx.repo.mountPath,
           packageName: pkgName,
         });
+        if (JSON.stringify(existingMetadata.manifest) === JSON.stringify(manifest)) {
+          ingestedVersions.set(version, {
+            id: existingVersion.id,
+            packageId: existingVersion.packageId,
+            version,
+          });
+          return;
+        }
         const versionId = await ctx.data.versions.upsert({
           package: pkg,
           version,
