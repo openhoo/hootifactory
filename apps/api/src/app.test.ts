@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { env } from "@hootifactory/config";
 import { app } from "./app";
+import { registryWriteAdmission } from "./middleware/request-safety";
 import {
   securityHeadersForNodeEnv,
   securityHeadersForRequest,
@@ -150,6 +151,33 @@ describe("request body guard", () => {
     await expect(response.json()).resolves.toEqual({
       errors: [{ code: "BAD_REQUEST", message: "invalid content-length" }],
     });
+  });
+
+  test("rejects registry writes when the global upload budget is exhausted", async () => {
+    const release = registryWriteAdmission.tryAcquire(env.REGISTRY_MAX_INFLIGHT_UPLOAD_BYTES - 10);
+    expect(typeof release).toBe("function");
+    try {
+      const response = await app.fetch(
+        new Request("http://localhost/npm/pkg", {
+          method: "PUT",
+          headers: { "content-length": "11" },
+          body: "x".repeat(11),
+        }),
+      );
+
+      expect(response.status).toBe(503);
+      expect(response.headers.get("retry-after")).toBe("1");
+      await expect(response.json()).resolves.toEqual({
+        errors: [
+          {
+            code: "UNAVAILABLE",
+            message: "registry upload capacity exhausted; retry later",
+          },
+        ],
+      });
+    } finally {
+      release?.();
+    }
   });
 
   test("rejects malformed JSON route bodies through Zod schemas", async () => {

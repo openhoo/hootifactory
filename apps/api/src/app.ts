@@ -10,6 +10,7 @@ import { planApplicationErrorResponse } from "./error-response";
 import { logger } from "./lib/logger";
 import { authenticate } from "./middleware/authenticate";
 import {
+  enforceRegistryWriteAdmission,
   enforceRequestBodyLimits,
   rejectCrossOriginSessionWrites,
 } from "./middleware/request-safety";
@@ -59,6 +60,7 @@ app.use("*", async (c, next) => {
 });
 
 app.use("*", rejectCrossOriginSessionWrites);
+app.use("*", enforceRegistryWriteAdmission);
 
 app.onError((err, c) => {
   const path = new URL(c.req.url).pathname;

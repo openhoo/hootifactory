@@ -6,6 +6,8 @@ import { logger } from "../lib/logger";
 import type { AppEnv } from "../types";
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+const WHOLE_BODY_WRITE_METHODS = new Set(["POST", "PUT", "PATCH"]);
+const RETRY_AFTER_SECONDS = 1;
 const ContentLengthHeaderSchema = z
   .string()
   .trim()
@@ -21,6 +23,23 @@ function parseContentLength(value: string | undefined): number | "invalid" | nul
 
 function registryPathname(pathname: string): string | null {
   return pathname.startsWith("/v2/") && pathname !== "/v2/" ? pathname : null;
+}
+
+function isExplicitAppPath(pathname: string): boolean {
+  return (
+    pathname === "/api" ||
+    pathname.startsWith("/api/") ||
+    pathname === "/token" ||
+    pathname.startsWith("/token/") ||
+    pathname === "/healthz" ||
+    pathname === "/readyz" ||
+    pathname === "/v2" ||
+    pathname === "/v2/"
+  );
+}
+
+function isRegistryWriteCandidate(method: string, pathname: string): boolean {
+  return WHOLE_BODY_WRITE_METHODS.has(method) && !isExplicitAppPath(pathname);
 }
 
 function trustedOriginsForRequest(requestUrl: string): Set<string> {
@@ -46,6 +65,33 @@ function rejectsCookieCsrf(c: Context<AppEnv>): boolean {
   const fetchSite = c.req.header("sec-fetch-site");
   return fetchSite === "cross-site" || fetchSite === "same-site";
 }
+
+export class RegistryWriteAdmission {
+  private inFlightBytes = 0;
+
+  constructor(private readonly maxBytes: number) {}
+
+  get currentBytes(): number {
+    return this.inFlightBytes;
+  }
+
+  tryAcquire(bytes: number): (() => void) | null {
+    const reserved = Math.max(1, bytes);
+    if (reserved > this.maxBytes) return null;
+    if (this.inFlightBytes + reserved > this.maxBytes) return null;
+    this.inFlightBytes += reserved;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.inFlightBytes = Math.max(0, this.inFlightBytes - reserved);
+    };
+  }
+}
+
+export const registryWriteAdmission = new RegistryWriteAdmission(
+  env.REGISTRY_MAX_INFLIGHT_UPLOAD_BYTES,
+);
 
 export async function enforceRequestBodyLimits(
   c: Context<AppEnv>,
@@ -96,6 +142,61 @@ export async function enforceRequestBodyLimits(
     );
   }
   await next();
+}
+
+export async function enforceRegistryWriteAdmission(
+  c: Context<AppEnv>,
+  next: () => Promise<void>,
+): Promise<Response | undefined> {
+  const pathname = c.req.path;
+  if (!isRegistryWriteCandidate(c.req.method, pathname)) {
+    await next();
+    return;
+  }
+  const contentLength = parseContentLength(c.req.header("content-length"));
+  if (contentLength === "invalid") {
+    await next();
+    return;
+  }
+  const reserveBytes = contentLength ?? env.REGISTRY_MAX_UPLOAD_BYTES;
+  const release = registryWriteAdmission.tryAcquire(reserveBytes);
+  if (!release) {
+    addSpanEvent("registry.write_admission.rejected", {
+      "http.request.body.size": reserveBytes,
+      "registry.write_admission.inflight_bytes": registryWriteAdmission.currentBytes,
+      "registry.write_admission.max_bytes": env.REGISTRY_MAX_INFLIGHT_UPLOAD_BYTES,
+    });
+    logger.warn("registry write admission rejected", {
+      method: c.req.method,
+      path: pathname,
+      reservedBytes: reserveBytes,
+      inFlightBytes: registryWriteAdmission.currentBytes,
+      limit: env.REGISTRY_MAX_INFLIGHT_UPLOAD_BYTES,
+    });
+    return new Response(
+      JSON.stringify({
+        errors: [
+          {
+            code: "UNAVAILABLE",
+            message: "registry upload capacity exhausted; retry later",
+          },
+        ],
+      }),
+      {
+        status: 503,
+        headers: {
+          "content-type": "application/json; charset=utf-8",
+          "retry-after": String(RETRY_AFTER_SECONDS),
+        },
+      },
+    );
+  }
+
+  try {
+    await next();
+  } finally {
+    release();
+  }
 }
 
 export async function rejectCrossOriginSessionWrites(
