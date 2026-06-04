@@ -35,6 +35,7 @@ function createTestDataService(): RegistryDataService {
       exists: () => Promise.resolve(false),
       listNames: () => Promise.resolve([]),
       listLive: () => Promise.resolve([]),
+      listLiveForPackages: () => Promise.resolve(new Map()),
       listRepositoryMetadata: () => Promise.resolve([]),
       create: () => unimplemented("data.versions.create"),
       upsert: () => unimplemented("data.versions.upsert"),
@@ -46,6 +47,7 @@ function createTestDataService(): RegistryDataService {
     },
     tags: {
       listLive: () => Promise.resolve({}),
+      listLiveForPackages: () => Promise.resolve(new Map()),
       set: () => Promise.resolve(),
       delete: () => Promise.resolve(),
       replace: () => Promise.resolve(),

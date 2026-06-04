@@ -61,6 +61,7 @@ export const NpmDistTagSchema = z
   .min(1)
   .max(214)
   .refine(isValidDistTag, "invalid npm dist-tag");
+export const NPM_SEARCH_MAX_SIZE = 250;
 export const NpmTarballFilenameSchema = z
   .string()
   .min(1)
@@ -69,7 +70,7 @@ export const NpmTarballFilenameSchema = z
 export const NpmSearchQuerySchema = z.strictObject({
   text: z.string().max(256).default(""),
   from: z.coerce.number().int().min(0).max(10_000).default(0),
-  size: z.coerce.number().int().min(0).max(10_000).default(20),
+  size: z.coerce.number().int().min(0).max(NPM_SEARCH_MAX_SIZE).default(20),
 });
 export const NpmPublishManifestSchema = z.looseObject({
   name: z.string().optional(),

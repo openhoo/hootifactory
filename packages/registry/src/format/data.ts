@@ -265,6 +265,10 @@ export interface RegistryDataService {
       pkg: RegistryPackageHandle,
       opts?: { orderByCreated?: "asc" | "desc" },
     ): Promise<RegistryPackageVersionRow[]>;
+    listLiveForPackages(
+      pkgs: RegistryPackageHandle[],
+      opts?: { orderByCreated?: "asc" | "desc" },
+    ): Promise<Map<string, RegistryPackageVersionRow[]>>;
     listRepositoryMetadata(opts?: {
       package?: RegistryPackageHandle;
       liveOnly?: boolean;
@@ -308,6 +312,9 @@ export interface RegistryDataService {
   };
   tags: {
     listLive(pkg: RegistryPackageHandle): Promise<Record<string, string>>;
+    listLiveForPackages(
+      pkgs: RegistryPackageHandle[],
+    ): Promise<Map<string, Record<string, string>>>;
     set(
       pkg: RegistryPackageHandle,
       tag: string,

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { buildNpmSearchObject, buildNpmSearchResponse, parseNpmSearchQuery } from "./npm-search";
+import { NPM_SEARCH_MAX_SIZE } from "./npm-validation";
 
 describe("npm search helpers", () => {
   test("parses search query defaults and pagination values", () => {
@@ -15,10 +16,20 @@ describe("npm search helpers", () => {
       from: 3,
       size: 10,
     });
+    expect(
+      parseNpmSearchQuery(`https://registry.test/-/v1/search?size=${NPM_SEARCH_MAX_SIZE}`),
+    ).toEqual({
+      text: "",
+      from: 0,
+      size: NPM_SEARCH_MAX_SIZE,
+    });
   });
 
   test("rejects invalid search query values before database work", () => {
     expect(() => parseNpmSearchQuery("https://registry.test/-/v1/search?from=-1")).toThrow();
+    expect(() =>
+      parseNpmSearchQuery(`https://registry.test/-/v1/search?size=${NPM_SEARCH_MAX_SIZE + 1}`),
+    ).toThrow();
     expect(() =>
       parseNpmSearchQuery(`https://registry.test/-/v1/search?text=${"x".repeat(257)}`),
     ).toThrow();

@@ -45,7 +45,9 @@ import {
 import {
   deleteDistTag,
   listLiveDistTags,
+  listLiveDistTagsForPackages,
   listLivePackageVersions,
+  listLivePackageVersionsForPackages,
   listLiveVersionPublishers,
   listPackageVersionNames,
   listRepositoryPackageNames,
@@ -192,6 +194,11 @@ export function createRegistryDataService(ctx: RegistryRequestContext): Registry
       exists: (pkg, version) => packageVersionExists(packageId(ctx, pkg), version),
       listNames: (pkg) => listPackageVersionNames(packageId(ctx, pkg)),
       listLive: (pkg, opts) => listLivePackageVersions(packageId(ctx, pkg), opts),
+      listLiveForPackages: (pkgs, opts) =>
+        listLivePackageVersionsForPackages(
+          pkgs.map((pkg) => packageId(ctx, pkg)),
+          opts,
+        ),
       listRepositoryMetadata: (opts) =>
         listRepositoryVersionMetadata(ctx, {
           packageId: opts?.package ? packageId(ctx, opts.package) : undefined,
@@ -269,6 +276,8 @@ export function createRegistryDataService(ctx: RegistryRequestContext): Registry
     },
     tags: {
       listLive: (pkg) => listLiveDistTags(packageId(ctx, pkg)),
+      listLiveForPackages: (pkgs) =>
+        listLiveDistTagsForPackages(pkgs.map((pkg) => packageId(ctx, pkg))),
       set: (pkg, tag, version) => {
         assertVersionForPackage(pkg, version);
         return setDistTag(packageId(ctx, pkg), tag, version.id);

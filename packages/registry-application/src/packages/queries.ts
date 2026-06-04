@@ -5,8 +5,8 @@ import {
   db,
   desc,
   eq,
+  inArray,
   isNull,
-  like,
   packages,
   packageVersions,
   sql,
@@ -35,6 +35,10 @@ export interface PackageVersionNameRow {
 export interface DistTagVersionRow {
   tag: string;
   version: string;
+}
+
+export interface DistTagVersionPackageRow extends DistTagVersionRow {
+  packageId: string;
 }
 
 export interface PackageSearchResult {
@@ -68,6 +72,10 @@ export interface PatchPackageVersionUpdate<T> {
   result: T;
 }
 
+export function packageSearchLikePattern(text: string): string {
+  return `%${text.replace(/[\\%_]/g, "\\$&")}%`;
+}
+
 export async function listRepositoryPackageNames(
   ctx: RegistryRequestContext,
 ): Promise<PackageNameRow[]> {
@@ -97,7 +105,9 @@ export async function searchRepositoryPackages(
 ): Promise<PackageSearchResult> {
   const where = and(
     eq(packages.repositoryId, ctx.repo.id),
-    opts.text ? like(packages.name, `%${opts.text}%`) : sql`true`,
+    opts.text
+      ? sql`${packages.name} like ${packageSearchLikePattern(opts.text)} escape '\\'`
+      : sql`true`,
   );
   const totalRows = (await db.select({ value: count() }).from(packages).where(where)) as Array<{
     value: number;
@@ -130,6 +140,38 @@ export async function listLivePackageVersions(
   return query;
 }
 
+export async function listLivePackageVersionsForPackages(
+  packageIds: string[],
+  opts: { orderByCreated?: "asc" | "desc" } = {},
+): Promise<Map<string, PackageVersionReadRow[]>> {
+  const ids = [...new Set(packageIds)];
+  const byPackageId = new Map(ids.map((id) => [id, [] as PackageVersionReadRow[]]));
+  if (ids.length === 0) return byPackageId;
+
+  const query = db
+    .select()
+    .from(packageVersions)
+    .where(and(inArray(packageVersions.packageId, ids), isNull(packageVersions.deletedAt)));
+  const rows =
+    opts.orderByCreated === "asc"
+      ? await query.orderBy(
+          asc(packageVersions.packageId),
+          asc(packageVersions.createdAt),
+          asc(packageVersions.id),
+        )
+      : opts.orderByCreated === "desc"
+        ? await query.orderBy(
+            asc(packageVersions.packageId),
+            desc(packageVersions.createdAt),
+            desc(packageVersions.id),
+          )
+        : await query;
+  for (const row of rows as PackageVersionReadRow[]) {
+    byPackageId.get(row.packageId)?.push(row);
+  }
+  return byPackageId;
+}
+
 export async function listPackageVersionNames(packageId: string): Promise<PackageVersionNameRow[]> {
   return db
     .select({ version: packageVersions.version })
@@ -148,6 +190,30 @@ export async function listLiveDistTags(packageId: string): Promise<Record<string
   const tags: Record<string, string> = {};
   for (const row of rows) tags[row.tag] = row.version;
   return tags;
+}
+
+export async function listLiveDistTagsForPackages(
+  packageIds: string[],
+): Promise<Map<string, Record<string, string>>> {
+  const ids = [...new Set(packageIds)];
+  const byPackageId = new Map(ids.map((id) => [id, {} as Record<string, string>]));
+  if (ids.length === 0) return byPackageId;
+
+  const rows = (await db
+    .select({
+      packageId: versionTags.packageId,
+      tag: versionTags.tag,
+      version: packageVersions.version,
+    })
+    .from(versionTags)
+    .innerJoin(packageVersions, eq(versionTags.versionId, packageVersions.id))
+    .where(
+      and(inArray(versionTags.packageId, ids), isNull(packageVersions.deletedAt)),
+    )) as DistTagVersionPackageRow[];
+  for (const row of rows) {
+    byPackageId.get(row.packageId)![row.tag] = row.version;
+  }
+  return byPackageId;
 }
 
 export async function deleteDistTag(packageId: string, tag: string): Promise<void> {
