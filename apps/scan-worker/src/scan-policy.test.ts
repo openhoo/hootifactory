@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createTtlPromiseCache, dedupeFindings, evaluateScanPolicy } from "./scan-policy";
+import { dedupeFindings, evaluateScanPolicy } from "./scan-policy";
 
 describe("scan policy helpers", () => {
   test("deduplicates findings by type, vulnerability/title, and package identity", () => {
@@ -77,42 +77,5 @@ describe("scan policy helpers", () => {
         licenseViolates: true,
       },
     });
-  });
-
-  test("caches promise results until the TTL expires", async () => {
-    let calls = 0;
-    const cache = createTtlPromiseCache(async (key: string) => {
-      calls += 1;
-      return `${key}:${calls}`;
-    }, 100);
-
-    await expect(cache.get("org-1", 1_000)).resolves.toBe("org-1:1");
-    await expect(cache.get("org-1", 1_050)).resolves.toBe("org-1:1");
-    await expect(cache.get("org-1", 1_101)).resolves.toBe("org-1:2");
-    expect(calls).toBe(2);
-  });
-
-  test("invalidates cached promise results", async () => {
-    let calls = 0;
-    const cache = createTtlPromiseCache(async () => {
-      calls += 1;
-      return calls;
-    }, 100);
-
-    await expect(cache.get("org-1", 1_000)).resolves.toBe(1);
-    cache.invalidate("org-1");
-    await expect(cache.get("org-1", 1_050)).resolves.toBe(2);
-  });
-
-  test("evicts failed promise results", async () => {
-    let calls = 0;
-    const cache = createTtlPromiseCache(async () => {
-      calls += 1;
-      if (calls === 1) throw new Error("db unavailable");
-      return calls;
-    }, 100);
-
-    await expect(cache.get("org-1", 1_000)).rejects.toThrow("db unavailable");
-    await expect(cache.get("org-1", 1_050)).resolves.toBe(2);
   });
 });

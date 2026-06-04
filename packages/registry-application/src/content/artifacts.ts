@@ -1,14 +1,16 @@
-import { and, artifacts, db, eq, inArray, scanPolicies } from "@hootifactory/db";
+import { and, artifacts, db, eq, inArray } from "@hootifactory/db";
 import {
   immutableRegistryBlobCacheControl,
   type RegistryRequestContext,
 } from "@hootifactory/registry";
-import { resolveScanPolicy, type ScanPolicyPattern } from "@hootifactory/scan-core";
 import { blobStore } from "@hootifactory/storage";
+import {
+  invalidateRegistryScanPolicyCache,
+  resolveRegistryScanPolicy,
+} from "../governance/scan-policy";
 
 export const REGISTRY_TOKEN_SERVICE = "hootifactory";
 
-type ScanPolicyRow = ScanPolicyPattern & { mode: "audit" | "enforce" };
 type BlobResponseOptions = {
   digest: string;
   contentType: string;
@@ -46,8 +48,8 @@ export async function areAllArtifactsBlocked(
 ): Promise<boolean> {
   const uniqueDigests = [...new Set(digests)];
   if (uniqueDigests.length === 0) return false;
-  const [policies, rows] = await Promise.all([
-    scanPolicyRowsForOrg(ctx.repo.orgId),
+  const [policy, rows] = await Promise.all([
+    resolveRegistryScanPolicy(ctx.repo.orgId, ctx.repo.name),
     db
       .select({ digest: artifacts.digest, state: artifacts.state })
       .from(artifacts)
@@ -59,7 +61,6 @@ export async function areAllArtifactsBlocked(
         ),
       ),
   ]);
-  const policy = resolveScanPolicy(policies as ScanPolicyRow[], ctx.repo.name);
   const stateByDigest = new Map(rows.map((row) => [row.digest, row.state]));
   if (policy?.mode === "enforce") {
     // Enforce mode is fail-closed: bytes are unavailable until a scanner has
@@ -69,14 +70,8 @@ export async function areAllArtifactsBlocked(
   return uniqueDigests.every((digest) => stateByDigest.get(digest) === "blocked");
 }
 
-export function invalidateScanPolicyCache(orgId: string): void {
-  void orgId;
-}
-
-function scanPolicyRowsForOrg(orgId: string): Promise<ScanPolicyRow[]> {
-  return db.select().from(scanPolicies).where(eq(scanPolicies.orgId, orgId)) as Promise<
-    ScanPolicyRow[]
-  >;
+export function invalidateScanPolicyCache(orgId?: string): void {
+  invalidateRegistryScanPolicyCache(orgId);
 }
 
 /**

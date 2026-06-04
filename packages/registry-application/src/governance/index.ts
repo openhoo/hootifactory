@@ -8,3 +8,11 @@ export {
   type UpsertScanPolicyInput,
   upsertScanPolicy,
 } from "./governance";
+export {
+  createRegistryScanPolicyResolver,
+  invalidateRegistryScanPolicyCache,
+  listRegistryScanPoliciesForOrg,
+  type RegistryScanPolicyResolver,
+  type RegistryScanPolicyRow,
+  resolveRegistryScanPolicy,
+} from "./scan-policy";

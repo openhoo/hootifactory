@@ -1,18 +1,16 @@
-import { createTtlPromiseCache } from "@hootifactory/core";
-import { db, eq, scanPolicies } from "@hootifactory/db";
+import {
+  type RegistryScanPolicyRow,
+  resolveRegistryScanPolicy,
+} from "@hootifactory/registry-application";
 import {
   maxSeverity,
   type NormalizedFinding,
-  resolveScanPolicy,
   SEVERITY_ORDER,
   type Severity,
 } from "@hootifactory/scan-core";
 
-type PolicyRow = typeof scanPolicies.$inferSelect;
 type ArtifactState = "clean" | "quarantined" | "blocked";
 type PolicyMode = "audit" | "enforce";
-
-const SCAN_POLICY_CACHE_TTL_MS = 5_000;
 
 export interface ScanPolicyRules {
   mode?: PolicyMode | null;
@@ -36,18 +34,8 @@ export interface ScanPolicyEvaluation {
   state: ArtifactState;
 }
 
-const policyRowsCache = createTtlPromiseCache(
-  (orgId: string) => db.select().from(scanPolicies).where(eq(scanPolicies.orgId, orgId)),
-  SCAN_POLICY_CACHE_TTL_MS,
-);
-
-export function invalidateScanPolicyCache(orgId?: string): void {
-  policyRowsCache.invalidate(orgId);
-}
-
-export async function loadPolicy(orgId: string, repoName: string): Promise<PolicyRow | null> {
-  const rows = await policyRowsCache.get(orgId);
-  return resolveScanPolicy(rows, repoName);
+export function loadPolicy(orgId: string, repoName: string): Promise<RegistryScanPolicyRow | null> {
+  return resolveRegistryScanPolicy(orgId, repoName);
 }
 
 export function dedupeFindings(items: NormalizedFinding[]): NormalizedFinding[] {
@@ -64,8 +52,6 @@ export function dedupeFindings(items: NormalizedFinding[]): NormalizedFinding[] 
   }
   return out;
 }
-
-export { createTtlPromiseCache };
 
 export function evaluateScanPolicy(
   findings: readonly NormalizedFinding[],
