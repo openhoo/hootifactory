@@ -51,8 +51,8 @@ export class PypiAdapter implements RegistryPlugin {
       route.get("/simple/:project/", "simpleProject", ({ params, req, ctx }) =>
         this.simpleProject(params.project, req, ctx),
       ),
-      route.get("/files/:filename", "download", ({ params, ctx }) =>
-        this.download(params.filename, ctx),
+      route.get("/files/:filename", "download", ({ params, req, ctx }) =>
+        this.download(params.filename, req, ctx),
       ),
       route.post("/", "upload", ({ req, ctx }) => this.upload(req, ctx)),
       route.post("/legacy/", "upload", ({ req, ctx }) => this.upload(req, ctx)),
@@ -199,7 +199,11 @@ export class PypiAdapter implements RegistryPlugin {
     });
   }
 
-  private async download(filename: string, ctx: RegistryRequestContext): Promise<Response> {
+  private async download(
+    filename: string,
+    req: Request,
+    ctx: RegistryRequestContext,
+  ): Promise<Response> {
     filename = parseRegistryInput(PypiFilenameSchema, filename, {
       code: "NAME_INVALID",
       message: "invalid distribution filename",
@@ -213,6 +217,7 @@ export class PypiAdapter implements RegistryPlugin {
       kind: "pypi_file",
       scope: file.scope,
       contentType: "application/octet-stream",
+      redirect: req.method === "GET",
       blocked: () => new Response("artifact blocked by scan policy", { status: 403 }),
     });
   }

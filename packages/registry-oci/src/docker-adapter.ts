@@ -282,6 +282,7 @@ export class DockerAdapter implements RegistryPlugin {
       headOnly,
       get: () => blob.get(),
       getRange: (start, end) => blob.getRange(start, end),
+      redirectUrl: () => blob.publicUrl?.() ?? null,
     });
   }
 

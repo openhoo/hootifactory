@@ -294,6 +294,7 @@ export class NpmAdapter implements RegistryPlugin {
       scope: `${name}@${distVersion}`,
       contentType: "application/octet-stream",
       extraHeaders: { etag },
+      redirect: req.method === "GET",
       blocked: () => Response.json({ error: "artifact blocked by scan policy" }, { status: 403 }),
       notModified: () =>
         ifNoneMatch(req, etag) ? new Response(null, { status: 304, headers: { etag } }) : null,

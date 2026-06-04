@@ -41,6 +41,7 @@ export interface BlobStore {
   /** GC only — removes bytes from the CAS. */
   delete(digest: string): Promise<void>;
   presignGet(digest: string, expiresIn?: number): string;
+  publicPresignGet(digest: string, expiresIn?: number): string | null;
 
   // ── raw-key (staging) ─────────────────────────────────────────────────────
   putAtKey(key: string, data: Exclude<BlobData, ReadableStream<Uint8Array>>): Promise<void>;

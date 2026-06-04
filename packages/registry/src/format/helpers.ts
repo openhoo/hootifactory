@@ -18,6 +18,7 @@ export interface ServeRegistryBlobOptions {
   extraHeaders?: Record<string, string>;
   blocked: () => Response;
   notModified?: () => Response | null;
+  redirect?: boolean;
   missing?: () => Response;
 }
 
@@ -73,6 +74,7 @@ export async function serveRegistryBlob(
     extraHeaders: opts.extraHeaders,
     blocked: opts.blocked,
     notModified: opts.notModified,
+    redirect: opts.redirect,
   });
 }
 

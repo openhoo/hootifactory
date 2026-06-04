@@ -125,8 +125,8 @@ export class NugetAdapter implements RegistryPlugin {
       route.get("/v3-flatcontainer/:id/index.json", "versions", ({ params, req, ctx }) =>
         this.versions(params.id, req, ctx),
       ),
-      route.get("/v3-flatcontainer/:id/:version/:file", "download", ({ params, ctx }) =>
-        this.download(params.id, params.version, params.file, ctx),
+      route.get("/v3-flatcontainer/:id/:version/:file", "download", ({ params, req, ctx }) =>
+        this.download(params.id, params.version, params.file, req, ctx),
       ),
       route.get("/v3/registrations/:id/index.json", "registration", ({ params, req, ctx }) =>
         this.registration(params.id, req, this.base(ctx), ctx),
@@ -325,6 +325,7 @@ export class NugetAdapter implements RegistryPlugin {
     id: string,
     version: string,
     file: string,
+    req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
     id = parseNugetId(id);
@@ -355,6 +356,7 @@ export class NugetAdapter implements RegistryPlugin {
       kind: "generic_file",
       scope: `${id.toLowerCase()}.${norm}.nupkg`,
       contentType: "application/octet-stream",
+      redirect: req.method === "GET",
       blocked: () => new Response("blocked by scan policy", { status: 403 }),
     });
   }

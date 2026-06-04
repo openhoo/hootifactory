@@ -14,7 +14,9 @@ function stream(text: string): ReadableStream<Uint8Array> {
   });
 }
 
-function blobResponse(input: { rangeHeader?: string | null; headOnly?: boolean } = {}) {
+function blobResponse(
+  input: { rangeHeader?: string | null; headOnly?: boolean; redirectUrl?: string | null } = {},
+) {
   const bytes = "0123456789";
   return buildOciBlobResponse({
     digest: "sha256:abc",
@@ -24,6 +26,7 @@ function blobResponse(input: { rangeHeader?: string | null; headOnly?: boolean }
     headOnly: input.headOnly ?? false,
     get: () => stream(bytes),
     getRange: (start, end) => stream(bytes.slice(start, end)),
+    redirectUrl: input.redirectUrl === undefined ? undefined : () => input.redirectUrl ?? null,
   });
 }
 
@@ -63,6 +66,27 @@ describe("OCI blob response helpers", () => {
     expect(response.status).toBe(206);
     expect(response.headers.get("content-range")).toBe("bytes 2-5/10");
     expect(response.headers.get("content-length")).toBe("4");
+    expect(await response.text()).toBe("2345");
+  });
+
+  test("redirects full blob GETs when a public URL is available", async () => {
+    const response = await blobResponse({ redirectUrl: "https://cdn.example.test/layer" });
+
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toBe("https://cdn.example.test/layer");
+    expect(response.headers.get("content-length")).toBeNull();
+    expect(response.headers.get("docker-content-digest")).toBe("sha256:abc");
+    expect(await response.text()).toBe("");
+  });
+
+  test("keeps ranged blob responses proxied even when redirects are available", async () => {
+    const response = await blobResponse({
+      rangeHeader: "bytes=2-5",
+      redirectUrl: "https://cdn.example.test/layer",
+    });
+
+    expect(response.status).toBe(206);
+    expect(response.headers.get("location")).toBeNull();
     expect(await response.text()).toBe("2345");
   });
 

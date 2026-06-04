@@ -112,6 +112,7 @@ export interface BlobStore {
   putStream(data: ReadableStream<Uint8Array>, expectedDigest?: string): Promise<PutResult>;
   delete(digest: string): Promise<void>;
   presignGet(digest: string, expiresIn?: number): string;
+  publicPresignGet(digest: string, expiresIn?: number): string | null;
   putAtKey(key: string, data: Exclude<BlobData, ReadableStream<Uint8Array>>): Promise<void>;
   readKey(key: string): ReadableStream<Uint8Array>;
   bytesAtKey(key: string): Promise<Uint8Array>;

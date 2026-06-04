@@ -53,6 +53,7 @@ async function streamToTempFile(
 
 export interface S3BlobStoreOptions {
   endpoint?: string;
+  publicEndpoint?: string;
   region?: string;
   bucket?: string;
   accessKeyId?: string;
@@ -73,7 +74,9 @@ async function toBytes(data: Exclude<BlobData, ReadableStream<Uint8Array>>): Pro
 /** S3-compatible (S3 / MinIO / R2) content-addressable blob store via Bun's native S3 client. */
 export class S3BlobStore implements BlobStore {
   private readonly client: S3Client;
+  private readonly publicClient?: S3Client;
   private readonly endpoint?: string;
+  private readonly publicEndpoint?: string;
   private readonly region: string;
   private readonly bucket?: string;
   private readonly accessKeyId?: string;
@@ -82,6 +85,7 @@ export class S3BlobStore implements BlobStore {
 
   constructor(opts: S3BlobStoreOptions = {}) {
     this.endpoint = opts.endpoint ?? env.S3_ENDPOINT;
+    this.publicEndpoint = opts.publicEndpoint ?? env.S3_PUBLIC_ENDPOINT;
     this.region = opts.region ?? env.S3_REGION;
     this.bucket = opts.bucket ?? env.S3_BUCKET;
     this.accessKeyId = opts.accessKeyId ?? env.S3_ACCESS_KEY_ID;
@@ -96,6 +100,16 @@ export class S3BlobStore implements BlobStore {
       // MinIO and other non-AWS S3 backends require path-style addressing.
       virtualHostedStyle: !this.forcePathStyle,
     });
+    this.publicClient = this.publicEndpoint
+      ? new S3Client({
+          endpoint: this.publicEndpoint,
+          region: this.region,
+          bucket: this.bucket,
+          accessKeyId: this.accessKeyId,
+          secretAccessKey: this.secretAccessKey,
+          virtualHostedStyle: !this.forcePathStyle,
+        })
+      : undefined;
   }
 
   private file(key: string) {
@@ -167,6 +181,11 @@ export class S3BlobStore implements BlobStore {
 
   presignGet(digest: string, expiresIn = 300): string {
     return this.file(this.blobKey(digest)).presign({ method: "GET", expiresIn });
+  }
+
+  publicPresignGet(digest: string, expiresIn = 300): string | null {
+    if (!this.publicClient) return null;
+    return this.publicClient.file(this.blobKey(digest)).presign({ method: "GET", expiresIn });
   }
 
   // ── raw-key (staging) ───────────────────────────────────────────────────

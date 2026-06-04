@@ -181,6 +181,7 @@ const EnvSchema = z
 
     // Object storage (S3-compatible)
     S3_ENDPOINT: absoluteUrl.default("http://localhost:9000"),
+    S3_PUBLIC_ENDPOINT: optionalHttpUrl,
     S3_REGION: z.string().default("us-east-1"),
     S3_BUCKET: z.string().default("hootifactory"),
     S3_ACCESS_KEY_ID: z.string().default("hootifactory"),

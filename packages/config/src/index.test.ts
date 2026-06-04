@@ -33,6 +33,7 @@ describe("environment auth creation defaults", () => {
     expect(devEnv.REGISTRY_MAX_STAGED_UPLOAD_BYTES).toBe(100 * 1024 * 1024);
     expect(devEnv.REGISTRY_MAX_INFLIGHT_UPLOAD_BYTES).toBe(256 * 1024 * 1024);
     expect(devEnv.REGISTRY_ALLOW_PRIVATE_UPSTREAMS).toBe(false);
+    expect(devEnv.S3_PUBLIC_ENDPOINT).toBeUndefined();
     expect(devEnv.SCAN_MAX_BYTES).toBe(100 * 1024 * 1024);
     expect(devEnv.SCANNER_CLI_RUNTIME).toBe("docker");
     expect(devEnv.SCANNER_DOCKER_MEMORY).toBe("1g");
@@ -110,13 +111,16 @@ describe("environment auth creation defaults", () => {
     const env = loadEnv({
       CLAMAV_REST_URL: "http://clamav:3310/scan/",
       TRIVY_SERVER_URL: "http://trivy:4954/",
+      S3_PUBLIC_ENDPOINT: "https://cdn.example.test/s3/",
       SCANNER_CLI_RUNTIME: "host",
     });
     expect(env.CLAMAV_REST_URL).toBe("http://clamav:3310/scan");
     expect(env.TRIVY_SERVER_URL).toBe("http://trivy:4954");
+    expect(env.S3_PUBLIC_ENDPOINT).toBe("https://cdn.example.test/s3");
     expect(env.SCANNER_CLI_RUNTIME).toBe("host");
     expect(() => loadEnv({ CLAMAV_REST_URL: "clamav:3310" })).toThrow();
     expect(() => loadEnv({ TRIVY_SERVER_URL: "trivy:4954" })).toThrow();
+    expect(() => loadEnv({ S3_PUBLIC_ENDPOINT: "notaurl" })).toThrow();
     expect(() => loadEnv({ SCANNER_CLI_RUNTIME: "local" })).toThrow();
     expect(() => loadEnv({ SCANNER_DOCKER_MEMORY: "large" })).toThrow();
     expect(() => loadEnv({ SCANNER_DOCKER_CPUS: "0" })).toThrow();

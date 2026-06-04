@@ -61,8 +61,8 @@ export class CargoAdapter implements RegistryPlugin {
         }),
       ),
       route.put("/api/v1/crates/new", "publish", ({ req, ctx }) => this.publish(req, ctx)),
-      route.get("/api/v1/crates/:crate/:version/download", "download", ({ params, ctx }) =>
-        this.download(params.crate, params.version, ctx),
+      route.get("/api/v1/crates/:crate/:version/download", "download", ({ params, req, ctx }) =>
+        this.download(params.crate, params.version, req, ctx),
       ),
       route.delete("/api/v1/crates/:crate/:version/yank", "yank", ({ params, ctx }) =>
         this.setYank(params.crate, params.version, true, ctx),
@@ -135,6 +135,7 @@ export class CargoAdapter implements RegistryPlugin {
   private async download(
     crate: string,
     version: string,
+    req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
     crate = parseCrateName(crate);
@@ -149,6 +150,7 @@ export class CargoAdapter implements RegistryPlugin {
       kind: "generic_file",
       scope: cargoBlobScope(crate, version),
       contentType: "application/octet-stream",
+      redirect: req.method === "GET",
       blocked: () => new Response("blocked by scan policy", { status: 403 }),
     });
   }

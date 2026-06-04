@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { serveBlobWithScanGate } from "./artifacts";
 
-function ctxForBlobResponse() {
+function ctxForBlobResponse(presignedUrl?: string | null) {
   return {
     getBlob: () => "BYTES",
+    presignBlobGet: () => presignedUrl ?? null,
   };
 }
 
@@ -56,6 +57,38 @@ describe("serveBlobIfClean", () => {
     expect(res.headers.get("cache-control")).toBe("private, max-age=31536000, immutable");
     expect(res.headers.get("etag")).toBe('"abc"');
     expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(await res.text()).toBe("BYTES");
+  });
+
+  test("a clean artifact redirects to a public blob URL when requested", async () => {
+    const res = await serveBlobWithScanGate(
+      ctxForBlobResponse("https://cdn.example.test/blob"),
+      {
+        digest: "sha256:deadbeef",
+        contentType: "application/octet-stream",
+        blocked: () => new Response("blocked by scan policy", { status: 403 }),
+        redirect: true,
+      },
+      async () => false,
+    );
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe("https://cdn.example.test/blob");
+    expect(res.headers.get("content-disposition")).toBe('attachment; filename="sha256_deadbeef"');
+    expect(await res.text()).toBe("");
+  });
+
+  test("a clean artifact falls back to streaming when no public blob URL is available", async () => {
+    const res = await serveBlobWithScanGate(
+      ctxForBlobResponse(null),
+      {
+        digest: "sha256:deadbeef",
+        contentType: "application/octet-stream",
+        blocked: () => new Response("blocked by scan policy", { status: 403 }),
+        redirect: true,
+      },
+      async () => false,
+    );
+    expect(res.status).toBe(200);
     expect(await res.text()).toBe("BYTES");
   });
 });

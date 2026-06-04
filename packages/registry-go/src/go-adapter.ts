@@ -176,6 +176,7 @@ export class GoAdapter implements RegistryPlugin {
         kind: "generic_file",
         scope: `${moduleName}@${version}.zip`,
         contentType: "application/zip",
+        redirect: req.method === "GET",
         blocked: () => new Response("blocked by scan policy", { status: 403 }),
       });
     }

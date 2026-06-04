@@ -15,6 +15,7 @@ type BlobResponseOptions = {
   extraHeaders?: Record<string, string>;
   blocked: () => Response;
   notModified?: () => Response | null;
+  redirect?: boolean;
 };
 type ScanPolicyCacheEntry = {
   expiresAt: number;
@@ -26,6 +27,27 @@ const scanPolicyCache = new Map<string, ScanPolicyCacheEntry>();
 
 function attachmentFilename(digest: string): string {
   return digest.replace(/[^A-Za-z0-9._-]/g, "_");
+}
+
+function blobResponseHeaders(ctx: unknown, opts: BlobResponseOptions): Record<string, string> {
+  return {
+    "cache-control": blobCacheControl(ctx),
+    "content-disposition": `attachment; filename="${attachmentFilename(opts.digest)}"`,
+    "content-type": opts.contentType,
+    etag: `"${opts.digest}"`,
+    "x-content-type-options": "nosniff",
+    ...opts.extraHeaders,
+  };
+}
+
+function publicBlobUrl(ctx: unknown, digest: string): string | null {
+  if (ctx && typeof ctx === "object" && "presignBlobGet" in ctx) {
+    return (
+      (ctx as { presignBlobGet?: (digest: string) => string | null }).presignBlobGet?.(digest) ??
+      null
+    );
+  }
+  return blobStore.publicPresignGet(digest);
 }
 
 export async function isArtifactBlocked(
@@ -108,19 +130,23 @@ export async function serveBlobWithScanGate(
   if (await isBlocked(opts.digest)) return opts.blocked();
   const notModified = opts.notModified?.();
   if (notModified) return notModified;
+  const headers = blobResponseHeaders(ctx, opts);
+  const location = opts.redirect ? publicBlobUrl(ctx, opts.digest) : null;
+  if (location) {
+    return new Response(null, {
+      status: 302,
+      headers: {
+        ...headers,
+        location,
+      },
+    });
+  }
   const read =
     ctx && typeof ctx === "object" && "getBlob" in ctx
       ? (ctx as { getBlob?: (digest: string) => ConstructorParameters<typeof Response>[0] }).getBlob
       : undefined;
   return new Response(read?.(opts.digest) ?? blobStore.get(opts.digest), {
-    headers: {
-      "cache-control": blobCacheControl(ctx),
-      "content-disposition": `attachment; filename="${attachmentFilename(opts.digest)}"`,
-      "content-type": opts.contentType,
-      etag: `"${opts.digest}"`,
-      "x-content-type-options": "nosniff",
-      ...opts.extraHeaders,
-    },
+    headers,
   });
 }
 

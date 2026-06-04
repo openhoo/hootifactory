@@ -8,6 +8,7 @@ export interface OciBlobResponseInput {
   headOnly: boolean;
   get: () => ReadableStream<Uint8Array>;
   getRange: (start: number, end: number) => ReadableStream<Uint8Array>;
+  redirectUrl?: () => string | null;
 }
 
 export function buildOciBlobHeaders(input: {
@@ -60,7 +61,14 @@ export async function buildOciBlobResponse(input: OciBlobResponseInput): Promise
     throw err;
   }
 
-  if (!range) return new Response(input.get(), { status: 200, headers });
+  if (!range) {
+    const location = input.redirectUrl?.() ?? null;
+    if (location) {
+      const { "content-length": _contentLength, ...redirectHeaders } = headers;
+      return new Response(null, { status: 302, headers: { ...redirectHeaders, location } });
+    }
+    return new Response(input.get(), { status: 200, headers });
+  }
 
   headers["content-range"] = `bytes ${range.start}-${range.end}/${input.size}`;
   headers["content-length"] = String(range.end - range.start + 1);

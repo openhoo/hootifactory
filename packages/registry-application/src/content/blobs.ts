@@ -383,6 +383,7 @@ export async function getBlobRef(
     size: row.size,
     get: () => blobStore.get(ref.digest),
     getRange: (start, end) => blobStore.getRange(ref.digest, start, end),
+    publicUrl: () => blobStore.publicPresignGet(ref.digest),
   };
 }
 

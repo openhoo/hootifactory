@@ -207,6 +207,7 @@ export interface RegistryBlobResponseOptions {
   extraHeaders?: Record<string, string>;
   blocked: () => Response;
   notModified?: () => Response | null;
+  redirect?: boolean;
 }
 
 export interface RegistryBlobRefInput {
@@ -220,6 +221,7 @@ export interface RegistryReferencedBlob {
   size: number;
   get(): ReadableStream<Uint8Array>;
   getRange(start: number, end?: number): ReadableStream<Uint8Array>;
+  publicUrl?(): string | null;
 }
 
 export interface PatchPackageVersionRow {
