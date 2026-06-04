@@ -32,6 +32,7 @@ import {
   NpmLegacyPackageNameSchema,
   NpmTarballFilenameSchema,
   parseNpmStoredVersionMetadata,
+  versionFromTarballFilename,
 } from "./npm-validation";
 import { buildPackument, mergePackuments } from "./packument";
 
@@ -199,17 +200,11 @@ export class NpmAdapter implements RegistryPlugin {
     });
     const pkg = await this.findPackage(ctx, name);
     if (!pkg) return Response.json({ error: "Not found" }, { status: 404 });
-    const versions = await this.liveVersionsFor(ctx, pkg);
-    let dist: NpmDist | undefined;
-    let distVersion: string | null = null;
-    for (const version of versions) {
-      const metadata = parseNpmStoredVersionMetadata(version.metadata);
-      if (metadata.dist?.filename === filename) {
-        dist = metadata.dist;
-        distVersion = version.version;
-        break;
-      }
-    }
+    const distVersion = versionFromTarballFilename(name, filename);
+    const version = distVersion ? await this.versionRow(ctx, pkg, distVersion) : null;
+    const metadata = version ? parseNpmStoredVersionMetadata(version.metadata) : null;
+    const dist: NpmDist | undefined =
+      metadata?.dist?.filename === filename ? metadata.dist : undefined;
     if (!dist || !distVersion) {
       return Response.json({ error: "Not found" }, { status: 404 });
     }

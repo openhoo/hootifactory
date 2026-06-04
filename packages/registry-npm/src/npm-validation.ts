@@ -6,6 +6,13 @@ export function basename(name: string): string {
   return i >= 0 ? name.slice(i + 1) : name;
 }
 
+export function versionFromTarballFilename(packageName: string, filename: string): string | null {
+  const prefix = `${basename(packageName)}-`;
+  if (!filename.startsWith(prefix) || !filename.endsWith(".tgz")) return null;
+  const version = filename.slice(prefix.length, -".tgz".length);
+  return isValidNpmVersion(version) ? version : null;
+}
+
 export function packagePath(name: string): string {
   return encodeURIComponent(name);
 }

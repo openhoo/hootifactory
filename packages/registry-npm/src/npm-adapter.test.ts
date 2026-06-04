@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type {
+  RegistryPackageRow,
   RegistryPackageSummaryRow,
   RegistryPackageVersionRow,
   RouteMatch,
@@ -19,8 +20,25 @@ const searchMatch = {
   path: "/-/v1/search",
 } satisfies RouteMatch;
 
+const tarballMatch = {
+  entry: { method: "GET", pattern: "/:pkg+/-/:filename", handlerId: "tarball" },
+  params: { pkg: "@scope/pkg", filename: "pkg-1.2.3-beta.1.tgz" },
+  path: "@scope/pkg/-/pkg-1.2.3-beta.1.tgz",
+} satisfies RouteMatch;
+
 function packageRow(id: string, name: string): RegistryPackageSummaryRow {
   return { id, orgId: "org_1", repositoryId: "repo_1", name };
+}
+
+function fullPackageRow(id: string, name: string): RegistryPackageRow {
+  return {
+    ...packageRow(id, name),
+    namespace: null,
+    metadata: {},
+    latestVersion: null,
+    createdAt: new Date("2026-01-01T00:00:00.000Z"),
+    updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+  };
 }
 
 function versionRow(
@@ -148,5 +166,65 @@ describe("npm adapter contract", () => {
     expect(perPackageTagReads).toBe(0);
     expect(batchedVersionReads).toBe(1);
     expect(batchedTagReads).toBe(1);
+  });
+
+  test("tarball lookup derives the version and avoids scanning live versions", async () => {
+    const ctx = createTestRegistryContext();
+    const digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let lookedUpVersion = "";
+    let blobScope = "";
+
+    ctx.data.packages.findByName = async (name) => {
+      expect(name).toBe("@scope/pkg");
+      return fullPackageRow("pkg_1", "@scope/pkg");
+    };
+    ctx.data.versions.listLive = async () => {
+      throw new Error("tarball lookup should not scan live versions");
+    };
+    ctx.data.versions.findLive = async (pkg, version) => {
+      expect(pkg.id).toBe("pkg_1");
+      lookedUpVersion = version;
+      return {
+        ...versionRow(pkg.id, version, new Date("2026-01-01T00:00:00.000Z")),
+        metadata: {
+          manifest: { name: "@scope/pkg", version },
+          dist: {
+            filename: "pkg-1.2.3-beta.1.tgz",
+            blobDigest: digest,
+            shasum: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            integrity: "sha512-test",
+            size: 12,
+          },
+        },
+      };
+    };
+    ctx.data.content.blobRefExists = async (input) => {
+      blobScope = input.scope;
+      expect(input).toMatchObject({
+        digest,
+        kind: "npm_tarball",
+        scope: "@scope/pkg@1.2.3-beta.1",
+      });
+      return true;
+    };
+    ctx.data.content.serveBlobIfClean = async ({ digest, contentType, extraHeaders }) =>
+      new Response(`blob:${digest}`, {
+        headers: {
+          ...extraHeaders,
+          "content-type": contentType,
+        },
+      });
+
+    const res = await new NpmAdapter().handle(
+      tarballMatch,
+      new Request("https://registry.test/@scope/pkg/-/pkg-1.2.3-beta.1.tgz"),
+      ctx,
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("etag")).toBe('"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"');
+    await expect(res.text()).resolves.toBe(`blob:${digest}`);
+    expect(lookedUpVersion).toBe("1.2.3-beta.1");
+    expect(blobScope).toBe("@scope/pkg@1.2.3-beta.1");
   });
 });
