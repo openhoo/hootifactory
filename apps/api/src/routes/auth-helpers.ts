@@ -31,13 +31,8 @@ export function oidcConfig(): OidcProviderConfig | null {
 }
 
 export function browserFacingUrl(c: Context<AppEnv>): URL {
-  const url = new URL(c.req.url);
-  const host = forwardedValue(c, "x-forwarded-host");
-  if (host) {
-    url.host = host;
-    url.protocol = `${forwardedValue(c, "x-forwarded-proto") ?? url.protocol.replace(":", "")}:`;
-  }
-  return url;
+  const requestUrl = new URL(c.req.url);
+  return new URL(`${requestUrl.pathname}${requestUrl.search}`, `${env.APP_PUBLIC_URL}/`);
 }
 
 export function oidcCallbackUrl(c: Context<AppEnv>): string {
@@ -123,8 +118,4 @@ export async function createRequestSession(
 
 export function deleteSessionCookie(c: Context<AppEnv>): void {
   deleteCookie(c, SESSION_COOKIE, { path: "/" });
-}
-
-function forwardedValue(c: Context<AppEnv>, header: string): string | undefined {
-  return c.req.header(header)?.split(",")[0]?.trim() || undefined;
 }
