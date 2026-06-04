@@ -1,5 +1,5 @@
 import type { NormalizedFinding } from "@hootifactory/scan-core";
-import { runClamAvIfAvailable } from "./clamav";
+import { runClamAvIfAvailable, type ScannerByteSource } from "./clamav";
 import { runGrypeIfAvailable } from "./grype";
 import {
   type AvailableScanners,
@@ -10,7 +10,7 @@ import { runTrivyIfAvailable } from "./trivy";
 
 export async function runExternalScanners(
   target: string,
-  bytes: Uint8Array,
+  bytes?: ScannerByteSource,
   options: ScannerRuntimeOptions = {},
   scanners: AvailableScanners = detectScanners(options),
 ): Promise<NormalizedFinding[]> {

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  createMalwareScanner,
   detectScanners,
   dockerScannerRunArgs,
   osvScanDependencies,
@@ -49,6 +50,24 @@ describe("heuristic scanning", () => {
     bytes.set(signature, 8192);
 
     expect(scanForMalware(bytes)).toEqual([
+      {
+        type: "malware",
+        severity: "critical",
+        vulnId: "EICAR-TEST",
+        title: "EICAR antivirus test signature detected",
+      },
+    ]);
+  });
+
+  test("detects the EICAR malware signature across chunk boundaries", () => {
+    const scanner = createMalwareScanner();
+    const split = Math.floor(EICAR.length / 2);
+
+    scanner.scan(new TextEncoder().encode(`prefix ${EICAR.slice(0, split)}`));
+    expect(scanner.findings()).toEqual([]);
+    scanner.scan(new TextEncoder().encode(`${EICAR.slice(split)} suffix`));
+
+    expect(scanner.findings()).toEqual([
       {
         type: "malware",
         severity: "critical",

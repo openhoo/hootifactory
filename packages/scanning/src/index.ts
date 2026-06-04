@@ -1,7 +1,14 @@
 export { parseClamAvRestFindings, runClamAvIfAvailable } from "./clamav";
 export { runExternalScanners } from "./external";
 export { runGrypeIfAvailable } from "./grype";
-export { ADVISORIES, type Advisory, scanDependencies, scanForMalware } from "./heuristic";
+export {
+  ADVISORIES,
+  type Advisory,
+  createMalwareScanner,
+  type MalwareScanner,
+  scanDependencies,
+  scanForMalware,
+} from "./heuristic";
 export { osvScanDependencies } from "./osv";
 export { asRecord, asString, asStringRecord } from "./scanner-json";
 export {

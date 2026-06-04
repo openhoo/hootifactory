@@ -1,3 +1,4 @@
+import { createWriteStream } from "node:fs";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { env } from "@hootifactory/config";
@@ -21,12 +22,12 @@ import {
 import type { NormalizedFinding } from "@hootifactory/scan-core";
 import {
   type AvailableScanners,
+  createMalwareScanner,
   detectScanners,
   osvScanDependencies,
   runExternalScanners,
   type ScannerRuntimeOptions,
   scanDependencies,
-  scanForMalware,
   scannerOptionsFromEnv,
 } from "@hootifactory/scanning";
 import { blobStore } from "@hootifactory/storage";
@@ -205,6 +206,43 @@ async function processScanInner(artifactId: string, scannerRuntime: ScannerRunti
   });
 
   let scannedBytePayload = false;
+  async function scanStoredByteStream(digest: string, path?: string): Promise<NormalizedFinding[]> {
+    const scanner = createMalwareScanner();
+    const reader = blobStore.get(digest).getReader();
+    const out = path ? createWriteStream(path, { flags: "wx" }) : null;
+    let size = 0;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        size += value.byteLength;
+        if (size > env.SCAN_MAX_BYTES) {
+          addSpanEvent("scan.bytes_too_large", { "artifact.size": size });
+          throw new Error(
+            `blob ${digest} exceeds SCAN_MAX_BYTES (${size} > ${env.SCAN_MAX_BYTES})`,
+          );
+        }
+        scanner.scan(value);
+        if (out) {
+          await new Promise<void>((resolve, reject) => {
+            out.write(value, (err) => (err ? reject(err) : resolve()));
+          });
+        }
+      }
+      if (out) {
+        await new Promise<void>((resolve, reject) => {
+          out.end((err?: Error | null) => (err ? reject(err) : resolve()));
+        });
+      }
+      return scanner.findings();
+    } catch (err) {
+      out?.destroy();
+      throw err;
+    } finally {
+      reader.releaseLock();
+    }
+  }
+
   async function scanStoredBytes(digest: string): Promise<boolean> {
     if (scannedBlobDigests.has(digest)) return true;
     scannedBlobDigests.add(digest);
@@ -227,23 +265,6 @@ async function processScanInner(artifactId: string, scannerRuntime: ScannerRunti
         );
       }
 
-      let bytes: Uint8Array;
-      try {
-        bytes = await blobStore.getBytes(digest);
-      } catch {
-        addSpanEvent("scan.bytes_read_failed", { "artifact.digest": digest });
-        return false;
-      }
-      if (bytes.byteLength > env.SCAN_MAX_BYTES) {
-        addSpanEvent("scan.bytes_too_large", { "artifact.size": bytes.byteLength });
-        throw new Error(
-          `blob ${digest} exceeds SCAN_MAX_BYTES (${bytes.byteLength} > ${env.SCAN_MAX_BYTES})`,
-        );
-      }
-      scannedBytePayload = true;
-      const malwareFindings = scanForMalware(bytes);
-      found.push(...malwareFindings);
-      span.setAttribute("scan.malware.findings", malwareFindings.length);
       span.setAttributes({
         "scan.external.grype": Boolean(scannerRuntime.scanners.grype),
         "scan.external.trivy": Boolean(scannerRuntime.scanners.trivy),
@@ -262,33 +283,52 @@ async function processScanInner(artifactId: string, scannerRuntime: ScannerRunti
         });
         throw new Error(message);
       }
-      if (
+      const shouldRunExternalScanners =
         scannerRuntime.scanners.grype ||
         scannerRuntime.scanners.trivy ||
-        scannerRuntime.scanners.clamav
-      ) {
-        let dir: string | null = null;
-        try {
+        scannerRuntime.scanners.clamav;
+      let dir: string | null = null;
+      try {
+        let path: string | undefined;
+        if (shouldRunExternalScanners) {
           const base = env.SCAN_SCRATCH_DIR.replace(/\/+$/, "");
           await mkdir(base, { recursive: true });
           dir = await mkdtemp(join(base, "scan-"));
-          const path = join(dir, digest.replace(/[^a-z0-9]/gi, "_"));
-          await Bun.write(path, bytes);
+          path = join(dir, digest.replace(/[^a-z0-9]/gi, "_"));
+        }
+
+        let malwareFindings: NormalizedFinding[];
+        try {
+          malwareFindings = await scanStoredByteStream(digest, path);
+        } catch (err) {
+          if (err instanceof Error && err.message.includes("SCAN_MAX_BYTES")) throw err;
+          addSpanEvent("scan.bytes_read_failed", { "artifact.digest": digest });
+          return false;
+        }
+        scannedBytePayload = true;
+        found.push(...malwareFindings);
+        span.setAttribute("scan.malware.findings", malwareFindings.length);
+
+        if (shouldRunExternalScanners && path) {
+          const bytesForRestClamAv = scannerRuntime.scannerOptions.clamavRestUrl
+            ? () => Bun.file(path).bytes()
+            : undefined;
           const externalFindings = await runExternalScanners(
             path,
-            bytes,
+            bytesForRestClamAv,
             scannerRuntime.scannerOptions,
             scannerRuntime.scanners,
           );
           found.push(...externalFindings);
           span.setAttribute("scan.external.findings", externalFindings.length);
-        } catch (err) {
-          addSpanEvent("scan.external_failed", { "error.message": String(err) });
-          logger.error("external scanner failed", { error: err });
-          throw err;
-        } finally {
-          if (dir) await rm(dir, { recursive: true, force: true }).catch(() => {});
         }
+      } catch (err) {
+        if (err instanceof Error && err.message.includes("SCAN_MAX_BYTES")) throw err;
+        addSpanEvent("scan.external_failed", { "error.message": String(err) });
+        logger.error("external scanner failed", { error: err });
+        throw err;
+      } finally {
+        if (dir) await rm(dir, { recursive: true, force: true }).catch(() => {});
       }
       return true;
     });

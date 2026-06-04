@@ -9,6 +9,8 @@ import {
   type ScannerRuntimeOptions,
 } from "./scanner-runtime";
 
+export type ScannerByteSource = Uint8Array | (() => Promise<Uint8Array>);
+
 function clamAvFinding(name: string): NormalizedFinding {
   return {
     type: "malware",
@@ -52,17 +54,19 @@ function parseClamAvCliFindings(output: string): NormalizedFinding[] {
 
 export async function runClamAvIfAvailable(
   target: string,
-  bytes: Uint8Array,
+  bytes: ScannerByteSource | undefined,
   restUrlOrOptions?: string | ScannerRuntimeOptions,
   scanners?: AvailableScanners,
 ): Promise<NormalizedFinding[]> {
   const options = coerceScannerOptions(restUrlOrOptions, "clamavRestUrl");
   if (options.clamavRestUrl) {
+    if (!bytes) throw new Error("clamav REST scanning requires artifact bytes");
+    const body = typeof bytes === "function" ? await bytes() : bytes;
     const res = await fetch(options.clamavRestUrl, {
       method: "POST",
       headers: { "content-type": "application/octet-stream" },
       signal: AbortSignal.timeout(options.timeoutMs ?? 120_000),
-      body: bytes,
+      body,
     });
     if (!res.ok) throw new Error(`clamav REST returned ${res.status}`);
     return parseClamAvRestFindings(await res.json());
