@@ -17,6 +17,8 @@ const REGISTRATION_USERNAME_SCOPE = "registration:username";
 const REGISTRATION_EMAIL_SCOPE = "registration:email";
 const PASSWORD_RESET_IDENTITY_SCOPE = "password-reset:identity";
 const PASSWORD_RESET_CLIENT_SCOPE = "password-reset:client";
+const OIDC_LINK_IDENTITY_SCOPE = "oidc-link:identity";
+const OIDC_LINK_CLIENT_SCOPE = "oidc-link:client";
 
 export function loginThrottleKey(username: string, ip: string): string {
   return throttleKey(username, ip);
@@ -31,6 +33,14 @@ export function passwordResetThrottleKey(email: string, ip: string): string {
 }
 
 export function passwordResetIdentityThrottleKey(email: string): string {
+  return identityThrottleKey(email);
+}
+
+export function oidcLinkThrottleKey(email: string, ip: string): string {
+  return throttleKey(email, ip);
+}
+
+export function oidcLinkIdentityThrottleKey(email: string): string {
   return identityThrottleKey(email);
 }
 
@@ -129,6 +139,30 @@ export async function consumePasswordResetRequest(
   const clientThrottle = await consumeSharedAuthThrottleBucket({
     scope: PASSWORD_RESET_CLIENT_SCOPE,
     key: passwordResetThrottleKey(email, ip),
+    windowSeconds: env.AUTH_PASSWORD_RESET_WINDOW_SECONDS,
+    maxAttempts: env.AUTH_PASSWORD_RESET_MAX_ATTEMPTS,
+  });
+  if (clientThrottle.throttled) return clientThrottle;
+  return { throttled: false, bucket: identityThrottle.bucket };
+}
+
+export async function consumeOidcLinkEmailRequest(
+  email: string,
+  ip: string,
+): Promise<
+  { throttled: false; bucket: AuthThrottleBucket } | { throttled: true; retryAfter: number }
+> {
+  const identityThrottle = await consumeSharedAuthThrottleBucket({
+    scope: OIDC_LINK_IDENTITY_SCOPE,
+    key: oidcLinkIdentityThrottleKey(email),
+    windowSeconds: env.AUTH_PASSWORD_RESET_WINDOW_SECONDS,
+    maxAttempts: env.AUTH_PASSWORD_RESET_MAX_ATTEMPTS,
+  });
+  if (identityThrottle.throttled) return identityThrottle;
+
+  const clientThrottle = await consumeSharedAuthThrottleBucket({
+    scope: OIDC_LINK_CLIENT_SCOPE,
+    key: oidcLinkThrottleKey(email, ip),
     windowSeconds: env.AUTH_PASSWORD_RESET_WINDOW_SECONDS,
     maxAttempts: env.AUTH_PASSWORD_RESET_MAX_ATTEMPTS,
   });

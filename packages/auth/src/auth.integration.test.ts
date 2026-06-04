@@ -504,7 +504,7 @@ describe("OIDC user sync (DB)", () => {
     await expect(resolveUserRole(local!.id, orgId)).resolves.toBe("owner");
   });
 
-  test("email confirmation can link an unverified-idp email conflict", async () => {
+  test("requires verified IdP email before linking an existing local email", async () => {
     const email = `${crypto.randomUUID()}@oidc.test`;
     const [local] = await db
       .insert(users)
@@ -512,21 +512,21 @@ describe("OIDC user sync (DB)", () => {
       .returning();
     cleanupUserIds.push(local!.id);
 
-    const linked = await syncOidcUser(
-      {
-        issuer: "https://idp.test",
-        subject: crypto.randomUUID(),
-        email,
-        emailVerified: false,
-        username: "conflict-user",
-        displayName: "Conflict User",
-        groups: ["developers"],
-        grants: [{ org: orgSlug, role: "developer", groups: ["developers"] }],
-      },
-      { allowExistingEmailLink: true },
-    );
+    const input: Parameters<typeof syncOidcUser>[0] = {
+      issuer: "https://idp.test",
+      subject: crypto.randomUUID(),
+      email,
+      emailVerified: false,
+      username: "conflict-user",
+      displayName: "Conflict User",
+      groups: ["developers"],
+      grants: [{ org: orgSlug, role: "developer", groups: ["developers"] }],
+    };
 
-    expect(linked.id).toBe(local!.id);
+    await expect(syncOidcUser(input)).rejects.toThrow("oidc: email claim is not verified");
+    await expect(syncOidcUser(input, { allowExistingEmailLink: true })).rejects.toThrow(
+      "oidc: email claim is not verified",
+    );
   });
 
   test("reconciles stale OIDC grants without deleting local memberships", async () => {

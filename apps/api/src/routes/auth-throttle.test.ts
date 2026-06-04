@@ -2,11 +2,13 @@ import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import {
   authenticateUserPasswordWithThrottle,
+  consumeOidcLinkEmailRequest,
   consumePasswordResetRequest,
   consumeRegistrationAttempt,
   currentThrottleBucket,
   loginIdentityThrottleKey,
   loginThrottleKey,
+  oidcLinkIdentityThrottleKey,
   passwordResetIdentityThrottleKey,
   pruneThrottleBuckets,
   registrationEmailThrottleKey,
@@ -21,6 +23,7 @@ describe("auth throttle helpers", () => {
     );
     expect(loginIdentityThrottleKey("  Alice@example.test ")).toBe("alice@example.test");
     expect(passwordResetIdentityThrottleKey("  Alice@example.test ")).toBe("alice@example.test");
+    expect(oidcLinkIdentityThrottleKey("  Alice@example.test ")).toBe("alice@example.test");
     expect(registrationUsernameThrottleKey("  Alice ")).toBe("alice");
     expect(registrationEmailThrottleKey("  Alice@example.test ")).toBe("alice@example.test");
   });
@@ -146,6 +149,21 @@ describe("auth throttle helpers", () => {
     }
 
     await expect(consumePasswordResetRequest(email, "203.0.113.250")).resolves.toMatchObject({
+      throttled: true,
+    });
+  });
+
+  test("throttles OIDC link emails across changing client addresses", async () => {
+    const email = `oidc-link-${randomUUID()}@example.test`;
+
+    for (let attempts = 1; attempts <= 3; attempts++) {
+      await expect(consumeOidcLinkEmailRequest(email, `203.0.113.${attempts}`)).resolves.toEqual({
+        throttled: false,
+        bucket: expect.objectContaining({ count: attempts }),
+      });
+    }
+
+    await expect(consumeOidcLinkEmailRequest(email, "203.0.113.250")).resolves.toMatchObject({
       throttled: true,
     });
   });

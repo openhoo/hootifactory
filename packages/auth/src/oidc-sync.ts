@@ -106,6 +106,9 @@ export async function syncOidcUser(
       if (existing && !existing.isActive) {
         throw new Error("oidc: existing user is disabled");
       }
+      if (existing && !input.emailVerified) {
+        throw new Error("oidc: email claim is not verified");
+      }
       if (existing && !options.allowExistingEmailLink) {
         throw new OidcEmailLinkRequiredError(existing.id, existing.email);
       }

@@ -18,6 +18,7 @@ import type { AppEnv } from "../types";
 import { errorMessage } from "../validation";
 import {
   browserFacingUrl,
+  clientIp,
   createRequestSession,
   deleteOidcStateCookie,
   enqueueEmail,
@@ -35,6 +36,7 @@ import {
   ConfirmLinkQuerySchema,
   OidcLinkMetadataSchema,
 } from "./auth-schemas";
+import { consumeOidcLinkEmailRequest } from "./auth-throttle";
 import { audit } from "./http";
 
 const OIDC_LINK_CSRF_COOKIE = "hoot_oidc_link_confirm";
@@ -262,11 +264,33 @@ export function registerOidcRoutes(router: Hono<AppEnv>): void {
       return c.redirect(state.returnTo);
     } catch (err) {
       if (claims && err instanceof OidcEmailLinkRequiredError) {
+        const ip = clientIp(c);
         if (!env.EMAIL_ENABLED) {
           logger.warn("OIDC link confirmation required but email is disabled", {
             userId: err.userId,
           });
           return c.redirect(loginRedirect("sso_link_unavailable"));
+        }
+        const throttle = await consumeOidcLinkEmailRequest(err.email, ip);
+        if (throttle.throttled) {
+          addSpanEvent("auth.oidc_link_email_rate_limited", {
+            "auth.retry_after_seconds": throttle.retryAfter,
+          });
+          logger.warn("OIDC link confirmation email rejected by throttle", {
+            userId: err.userId,
+            ip,
+            retryAfter: throttle.retryAfter,
+          });
+          audit({
+            action: "auth.oidc_link_email",
+            result: "failure",
+            resourceType: "user",
+            resourceId: err.userId,
+            ip,
+            detail: { error: "rate_limited" },
+          });
+          c.header("retry-after", String(throttle.retryAfter));
+          return c.redirect(loginRedirect("sso_link_limited"));
         }
         const { job } = await createOidcLinkEmail({
           userId: err.userId,
@@ -285,6 +309,7 @@ export function registerOidcRoutes(router: Hono<AppEnv>): void {
           result: "success",
           resourceType: "user",
           resourceId: err.userId,
+          ip,
           detail: oidcAuditDetail(claims),
         });
         return c.redirect(loginNoticeRedirect("sso_link_email"));
