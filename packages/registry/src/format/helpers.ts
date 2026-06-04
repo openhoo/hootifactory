@@ -36,12 +36,16 @@ export function ifNoneMatch(req: Request, etag: string): boolean {
     .some((v) => v === "*" || v === etag || v === `W/${etag}`);
 }
 
+export function textEtag(body: string): string {
+  return `"${sha1hexText(body)}"`;
+}
+
 export function textResponseWithEtag(
   req: Request,
   body: string,
   headers: Record<string, string>,
+  etag = textEtag(body),
 ): Response {
-  const etag = `"${sha1hexText(body)}"`;
   if (ifNoneMatch(req, etag)) return new Response(null, { status: 304, headers: { etag } });
   return new Response(body, { headers: { ...headers, etag } });
 }

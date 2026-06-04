@@ -11,6 +11,7 @@ import {
   registryCapabilities,
   registryPlugin,
   serveRegistryBlob,
+  textEtag,
   textResponseWithEtag,
 } from "@hootifactory/registry";
 import { handlePypiUpload } from "./pypi-upload-lifecycle";
@@ -27,10 +28,20 @@ import {
   simpleHtmlContentType,
 } from "./simple";
 
+const SIMPLE_ROOT_CACHE_TTL_MS = 5_000;
+type SimpleRootVariant = "html" | "json";
+
+interface SimpleRootCacheEntry {
+  body: string;
+  etag: string;
+  expiresAt: number;
+}
+
 export class PypiAdapter implements RegistryPlugin {
   readonly format = "pypi" as const;
   readonly capabilities = registryCapabilities("virtualizable");
   authChallenge = basicAuthChallenge;
+  private readonly simpleRootCache = new Map<string, SimpleRootCacheEntry>();
 
   private readonly plugin = registryPlugin(this.format)
     .capabilities(this.capabilities)
@@ -66,6 +77,40 @@ export class PypiAdapter implements RegistryPlugin {
 
   handle = this.delegate.handle;
 
+  private simpleRootCacheKey(ctx: RegistryRequestContext, variant: SimpleRootVariant): string {
+    return `${ctx.repo.id}:${variant}`;
+  }
+
+  private cachedSimpleRoot(
+    ctx: RegistryRequestContext,
+    variant: SimpleRootVariant,
+  ): SimpleRootCacheEntry | null {
+    const entry = this.simpleRootCache.get(this.simpleRootCacheKey(ctx, variant));
+    if (!entry) return null;
+    if (entry.expiresAt > Date.now()) return entry;
+    this.simpleRootCache.delete(this.simpleRootCacheKey(ctx, variant));
+    return null;
+  }
+
+  private storeSimpleRoot(
+    ctx: RegistryRequestContext,
+    variant: SimpleRootVariant,
+    body: string,
+  ): SimpleRootCacheEntry {
+    const entry = {
+      body,
+      etag: textEtag(body),
+      expiresAt: Date.now() + SIMPLE_ROOT_CACHE_TTL_MS,
+    };
+    this.simpleRootCache.set(this.simpleRootCacheKey(ctx, variant), entry);
+    return entry;
+  }
+
+  private clearSimpleRootCache(ctx: RegistryRequestContext): void {
+    this.simpleRootCache.delete(this.simpleRootCacheKey(ctx, "html"));
+    this.simpleRootCache.delete(this.simpleRootCacheKey(ctx, "json"));
+  }
+
   private redirectToSlash(req: Request): Response | null {
     if (new URL(req.url).pathname.endsWith("/")) return null;
     const url = new URL(req.url);
@@ -77,16 +122,46 @@ export class PypiAdapter implements RegistryPlugin {
     const redirect = this.redirectToSlash(req);
     if (redirect) return redirect;
 
+    const variant = preferredSimpleResponse(req.headers.get("accept"));
+    const cached = this.cachedSimpleRoot(ctx, variant);
+    if (cached) {
+      return textResponseWithEtag(
+        req,
+        cached.body,
+        this.simpleRootHeaders(req, variant),
+        cached.etag,
+      );
+    }
+
     const rows = await ctx.data.packages.listNames();
     const projects = rows.map((r) => r.name);
-    if (preferredSimpleResponse(req.headers.get("accept")) === "json") {
-      return textResponseWithEtag(req, JSON.stringify(buildSimpleRootJson(projects)), {
-        "content-type": SIMPLE_JSON_CONTENT_TYPE,
-      });
+    if (variant === "json") {
+      const entry = this.storeSimpleRoot(
+        ctx,
+        variant,
+        JSON.stringify(buildSimpleRootJson(projects)),
+      );
+      return textResponseWithEtag(
+        req,
+        entry.body,
+        this.simpleRootHeaders(req, variant),
+        entry.etag,
+      );
     }
-    return textResponseWithEtag(req, renderRootHtml(projects), {
-      "content-type": simpleHtmlContentType(req.headers.get("accept")),
-    });
+    const entry = this.storeSimpleRoot(ctx, variant, renderRootHtml(projects));
+    return textResponseWithEtag(req, entry.body, this.simpleRootHeaders(req, variant), entry.etag);
+  }
+
+  private simpleRootHeaders(
+    req: Request,
+    variant: SimpleRootVariant,
+  ): Record<"content-type", string> {
+    return {
+      "content-type":
+        variant === "json"
+          ? SIMPLE_JSON_CONTENT_TYPE
+          : simpleHtmlContentType(req.headers.get("accept")),
+    };
   }
 
   private async simpleProject(
@@ -143,7 +218,9 @@ export class PypiAdapter implements RegistryPlugin {
   }
 
   private async upload(req: Request, ctx: RegistryRequestContext): Promise<Response> {
-    return handlePypiUpload(req, ctx);
+    const res = await handlePypiUpload(req, ctx);
+    if (res.status >= 200 && res.status < 300) this.clearSimpleRootCache(ctx);
+    return res;
   }
 }
 

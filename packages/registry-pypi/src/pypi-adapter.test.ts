@@ -52,7 +52,11 @@ describe("PyPI adapter", () => {
   test("simple root index emits an ETag and honors If-None-Match", async () => {
     const ctx = createTestRegistryContext();
     ctx.repo = { ...ctx.repo, format: "pypi", mountPath: "pypi/private" };
-    ctx.data.packages.listNames = async () => [{ name: "demo-pkg" }];
+    let listReads = 0;
+    ctx.data.packages.listNames = async () => {
+      listReads += 1;
+      return [{ name: "demo-pkg" }];
+    };
 
     const adapter = new PypiAdapter();
     const first = await adapter.handle(
@@ -67,6 +71,7 @@ describe("PyPI adapter", () => {
     if (!etag) throw new Error("expected ETag");
     expect(first.headers.get("content-type")).toBe("text/html; charset=utf-8");
     await expect(first.text()).resolves.toContain("demo-pkg");
+    expect(listReads).toBe(1);
 
     const cached = await adapter.handle(
       simpleRootMatch,
@@ -77,6 +82,7 @@ describe("PyPI adapter", () => {
     expect(cached.status).toBe(304);
     expect(cached.headers.get("etag")).toBe(etag);
     await expect(cached.text()).resolves.toBe("");
+    expect(listReads).toBe(1);
   });
 
   test("simple project JSON emits an ETag and honors If-None-Match", async () => {
