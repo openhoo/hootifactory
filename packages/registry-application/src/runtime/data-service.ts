@@ -51,6 +51,7 @@ import {
   deleteDistTag,
   listLiveDistTags,
   listLiveDistTagsForPackages,
+  listLivePackageVersionFingerprints,
   listLivePackageVersionNames,
   listLivePackageVersions,
   listLivePackageVersionsForPackages,
@@ -205,6 +206,7 @@ export function createRegistryDataService(ctx: RegistryRequestContext): Registry
           pkgs.map((pkg) => packageId(ctx, pkg)),
           opts,
         ),
+      listLiveFingerprints: (pkg) => listLivePackageVersionFingerprints(packageId(ctx, pkg)),
       listRepositoryMetadata: (opts) =>
         listRepositoryVersionMetadata(ctx, {
           packageId: opts?.package ? packageId(ctx, opts.package) : undefined,

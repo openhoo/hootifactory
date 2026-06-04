@@ -6,6 +6,7 @@ import {
   type Permission,
   parseRegistryInput,
   type RegistryPackageHandle,
+  type RegistryPackageVersionFingerprintRow,
   type RegistryPackageVersionRow,
   type RegistryPlugin,
   type RegistryRequestContext,
@@ -38,6 +39,13 @@ type StoredNugetVersionRow = Omit<RegistryPackageVersionRow, "metadata"> & {
 };
 
 const NUGET_SEARCH_PACKAGE_BATCH_SIZE = 250;
+const NUGET_REGISTRATION_CACHE_LIMIT = 256;
+
+interface NugetRegistrationCacheEntry {
+  fingerprint: string;
+  body: string;
+  etag: string;
+}
 
 function parseNugetId(id: string): string {
   return parseRegistryInput(NugetIdSchema, id, {
@@ -51,6 +59,40 @@ function parseNugetVersionInput(version: string): string {
     code: "MANIFEST_UNKNOWN",
     message: "invalid package version",
     status: 404,
+  });
+}
+
+function sha1hexText(data: string): string {
+  const h = new Bun.CryptoHasher("sha1");
+  h.update(data);
+  return h.digest("hex");
+}
+
+function ifNoneMatch(req: Request, etag: string): boolean {
+  const header = req.headers.get("if-none-match");
+  if (!header) return false;
+  return header
+    .split(",")
+    .map((value) => value.trim())
+    .some((value) => value === "*" || value === etag || value === `W/${etag}`);
+}
+
+function registrationFingerprint(rows: RegistryPackageVersionFingerprintRow[]): string {
+  return rows.map((row) => `${row.version}\0${row.updatedAt.getTime()}`).join("\n");
+}
+
+function registrationResponse(
+  req: Request,
+  entry: Pick<NugetRegistrationCacheEntry, "body" | "etag">,
+): Response {
+  if (ifNoneMatch(req, entry.etag)) {
+    return new Response(null, { status: 304, headers: { etag: entry.etag } });
+  }
+  return new Response(entry.body, {
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      etag: entry.etag,
+    },
   });
 }
 
@@ -85,8 +127,8 @@ export class NugetAdapter implements RegistryPlugin {
       route.get("/v3-flatcontainer/:id/:version/:file", "download", ({ params, ctx }) =>
         this.download(params.id, params.version, params.file, ctx),
       ),
-      route.get("/v3/registrations/:id/index.json", "registration", ({ params, ctx }) =>
-        this.registration(params.id, this.base(ctx), ctx),
+      route.get("/v3/registrations/:id/index.json", "registration", ({ params, req, ctx }) =>
+        this.registration(params.id, req, this.base(ctx), ctx),
       ),
       route.get("/v3/registrations/:id/:file", "registrationLeaf", ({ params, ctx }) =>
         this.registrationLeaf(params.id, params.file, this.base(ctx), ctx),
@@ -94,6 +136,7 @@ export class NugetAdapter implements RegistryPlugin {
     ])
     .build();
   private readonly delegate = delegateRegistryPlugin(this.plugin);
+  private readonly registrationCache = new Map<string, NugetRegistrationCacheEntry>();
 
   routes = this.delegate.routes;
 
@@ -165,14 +208,20 @@ export class NugetAdapter implements RegistryPlugin {
 
   private async registration(
     id: string,
+    req: Request,
     base: string,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
     id = parseNugetId(id);
     const pkg = await this.findPkg(ctx, id);
     if (!pkg) return new Response("Not Found", { status: 404 });
+    const cacheKey = this.registrationCacheKey(pkg, base);
+    const fingerprint = registrationFingerprint(await ctx.data.versions.listLiveFingerprints(pkg));
+    const cached = this.registrationCache.get(cacheKey);
+    if (cached?.fingerprint === fingerprint) return registrationResponse(req, cached);
+
     const rows = await this.listVersions(ctx, pkg, { includeUnlisted: true });
-    return Response.json(
+    const body = JSON.stringify(
       buildNugetRegistrationIndex({
         id,
         base,
@@ -182,6 +231,9 @@ export class NugetAdapter implements RegistryPlugin {
         })),
       }),
     );
+    const entry = { fingerprint, body, etag: `"${sha1hexText(body)}"` };
+    this.putRegistrationCache(cacheKey, entry);
+    return registrationResponse(req, entry);
   }
 
   private async registrationLeaf(
@@ -308,11 +360,33 @@ export class NugetAdapter implements RegistryPlugin {
     const metadata = parseNugetVersionMeta(row.metadata);
     if (!metadata) throw Errors.notFound();
     await ctx.data.versions.updateMetadata(row, { ...metadata, listed });
+    this.clearRegistrationCacheForPackage(pkg.id);
     return new Response(null, { status: listed ? 200 : 204 });
   }
 
   private async publish(req: Request, ctx: RegistryRequestContext): Promise<Response> {
     return handleNugetPublish(req, ctx);
+  }
+
+  private registrationCacheKey(pkg: RegistryPackageHandle, base: string): string {
+    return `${pkg.id}\0${base}`;
+  }
+
+  private putRegistrationCache(cacheKey: string, entry: NugetRegistrationCacheEntry): void {
+    if (this.registrationCache.has(cacheKey)) this.registrationCache.delete(cacheKey);
+    while (this.registrationCache.size >= NUGET_REGISTRATION_CACHE_LIMIT) {
+      const oldest = this.registrationCache.keys().next().value;
+      if (!oldest) break;
+      this.registrationCache.delete(oldest);
+    }
+    this.registrationCache.set(cacheKey, entry);
+  }
+
+  private clearRegistrationCacheForPackage(packageId: string): void {
+    const prefix = `${packageId}\0`;
+    for (const key of this.registrationCache.keys()) {
+      if (key.startsWith(prefix)) this.registrationCache.delete(key);
+    }
   }
 }
 

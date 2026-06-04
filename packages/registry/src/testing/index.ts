@@ -36,6 +36,7 @@ function createTestDataService(): RegistryDataService {
       listNames: () => Promise.resolve([]),
       listLive: () => Promise.resolve([]),
       listLiveForPackages: () => Promise.resolve(new Map()),
+      listLiveFingerprints: () => Promise.resolve([]),
       listRepositoryMetadata: () => Promise.resolve([]),
       listLiveNames: () => Promise.resolve([]),
       create: () => unimplemented("data.versions.create"),

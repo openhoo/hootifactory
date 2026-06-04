@@ -33,6 +33,11 @@ export interface PackageVersionNameRow {
   version: string;
 }
 
+export interface PackageVersionFingerprintRow {
+  version: string;
+  updatedAt: Date;
+}
+
 export interface DistTagVersionRow {
   tag: string;
   version: string;
@@ -204,6 +209,16 @@ export async function listLivePackageVersionNames(
     .select({ version: packageVersions.version })
     .from(packageVersions)
     .where(and(eq(packageVersions.packageId, packageId), isNull(packageVersions.deletedAt)));
+}
+
+export async function listLivePackageVersionFingerprints(
+  packageId: string,
+): Promise<PackageVersionFingerprintRow[]> {
+  return db
+    .select({ version: packageVersions.version, updatedAt: packageVersions.updatedAt })
+    .from(packageVersions)
+    .where(and(eq(packageVersions.packageId, packageId), isNull(packageVersions.deletedAt)))
+    .orderBy(asc(packageVersions.version), asc(packageVersions.id));
 }
 
 export async function listLiveDistTags(packageId: string): Promise<Record<string, string>> {
