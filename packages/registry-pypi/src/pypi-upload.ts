@@ -1,4 +1,4 @@
-import { computeDigest, digestHex, parseRegistryInput } from "@hootifactory/registry";
+import { parseRegistryInput } from "@hootifactory/registry";
 import {
   filenameVersionMatches,
   PypiFilenameSchema,
@@ -17,7 +17,9 @@ export interface PypiUploadPlan {
   name: string;
   version: string;
   filename: string;
-  bytes: Uint8Array;
+  content: File;
+  size: number;
+  expectedDigest?: string;
   requiresPython?: string;
   filetype?: string;
 }
@@ -67,16 +69,6 @@ export async function parsePypiUploadRequest(req: Request): Promise<PypiUploadPl
     };
   }
 
-  const bytes = new Uint8Array(await content.arrayBuffer());
-  const actualSha = digestHex(computeDigest(bytes));
-  const claimed = fields.sha256_digest;
-  if (claimed && claimed.toLowerCase() !== actualSha) {
-    return {
-      ok: false,
-      error: { body: { message: "sha256_digest does not match uploaded content" }, status: 400 },
-    };
-  }
-
   return {
     ok: true,
     plan: {
@@ -84,7 +76,11 @@ export async function parsePypiUploadRequest(req: Request): Promise<PypiUploadPl
       name,
       version,
       filename,
-      bytes,
+      content,
+      size: content.size,
+      expectedDigest: fields.sha256_digest
+        ? `sha256:${fields.sha256_digest.toLowerCase()}`
+        : undefined,
       requiresPython: fields.requires_python,
       filetype: fields.filetype,
     },

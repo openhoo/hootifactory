@@ -47,7 +47,9 @@ describe("PyPI upload request helpers", () => {
       name: "example-pkg",
       version: "1.0.0-rc.1",
       filename: "Example_Pkg-1.0.0_rc_1-py3-none-any.whl",
-      bytes,
+      content: expect.any(File),
+      size: bytes.byteLength,
+      expectedDigest: `sha256:${digestHex(computeDigest(bytes))}`,
       requiresPython: ">=3.11",
       filetype: "bdist_wheel",
     });
@@ -68,7 +70,7 @@ describe("PyPI upload request helpers", () => {
     });
   });
 
-  test("reports filename and sha256 mismatches before storage work", async () => {
+  test("reports filename mismatches before storage work", async () => {
     await expect(
       parsePypiUploadRequest(
         uploadRequest({ name: "pkg", version: "1.0.0", filename: "other-1.0.0-py3-none-any.whl" }),
@@ -79,19 +81,6 @@ describe("PyPI upload request helpers", () => {
         body: { message: "filename does not match submitted package name and version" },
         status: 400,
       },
-    });
-    await expect(
-      parsePypiUploadRequest(
-        uploadRequest({
-          name: "pkg",
-          version: "1.0.0",
-          filename: "pkg-1.0.0-py3-none-any.whl",
-          sha256: "0".repeat(64),
-        }),
-      ),
-    ).resolves.toEqual({
-      ok: false,
-      error: { body: { message: "sha256_digest does not match uploaded content" }, status: 400 },
     });
   });
 });

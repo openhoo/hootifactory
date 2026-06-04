@@ -1,8 +1,9 @@
 import {
   digestHex,
+  InvalidDigestError,
   type RegistryRequestContext,
   releaseRegistryBlobRef,
-  storeRegistryBlobWithRef,
+  storeRegistryBlobStreamWithRef,
 } from "@hootifactory/registry";
 import { type PypiUploadPlan, parsePypiUploadRequest } from "./pypi-upload";
 import {
@@ -12,7 +13,7 @@ import {
 } from "./pypi-validation";
 
 export function buildPypiFileMetadata(
-  plan: Pick<PypiUploadPlan, "bytes" | "filename" | "filetype" | "requiresPython">,
+  plan: Pick<PypiUploadPlan, "filename" | "filetype" | "requiresPython" | "size">,
   digest: string,
 ): PypiFileMeta {
   return {
@@ -20,7 +21,7 @@ export function buildPypiFileMetadata(
     blobDigest: digest,
     sha256: digestHex(digest),
     requiresPython: plan.requiresPython,
-    size: plan.bytes.length,
+    size: plan.size,
     filetype: plan.filetype,
   };
 }
@@ -35,7 +36,8 @@ export async function handlePypiUpload(
 ): Promise<Response> {
   const parsed = await parsePypiUploadRequest(req);
   if (!parsed.ok) return Response.json(parsed.error.body, { status: parsed.error.status });
-  const { bytes, filename, filetype, name, rawName, requiresPython, version } = parsed.plan;
+  const { content, expectedDigest, filename, filetype, name, rawName, requiresPython, version } =
+    parsed.plan;
 
   // PyPI files are immutable: reject a re-upload of an existing filename,
   // including files hidden by retention.
@@ -45,20 +47,35 @@ export async function handlePypiUpload(
     return Response.json({ message: "File already exists." }, { status: 409 });
   }
 
-  const pkg = await ctx.data.packages.findOrCreate({
-    name,
-  });
-  const existing = await ctx.data.versions.find(pkg, version);
+  const existingPkg = await ctx.data.packages.findByName(name);
+  const existing = existingPkg ? await ctx.data.versions.find(existingPkg, version) : null;
   if (existing?.deletedAt) {
     return Response.json({ message: "Release version already exists." }, { status: 409 });
   }
 
-  const stored = await storeRegistryBlobWithRef(ctx, {
-    data: bytes,
-    kind: "pypi_file",
-    scope: filename,
-    mediaType: "application/octet-stream",
-  });
+  let stored: Awaited<ReturnType<typeof storeRegistryBlobStreamWithRef>>;
+  try {
+    stored = await storeRegistryBlobStreamWithRef(ctx, {
+      data: content.stream(),
+      expectedDigest,
+      kind: "pypi_file",
+      scope: filename,
+      mediaType: "application/octet-stream",
+    });
+  } catch (err) {
+    if (err instanceof InvalidDigestError) {
+      return Response.json(
+        { message: "sha256_digest does not match uploaded content" },
+        { status: 400 },
+      );
+    }
+    throw err;
+  }
+  const pkg =
+    existingPkg ??
+    (await ctx.data.packages.findOrCreate({
+      name,
+    }));
   const fileMeta = buildPypiFileMetadata(parsed.plan, stored.digest);
 
   const added = await addFileToVersion(ctx, {
