@@ -21,6 +21,7 @@ interface ClaimedScanIntent {
 }
 
 const workerBatchSize = intEnv("SCAN_WORKER_BATCH_SIZE", 16, 1);
+const workerConcurrency = Math.min(workerBatchSize, intEnv("SCAN_WORKER_CONCURRENCY", 4, 1));
 const pollingIntervalSeconds = intEnv("SCAN_WORKER_POLL_INTERVAL_SECONDS", 0.5, 0.5);
 const maxAttempts = intEnv("SCAN_WORKER_MAX_ATTEMPTS", 5, 1);
 const uploadReaperIntervalSeconds = intEnv("OCI_UPLOAD_REAPER_INTERVAL_SECONDS", 300, 1);
@@ -106,6 +107,21 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function runWithConcurrency<T>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T) => Promise<void>,
+): Promise<void> {
+  let next = 0;
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (next < items.length) {
+      const item = items[next++];
+      if (item !== undefined) await worker(item);
+    }
+  });
+  await Promise.all(workers);
+}
+
 let ready = false;
 let healthServer: ReturnType<typeof Bun.serve> | null = null;
 if (process.env.WORKER_PORT) {
@@ -152,6 +168,7 @@ process.on("unhandledRejection", (reason) => void shutdown("unhandledRejection",
 
 logger.info("scan worker starting", {
   batchSize: workerBatchSize,
+  concurrency: workerConcurrency,
   pollingIntervalSeconds,
   maxAttempts,
   uploadReaperBatchSize,
@@ -192,8 +209,8 @@ while (!shuttingDown) {
     await sleep(pollingIntervalSeconds * 1000);
     continue;
   }
-  for (const intent of intents) {
-    await withSpan(
+  await runWithConcurrency(intents, workerConcurrency, async (intent) => {
+    return withSpan(
       "scan.outbox.process",
       {
         "scan.outbox.id": intent.id,
@@ -221,5 +238,5 @@ while (!shuttingDown) {
         }
       },
     );
-  }
+  });
 }
