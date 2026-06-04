@@ -19,8 +19,7 @@ function parseContentLength(value: string | undefined): number | "invalid" | nul
   return parsed.success ? parsed.data : "invalid";
 }
 
-function registryPathname(url: string): string | null {
-  const pathname = new URL(url).pathname;
+function registryPathname(pathname: string): string | null {
   return pathname.startsWith("/v2/") && pathname !== "/v2/" ? pathname : null;
 }
 
@@ -52,13 +51,14 @@ export async function enforceRequestBodyLimits(
   c: Context<AppEnv>,
   next: () => Promise<void>,
 ): Promise<Response | undefined> {
+  const pathname = c.req.path;
   const contentLength = parseContentLength(c.req.header("content-length"));
-  const registryPath = registryPathname(c.req.url);
+  const registryPath = registryPathname(pathname);
   if (contentLength === "invalid") {
     addSpanEvent("http.request.invalid_content_length");
     logger.debug("invalid content-length rejected", {
       method: c.req.method,
-      path: new URL(c.req.url).pathname,
+      path: pathname,
     });
     if (registryPath) {
       return new RegistryError(400, "SIZE_INVALID", "invalid content-length").toResponse();
@@ -72,7 +72,7 @@ export async function enforceRequestBodyLimits(
     });
     logger.debug("oversized request rejected", {
       method: c.req.method,
-      path: new URL(c.req.url).pathname,
+      path: pathname,
       contentLength,
       limit: env.REGISTRY_MAX_UPLOAD_BYTES,
     });

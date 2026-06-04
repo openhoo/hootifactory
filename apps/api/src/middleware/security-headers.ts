@@ -47,8 +47,8 @@ export function securityHeadersForNodeEnv(nodeEnv: string): Record<string, strin
 export function securityHeadersForRequest(
   nodeEnv: string,
   request: Request,
+  pathname = new URL(request.url).pathname,
 ): Record<string, string> {
-  const pathname = new URL(request.url).pathname;
   return {
     ...securityHeadersForNodeEnv(nodeEnv),
     ...(isApiOrTokenPath(pathname) || hasRequestCredentials(request.headers)
@@ -62,7 +62,7 @@ export const securityHeaders: MiddlewareHandler<AppEnv> = async (c, next) => {
     await next();
   } finally {
     for (const [name, value] of Object.entries(
-      securityHeadersForRequest(env.NODE_ENV, c.req.raw),
+      securityHeadersForRequest(env.NODE_ENV, c.req.raw, c.req.path),
     )) {
       c.header(name, value);
     }

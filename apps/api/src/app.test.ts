@@ -79,6 +79,16 @@ describe("request body guard", () => {
     ).toBeUndefined();
   });
 
+  test("classifies cache-sensitive paths from a pre-parsed pathname", () => {
+    expect(
+      securityHeadersForRequest(
+        "development",
+        new Request("http://localhost/healthz"),
+        "/api/auth/me",
+      )["cache-control"],
+    ).toBe("no-store");
+  });
+
   test("rejects requests whose declared body exceeds the configured buffered upload ceiling", async () => {
     const response = await app.fetch(
       new Request("http://localhost/v2", {
