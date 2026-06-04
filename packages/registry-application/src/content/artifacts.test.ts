@@ -53,6 +53,7 @@ describe("serveBlobIfClean", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("content-disposition")).toBe('attachment; filename="sha256_deadbeef"');
     expect(res.headers.get("content-type")).toBe("application/octet-stream");
+    expect(res.headers.get("cache-control")).toBe("private, max-age=31536000, immutable");
     expect(res.headers.get("etag")).toBe('"abc"');
     expect(res.headers.get("x-content-type-options")).toBe("nosniff");
     expect(await res.text()).toBe("BYTES");

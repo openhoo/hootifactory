@@ -64,12 +64,20 @@ describe("request body guard", () => {
     }
   });
 
-  test("does not overwrite immutable cache headers for credentialed OCI digest manifests", () => {
+  test("does not overwrite immutable cache headers for credentialed OCI digest paths", () => {
     const digest = `sha256:${"a".repeat(64)}`;
     expect(
       securityHeadersForRequest(
         "development",
         new Request(`http://localhost/v2/acme/containers/team/api/manifests/${digest}`, {
+          headers: { authorization: "Bearer token" },
+        }),
+      )["cache-control"],
+    ).toBeUndefined();
+    expect(
+      securityHeadersForRequest(
+        "development",
+        new Request(`http://localhost/v2/acme/containers/team/api/blobs/${digest}`, {
           headers: { authorization: "Bearer token" },
         }),
       )["cache-control"],

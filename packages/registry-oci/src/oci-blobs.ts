@@ -3,6 +3,7 @@ import { parseBlobRange } from "./oci-validation";
 export interface OciBlobResponseInput {
   digest: string;
   size: number;
+  cacheControl: string;
   rangeHeader: string | null;
   headOnly: boolean;
   get: () => ReadableStream<Uint8Array>;
@@ -12,10 +13,13 @@ export interface OciBlobResponseInput {
 export function buildOciBlobHeaders(input: {
   digest: string;
   size: number;
+  cacheControl: string;
 }): Record<string, string> {
   return {
     "accept-ranges": "bytes",
+    "cache-control": input.cacheControl,
     "docker-content-digest": input.digest,
+    etag: `"${input.digest}"`,
     "content-length": String(input.size),
     "content-type": "application/octet-stream",
   };
@@ -41,7 +45,11 @@ function streamResponseBody(stream: ReadableStream<Uint8Array>): ResponseBody {
 }
 
 export async function buildOciBlobResponse(input: OciBlobResponseInput): Promise<Response> {
-  const headers = buildOciBlobHeaders({ digest: input.digest, size: input.size });
+  const headers = buildOciBlobHeaders({
+    digest: input.digest,
+    size: input.size,
+    cacheControl: input.cacheControl,
+  });
   if (input.headOnly) return new Response(null, { status: 200, headers });
 
   let range: { start: number; end: number } | null = null;

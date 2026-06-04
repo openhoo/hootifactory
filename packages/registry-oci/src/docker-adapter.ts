@@ -3,6 +3,7 @@ import {
   Errors,
   type HttpMethod,
   ifNoneMatch,
+  immutableRegistryBlobCacheControl,
   type Permission,
   parseRegistryInput,
   type RegistryPlugin,
@@ -276,6 +277,7 @@ export class DockerAdapter implements RegistryPlugin {
     return buildOciBlobResponse({
       digest,
       size: blob.size,
+      cacheControl: immutableRegistryBlobCacheControl(ctx),
       rangeHeader: req.headers.get("range"),
       headOnly,
       get: () => blob.get(),

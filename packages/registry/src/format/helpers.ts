@@ -50,6 +50,14 @@ export function textResponseWithEtag(
   return new Response(body, { headers: { ...headers, etag } });
 }
 
+export function immutableRegistryBlobCacheControl(
+  ctx: Pick<RegistryRequestContext, "principal" | "repo">,
+): string {
+  return ctx.repo.visibility === "public" && ctx.principal.kind === "anonymous"
+    ? "public, max-age=31536000, immutable"
+    : "private, max-age=31536000, immutable";
+}
+
 export async function serveRegistryBlob(
   ctx: RegistryRequestContext,
   opts: ServeRegistryBlobOptions,

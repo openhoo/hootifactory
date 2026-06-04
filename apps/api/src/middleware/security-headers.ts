@@ -36,6 +36,18 @@ function isImmutableOciManifestPath(pathname: string): boolean {
   return pathname.startsWith("/v2/") && /\/manifests\/sha256:[a-fA-F0-9]{64}$/.test(pathname);
 }
 
+function isImmutableOciBlobPath(pathname: string): boolean {
+  return pathname.startsWith("/v2/") && /\/blobs\/sha256:[a-fA-F0-9]{64}$/.test(pathname);
+}
+
+function isImmutableOciDigestPath(pathname: string): boolean {
+  return isImmutableOciManifestPath(pathname) || isImmutableOciBlobPath(pathname);
+}
+
+function isImmutableCacheControl(value: string | null): boolean {
+  return value?.toLowerCase().includes("immutable") ?? false;
+}
+
 export function securityHeadersForNodeEnv(nodeEnv: string): Record<string, string> {
   return {
     "content-security-policy": CONTENT_SECURITY_POLICY,
@@ -55,7 +67,7 @@ export function securityHeadersForRequest(
 ): Record<string, string> {
   const shouldForceNoStore =
     isApiOrTokenPath(pathname) ||
-    (hasRequestCredentials(request.headers) && !isImmutableOciManifestPath(pathname));
+    (hasRequestCredentials(request.headers) && !isImmutableOciDigestPath(pathname));
   return {
     ...securityHeadersForNodeEnv(nodeEnv),
     ...(shouldForceNoStore ? SENSITIVE_CACHE_HEADERS : {}),
@@ -66,9 +78,11 @@ export const securityHeaders: MiddlewareHandler<AppEnv> = async (c, next) => {
   try {
     await next();
   } finally {
+    const existingCacheControl = c.res.headers.get("cache-control");
     for (const [name, value] of Object.entries(
       securityHeadersForRequest(env.NODE_ENV, c.req.raw, c.req.path),
     )) {
+      if (name === "cache-control" && isImmutableCacheControl(existingCacheControl)) continue;
       c.header(name, value);
     }
   }

@@ -1,5 +1,8 @@
 import { and, artifacts, db, eq, inArray, scanPolicies } from "@hootifactory/db";
-import type { RegistryRequestContext } from "@hootifactory/registry";
+import {
+  immutableRegistryBlobCacheControl,
+  type RegistryRequestContext,
+} from "@hootifactory/registry";
 import { resolveScanPolicy, type ScanPolicyPattern } from "@hootifactory/scan-core";
 import { blobStore } from "@hootifactory/storage";
 
@@ -85,10 +88,19 @@ export async function serveBlobWithScanGate(
       : undefined;
   return new Response(read?.(opts.digest) ?? blobStore.get(opts.digest), {
     headers: {
+      "cache-control": blobCacheControl(ctx),
       "content-disposition": `attachment; filename="${attachmentFilename(opts.digest)}"`,
       "content-type": opts.contentType,
+      etag: `"${opts.digest}"`,
       "x-content-type-options": "nosniff",
       ...opts.extraHeaders,
     },
   });
+}
+
+function blobCacheControl(ctx: unknown): string {
+  if (ctx && typeof ctx === "object" && "repo" in ctx && "principal" in ctx) {
+    return immutableRegistryBlobCacheControl(ctx as RegistryRequestContext);
+  }
+  return "private, max-age=31536000, immutable";
 }

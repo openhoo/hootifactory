@@ -19,6 +19,7 @@ function blobResponse(input: { rangeHeader?: string | null; headOnly?: boolean }
   return buildOciBlobResponse({
     digest: "sha256:abc",
     size: bytes.length,
+    cacheControl: "private, max-age=31536000, immutable",
     rangeHeader: input.rangeHeader ?? null,
     headOnly: input.headOnly ?? false,
     get: () => stream(bytes),
@@ -28,9 +29,17 @@ function blobResponse(input: { rangeHeader?: string | null; headOnly?: boolean }
 
 describe("OCI blob response helpers", () => {
   test("builds stable blob headers", () => {
-    expect(buildOciBlobHeaders({ digest: "sha256:abc", size: 10 })).toEqual({
+    expect(
+      buildOciBlobHeaders({
+        digest: "sha256:abc",
+        size: 10,
+        cacheControl: "private, max-age=31536000, immutable",
+      }),
+    ).toEqual({
       "accept-ranges": "bytes",
+      "cache-control": "private, max-age=31536000, immutable",
       "docker-content-digest": "sha256:abc",
+      etag: '"sha256:abc"',
       "content-length": "10",
       "content-type": "application/octet-stream",
     });
@@ -67,6 +76,7 @@ describe("OCI blob response helpers", () => {
     const responsePromise = buildOciBlobResponse({
       digest: "sha256:abc",
       size: 10,
+      cacheControl: "private, max-age=31536000, immutable",
       rangeHeader: "bytes=2-5",
       headOnly: false,
       get: () => stream("0123456789"),

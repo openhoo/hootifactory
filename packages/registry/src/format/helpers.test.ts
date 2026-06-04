@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { createTestRegistryContext } from "../testing";
-import { serveRegistryBlob, textResponseWithEtag } from "./helpers";
+import {
+  immutableRegistryBlobCacheControl,
+  serveRegistryBlob,
+  textResponseWithEtag,
+} from "./helpers";
 
 describe("registry SDK helpers", () => {
   test("textResponseWithEtag emits validators and honors conditional requests", async () => {
@@ -65,5 +69,22 @@ describe("registry SDK helpers", () => {
 
     expect(res.status).toBe(200);
     expect(await res.text()).toBe("blob:sha256:present");
+  });
+
+  test("immutable blob cache control is public only for anonymous public repos", () => {
+    const anonymousPublic = createTestRegistryContext({
+      repo: { ...createTestRegistryContext().repo, visibility: "public" },
+    });
+    expect(immutableRegistryBlobCacheControl(anonymousPublic)).toBe(
+      "public, max-age=31536000, immutable",
+    );
+
+    const tokenPublic = createTestRegistryContext({
+      repo: { ...createTestRegistryContext().repo, visibility: "public" },
+      principal: { kind: "user", userId: "user_1", username: "alice" },
+    });
+    expect(immutableRegistryBlobCacheControl(tokenPublic)).toBe(
+      "private, max-age=31536000, immutable",
+    );
   });
 });
