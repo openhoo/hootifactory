@@ -42,6 +42,9 @@ describe("PyPI validation helpers", () => {
     };
     expect(normalizePypiVersionMetadata({ files: [file] })).toEqual({ files: [file] });
     expect(
+      normalizePypiVersionMetadata({ files: [{ ...file, storedAtPublishTime: true }] }),
+    ).toEqual({ files: [file] });
+    expect(
       normalizePypiVersionMetadata({
         files: [{ ...file, filename: "../pkg-1.0.0.tar.gz", blobDigest: "not-a-digest" }],
       }),

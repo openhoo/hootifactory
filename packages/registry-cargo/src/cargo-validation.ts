@@ -1,4 +1,4 @@
-import { z } from "@hootifactory/registry";
+import { asJsonRecord, z } from "@hootifactory/registry";
 
 /** Cargo sparse-index path sharding for a crate name. */
 export function cargoIndexPath(name: string): string {
@@ -112,4 +112,11 @@ export type CargoVersionMeta = z.output<typeof CargoVersionMetaSchema>;
 export function parseCargoVersionMeta(value: unknown): CargoVersionMeta | null {
   const parsed = CargoVersionMetaSchema.safeParse(value);
   return parsed.success ? parsed.data : null;
+}
+
+export function readCargoIndexEntry(value: unknown): CargoIndexEntry | null {
+  const metadata = asJsonRecord(value);
+  if (!metadata) return null;
+  const index = asJsonRecord(metadata.index);
+  return index ? (index as CargoIndexEntry) : null;
 }

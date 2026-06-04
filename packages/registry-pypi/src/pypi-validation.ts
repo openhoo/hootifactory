@@ -97,14 +97,48 @@ export function normalizePypiVersionMetadata(value: unknown): PypiVersionMetadat
   const out: PypiVersionMetadata = {};
   if (typeof metadata.name === "string") out.name = metadata.name;
   if (typeof metadata.requiresPython === "string") out.requiresPython = metadata.requiresPython;
-  if (Object.hasOwn(metadata, "files")) {
-    const files = Array.isArray(metadata.files) ? metadata.files : [];
-    out.files = files.flatMap((file) => {
-      const parsed = PypiFileMetaSchema.safeParse(file);
-      return parsed.success ? [parsed.data] : [];
-    });
-  }
+  if (Object.hasOwn(metadata, "files")) out.files = readPypiFileMetadataList(metadata.files);
   return out;
+}
+
+export function readPypiVersionFileMetadata(value: unknown): PypiFileMeta[] {
+  const metadata = asJsonRecord(value);
+  return metadata ? readPypiFileMetadataList(metadata.files) : [];
+}
+
+export function readPypiFileMetadataList(value: unknown): PypiFileMeta[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((file) => {
+    const metadata = pypiFileMetaFromStoredRecord(file);
+    return metadata ? [metadata] : [];
+  });
+}
+
+function pypiFileMetaFromStoredRecord(value: unknown): PypiFileMeta | null {
+  const file = asJsonRecord(value);
+  if (!file) return null;
+  const { blobDigest, filename, filetype, requiresPython, sha256, size } = file;
+  if (
+    typeof filename !== "string" ||
+    !isSafeDistributionFilename(filename) ||
+    typeof blobDigest !== "string" ||
+    typeof sha256 !== "string" ||
+    typeof size !== "number" ||
+    !Number.isSafeInteger(size) ||
+    size < 0
+  ) {
+    return null;
+  }
+  if (requiresPython !== undefined && typeof requiresPython !== "string") return null;
+  if (filetype !== undefined && typeof filetype !== "string") return null;
+  return {
+    filename,
+    blobDigest,
+    sha256,
+    ...(requiresPython === undefined ? {} : { requiresPython }),
+    size,
+    ...(filetype === undefined ? {} : { filetype }),
+  };
 }
 
 function normalizeFilenameVersionToken(version: string): string {

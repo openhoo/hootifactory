@@ -26,6 +26,7 @@ import {
   CargoVersionSchema,
   cargoIndexPath,
   parseCargoVersionMeta,
+  readCargoIndexEntry,
 } from "./cargo-validation";
 
 function parseCrateName(crate: string): string {
@@ -123,8 +124,8 @@ export class CargoAdapter implements RegistryPlugin {
     const vers = await ctx.data.versions.listLive(pkg, { orderByCreated: "asc" });
     const lines = vers
       .flatMap((v) => {
-        const metadata = parseCargoVersionMeta(v.metadata);
-        return metadata ? [JSON.stringify(metadata.index)] : [];
+        const index = readCargoIndexEntry(v.metadata);
+        return index ? [JSON.stringify(index)] : [];
       })
       .join("\n");
     return new Response(`${lines}\n`, { headers: { "content-type": "text/plain" } });

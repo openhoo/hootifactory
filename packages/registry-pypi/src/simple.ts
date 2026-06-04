@@ -1,3 +1,5 @@
+import { readPypiVersionFileMetadata } from "./pypi-validation";
+
 export interface SimpleFile {
   filename: string;
   url: string;
@@ -97,7 +99,7 @@ export function buildSimpleProjectFiles(
 ): SimpleFile[] {
   const files: SimpleFile[] = [];
   for (const version of versions) {
-    const fileList = normalizePypiVersionMetadata(version.metadata).files ?? [];
+    const fileList = readPypiVersionFileMetadata(version.metadata);
     for (const file of fileList) {
       files.push({
         filename: file.filename,
@@ -163,5 +165,3 @@ export function simpleHtmlContentType(acceptHeader: string | null): string {
 export function normalizeName(name: string): string {
   return name.toLowerCase().replace(/[-_.]+/g, "-");
 }
-
-import { normalizePypiVersionMetadata } from "./pypi-validation";

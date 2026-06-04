@@ -76,6 +76,7 @@ describe("PyPI simple API rendering", () => {
                   sha256: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
                   requiresPython: ">=3.11",
                   size: 7,
+                  storedAtPublishTime: true,
                 },
               ],
             },
