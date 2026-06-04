@@ -7,7 +7,10 @@ import {
   withSpan,
 } from "@hootifactory/observability";
 import { intEnv } from "@hootifactory/queue";
-import { reapExpiredOciUploadSessions } from "@hootifactory/registry-application";
+import {
+  reapExpiredOciUploadSessions,
+  sweepUnreferencedCasBlobs,
+} from "@hootifactory/registry-application";
 import { processScan, recordScanFailure, scannerRuntimeFromEnv } from "./pipeline";
 
 const workerRole = "scan-worker";
@@ -26,6 +29,9 @@ const pollingIntervalSeconds = intEnv("SCAN_WORKER_POLL_INTERVAL_SECONDS", 0.5, 
 const maxAttempts = intEnv("SCAN_WORKER_MAX_ATTEMPTS", 5, 1);
 const uploadReaperIntervalSeconds = intEnv("OCI_UPLOAD_REAPER_INTERVAL_SECONDS", 300, 1);
 const uploadReaperBatchSize = intEnv("OCI_UPLOAD_REAPER_BATCH_SIZE", 100, 1);
+const blobGcIntervalSeconds = intEnv("BLOB_GC_INTERVAL_SECONDS", 300, 1);
+const blobGcBatchSize = intEnv("BLOB_GC_BATCH_SIZE", 100, 1);
+const blobGcGraceSeconds = intEnv("BLOB_GC_GRACE_SECONDS", 60, 0);
 
 const scannerRuntime = scannerRuntimeFromEnv();
 
@@ -173,12 +179,16 @@ logger.info("scan worker starting", {
   maxAttempts,
   uploadReaperBatchSize,
   uploadReaperIntervalSeconds,
+  blobGcBatchSize,
+  blobGcGraceSeconds,
+  blobGcIntervalSeconds,
   workerPort: process.env.WORKER_PORT,
   externalScanners: scannerRuntime.scanners,
 });
 ready = true;
 
 let nextUploadReapAt = 0;
+let nextBlobGcAt = 0;
 
 async function reapExpiredUploadsIfDue(): Promise<void> {
   const now = Date.now();
@@ -198,8 +208,34 @@ async function reapExpiredUploadsIfDue(): Promise<void> {
   }
 }
 
+async function sweepBlobsIfDue(): Promise<void> {
+  const now = Date.now();
+  if (now < nextBlobGcAt) return;
+  nextBlobGcAt = now + blobGcIntervalSeconds * 1000;
+  try {
+    const result = await withSpan(
+      "blob_gc.sweep",
+      {
+        "blob_gc.batch_size": blobGcBatchSize,
+        "blob_gc.grace_seconds": blobGcGraceSeconds,
+      },
+      () =>
+        sweepUnreferencedCasBlobs({
+          limit: blobGcBatchSize,
+          graceMs: blobGcGraceSeconds * 1000,
+        }),
+    );
+    if (result.candidates > 0 || result.reclaimed > 0) {
+      logger.info("unreferenced CAS blobs swept", result);
+    }
+  } catch (err) {
+    logger.error("unreferenced CAS blob sweeper failed", { error: err });
+  }
+}
+
 while (!shuttingDown) {
   await reapExpiredUploadsIfDue();
+  await sweepBlobsIfDue();
   const intents = await withSpan(
     "scan.outbox.claim",
     { "worker.batch_size": workerBatchSize },

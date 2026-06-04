@@ -18,5 +18,6 @@ export {
   type StoredBlob,
   storeBlobStreamWithRef,
   storeBlobWithRef,
+  sweepUnreferencedCasBlobs,
   uploadBlobStream,
 } from "./blobs";

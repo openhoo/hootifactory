@@ -41,6 +41,29 @@ interface BlobPutResult extends BlobPut {
 
 type BlobLifecycleContext = unknown;
 
+export interface BlobGcSweepResult {
+  candidates: number;
+  reclaimed: number;
+}
+
+function rowsFromExecute(result: unknown): unknown[] {
+  if (Array.isArray(result)) return result;
+  if (
+    result &&
+    typeof result === "object" &&
+    Array.isArray((result as { rows?: unknown[] }).rows)
+  ) {
+    return (result as { rows: unknown[] }).rows;
+  }
+  return [];
+}
+
+function stringField(row: unknown, field: string): string | null {
+  if (!row || typeof row !== "object") return null;
+  const value = (row as Record<string, unknown>)[field];
+  return typeof value === "string" ? value : null;
+}
+
 export async function lockDigestTx(tx: Tx, digest: string): Promise<void> {
   await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${digest}, 0))`);
 }
@@ -74,25 +97,68 @@ async function deleteUnrecordedCasBlob(
   }
 }
 
+async function reclaimUnreferencedCasBlob(digest: string): Promise<boolean> {
+  return db.transaction(async (tx) => {
+    await lockDigestTx(tx, digest);
+    const [row] = await tx
+      .select({ digest: blobs.digest })
+      .from(blobs)
+      .where(
+        and(eq(blobs.digest, digest), eq(blobs.refCount, 0), eq(blobs.state, "pending_delete")),
+      )
+      .limit(1);
+    if (!row) return false;
+    await blobStore.delete(digest);
+    const deleted = await tx
+      .delete(blobs)
+      .where(
+        and(eq(blobs.digest, digest), eq(blobs.refCount, 0), eq(blobs.state, "pending_delete")),
+      )
+      .returning({ digest: blobs.digest });
+    return deleted.length > 0;
+  });
+}
+
 export async function deleteUnreferencedCasBlob(
   _ctx: BlobLifecycleContext,
   digest: string,
 ): Promise<void> {
   try {
-    await db.transaction(async (tx) => {
-      await lockDigestTx(tx, digest);
-      const deleted = await tx
-        .delete(blobs)
-        .where(
-          and(eq(blobs.digest, digest), eq(blobs.refCount, 0), eq(blobs.state, "pending_delete")),
-        )
-        .returning({ digest: blobs.digest });
-      if (deleted.length === 0) return;
-      await blobStore.delete(digest).catch(() => {});
-    });
+    await reclaimUnreferencedCasBlob(digest);
   } catch {
     // Reclaim is best-effort; a later retention/delete pass can retry.
   }
+}
+
+export async function sweepUnreferencedCasBlobs(opts: {
+  limit: number;
+  graceMs: number;
+}): Promise<BlobGcSweepResult> {
+  const cutoff = new Date(Date.now() - opts.graceMs);
+  const candidates = rowsFromExecute(
+    await db.execute(sql`
+      with candidates as (
+        select digest
+        from blobs
+        where ref_count = 0
+          and state = 'pending_delete'
+          and (pending_since is null or pending_since <= ${cutoff})
+        order by pending_since asc nulls first, digest asc
+        limit ${opts.limit}
+        for update skip locked
+      )
+      select digest from candidates
+    `),
+  ).flatMap((row) => {
+    const digest = stringField(row, "digest");
+    return digest ? [digest] : [];
+  });
+
+  let reclaimed = 0;
+  for (const digest of candidates) {
+    if (await reclaimUnreferencedCasBlob(digest).catch(() => false)) reclaimed += 1;
+  }
+  return { candidates: candidates.length, reclaimed };
 }
 
 export async function discardUncommittedBlobPut(
