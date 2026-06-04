@@ -24,6 +24,13 @@ import {
 } from "./otel-helpers";
 import type { HttpRequestTelemetry } from "./types";
 
+const INBOUND_CORRELATION_ID_PATTERN = /^[A-Za-z0-9._-]{1,128}$/;
+
+function trustedInboundCorrelationId(value: string | null): string | undefined {
+  if (!value) return undefined;
+  return INBOUND_CORRELATION_ID_PATTERN.test(value) ? value : undefined;
+}
+
 export async function instrumentHttpRequest<T>(
   request: Request,
   handler: (telemetry: HttpRequestTelemetry) => Promise<T>,
@@ -41,10 +48,12 @@ export async function instrumentHttpRequest<T>(
     },
     parentContext,
   );
-  const requestId = request.headers.get("x-request-id") ?? randomUUID();
+  const inboundRequestId = trustedInboundCorrelationId(request.headers.get("x-request-id"));
+  const inboundCorrelationId = trustedInboundCorrelationId(request.headers.get("x-correlation-id"));
+  const requestId = inboundRequestId ?? randomUUID();
   const correlationId =
-    request.headers.get("x-correlation-id") ??
-    request.headers.get("x-request-id") ??
+    inboundCorrelationId ??
+    inboundRequestId ??
     currentCorrelationContext().correlationId ??
     requestId;
   const spanContext = span.spanContext();

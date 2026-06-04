@@ -12,6 +12,7 @@ import {
 } from ".";
 
 const originalConsoleLog = console.log;
+const uuidPattern = /^[0-9a-f-]{36}$/;
 
 afterEach(() => {
   console.log = originalConsoleLog;
@@ -77,6 +78,33 @@ describe("correlated logger", () => {
     expect(line.trace_id).not.toBe("0".repeat(32));
     expect(line.span_id).toMatch(/^[0-9a-f]{16}$/);
     expect(line.span_id).not.toBe("0".repeat(16));
+  });
+
+  test("drops malformed HTTP request identifiers before logging", async () => {
+    initializeObservability({ serviceRole: "test" });
+    const lines: string[] = [];
+    console.log = (value?: unknown) => {
+      lines.push(String(value));
+    };
+
+    await instrumentHttpRequest(
+      new Request("http://localhost/healthz", {
+        headers: {
+          "x-request-id": "bad id<script>",
+          "x-correlation-id": "bad,corr",
+        },
+      }),
+      async (telemetry) => {
+        logger.info("inside request");
+        telemetry.setStatusCode(200);
+      },
+    );
+
+    expect(lines).toHaveLength(1);
+    const line = JSON.parse(lines[0] ?? "{}") as Record<string, unknown>;
+    expect(line.request_id).toMatch(uuidPattern);
+    expect(line.request_id).not.toBe("bad id<script>");
+    expect(line.correlation_id).toBe(line.request_id);
   });
 
   test("adds scoped log attributes without replacing correlation context", async () => {

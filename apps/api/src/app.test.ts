@@ -4,8 +4,10 @@ import { env } from "@hootifactory/config";
 import { app } from "./app";
 import { securityHeadersForNodeEnv } from "./middleware/security-headers";
 
+const uuidPattern = /^[0-9a-f-]{36}$/;
+
 describe("request body guard", () => {
-  test("echoes request and correlation identifiers on responses", async () => {
+  test("echoes trusted request and correlation identifiers on responses", async () => {
     const response = await app.fetch(
       new Request("http://localhost/healthz", {
         headers: { "x-request-id": "req-test", "x-correlation-id": "corr-test" },
@@ -15,6 +17,23 @@ describe("request body guard", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("x-request-id")).toBe("req-test");
     expect(response.headers.get("x-correlation-id")).toBe("corr-test");
+  });
+
+  test("drops malformed request identifiers before reflecting them", async () => {
+    const response = await app.fetch(
+      new Request("http://localhost/healthz", {
+        headers: {
+          "x-request-id": "bad id<script>",
+          "x-correlation-id": "bad,corr",
+        },
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    const requestId = response.headers.get("x-request-id");
+    expect(requestId).toMatch(uuidPattern);
+    expect(requestId).not.toBe("bad id<script>");
+    expect(response.headers.get("x-correlation-id")).toBe(requestId);
   });
 
   test("adds browser security headers to responses", async () => {
