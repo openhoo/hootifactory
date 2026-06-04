@@ -10,6 +10,12 @@ import {
 type PolicyRow = typeof scanPolicies.$inferSelect;
 type ArtifactState = "clean" | "quarantined" | "blocked";
 type PolicyMode = "audit" | "enforce";
+type CacheEntry<T> = {
+  expiresAt: number;
+  promise: Promise<T>;
+};
+
+const SCAN_POLICY_CACHE_TTL_MS = 5_000;
 
 export interface ScanPolicyRules {
   mode?: PolicyMode | null;
@@ -33,8 +39,50 @@ export interface ScanPolicyEvaluation {
   state: ArtifactState;
 }
 
+export function createTtlPromiseCache<T>(
+  fetchValue: (key: string) => Promise<T>,
+  ttlMs: number,
+): {
+  get: (key: string, now?: number) => Promise<T>;
+  invalidate: (key?: string) => void;
+} {
+  if (!Number.isInteger(ttlMs) || ttlMs < 1) {
+    throw new Error("ttlMs must be a positive integer");
+  }
+  const entries = new Map<string, CacheEntry<T>>();
+  return {
+    get(key, now = Date.now()) {
+      const cached = entries.get(key);
+      if (cached && cached.expiresAt > now) return cached.promise;
+
+      const promise = fetchValue(key);
+      entries.set(key, { expiresAt: now + ttlMs, promise });
+      promise.catch(() => {
+        if (entries.get(key)?.promise === promise) entries.delete(key);
+      });
+      return promise;
+    },
+    invalidate(key) {
+      if (key === undefined) {
+        entries.clear();
+        return;
+      }
+      entries.delete(key);
+    },
+  };
+}
+
+const policyRowsCache = createTtlPromiseCache(
+  (orgId: string) => db.select().from(scanPolicies).where(eq(scanPolicies.orgId, orgId)),
+  SCAN_POLICY_CACHE_TTL_MS,
+);
+
+export function invalidateScanPolicyCache(orgId?: string): void {
+  policyRowsCache.invalidate(orgId);
+}
+
 export async function loadPolicy(orgId: string, repoName: string): Promise<PolicyRow | null> {
-  const rows = await db.select().from(scanPolicies).where(eq(scanPolicies.orgId, orgId));
+  const rows = await policyRowsCache.get(orgId);
   return resolveScanPolicy(rows, repoName);
 }
 
