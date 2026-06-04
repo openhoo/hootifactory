@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { ociManifestReferences } from "@hootifactory/types";
-import { externalContentScannerRequired, shouldFailForMissingExternalScanner } from "./pipeline";
+import {
+  externalContentScannerRequired,
+  mapWithBoundedConcurrency,
+  shouldFailForMissingExternalScanner,
+} from "./pipeline";
 
 describe("scan pipeline pure helpers", () => {
   test("extracts blob and child manifest references from OCI manifests", () => {
@@ -50,5 +54,26 @@ describe("scan pipeline pure helpers", () => {
         { syft: false, grype: false, trivy: false, clamav: true },
       ),
     ).toBe(false);
+  });
+
+  test("maps work with bounded concurrency and preserves result order", async () => {
+    let active = 0;
+    let maxActive = 0;
+    const results = await mapWithBoundedConcurrency([1, 2, 3, 4, 5], 2, async (value) => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      active -= 1;
+      return value * 10;
+    });
+
+    expect(results).toEqual([10, 20, 30, 40, 50]);
+    expect(maxActive).toBeLessThanOrEqual(2);
+  });
+
+  test("rejects invalid concurrency limits", async () => {
+    await expect(mapWithBoundedConcurrency([1], 0, async (value) => value)).rejects.toThrow(
+      "concurrency must be a positive integer",
+    );
   });
 });

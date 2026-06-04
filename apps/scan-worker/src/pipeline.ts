@@ -39,6 +39,52 @@ export { dedupeFindings } from "./scan-policy";
 export { recordScanFailure } from "./scan-results";
 
 const OCI_FORMATS = new Set(["docker", "oci", "helm"]);
+const OCI_REFERENCE_SCAN_CONCURRENCY = 3;
+
+export async function mapWithBoundedConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T) => Promise<R>,
+): Promise<R[]> {
+  if (!Number.isInteger(concurrency) || concurrency < 1) {
+    throw new Error("concurrency must be a positive integer");
+  }
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await worker(items[index] as T);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
+function createAsyncLimiter(concurrency: number): <T>(fn: () => Promise<T>) => Promise<T> {
+  if (!Number.isInteger(concurrency) || concurrency < 1) {
+    throw new Error("concurrency must be a positive integer");
+  }
+  let active = 0;
+  const waiting: Array<() => void> = [];
+  async function acquire(): Promise<void> {
+    if (active < concurrency) {
+      active += 1;
+      return;
+    }
+    await new Promise<void>((resolve) => waiting.push(resolve));
+    await acquire();
+  }
+  return async (fn) => {
+    await acquire();
+    try {
+      return await fn();
+    } finally {
+      active -= 1;
+      waiting.shift()?.();
+    }
+  };
+}
 
 export function externalContentScannerRequired(options: ScannerRuntimeOptions): boolean {
   return (
@@ -151,6 +197,7 @@ async function processScanInner(artifactId: string, scannerRuntime: ScannerRunti
 
   const found: NormalizedFinding[] = [];
   const scannedBlobDigests = new Set<string>();
+  const scanReferencedBytes = createAsyncLimiter(OCI_REFERENCE_SCAN_CONCURRENCY);
   await withSpan("scan.heuristic_dependencies", {}, async (span) => {
     const dependencyFindings = scanDependencies(deps);
     found.push(...dependencyFindings);
@@ -273,11 +320,16 @@ async function processScanInner(artifactId: string, scannerRuntime: ScannerRunti
         "scan.oci_manifest.manifest_refs": refs.manifests.length,
       });
       let referenceCount = refs.blobs.length + refs.manifests.length;
-      for (const blobDigest of refs.blobs) {
-        await scanStoredBytes(blobDigest);
-      }
-      for (const manifestDigest of refs.manifests) {
-        referenceCount += (await scanOciManifestReferences(manifestDigest, seen)) ?? 0;
+      await mapWithBoundedConcurrency(refs.blobs, OCI_REFERENCE_SCAN_CONCURRENCY, (blobDigest) =>
+        scanReferencedBytes(() => scanStoredBytes(blobDigest)),
+      );
+      const manifestReferenceCounts = await mapWithBoundedConcurrency(
+        refs.manifests,
+        OCI_REFERENCE_SCAN_CONCURRENCY,
+        (manifestDigest) => scanOciManifestReferences(manifestDigest, seen),
+      );
+      for (const count of manifestReferenceCounts) {
+        referenceCount += count ?? 0;
       }
       span.setAttribute("scan.oci_manifest.reference_count", referenceCount);
       return referenceCount;
