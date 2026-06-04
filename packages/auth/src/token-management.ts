@@ -30,11 +30,13 @@ export function tokenResourceDecision(
   token: ApiTokenRow,
   action: Action,
 ): Promise<Decision> {
-  return authorize(principal, action, {
+  const tokenTarget = tokenTargetFor(principal, token);
+  const requiredAction = principal.kind === "user" && tokenTarget === "org" ? "admin" : action;
+  return authorize(principal, requiredAction, {
     type: "token",
     orgId: token.orgId,
     tokenId: token.id,
-    tokenTarget: tokenTargetFor(principal, token),
+    tokenTarget,
   });
 }
 

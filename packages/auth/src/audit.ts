@@ -1,10 +1,11 @@
 import { auditLog, db } from "@hootifactory/db";
+import type { AuditResult } from "@hootifactory/types";
 import type { Principal } from "./principal";
 
 export interface AuditEntry {
   orgId?: string | null;
   action: string;
-  result: "allow" | "deny" | "success" | "failure";
+  result: AuditResult;
   resourceType?: string;
   resourceId?: string;
   ip?: string;

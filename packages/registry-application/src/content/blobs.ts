@@ -6,6 +6,7 @@ import {
   type RegistryRequestContext,
 } from "@hootifactory/registry";
 import { blobStore } from "@hootifactory/storage";
+import { BLOB_STATE } from "@hootifactory/types";
 import {
   adjustStorageUsedTx,
   assertStorageQuota,
@@ -161,15 +162,15 @@ export async function ensureActiveBlobTx(
       storageKey: blobStore.blobKey(put.digest),
       mediaType: mediaType ?? null,
       refCount: 0,
-      state: "active",
+      state: BLOB_STATE.active,
     })
     .onConflictDoNothing()
     .returning({ digest: blobs.digest });
   if (created.length === 0) {
     await tx
       .update(blobs)
-      .set({ state: "active", pendingSince: null })
-      .where(and(eq(blobs.digest, put.digest), eq(blobs.state, "pending_delete")));
+      .set({ state: BLOB_STATE.active, pendingSince: null })
+      .where(and(eq(blobs.digest, put.digest), eq(blobs.state, BLOB_STATE.pendingDelete)));
   }
 }
 
@@ -346,7 +347,7 @@ export async function ensureBlobRef(
       .update(blobs)
       .set({
         refCount: sql`${blobs.refCount} + 1`,
-        state: "active",
+        state: BLOB_STATE.active,
         pendingSince: null,
       })
       .where(eq(blobs.digest, ref.digest));

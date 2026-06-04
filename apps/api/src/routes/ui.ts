@@ -9,7 +9,7 @@ import {
 import { Hono } from "hono";
 import type { AppEnv } from "../types";
 import { uuidParams, validateJsonBody, validateParams } from "../validation";
-import { audit } from "./http";
+import { AUDIT_RESULT, audit } from "./http";
 import { registerContentRoutes } from "./ui-content";
 import { repositoryDto } from "./ui-dto";
 import { registerGovernanceRoutes } from "./ui-governance";
@@ -63,7 +63,7 @@ uiRouter.post("/orgs", async (c) => {
     audit({
       orgId: org.id,
       action: "org.create",
-      result: "success",
+      result: AUDIT_RESULT.success,
       resourceType: "org",
       resourceId: org.id,
       principal: p,
@@ -113,7 +113,7 @@ uiRouter.post("/orgs/:orgId/repositories", async (c) => {
   audit({
     orgId,
     action: "repository.create",
-    result: "success",
+    result: AUDIT_RESULT.success,
     resourceType: "repository",
     resourceId: repo.id,
     principal: c.get("principal"),

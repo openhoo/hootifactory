@@ -12,7 +12,12 @@ import {
   setActiveSpanAttributes,
   withSpan,
 } from "@hootifactory/observability";
-import type { NormalizedFinding } from "@hootifactory/scan-core";
+import {
+  ARTIFACT_STATE,
+  type NormalizedFinding,
+  SCAN_STATUS,
+  SCAN_TYPE,
+} from "@hootifactory/scan-core";
 import type { AvailableScanners } from "@hootifactory/scanning";
 import { evaluateScanPolicy, loadPolicy } from "./scan-policy";
 
@@ -27,7 +32,7 @@ const SCAN_CONFLICT_TARGET = [
   scans.dbVersion,
 ];
 const SCAN_DEDUP_FIELDS = {
-  scanType: "vuln" as const,
+  scanType: SCAN_TYPE.vulnerability,
   scanner: "hootifactory-heuristic",
   scannerVersion: "1",
   dbVersion: "builtin",
@@ -59,7 +64,7 @@ export async function persistScanResult(
         .insert(scans)
         .values({
           ...dedupKey,
-          status: "succeeded",
+          status: SCAN_STATUS.succeeded,
           startedAt: new Date(),
           finishedAt: new Date(),
           sbomNativeJson: {
@@ -68,7 +73,7 @@ export async function persistScanResult(
         })
         .onConflictDoUpdate({
           target: SCAN_CONFLICT_TARGET,
-          set: { status: "succeeded", error: null, finishedAt: new Date() },
+          set: { status: SCAN_STATUS.succeeded, error: null, finishedAt: new Date() },
         })
         .returning({ id: scans.id }),
   );
@@ -154,7 +159,7 @@ export async function markSkippedClean(
   await db
     .update(artifacts)
     .set({
-      state: "clean",
+      state: ARTIFACT_STATE.clean,
       policyDecision: { skipped: reason, findings: 0 },
     })
     .where(eq(artifacts.id, art.id));
@@ -182,19 +187,19 @@ export async function recordScanFailure(artifactId: string, err: unknown): Promi
       artifactId: art.id,
       blobDigest: art.digest,
       ...SCAN_DEDUP_FIELDS,
-      status: "failed",
+      status: SCAN_STATUS.failed,
       error: message,
       finishedAt: new Date(),
     })
     .onConflictDoUpdate({
       target: SCAN_CONFLICT_TARGET,
-      set: { status: "failed", error: message, finishedAt: new Date() },
+      set: { status: SCAN_STATUS.failed, error: message, finishedAt: new Date() },
     });
   await db
     .update(artifacts)
     .set({
       policyDecision: {
-        scanStatus: "failed",
+        scanStatus: SCAN_STATUS.failed,
         error: message,
         failedAt: new Date().toISOString(),
       },

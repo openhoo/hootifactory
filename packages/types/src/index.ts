@@ -15,6 +15,38 @@ export const ROLE_NAMES = ["viewer", "developer", "admin", "owner"] as const;
 export type RoleName = (typeof ROLE_NAMES)[number];
 export const TOKEN_TYPES = ["personal", "robot"] as const;
 export type TokenType = (typeof TOKEN_TYPES)[number];
+export const BLOB_STATE = {
+  active: "active",
+  pendingDelete: "pending_delete",
+} as const;
+export const BLOB_STATES = [BLOB_STATE.active, BLOB_STATE.pendingDelete] as const;
+export type BlobState = (typeof BLOB_STATES)[number];
+export const UPLOAD_STATE = {
+  open: "open",
+  closed: "closed",
+  committed: "committed",
+  aborted: "aborted",
+} as const;
+export const UPLOAD_STATES = [
+  UPLOAD_STATE.open,
+  UPLOAD_STATE.closed,
+  UPLOAD_STATE.committed,
+  UPLOAD_STATE.aborted,
+] as const;
+export type UploadState = (typeof UPLOAD_STATES)[number];
+export const AUDIT_RESULT = {
+  allow: "allow",
+  deny: "deny",
+  success: "success",
+  failure: "failure",
+} as const;
+export const AUDIT_RESULTS = [
+  AUDIT_RESULT.allow,
+  AUDIT_RESULT.deny,
+  AUDIT_RESULT.success,
+  AUDIT_RESULT.failure,
+] as const;
+export type AuditResult = (typeof AUDIT_RESULTS)[number];
 export const POLICY_NAMES = ["scan", "quota", "retention", "*"] as const;
 export type PolicyName = (typeof POLICY_NAMES)[number];
 export const TOKEN_TARGETS = ["self", "org"] as const;
@@ -61,6 +93,18 @@ export function isAction(value: unknown): value is Action {
 
 export function isRoleName(value: unknown): value is RoleName {
   return isOneOf(ROLE_NAMES, value);
+}
+
+export function isBlobState(value: unknown): value is BlobState {
+  return isOneOf(BLOB_STATES, value);
+}
+
+export function isUploadState(value: unknown): value is UploadState {
+  return isOneOf(UPLOAD_STATES, value);
+}
+
+export function isAuditResult(value: unknown): value is AuditResult {
+  return isOneOf(AUDIT_RESULTS, value);
 }
 
 export function isPolicyName(value: unknown): value is PolicyName {

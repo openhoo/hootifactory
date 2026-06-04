@@ -7,6 +7,7 @@ import type {
   RegistryUploadedBlob,
 } from "@hootifactory/registry";
 import { blobStore } from "@hootifactory/storage";
+import { UPLOAD_STATE } from "@hootifactory/types";
 import { commitUploadedBlobRefTx } from "../content";
 import { assertStorageQuotaRowAllows, lockOrgQuotaTx, type Tx } from "../governance/quota";
 import { rowsFromExecute, stringField } from "../runtime/raw-rows";
@@ -68,7 +69,7 @@ export async function createOciUploadSession(
     scope: input.scope,
     storageKey: input.storageKey,
     offsetBytes: input.offsetBytes,
-    state: "open",
+    state: UPLOAD_STATE.open,
     expiresAt: input.expiresAt,
   });
 }
@@ -119,13 +120,13 @@ export async function withLockedOciUploadSession<T>(
       commit: async (offsetBytes) => {
         await tx
           .update(uploadSessions)
-          .set({ state: "committed", offsetBytes })
+          .set({ state: UPLOAD_STATE.committed, offsetBytes })
           .where(openOciUploadSessionWhere(ctx, opts.scope, opts.uuid));
       },
       markAborted: async () => {
         await tx
           .update(uploadSessions)
-          .set({ state: "aborted" })
+          .set({ state: UPLOAD_STATE.aborted })
           .where(openOciUploadSessionWhere(ctx, opts.scope, opts.uuid));
       },
       deleteSession: async () => {
@@ -150,7 +151,7 @@ export async function markOciUploadSessionAborted(
 ): Promise<void> {
   await db
     .update(uploadSessions)
-    .set({ state: "aborted" })
+    .set({ state: UPLOAD_STATE.aborted })
     .where(openOciUploadSessionWhere(ctx, opts.scope, opts.uuid));
 }
 
@@ -164,7 +165,7 @@ export async function reapExpiredOciUploadSessions(
       await tx.execute(sql`
         select id, storage_key as "storageKey", multipart
           from upload_sessions
-         where state = 'open'
+         where state = ${UPLOAD_STATE.open}
            and expires_at <= ${now}
          order by expires_at asc
          limit ${limit}
@@ -180,8 +181,8 @@ export async function reapExpiredOciUploadSessions(
       await deleteOciUploadSessionStorage(session);
       const rows = await tx
         .update(uploadSessions)
-        .set({ state: "aborted", updatedAt: new Date() })
-        .where(and(eq(uploadSessions.id, session.id), eq(uploadSessions.state, "open")))
+        .set({ state: UPLOAD_STATE.aborted, updatedAt: new Date() })
+        .where(and(eq(uploadSessions.id, session.id), eq(uploadSessions.state, UPLOAD_STATE.open)))
         .returning({ id: uploadSessions.id });
       aborted += rows.length;
     }

@@ -11,6 +11,7 @@ import { createMaintenanceScheduler, intEnv } from "@hootifactory/queue";
 import { sweepUnreferencedCasBlobs } from "@hootifactory/registry-application/content";
 import { reapExpiredOciUploadSessions } from "@hootifactory/registry-application/oci";
 import { registerBuiltInRegistryPlugins } from "@hootifactory/registry-builtins";
+import { SCAN_OUTBOX_STATUS } from "@hootifactory/scan-core";
 import { processScan, recordScanFailure, scannerRuntimeFromEnv } from "./pipeline";
 import { type ClaimedScanIntent, claimedScanIntentsFromExecute } from "./scan-outbox-rows";
 
@@ -36,13 +37,13 @@ async function claimScanIntents(limit: number): Promise<ClaimedScanIntent[]> {
     with claimed as (
       select id
       from scan_outbox
-      where status = 'pending' and next_attempt_at <= now()
+      where status = ${SCAN_OUTBOX_STATUS.pending} and next_attempt_at <= now()
       order by next_attempt_at asc, created_at asc
       limit ${limit}
       for update skip locked
     )
     update scan_outbox so
-       set status = 'processing',
+       set status = ${SCAN_OUTBOX_STATUS.processing},
            attempts = so.attempts + 1,
            locked_at = now(),
            updated_at = now()
@@ -56,7 +57,12 @@ async function claimScanIntents(limit: number): Promise<ClaimedScanIntent[]> {
 async function markSucceeded(intentId: string): Promise<void> {
   await db
     .update(scanOutbox)
-    .set({ status: "succeeded", lockedAt: null, lastError: null, updatedAt: new Date() })
+    .set({
+      status: SCAN_OUTBOX_STATUS.succeeded,
+      lockedAt: null,
+      lastError: null,
+      updatedAt: new Date(),
+    })
     .where(eq(scanOutbox.id, intentId));
 }
 
@@ -66,7 +72,7 @@ async function markFailed(intent: ClaimedScanIntent, err: unknown): Promise<void
   await db
     .update(scanOutbox)
     .set({
-      status: retry ? "pending" : "failed",
+      status: retry ? SCAN_OUTBOX_STATUS.pending : SCAN_OUTBOX_STATUS.failed,
       lockedAt: null,
       lastError: error.slice(0, 2000),
       nextAttemptAt: new Date(Date.now() + Math.min(60_000, 1_000 * 2 ** intent.attempts)),

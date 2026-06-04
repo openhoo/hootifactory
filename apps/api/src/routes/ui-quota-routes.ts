@@ -2,7 +2,7 @@ import { getOrgQuota, setOrgQuota } from "@hootifactory/registry-application/gov
 import type { Hono } from "hono";
 import type { AppEnv } from "../types";
 import { uuidParams, validateJsonBody, validateParams } from "../validation";
-import { audit } from "./http";
+import { AUDIT_RESULT, audit } from "./http";
 import { requireOrgAccess } from "./ui-repository-access";
 import { QuotaBodySchema } from "./ui-schemas";
 
@@ -34,7 +34,7 @@ export function registerQuotaRoutes(router: Hono<AppEnv>): void {
     audit({
       orgId,
       action: "quota.set",
-      result: "success",
+      result: AUDIT_RESULT.success,
       resourceType: "quota",
       principal: c.get("principal"),
       detail: { maxStorageBytes },

@@ -2,7 +2,7 @@ import { upsertScanPolicy } from "@hootifactory/registry-application/governance"
 import type { Hono } from "hono";
 import type { AppEnv } from "../types";
 import { uuidParams, validateJsonBody, validateParams } from "../validation";
-import { audit } from "./http";
+import { AUDIT_RESULT, audit } from "./http";
 import { requireOrgAccess } from "./ui-repository-access";
 import { isValidScanPolicyPattern, ScanPolicyBodySchema } from "./ui-schemas";
 
@@ -40,7 +40,7 @@ export function registerScanPolicyRoutes(router: Hono<AppEnv>): void {
     audit({
       orgId,
       action: "scan_policy.create",
-      result: "success",
+      result: AUDIT_RESULT.success,
       resourceType: "scan_policy",
       resourceId: row?.id,
       principal: c.get("principal"),

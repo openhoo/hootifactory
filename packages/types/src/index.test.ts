@@ -1,12 +1,18 @@
 import { describe, expect, test } from "bun:test";
 import {
   ACTIONS,
+  AUDIT_RESULT,
+  AUDIT_RESULTS,
   AUTH_EMAIL_TOKEN_PURPOSE,
   AUTH_EMAIL_TOKEN_PURPOSES,
+  BLOB_STATE,
+  BLOB_STATES,
   EMAIL_TEMPLATE,
   EMAIL_TEMPLATES,
   isAction,
+  isAuditResult,
   isAuthEmailTokenPurpose,
+  isBlobState,
   isEmailTemplate,
   isLogLevel,
   isPolicyName,
@@ -14,6 +20,7 @@ import {
   isRoleName,
   isScannerCliRuntime,
   isTokenTarget,
+  isUploadState,
   isVisibility,
   LOG_LEVELS,
   OCI_MEDIA_TYPES,
@@ -27,6 +34,8 @@ import {
   SCANNER_CLI_RUNTIMES,
   TOKEN_TARGETS,
   TOKEN_TYPES,
+  UPLOAD_STATE,
+  UPLOAD_STATES,
   VISIBILITIES,
 } from "./index";
 
@@ -37,6 +46,12 @@ describe("shared type constants", () => {
     expect(ACTIONS).toEqual(["read", "write", "delete", "admin"]);
     expect(ROLE_NAMES).toEqual(["viewer", "developer", "admin", "owner"]);
     expect(TOKEN_TYPES).toEqual(["personal", "robot"]);
+    expect(BLOB_STATES).toEqual(["active", "pending_delete"]);
+    expect(BLOB_STATE.pendingDelete).toBe("pending_delete");
+    expect(UPLOAD_STATES).toEqual(["open", "closed", "committed", "aborted"]);
+    expect(UPLOAD_STATE.committed).toBe("committed");
+    expect(AUDIT_RESULTS).toEqual(["allow", "deny", "success", "failure"]);
+    expect(AUDIT_RESULT.failure).toBe("failure");
     expect(POLICY_NAMES).toEqual(["scan", "quota", "retention", "*"]);
     expect(TOKEN_TARGETS).toEqual(["self", "org"]);
     expect(LOG_LEVELS).toEqual(["debug", "info", "warn", "error", "silent"]);
@@ -57,6 +72,12 @@ describe("shared type constants", () => {
     expect(isAction("publish")).toBe(false);
     expect(isRoleName("developer")).toBe(true);
     expect(isRoleName("superuser")).toBe(false);
+    expect(isBlobState("pending_delete")).toBe(true);
+    expect(isBlobState("deleted")).toBe(false);
+    expect(isUploadState("committed")).toBe(true);
+    expect(isUploadState("expired")).toBe(false);
+    expect(isAuditResult("success")).toBe(true);
+    expect(isAuditResult("partial")).toBe(false);
     expect(isPolicyName("retention")).toBe(true);
     expect(isPolicyName("routing")).toBe(false);
     expect(isTokenTarget("org")).toBe(true);

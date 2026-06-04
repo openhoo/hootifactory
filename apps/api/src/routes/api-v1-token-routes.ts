@@ -34,7 +34,7 @@ import {
   validatePagination,
   validateV1,
 } from "./api-v1-helpers";
-import { audit } from "./http";
+import { AUDIT_RESULT, audit } from "./http";
 import { tokenDto } from "./ui-dto";
 import { requireUserPrincipal } from "./ui-repository-access";
 
@@ -121,7 +121,7 @@ export function registerApiV1TokenRoutes(apiV1Router: Hono<AppEnv>) {
       audit({
         orgId: params.data.orgId,
         action: "token.create",
-        result: "success",
+        result: AUDIT_RESULT.success,
         resourceType: "token",
         resourceId: token.id,
         principal: user.principal,
@@ -177,7 +177,7 @@ export function registerApiV1TokenRoutes(apiV1Router: Hono<AppEnv>) {
       audit({
         orgId: token.orgId,
         action: "token.rotate",
-        result: "success",
+        result: AUDIT_RESULT.success,
         resourceType: "token",
         resourceId: token.id,
         principal: c.get("principal"),
@@ -209,7 +209,7 @@ export function registerApiV1TokenRoutes(apiV1Router: Hono<AppEnv>) {
       audit({
         orgId: token.orgId,
         action: "token.revoke",
-        result: "success",
+        result: AUDIT_RESULT.success,
         resourceType: "token",
         resourceId: token.id,
         principal: c.get("principal"),

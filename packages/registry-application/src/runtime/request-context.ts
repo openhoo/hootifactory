@@ -12,6 +12,7 @@ import type {
   RegistryRequestContext,
   ResolvedRepo,
 } from "@hootifactory/registry";
+import { ARTIFACT_STATE, SCAN_OUTBOX_STATUS } from "@hootifactory/scan-core";
 import { createRegistryDataService } from "./data-service";
 
 async function enqueueArtifactScan(repo: ResolvedRepo, input: EnqueueScanInput): Promise<void> {
@@ -36,11 +37,11 @@ async function enqueueArtifactScan(repo: ResolvedRepo, input: EnqueueScanInput):
             mediaType: input.mediaType,
             name: input.name,
             version: input.version,
-            state: "pending",
+            state: ARTIFACT_STATE.pending,
           })
           .onConflictDoUpdate({
             target: [artifacts.orgId, artifacts.repositoryId, artifacts.digest],
-            set: { name: input.name, version: input.version, state: "pending" },
+            set: { name: input.name, version: input.version, state: ARTIFACT_STATE.pending },
           })
           .returning({ id: artifacts.id });
         if (!row) return null;
@@ -48,7 +49,7 @@ async function enqueueArtifactScan(repo: ResolvedRepo, input: EnqueueScanInput):
           .insert(scanOutbox)
           .values({
             artifactId: row.id,
-            status: "pending",
+            status: SCAN_OUTBOX_STATUS.pending,
             attempts: 0,
             nextAttemptAt: new Date(),
             lockedAt: null,
@@ -57,7 +58,7 @@ async function enqueueArtifactScan(repo: ResolvedRepo, input: EnqueueScanInput):
           .onConflictDoUpdate({
             target: [scanOutbox.artifactId],
             set: {
-              status: "pending",
+              status: SCAN_OUTBOX_STATUS.pending,
               nextAttemptAt: new Date(),
               lockedAt: null,
               lastError: null,

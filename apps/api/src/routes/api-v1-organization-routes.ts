@@ -23,7 +23,7 @@ import {
   validatePagination,
   validateV1,
 } from "./api-v1-helpers";
-import { audit } from "./http";
+import { AUDIT_RESULT, audit } from "./http";
 import { repositoryDto } from "./ui-dto";
 
 export function registerApiV1OrganizationRoutes(apiV1Router: Hono<AppEnv>) {
@@ -165,7 +165,7 @@ export function registerApiV1OrganizationRoutes(apiV1Router: Hono<AppEnv>) {
       audit({
         orgId: params.data.orgId,
         action: "repository.create",
-        result: "success",
+        result: AUDIT_RESULT.success,
         resourceType: "repository",
         resourceId: repo.id,
         principal: c.get("principal"),

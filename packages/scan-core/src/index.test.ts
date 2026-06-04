@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  ARTIFACT_STATE,
   ARTIFACT_STATES,
   asRecord,
   asString,
@@ -12,6 +13,12 @@ import {
   POLICY_MODES,
   repositoryPatternMatches,
   resolveScanPolicy,
+  SCAN_OUTBOX_STATUS,
+  SCAN_OUTBOX_STATUSES,
+  SCAN_STATUS,
+  SCAN_STATUSES,
+  SCAN_TYPE,
+  SCAN_TYPES,
   SEVERITIES,
 } from "./index";
 
@@ -19,7 +26,14 @@ describe("scan-core severity helpers", () => {
   test("keeps scan-domain enum constants stable", () => {
     expect(SEVERITIES).toEqual(["critical", "high", "medium", "low", "negligible", "unknown"]);
     expect(FINDING_TYPES).toEqual(["vuln", "license", "secret", "malware"]);
+    expect(SCAN_STATUSES).toEqual(["pending", "running", "succeeded", "failed", "skipped_dedup"]);
+    expect(SCAN_STATUS.skippedDedup).toBe("skipped_dedup");
+    expect(SCAN_TYPES).toEqual(["sbom", "vuln", "malware", "license", "secret"]);
+    expect(SCAN_TYPE.vulnerability).toBe("vuln");
+    expect(SCAN_OUTBOX_STATUSES).toEqual(["pending", "processing", "succeeded", "failed"]);
+    expect(SCAN_OUTBOX_STATUS.processing).toBe("processing");
     expect(ARTIFACT_STATES).toEqual(["pending", "clean", "quarantined", "blocked"]);
+    expect(ARTIFACT_STATE.quarantined).toBe("quarantined");
     expect(POLICY_MODES).toEqual(["audit", "enforce"]);
   });
 

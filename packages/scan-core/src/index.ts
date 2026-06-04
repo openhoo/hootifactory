@@ -66,7 +66,64 @@ export function normalizeSeverity(raw: string | null | undefined): Severity {
 export const FINDING_TYPES = ["vuln", "license", "secret", "malware"] as const;
 export type FindingType = (typeof FINDING_TYPES)[number];
 
-export const ARTIFACT_STATES = ["pending", "clean", "quarantined", "blocked"] as const;
+export const SCAN_STATUS = {
+  pending: "pending",
+  running: "running",
+  succeeded: "succeeded",
+  failed: "failed",
+  skippedDedup: "skipped_dedup",
+} as const;
+export const SCAN_STATUSES = [
+  SCAN_STATUS.pending,
+  SCAN_STATUS.running,
+  SCAN_STATUS.succeeded,
+  SCAN_STATUS.failed,
+  SCAN_STATUS.skippedDedup,
+] as const;
+export type ScanStatus = (typeof SCAN_STATUSES)[number];
+
+export const SCAN_TYPE = {
+  sbom: "sbom",
+  vulnerability: "vuln",
+  malware: "malware",
+  license: "license",
+  secret: "secret",
+} as const;
+export const SCAN_TYPES = [
+  SCAN_TYPE.sbom,
+  SCAN_TYPE.vulnerability,
+  SCAN_TYPE.malware,
+  SCAN_TYPE.license,
+  SCAN_TYPE.secret,
+] as const;
+export type ScanType = (typeof SCAN_TYPES)[number];
+
+export const SCAN_OUTBOX_STATUS = {
+  pending: "pending",
+  processing: "processing",
+  succeeded: "succeeded",
+  failed: "failed",
+} as const;
+export const SCAN_OUTBOX_STATUSES = [
+  SCAN_OUTBOX_STATUS.pending,
+  SCAN_OUTBOX_STATUS.processing,
+  SCAN_OUTBOX_STATUS.succeeded,
+  SCAN_OUTBOX_STATUS.failed,
+] as const;
+export type ScanOutboxStatus = (typeof SCAN_OUTBOX_STATUSES)[number];
+
+export const ARTIFACT_STATE = {
+  pending: "pending",
+  clean: "clean",
+  quarantined: "quarantined",
+  blocked: "blocked",
+} as const;
+export const ARTIFACT_STATES = [
+  ARTIFACT_STATE.pending,
+  ARTIFACT_STATE.clean,
+  ARTIFACT_STATE.quarantined,
+  ARTIFACT_STATE.blocked,
+] as const;
 export type ArtifactState = (typeof ARTIFACT_STATES)[number];
 
 export const POLICY_MODES = ["audit", "enforce"] as const;

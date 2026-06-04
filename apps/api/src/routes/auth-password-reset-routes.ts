@@ -8,7 +8,7 @@ import { clientIp, enqueueEmail, publicUrl } from "./auth-helpers";
 import { createPasswordResetEmail } from "./auth-password-reset";
 import { PasswordResetConfirmBodySchema, PasswordResetRequestBodySchema } from "./auth-schemas";
 import { consumePasswordResetRequest } from "./auth-throttle";
-import { audit } from "./http";
+import { AUDIT_RESULT, audit } from "./http";
 
 export function registerPasswordResetRoutes(router: Hono<AppEnv>): void {
   router.post("/password-reset/request", async (c) => {
@@ -52,7 +52,7 @@ export function registerPasswordResetRoutes(router: Hono<AppEnv>): void {
         logger.info("password reset email queued", { userId: user.id });
         audit({
           action: "auth.password_reset_email",
-          result: "success",
+          result: AUDIT_RESULT.success,
           resourceType: "user",
           resourceId: user.id,
           ip,
@@ -63,7 +63,7 @@ export function registerPasswordResetRoutes(router: Hono<AppEnv>): void {
         logger.error("password reset email failed", { userId: user.id, error: err });
         audit({
           action: "auth.password_reset_email",
-          result: "failure",
+          result: AUDIT_RESULT.failure,
           resourceType: "user",
           resourceId: user.id,
           ip,
@@ -87,7 +87,7 @@ export function registerPasswordResetRoutes(router: Hono<AppEnv>): void {
     logger.info("password reset confirmed", { userId: reset.userId });
     audit({
       action: "auth.password_reset_confirm",
-      result: "success",
+      result: AUDIT_RESULT.success,
       resourceType: "user",
       resourceId: reset.userId,
       ip: clientIp(c),

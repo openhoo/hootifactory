@@ -20,7 +20,7 @@ import {
   validateJsonV1,
   validateV1,
 } from "./api-v1-helpers";
-import { audit } from "./http";
+import { AUDIT_RESULT, audit } from "./http";
 import { validateProxyUpstreamParent, validateProxyUpstreamUrl } from "./ui-upstreams";
 import { validateVirtualMemberCandidate, validateVirtualMemberParent } from "./ui-virtual-members";
 
@@ -62,7 +62,7 @@ export function registerApiV1RepositoryConfigRoutes(apiV1Router: Hono<AppEnv>) {
       audit({
         orgId: access.repo.orgId,
         action: "repository.upstream.add",
-        result: "success",
+        result: AUDIT_RESULT.success,
         resourceType: "repository",
         resourceId: access.repo.id,
         principal: c.get("principal"),
@@ -116,7 +116,7 @@ export function registerApiV1RepositoryConfigRoutes(apiV1Router: Hono<AppEnv>) {
       audit({
         orgId: access.repo.orgId,
         action: "repository.member.add",
-        result: "success",
+        result: AUDIT_RESULT.success,
         resourceType: "repository",
         resourceId: access.repo.id,
         principal: c.get("principal"),

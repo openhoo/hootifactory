@@ -39,7 +39,7 @@ import {
   OidcLinkMetadataSchema,
 } from "./auth-schemas";
 import { consumeOidcLinkEmailRequest } from "./auth-throttle";
-import { audit } from "./http";
+import { AUDIT_RESULT, audit } from "./http";
 
 const OIDC_LINK_CSRF_COOKIE = "hoot_oidc_link_confirm";
 const OIDC_LINK_CSRF_TTL_MS = 10 * 60 * 1000;
@@ -198,7 +198,7 @@ async function confirmOidcLink(c: Context<AppEnv>, tokenSecret: string): Promise
     logger.info("OIDC link confirmation succeeded", { userId: user.id, issuer: claims.issuer });
     audit({
       action: "auth.oidc_link_confirm",
-      result: "success",
+      result: AUDIT_RESULT.success,
       resourceType: "user",
       resourceId: user.id,
       detail: oidcAuditDetail(claims),
@@ -209,7 +209,7 @@ async function confirmOidcLink(c: Context<AppEnv>, tokenSecret: string): Promise
     logger.warn("OIDC link confirmation failed", { error: message });
     audit({
       action: "auth.oidc_link_confirm",
-      result: "failure",
+      result: AUDIT_RESULT.failure,
       resourceType: "user",
       resourceId: token.userId,
       detail: { error: message },
@@ -249,7 +249,7 @@ export function registerOidcRoutes(router: Hono<AppEnv>): void {
       logger.info("OIDC login succeeded", { userId: user.id, issuer: claims.issuer });
       audit({
         action: "auth.oidc_login",
-        result: "success",
+        result: AUDIT_RESULT.success,
         resourceType: "user",
         resourceId: user.id,
         detail: {
@@ -281,7 +281,7 @@ export function registerOidcRoutes(router: Hono<AppEnv>): void {
           });
           audit({
             action: "auth.oidc_link_email",
-            result: "failure",
+            result: AUDIT_RESULT.failure,
             resourceType: "user",
             resourceId: err.userId,
             ip,
@@ -304,7 +304,7 @@ export function registerOidcRoutes(router: Hono<AppEnv>): void {
         logger.info("OIDC link confirmation email queued", { userId: err.userId });
         audit({
           action: "auth.oidc_link_email",
-          result: "success",
+          result: AUDIT_RESULT.success,
           resourceType: "user",
           resourceId: err.userId,
           ip,
@@ -317,7 +317,7 @@ export function registerOidcRoutes(router: Hono<AppEnv>): void {
       logger.warn("OIDC login failed", { error: message });
       audit({
         action: "auth.oidc_login",
-        result: "failure",
+        result: AUDIT_RESULT.failure,
         detail: { error: message },
       });
       return c.redirect(loginRedirect());

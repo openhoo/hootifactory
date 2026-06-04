@@ -2,7 +2,7 @@ import { applyRetention } from "@hootifactory/registry-application/repositories"
 import type { Hono } from "hono";
 import type { AppEnv } from "../types";
 import { validateJsonBody } from "../validation";
-import { audit } from "./http";
+import { AUDIT_RESULT, audit } from "./http";
 import { requireRepositoryAccessFromParam } from "./ui-repository-access";
 import { RetentionBodySchema } from "./ui-schemas";
 
@@ -17,7 +17,7 @@ export function registerRetentionRoutes(router: Hono<AppEnv>): void {
     audit({
       orgId: guard.repo.orgId,
       action: "retention.apply",
-      result: "success",
+      result: AUDIT_RESULT.success,
       resourceType: "repository",
       resourceId: guard.repo.id,
       principal: c.get("principal"),

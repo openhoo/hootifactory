@@ -18,7 +18,7 @@ import {
 } from "./auth-helpers";
 import { LoginBodySchema, RegisterBodySchema } from "./auth-schemas";
 import { authenticateUserPasswordWithThrottle, consumeRegistrationAttempt } from "./auth-throttle";
-import { audit } from "./http";
+import { AUDIT_RESULT, audit } from "./http";
 
 export function registerLocalAuthRoutes(router: Hono<AppEnv>): void {
   router.post("/register", async (c) => {
@@ -87,7 +87,7 @@ export function registerLocalAuthRoutes(router: Hono<AppEnv>): void {
       logger.warn("login rejected by throttle", { ip, retryAfter: passwordAuth.retryAfter });
       audit({
         action: "auth.login",
-        result: "failure",
+        result: AUDIT_RESULT.failure,
         ip,
         detail: { username, reason: "rate_limited" },
       });
@@ -100,7 +100,7 @@ export function registerLocalAuthRoutes(router: Hono<AppEnv>): void {
       logger.warn("login failed", { ip, attempts: passwordAuth.failure.count });
       audit({
         action: "auth.login",
-        result: "failure",
+        result: AUDIT_RESULT.failure,
         ip,
         detail: {
           username,
@@ -115,7 +115,7 @@ export function registerLocalAuthRoutes(router: Hono<AppEnv>): void {
     logger.info("login succeeded", { userId: principal.userId, ip });
     audit({
       action: "auth.login",
-      result: "success",
+      result: AUDIT_RESULT.success,
       ip,
       principal,
       resourceType: "user",

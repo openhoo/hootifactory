@@ -26,7 +26,7 @@ import {
   validateJsonV1,
   validateV1,
 } from "./api-v1-helpers";
-import { audit } from "./http";
+import { AUDIT_RESULT, audit } from "./http";
 import { isValidScanPolicyPattern } from "./ui-schemas";
 
 export function registerApiV1PolicyRoutes(apiV1Router: Hono<AppEnv>) {
@@ -81,7 +81,7 @@ export function registerApiV1PolicyRoutes(apiV1Router: Hono<AppEnv>) {
       audit({
         orgId: params.data.orgId,
         action: "scan_policy.create",
-        result: "success",
+        result: AUDIT_RESULT.success,
         resourceType: "scan_policy",
         resourceId: row?.id,
         principal: c.get("principal"),
@@ -143,7 +143,7 @@ export function registerApiV1PolicyRoutes(apiV1Router: Hono<AppEnv>) {
       audit({
         orgId: params.data.orgId,
         action: "quota.set",
-        result: "success",
+        result: AUDIT_RESULT.success,
         resourceType: "quota",
         principal: c.get("principal"),
       });
@@ -187,7 +187,7 @@ export function registerApiV1PolicyRoutes(apiV1Router: Hono<AppEnv>) {
       audit({
         orgId: repo.orgId,
         action: "retention.apply",
-        result: "success",
+        result: AUDIT_RESULT.success,
         resourceType: "repository",
         resourceId: repo.id,
         principal: c.get("principal"),

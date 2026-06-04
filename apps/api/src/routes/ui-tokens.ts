@@ -12,7 +12,7 @@ import {
 import type { Hono } from "hono";
 import type { AppEnv } from "../types";
 import { uuidParams, validateJsonBody, validateParams } from "../validation";
-import { audit, denied } from "./http";
+import { AUDIT_RESULT, audit, denied } from "./http";
 import { tokenDto } from "./ui-dto";
 import { requireUserPrincipal } from "./ui-repository-access";
 import { CreateTokenBodySchema } from "./ui-schemas";
@@ -41,7 +41,7 @@ export function registerTokenRoutes(router: Hono<AppEnv>): void {
     audit({
       orgId,
       action: "token.revoke",
-      result: "success",
+      result: AUDIT_RESULT.success,
       resourceType: "token",
       resourceId: tokenId,
       principal: c.get("principal"),
@@ -83,7 +83,7 @@ export function registerTokenRoutes(router: Hono<AppEnv>): void {
     audit({
       orgId,
       action: "token.create",
-      result: "success",
+      result: AUDIT_RESULT.success,
       resourceType: "token",
       resourceId: token.id,
       principal: p,

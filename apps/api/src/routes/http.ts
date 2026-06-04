@@ -5,6 +5,9 @@ import {
   writeAudit,
 } from "@hootifactory/auth";
 import { logger } from "@hootifactory/observability";
+
+export { AUDIT_RESULT } from "@hootifactory/types";
+
 import type { Context } from "hono";
 import type { AppEnv } from "../types";
 

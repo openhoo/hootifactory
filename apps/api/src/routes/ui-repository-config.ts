@@ -7,7 +7,7 @@ import {
 import type { Hono } from "hono";
 import type { AppEnv } from "../types";
 import { validateJsonBody } from "../validation";
-import { audit } from "./http";
+import { AUDIT_RESULT, audit } from "./http";
 import { requireRepositoryAccessFromParam } from "./ui-repository-access";
 import { AddMemberBodySchema, AddUpstreamBodySchema } from "./ui-schemas";
 import { validateProxyUpstreamParent, validateProxyUpstreamUrl } from "./ui-upstreams";
@@ -46,7 +46,7 @@ export function registerRepositoryConfigRoutes(router: Hono<AppEnv>): void {
     audit({
       orgId: guard.repo.orgId,
       action: "repository.member.add",
-      result: "success",
+      result: AUDIT_RESULT.success,
       resourceType: "repository",
       resourceId: guard.repo.id,
       principal: c.get("principal"),
@@ -73,7 +73,7 @@ export function registerRepositoryConfigRoutes(router: Hono<AppEnv>): void {
     audit({
       orgId: guard.repo.orgId,
       action: "repository.upstream.add",
-      result: "success",
+      result: AUDIT_RESULT.success,
       resourceType: "repository",
       resourceId: guard.repo.id,
       principal: c.get("principal"),
