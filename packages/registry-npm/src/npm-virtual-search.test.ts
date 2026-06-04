@@ -5,7 +5,7 @@ import {
   mergeNpmSearchBodies,
   npmSearchWindow,
   parseNpmSearchBody,
-} from "./npm-adapter";
+} from "./npm-virtual-search";
 
 describe("npm virtual search helpers", () => {
   test("parses search windows with defaults", () => {
