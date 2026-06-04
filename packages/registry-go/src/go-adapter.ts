@@ -97,7 +97,7 @@ export class GoAdapter implements RegistryPlugin {
     // 200 would falsely assert "known module, no versions".
     const pkg = await ctx.data.packages.findByName(moduleName);
     if (!pkg) throw Errors.notFound();
-    const rows = await this.storedVersions(ctx, pkg);
+    const rows = await ctx.data.versions.listLiveNames(pkg, { orderByCreated: "asc" });
     return new Response(
       `${rows
         .map((r) => r.version)

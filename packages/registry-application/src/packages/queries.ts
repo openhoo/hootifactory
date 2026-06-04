@@ -204,11 +204,17 @@ export async function listPackageVersionNames(packageId: string): Promise<Packag
 
 export async function listLivePackageVersionNames(
   packageId: string,
+  opts: { orderByCreated?: "asc" | "desc" } = {},
 ): Promise<PackageVersionNameRow[]> {
-  return db
+  const query = db
     .select({ version: packageVersions.version })
     .from(packageVersions)
     .where(and(eq(packageVersions.packageId, packageId), isNull(packageVersions.deletedAt)));
+  if (opts.orderByCreated === "asc")
+    return query.orderBy(asc(packageVersions.createdAt), asc(packageVersions.id));
+  if (opts.orderByCreated === "desc")
+    return query.orderBy(desc(packageVersions.createdAt), desc(packageVersions.id));
+  return query;
 }
 
 export async function listLivePackageVersionFingerprints(

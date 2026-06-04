@@ -281,7 +281,10 @@ export interface RegistryDataService {
       package?: RegistryPackageHandle;
       liveOnly?: boolean;
     }): Promise<RegistryVersionMetadataRow[]>;
-    listLiveNames(pkg: RegistryPackageHandle): Promise<RegistryPackageVersionNameRow[]>;
+    listLiveNames(
+      pkg: RegistryPackageHandle,
+      opts?: { orderByCreated?: "asc" | "desc" },
+    ): Promise<RegistryPackageVersionNameRow[]>;
     create(input: UpsertPackageVersionInput): Promise<string | null>;
     upsert(input: UpsertPackageVersionInput): Promise<string>;
     upsertWithBlobRef(
