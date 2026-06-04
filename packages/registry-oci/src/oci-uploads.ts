@@ -3,13 +3,12 @@ import type {
   RegistryOciUploadSessionRow,
 } from "@hootifactory/registry";
 import {
-  computeDigest,
   Errors,
   parseRegistryInput,
   type RegistryRequestContext,
   type RegistryUploadedBlob,
   stagingKey,
-  storeRegistryBlobWithRef,
+  storeRegistryBlobStreamWithRef,
 } from "@hootifactory/registry";
 import {
   buildOciBlobCreatedResponse,
@@ -54,10 +53,9 @@ export async function startUpload(
   }
 
   if (digest) {
-    const bytes = await bodyBytes(req);
-    if (computeDigest(bytes) !== digest) throw Errors.digestInvalid();
-    await storeRegistryBlobWithRef(ctx, {
-      data: bytes,
+    await storeRegistryBlobStreamWithRef(ctx, {
+      data: req.body ?? emptyStream(),
+      expectedDigest: digest,
       kind: "oci_layer",
       scope: image,
       asset: {
@@ -66,6 +64,11 @@ export async function startUpload(
         path: `${image}/blobs/${digest}`,
         mediaType: "application/octet-stream",
       },
+    }).catch((err) => {
+      if (err instanceof Error && err.name === "InvalidDigestError") {
+        throw Errors.digestInvalid({ expected: digest, error: err.message });
+      }
+      throw err;
     });
     return buildOciBlobCreatedResponse({ ctx, image, digest });
   }
@@ -414,5 +417,13 @@ function parseUploadUuid(uuid: string): string {
   return parseRegistryInput(UploadUuidSchema, uuid, {
     code: "BLOB_UPLOAD_INVALID",
     message: "invalid upload uuid",
+  });
+}
+
+function emptyStream(): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.close();
+    },
   });
 }

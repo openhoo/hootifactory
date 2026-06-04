@@ -463,6 +463,49 @@ describe("Docker adapter contract", () => {
     ]);
   });
 
+  test("streams monolithic digest uploads through the blob stream path", async () => {
+    const ctx = createTestRegistryContext({ baseUrl: "https://registry.test" });
+    ctx.repo = { ...ctx.repo, format: "docker", mountPath: "v2/acme/containers" };
+    let streamStores = 0;
+    ctx.data.content.storeBlobWithRef = async () => {
+      throw new Error("monolithic digest uploads should not use the buffered blob path");
+    };
+    ctx.data.content.storeBlobStreamWithRef = async (input) => {
+      streamStores += 1;
+      expect(input.expectedDigest).toBe(UPLOAD_DIGEST);
+      expect(input.kind).toBe("oci_layer");
+      expect(input.scope).toBe(pkg.name);
+      expect(input.asset).toEqual({
+        role: "oci_layer",
+        scope: pkg.name,
+        path: `${pkg.name}/blobs/${UPLOAD_DIGEST}`,
+        mediaType: "application/octet-stream",
+      });
+      await expect(readStreamText(input.data)).resolves.toBe("layer");
+      return { digest: UPLOAD_DIGEST, size: 5, deduped: false, refCreated: true };
+    };
+
+    const response = await new DockerAdapter().handle(
+      {
+        entry: { method: "POST", pattern: "/:name+/blobs/uploads", handlerId: "startUpload" },
+        params: { name: pkg.name },
+        path: "/team/api/blobs/uploads",
+      },
+      new Request(
+        `https://registry.test/v2/acme/containers/team/api/blobs/uploads?digest=${UPLOAD_DIGEST}`,
+        {
+          method: "POST",
+          body: "layer",
+        },
+      ),
+      ctx,
+    );
+
+    expect(response.status).toBe(201);
+    expect(response.headers.get("docker-content-digest")).toBe(UPLOAD_DIGEST);
+    expect(streamStores).toBe(1);
+  });
+
   test("digest-pinned manifests emit immutable validators and honor If-None-Match", async () => {
     const ctx = createTestRegistryContext();
     ctx.repo = { ...ctx.repo, format: "docker", mountPath: "v2/acme/containers" };
