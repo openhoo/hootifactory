@@ -56,20 +56,23 @@ export async function resolveUserRole(
     if (repoBindingRole) return repoBindingRole;
   }
 
-  const [member] = await db
-    .select({ role: memberships.role })
-    .from(memberships)
-    .where(and(eq(memberships.userId, userId), eq(memberships.orgId, orgId)))
-    .limit(1);
+  const [memberRows, orgBindingRole, externalGrants] = await Promise.all([
+    db
+      .select({ role: memberships.role })
+      .from(memberships)
+      .where(and(eq(memberships.userId, userId), eq(memberships.orgId, orgId)))
+      .limit(1),
+    roleBindingRole({ userId }, orgId),
+    db
+      .select({ role: externalRoleGrants.role })
+      .from(externalRoleGrants)
+      .where(and(eq(externalRoleGrants.userId, userId), eq(externalRoleGrants.orgId, orgId))),
+  ]);
+  const [member] = memberRows;
   let role: RoleName | null = member?.role ?? null;
 
-  const orgBindingRole = await roleBindingRole({ userId }, orgId);
   if (orgBindingRole) role = role ? maxRole(role, orgBindingRole) : orgBindingRole;
 
-  const externalGrants = await db
-    .select({ role: externalRoleGrants.role })
-    .from(externalRoleGrants)
-    .where(and(eq(externalRoleGrants.userId, userId), eq(externalRoleGrants.orgId, orgId)));
   for (const grant of externalGrants) {
     role = role ? maxRole(role, grant.role) : grant.role;
   }
