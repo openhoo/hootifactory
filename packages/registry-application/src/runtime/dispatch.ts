@@ -8,6 +8,7 @@ import {
   type RouteMatch,
   registryErrorToModuleResponse,
 } from "@hootifactory/registry";
+import type { RepoKind } from "@hootifactory/types";
 import { loadUpstream } from "../repositories/upstreams";
 import { isReadMethod, repoModuleSpanAttributes } from "./telemetry";
 
@@ -220,22 +221,31 @@ export async function dispatchProxy(
   );
 }
 
+function assertNever(value: never): never {
+  throw new Error(`unhandled repo kind: ${String(value)}`);
+}
+
 /** Route a matched request to the virtual/proxy/hosted dispatch path by repo kind. */
 export function dispatchByRepoKind(
-  kind: string,
+  kind: RepoKind,
   adapter: RegistryPlugin,
   match: RouteMatch,
   req: Request,
   ctx: RegistryRequestContext,
   opts: RegistryKindDispatchOptions = {},
 ): Promise<Response> {
-  if (kind === "virtual") {
-    if (!opts.dispatchVirtual) {
-      throw Errors.unsupported({ reason: "virtual repository dispatch is not configured" });
-    }
-    return opts.dispatchVirtual(adapter, match, req, ctx);
+  switch (kind) {
+    case "virtual":
+      if (!opts.dispatchVirtual) {
+        throw Errors.unsupported({ reason: "virtual repository dispatch is not configured" });
+      }
+      return opts.dispatchVirtual(adapter, match, req, ctx);
+    case "proxy":
+      return dispatchProxy(adapter, match, req, ctx);
+    case "hosted":
+      return adapterResponse(adapter, match, req, ctx);
+    default:
+      // Exhaustiveness: a new RepoKind must add a branch here (compile error).
+      return assertNever(kind);
   }
-  return kind === "proxy"
-    ? dispatchProxy(adapter, match, req, ctx)
-    : adapterResponse(adapter, match, req, ctx);
 }
