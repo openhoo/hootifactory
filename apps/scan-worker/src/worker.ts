@@ -1,5 +1,5 @@
 import { mapWithBoundedConcurrency } from "@hootifactory/core";
-import { db, eq, scanOutbox, sql } from "@hootifactory/db";
+import { and, db, eq, scanOutbox, sql } from "@hootifactory/db";
 import {
   initializeObservability,
   instrumentHttpRequest,
@@ -31,6 +31,13 @@ const uploadReaperBatchSize = intEnv("UPLOAD_REAPER_BATCH_SIZE", 100, 1);
 const blobGcIntervalSeconds = intEnv("BLOB_GC_INTERVAL_SECONDS", 300, 1);
 const blobGcBatchSize = intEnv("BLOB_GC_BATCH_SIZE", 100, 1);
 const blobGcGraceSeconds = intEnv("BLOB_GC_GRACE_SECONDS", 60, 0);
+// A claimed row whose worker died never reaches markSucceeded/markFailed and is
+// stranded in 'processing', permanently blocking its artifact under enforce-mode
+// policy. Reclaim such rows once they exceed a generous multiple of the worst-
+// case per-artifact scan time (manifest-graph traversal + OSV, each bounded by
+// SCANNER_TIMEOUT_MS, default 120s) so a live worker is never reclaimed mid-scan.
+const scanReclaimIntervalSeconds = intEnv("SCAN_RECLAIM_INTERVAL_SECONDS", 300, 1);
+const scanReclaimTimeoutSeconds = intEnv("SCAN_RECLAIM_TIMEOUT_SECONDS", 900, 60);
 
 const scannerRuntime = scannerRuntimeFromEnv();
 
@@ -141,6 +148,8 @@ logger.info("scan worker starting", {
   blobGcBatchSize,
   blobGcGraceSeconds,
   blobGcIntervalSeconds,
+  scanReclaimIntervalSeconds,
+  scanReclaimTimeoutSeconds,
   workerPort: process.env.WORKER_PORT,
   externalScanners: scannerRuntime.scanners,
 });
@@ -183,6 +192,44 @@ async function sweepBlobs(): Promise<void> {
   }
 }
 
+async function reclaimStuckScans(): Promise<void> {
+  try {
+    const reclaimed = await withSpan(
+      "scan.outbox.reclaim_stuck",
+      { "scan.reclaim.timeout_seconds": scanReclaimTimeoutSeconds },
+      () =>
+        db
+          .update(scanOutbox)
+          .set({
+            // attempts was already incremented at claim time, so mirror markFailed:
+            // exhaust to 'failed' once attempts reach the cap, otherwise retry.
+            status: sql`case when ${scanOutbox.attempts} >= ${maxAttempts}
+                             then ${SCAN_OUTBOX_STATUS.failed}
+                             else ${SCAN_OUTBOX_STATUS.pending} end`,
+            lockedAt: null,
+            nextAttemptAt: new Date(),
+            lastError: "reclaimed: worker stopped while processing",
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(scanOutbox.status, SCAN_OUTBOX_STATUS.processing),
+              sql`${scanOutbox.lockedAt} < now() - make_interval(secs => ${scanReclaimTimeoutSeconds})`,
+            ),
+          )
+          .returning({ id: scanOutbox.id }),
+    );
+    if (reclaimed.length > 0) {
+      logger.warn("reclaimed stuck scan_outbox rows", {
+        reclaimed: reclaimed.length,
+        timeoutSeconds: scanReclaimTimeoutSeconds,
+      });
+    }
+  } catch (err) {
+    logger.error("stuck scan reclaim failed", { error: err });
+  }
+}
+
 const maintenance = createMaintenanceScheduler([
   {
     name: "upload_sessions.reap_expired",
@@ -193,6 +240,11 @@ const maintenance = createMaintenanceScheduler([
     name: "blob_gc.sweep",
     intervalMs: blobGcIntervalSeconds * 1000,
     run: sweepBlobs,
+  },
+  {
+    name: "scan.outbox.reclaim_stuck",
+    intervalMs: scanReclaimIntervalSeconds * 1000,
+    run: reclaimStuckScans,
   },
 ]);
 
