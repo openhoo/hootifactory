@@ -188,6 +188,9 @@ export async function safeFetch(raw: string, opts: SafeFetchOptions = {}): Promi
       const loc = res.headers.get("location");
       if (!loc) return res;
       url = assertPublicHttpUrl(new URL(loc, url).toString(), { enforcePublicNetwork });
+      // Drain the redirect body so the pinned-fetch socket is released now rather
+      // than lingering until the per-hop timeout fires.
+      await res.body?.cancel().catch(() => {});
       continue;
     }
     return res;

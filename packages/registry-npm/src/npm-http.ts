@@ -14,7 +14,12 @@ export function decodeBase64(data: unknown): Buffer | null {
 
 export async function responseBytes(res: Response, maxBytes: number): Promise<Uint8Array | null> {
   const declared = Number(res.headers.get("content-length") ?? 0);
-  if (declared > maxBytes) return null;
+  if (declared > maxBytes) {
+    // Cancel the upstream body so its (keep-alive) socket is released now rather
+    // than lingering until the request timeout fires.
+    await res.body?.cancel().catch(() => {});
+    return null;
+  }
   const reader = res.body?.getReader();
   if (!reader) return new Uint8Array(0);
   const chunks: Uint8Array[] = [];

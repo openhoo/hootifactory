@@ -250,6 +250,9 @@ export class S3BlobStore implements BlobStore {
     });
     try {
       const response = await fetch(request.url, { method: "PUT", headers: request.headers });
+      // Drain the body so the connection returns to the pool immediately instead
+      // of waiting for GC to collect the unconsumed Response.
+      await response.body?.cancel().catch(() => {});
       return response.ok;
     } catch {
       return false;

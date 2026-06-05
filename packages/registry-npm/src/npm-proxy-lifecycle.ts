@@ -216,7 +216,10 @@ async function responseBytesWithDigests(
   maxBytes: number,
 ): Promise<{ tarball: Uint8Array; digests: NpmTarballDigests } | null> {
   const declared = Number(res.headers.get("content-length") ?? 0);
-  if (declared > maxBytes) return null;
+  if (declared > maxBytes) {
+    await res.body?.cancel().catch(() => {});
+    return null;
+  }
   const reader = res.body?.getReader();
   if (!reader) {
     return {
