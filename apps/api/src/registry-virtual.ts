@@ -15,7 +15,7 @@ import {
 } from "@hootifactory/registry-application/runtime";
 import { authorizeVirtualMembers, virtualMemberSkipReason } from "./registry-virtual-member";
 import { dispatchVirtualMetadata, virtualMetadataPackageName } from "./registry-virtual-metadata";
-import { virtualNotFound } from "./registry-virtual-response";
+import { virtualMemberUnavailable, virtualNotFound } from "./registry-virtual-response";
 import { rewriteVirtualBody, shouldRewriteVirtualBody } from "./registry-virtual-rewrite";
 import { dispatchVirtualSearch } from "./registry-virtual-search-dispatch";
 
@@ -70,14 +70,30 @@ export async function dispatchVirtual(
           "registry.virtual.member_response",
           repoSpanAttributes(member),
           async (memberSpan) => {
-            const response = await adapterResponseOrRegistryError(
-              adapter,
-              match,
-              req,
-              authorization.memberCtx,
-            );
-            memberSpan.setAttribute("http.response.status_code", response.status);
-            return response;
+            try {
+              const response = await adapterResponseOrRegistryError(
+                adapter,
+                match,
+                req,
+                authorization.memberCtx,
+              );
+              memberSpan.setAttribute("http.response.status_code", response.status);
+              return response;
+            } catch (err) {
+              // Isolate an unexpected member fault (transient DB/network) so one
+              // bad member does not abort the whole fan-out; record it as `last`
+              // (a 5xx) and keep trying later members. RegistryError is already
+              // converted to a response by adapterResponseOrRegistryError.
+              memberSpan.addEvent("registry.virtual.member_error");
+              logger.debug("virtual member failed", {
+                virtualRepo: ctx.repo.name,
+                member: member.name,
+                error: err,
+              });
+              const fallback = virtualMemberUnavailable(adapter);
+              memberSpan.setAttribute("http.response.status_code", fallback.status);
+              return fallback;
+            }
           },
         );
         if (res.status < 400) {

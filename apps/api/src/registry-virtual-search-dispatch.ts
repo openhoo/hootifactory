@@ -1,4 +1,4 @@
-import { withSpan } from "@hootifactory/observability";
+import { logger, withSpan } from "@hootifactory/observability";
 import {
   Errors,
   type HttpMethod,
@@ -55,15 +55,28 @@ export function dispatchVirtualSearch(
                   "registry.virtual.search_member_response",
                   repoSpanAttributes(member),
                   async (memberSpan) => {
-                    const memberReq = await requestForMember({ req, member });
-                    const response = await adapterResponseOrRegistryError(
-                      adapter,
-                      match,
-                      memberReq,
-                      authorization.memberCtx,
-                    );
-                    memberSpan.setAttribute("http.response.status_code", response.status);
-                    return { member, response };
+                    try {
+                      const memberReq = await requestForMember({ req, member });
+                      const response = await adapterResponseOrRegistryError(
+                        adapter,
+                        match,
+                        memberReq,
+                        authorization.memberCtx,
+                      );
+                      memberSpan.setAttribute("http.response.status_code", response.status);
+                      return { member, response };
+                    } catch (err) {
+                      // Isolate an unexpected member fault (transient DB/network):
+                      // drop this member from the merge instead of failing the
+                      // whole search. RegistryError is already handled upstream.
+                      memberSpan.addEvent("registry.virtual.member_error");
+                      logger.debug("virtual search member failed", {
+                        virtualRepo: ctx.repo.name,
+                        member: member.name,
+                        error: err,
+                      });
+                      return null;
+                    }
                   },
                 );
               }),

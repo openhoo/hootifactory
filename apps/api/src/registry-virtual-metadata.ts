@@ -1,4 +1,4 @@
-import { withSpan } from "@hootifactory/observability";
+import { logger, withSpan } from "@hootifactory/observability";
 import {
   Errors,
   type HttpMethod,
@@ -12,7 +12,7 @@ import { loadVirtualMembers } from "@hootifactory/registry-application/repositor
 import { repoSpanAttributes } from "@hootifactory/registry-application/runtime";
 import { registryErrorToModuleResponse } from "./registry-error-format";
 import { authorizeVirtualMembers } from "./registry-virtual-member";
-import { virtualNotFound } from "./registry-virtual-response";
+import { virtualMemberUnavailable, virtualNotFound } from "./registry-virtual-response";
 import {
   metadataResponseEtag,
   metadataResponseWithEtag,
@@ -76,8 +76,22 @@ export async function dispatchVirtualMetadata(
                   last: null,
                 };
               } catch (err) {
-                if (!(err instanceof RegistryError)) throw err;
-                const res = registryErrorToModuleResponse(adapter, err);
+                // RegistryError is a clean per-module failure (e.g. a miss).
+                // Anything else is an unexpected member fault (transient DB/
+                // network): isolate it so one bad member cannot 500 the whole
+                // merge and discard the healthy members' parts.
+                const res =
+                  err instanceof RegistryError
+                    ? registryErrorToModuleResponse(adapter, err)
+                    : virtualMemberUnavailable(adapter);
+                if (!(err instanceof RegistryError)) {
+                  memberSpan.addEvent("registry.virtual.member_error");
+                  logger.debug("virtual metadata member failed", {
+                    virtualRepo: ctx.repo.name,
+                    member: member.name,
+                    error: err,
+                  });
+                }
                 memberSpan.setAttribute("http.response.status_code", res.status);
                 return { part: null, last: res };
               }
