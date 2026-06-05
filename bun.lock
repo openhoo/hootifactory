@@ -228,6 +228,13 @@
         "@hootifactory/types": "workspace:*",
       },
     },
+    "packages/registry-apt": {
+      "name": "@hootifactory/registry-apt",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/registry": "workspace:*",
+      },
+    },
     "packages/registry-cargo": {
       "name": "@hootifactory/registry-cargo",
       "version": "0.0.0",
@@ -276,6 +283,7 @@
       "dependencies": {
         "@hootifactory/config": "workspace:*",
         "@hootifactory/registry": "workspace:*",
+        "@hootifactory/registry-apt": "workspace:*",
         "@hootifactory/registry-cargo": "workspace:*",
         "@hootifactory/registry-go": "workspace:*",
         "@hootifactory/registry-npm": "workspace:*",
@@ -556,6 +564,8 @@
     "@hootifactory/registry": ["@hootifactory/registry@workspace:packages/registry"],
 
     "@hootifactory/registry-application": ["@hootifactory/registry-application@workspace:packages/registry-application"],
+
+    "@hootifactory/registry-apt": ["@hootifactory/registry-apt@workspace:packages/registry-apt"],
 
     "@hootifactory/registry-cargo": ["@hootifactory/registry-cargo@workspace:packages/registry-cargo"],
 

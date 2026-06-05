@@ -1,4 +1,5 @@
 import type { RegistryPlugin } from "@hootifactory/registry";
+import { aptRegistryPlugin } from "@hootifactory/registry-apt";
 import { cargoRegistryPlugin } from "@hootifactory/registry-cargo";
 import { goRegistryPlugin } from "@hootifactory/registry-go";
 import { npmRegistryPlugin } from "@hootifactory/registry-npm";
@@ -27,4 +28,5 @@ export const REGISTRY_PLUGIN_MANIFEST: RegistryPluginEntry[] = [
   { plugin: goRegistryPlugin },
   { plugin: cargoRegistryPlugin },
   { plugin: nugetRegistryPlugin },
+  { plugin: aptRegistryPlugin },
 ];
