@@ -322,6 +322,14 @@
         "@hootifactory/registry-oci": "workspace:*",
         "@hootifactory/registry-pypi": "workspace:*",
         "@hootifactory/registry-rubygems": "workspace:*",
+        "@hootifactory/registry-swift": "workspace:*",
+      },
+    },
+    "packages/registry-swift": {
+      "name": "@hootifactory/registry-swift",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/registry": "workspace:*",
       },
     },
     "packages/scan-core": {
@@ -620,6 +628,8 @@
     "@hootifactory/registry-rubygems": ["@hootifactory/registry-rubygems@workspace:packages/registry-rubygems"],
 
     "@hootifactory/registry-runtime": ["@hootifactory/registry-runtime@workspace:packages/registry-runtime"],
+
+    "@hootifactory/registry-swift": ["@hootifactory/registry-swift@workspace:packages/registry-swift"],
 
     "@hootifactory/scan-core": ["@hootifactory/scan-core@workspace:packages/scan-core"],
 

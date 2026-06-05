@@ -20,6 +20,7 @@ describe("loadConfiguredRegistryPlugins", () => {
       "maven",
       "apt",
       "dart",
+      "swift",
     ]) {
       expect(registry.has(id)).toBe(true);
     }
@@ -43,6 +44,7 @@ describe("loadConfiguredRegistryPlugins", () => {
       "maven",
       "apt",
       "dart",
+      "swift",
       "oci",
       "helm",
     ]);
