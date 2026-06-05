@@ -144,7 +144,7 @@ export class ScoopAdapter implements RegistryPlugin {
     const names = await ctx.data.packages.listNames();
     const index: Record<string, { version: string }> = {};
     // Deterministic ordering so the ETag is stable across requests.
-    for (const { name } of [...names].sort((a, b) => (a.name < b.name ? -1 : 1))) {
+    for (const { name } of [...names].sort((a, b) => a.name.localeCompare(b.name))) {
       const pkg = await ctx.data.packages.findByName(name);
       if (!pkg) continue;
       const latest = await this.latestMeta(ctx, pkg);
