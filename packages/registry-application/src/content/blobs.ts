@@ -1,5 +1,6 @@
 import { Errors } from "@hootifactory/core";
 import { and, blobRefs, blobs, db, eq, repositories, sql } from "@hootifactory/db";
+import { logger } from "@hootifactory/observability";
 import {
   computeDigest,
   type RegistryReferencedBlob,
@@ -439,7 +440,17 @@ export async function releaseBlobRef(
       }
       maybeDeleteCasDigest = ref.digest;
     });
-  } catch {
+  } catch (err) {
+    // The transaction rolled back, so DB consistency holds and the CAS blob must
+    // NOT be GC'd (hence the null reset). But a recurring failure here silently
+    // orphans a blob_ref + its quota charge — surface it instead of swallowing.
+    logger.warn("releaseBlobRef failed; blob ref/quota may be orphaned (tx rolled back)", {
+      digest: ref.digest,
+      kind: ref.kind,
+      repositoryId: ctx.repo.id,
+      scope: ref.scope,
+      error: err,
+    });
     maybeDeleteCasDigest = null;
   }
   if (maybeDeleteCasDigest) await deleteUnreferencedCasBlob(ctx, maybeDeleteCasDigest);
