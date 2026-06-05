@@ -260,3 +260,54 @@ describe("can() — user", () => {
     ).toBe(false);
   });
 });
+
+describe("delegated registry bearer token", () => {
+  const reg = (access: { type: string; name: string; actions: string[] }[]): Principal => ({
+    kind: "registryToken",
+    subject: "ci",
+    access,
+  });
+  const repoRes = (repositoryName: string) => ({ type: "repository", repositoryName }) as const;
+
+  test("allows the granted generic action on the matching repository", () => {
+    const p = reg([{ type: "repository", name: "acme/app", actions: ["read"] }]);
+    expect(can({ principal: p, action: "read", resource: repoRes("acme/app") }).allowed).toBe(true);
+  });
+
+  test("denies an action not present in the claim", () => {
+    const p = reg([{ type: "repository", name: "acme/app", actions: ["read"] }]);
+    const decision = can({ principal: p, action: "write", resource: repoRes("acme/app") });
+    expect(decision.allowed).toBe(false);
+    expect(decision.code).toBe("insufficient_scope");
+  });
+
+  test("a wildcard claim grants any action", () => {
+    const p = reg([{ type: "repository", name: "acme/app", actions: ["*"] }]);
+    expect(can({ principal: p, action: "write", resource: repoRes("acme/app") }).allowed).toBe(
+      true,
+    );
+    expect(can({ principal: p, action: "delete", resource: repoRes("acme/app") }).allowed).toBe(
+      true,
+    );
+  });
+
+  test("denies on repository-name mismatch and on empty access", () => {
+    const p = reg([{ type: "repository", name: "acme/app", actions: ["read"] }]);
+    expect(can({ principal: p, action: "read", resource: repoRes("acme/other") }).allowed).toBe(
+      false,
+    );
+    expect(can({ principal: reg([]), action: "read", resource: repoRes("acme/app") }).allowed).toBe(
+      false,
+    );
+  });
+
+  test("does not translate Docker verbs: the claim vocabulary is generic actions", () => {
+    // Phase-3 regression guard: agnostic auth matches the requested generic
+    // action directly and must NOT accept a legacy Docker verb in the claim
+    // (the OCI token issuer translates pull/push->read/write at mint time).
+    const p = reg([{ type: "repository", name: "acme/app", actions: ["pull"] }]);
+    expect(can({ principal: p, action: "read", resource: repoRes("acme/app") }).allowed).toBe(
+      false,
+    );
+  });
+});

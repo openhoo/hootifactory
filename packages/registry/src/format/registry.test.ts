@@ -1,12 +1,21 @@
 import { describe, expect, test } from "bun:test";
 import { registryPlugin } from "./plugin";
-import { RegistryPluginRegistry } from "./registry";
+import { isImmutableContentPath, RegistryPluginRegistry } from "./registry";
 
 const adapter = registryPlugin("npm")
   .module({ displayName: "npm", mountSegment: "npm" })
   .capabilities({ proxyable: true, virtualizable: true })
   .get("/:pkg+", "packument", () => Response.json({ ok: true }))
   .put("/:pkg+", "publish", () => Response.json({ ok: true }))
+  .build();
+
+const contentAddressableAdapter = registryPlugin("docker")
+  .module({ displayName: "OCI", mountSegment: "v2" })
+  .capabilities("contentAddressable", "resumableUploads", "virtualizable")
+  .get("/:name+/blobs/:digest", "getBlob", () => Response.json({ ok: true }), {
+    immutableContentAddressed: true,
+  })
+  .get("/:name+/manifests/:reference", "getManifest", () => Response.json({ ok: true }))
   .build();
 
 describe("RegistryPluginRegistry", () => {
@@ -29,5 +38,34 @@ describe("RegistryPluginRegistry", () => {
     expect(registry.lookup("helm")?.id).toBe("helm");
     expect(registry.lookup("helm")?.routes()).toEqual(adapter.routes());
     expect(registry.has("npm")).toBe(false);
+  });
+});
+
+describe("isImmutableContentPath", () => {
+  const registry = new RegistryPluginRegistry();
+  registry.register(contentAddressableAdapter);
+  registry.register(adapter);
+
+  test("true for a content-addressable route flagged immutable", () => {
+    expect(isImmutableContentPath("/v2/acme/app/blobs/sha256:abcd", registry)).toBe(true);
+  });
+
+  test("false for a content-addressable route NOT flagged immutable", () => {
+    expect(isImmutableContentPath("/v2/acme/app/manifests/latest", registry)).toBe(false);
+  });
+
+  test("false for a non-content-addressable module's path", () => {
+    expect(isImmutableContentPath("/npm/acme/left-pad/blobs/sha256:abcd", registry)).toBe(false);
+  });
+
+  test("false for a path outside any module mount segment", () => {
+    expect(isImmutableContentPath("/api/v1/anything", registry)).toBe(false);
+  });
+
+  test("memoized matchers are rebuilt after a new plugin registers", () => {
+    const fresh = new RegistryPluginRegistry();
+    expect(isImmutableContentPath("/v2/acme/app/blobs/sha256:abcd", fresh)).toBe(false);
+    fresh.register(contentAddressableAdapter);
+    expect(isImmutableContentPath("/v2/acme/app/blobs/sha256:abcd", fresh)).toBe(true);
   });
 });
