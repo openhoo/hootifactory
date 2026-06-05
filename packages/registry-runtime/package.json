@@ -15,7 +15,12 @@
   "dependencies": {
     "@hootifactory/config": "workspace:*",
     "@hootifactory/registry": "workspace:*",
+    "@hootifactory/registry-apt": "workspace:*",
+    "@hootifactory/registry-maven": "workspace:*",
+    "@hootifactory/registry-composer": "workspace:*",
+    "@hootifactory/registry-rubygems": "workspace:*",
     "@hootifactory/registry-cargo": "workspace:*",
+    "@hootifactory/registry-dart": "workspace:*",
     "@hootifactory/registry-go": "workspace:*",
     "@hootifactory/registry-npm": "workspace:*",
     "@hootifactory/registry-nuget": "workspace:*",
