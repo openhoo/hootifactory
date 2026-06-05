@@ -12,9 +12,9 @@ export interface RepoResolution {
  * prefix match. Module mount paths are stored with the repository, so the
  * resolver does not need to know registry-specific URL conventions.
  *
- * Returns null for unmatched paths (e.g. the global "/v2/" version check, which
- * the API handles before repo resolution). Note: a global "/v2/_catalog" endpoint
- * is not implemented; such requests currently 404.
+ * Returns null for unmatched paths (e.g. a module's global version-check or
+ * catalog endpoints, which are module URL grammar handled by the API before repo
+ * resolution rather than repository mounts; unimplemented ones currently 404).
  */
 export async function resolveRepository(pathname: string): Promise<RepoResolution | null> {
   const norm = pathname.replace(/^\/+/, "").replace(/\/+$/, "");

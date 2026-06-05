@@ -113,7 +113,7 @@ const rules: BoundaryRule[] = [
       /\bregistryErrorToFormatResponse\b/,
       /\b(?:format|moduleId)\s*[:=]\s*["'](?:npm|pypi|cargo|nuget|oci|helm|maven|generic)["']/,
       /\b[Oo]ci[A-Z]/,
-      /["']v2\//,
+      /["']\/?v2\//,
     ],
   },
   {
@@ -244,7 +244,7 @@ const rules: BoundaryRule[] = [
       /\bociManifestId\b/,
       // The OCI distribution mount prefix is module grammar; it must not appear
       // in any agnostic package (route matching, scope matching, etc.).
-      /["']v2\//,
+      /["']\/?v2\//,
     ],
   },
   {

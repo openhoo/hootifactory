@@ -44,11 +44,13 @@ export function parseKeyValueList(value: string): Record<string, string> {
 
 export function defaultHttpRoute(pathname: string): string {
   if (pathname === "/healthz" || pathname === "/readyz" || pathname === "/token") return pathname;
-  if (pathname === "/v2" || pathname === "/v2/" || pathname.startsWith("/v2/")) return "/v2/*";
   if (pathname.startsWith("/api/auth")) return "/api/auth/*";
   if (pathname.startsWith("/api/")) return "/api/*";
   const [, mount, org, repo] = pathname.split("/", 4);
   if (mount && org && repo) return `/${mount}/*`;
+  // A module's single-segment mount root (e.g. an OCI version check) — group by
+  // the first segment without naming any specific module's URL grammar.
+  if (mount) return pathname === `/${mount}` ? `/${mount}` : `/${mount}/*`;
   return pathname === "/" ? "/" : "/*";
 }
 
