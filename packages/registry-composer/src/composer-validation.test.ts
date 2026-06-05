@@ -22,13 +22,16 @@ describe("composer validation", () => {
     expect(isValidComposerVersion("v2.3.4")).toBe(true);
     expect(isValidComposerVersion("1.0.0-beta1")).toBe(true);
     expect(isValidComposerVersion("dev-main")).toBe(true);
+    expect(isValidComposerVersion("dev-feature/foo")).toBe(true);
     expect(isValidComposerVersion("../1")).toBe(false);
   });
 
-  test("dist path requires three safe segments ending in .zip", () => {
+  test("dist path validates vendor, package, and zip version segments", () => {
     expect(isValidComposerDistPath("acme/pkg/1.0.0.zip")).toBe(true);
+    expect(isValidComposerDistPath("acme/pkg/dev-feature/foo.zip")).toBe(true);
     expect(isValidComposerDistPath("acme/pkg/1.0.0.tar")).toBe(false);
     expect(isValidComposerDistPath("../acme/pkg/1.0.0.zip")).toBe(false);
+    expect(isValidComposerDistPath("acme/pkg/dev-feature/../foo.zip")).toBe(false);
     expect(isValidComposerDistPath("acme/pkg.zip")).toBe(false);
   });
 
