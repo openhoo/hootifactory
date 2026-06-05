@@ -18,7 +18,13 @@ export async function writeAudit(entry: AuditEntry): Promise<void> {
   const actorUserId = p?.kind === "user" ? p.userId : p?.kind === "token" ? p.ownerUserId : null;
   const actorTokenId = p?.kind === "token" ? p.tokenId : null;
   const actorLabel =
-    p?.kind === "user" ? p.username : p?.kind === "token" ? `token:${p.tokenId}` : "anonymous";
+    p?.kind === "user"
+      ? p.username
+      : p?.kind === "token"
+        ? `token:${p.tokenId}`
+        : p?.kind === "registryToken"
+          ? `registry:${p.subject}`
+          : "anonymous";
 
   await db.insert(auditLog).values({
     orgId: entry.orgId ?? null,
