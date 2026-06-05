@@ -20,6 +20,7 @@
     "@hootifactory/registry-npm": "workspace:*",
     "@hootifactory/registry-nuget": "workspace:*",
     "@hootifactory/registry-oci": "workspace:*",
-    "@hootifactory/registry-pypi": "workspace:*"
+    "@hootifactory/registry-pypi": "workspace:*",
+    "@hootifactory/registry-swift": "workspace:*"
   }
 }
