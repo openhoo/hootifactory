@@ -181,7 +181,7 @@ export async function searchRepositoryPackages(
   return { packages: [], total: totalRows[0]?.value ?? 0 };
 }
 
-export async function listLivePackageVersions(
+export function listLivePackageVersions(
   packageId: string,
   opts: { orderByCreated?: "asc" | "desc" } = {},
 ): Promise<PackageVersionReadRow[]> {
@@ -189,10 +189,17 @@ export async function listLivePackageVersions(
     .select()
     .from(packageVersions)
     .where(and(eq(packageVersions.packageId, packageId), isNull(packageVersions.deletedAt)));
-  if (opts.orderByCreated === "asc") return query.orderBy(asc(packageVersions.createdAt));
+  // Always order by a UNIQUE total key (createdAt + the id tiebreak). createdAt
+  // is not unique — versions published in the same millisecond tie — so ordering
+  // by it alone (or not at all) lets Postgres return tied rows in plan/heap order
+  // that can differ between two otherwise-identical requests. Metadata builders
+  // (npm packument, cargo sparse index, pypi simple) serialize this row order
+  // verbatim, so a non-total order makes the response bytes non-deterministic and
+  // flakes the gzip-vs-identity byte-equality check. Index-backed by
+  // package_versions_live_created_idx (packageId, createdAt, id).
   if (opts.orderByCreated === "desc")
     return query.orderBy(desc(packageVersions.createdAt), desc(packageVersions.id));
-  return query;
+  return query.orderBy(asc(packageVersions.createdAt), asc(packageVersions.id));
 }
 
 export async function listLivePackageVersionsForPackages(
@@ -220,7 +227,11 @@ export async function listLivePackageVersionsForPackages(
             desc(packageVersions.createdAt),
             desc(packageVersions.id),
           )
-        : await query;
+        : await query.orderBy(
+            asc(packageVersions.packageId),
+            asc(packageVersions.createdAt),
+            asc(packageVersions.id),
+          );
   for (const row of rows) {
     byPackageId.get(row.packageId)?.push(row);
   }
@@ -294,7 +305,7 @@ export async function listPackageVersionNames(packageId: string): Promise<Packag
     .where(eq(packageVersions.packageId, packageId));
 }
 
-export async function listLivePackageVersionNames(
+export function listLivePackageVersionNames(
   packageId: string,
   opts: { orderByCreated?: "asc" | "desc" } = {},
 ): Promise<PackageVersionNameRow[]> {
@@ -302,11 +313,11 @@ export async function listLivePackageVersionNames(
     .select({ version: packageVersions.version })
     .from(packageVersions)
     .where(and(eq(packageVersions.packageId, packageId), isNull(packageVersions.deletedAt)));
-  if (opts.orderByCreated === "asc")
-    return query.orderBy(asc(packageVersions.createdAt), asc(packageVersions.id));
   if (opts.orderByCreated === "desc")
     return query.orderBy(desc(packageVersions.createdAt), desc(packageVersions.id));
-  return query;
+  // Default to the same unique total order as the explicit "asc" request so the
+  // version-name list is deterministic across requests (see listLivePackageVersions).
+  return query.orderBy(asc(packageVersions.createdAt), asc(packageVersions.id));
 }
 
 export async function listLivePackageVersionFingerprints(
