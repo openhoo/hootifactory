@@ -15,12 +15,22 @@
   "dependencies": {
     "@hootifactory/config": "workspace:*",
     "@hootifactory/registry": "workspace:*",
+    "@hootifactory/registry-apt": "workspace:*",
+    "@hootifactory/registry-chocolatey": "workspace:*",
+    "@hootifactory/registry-winget": "workspace:*",
+    "@hootifactory/registry-maven": "workspace:*",
+    "@hootifactory/registry-composer": "workspace:*",
+    "@hootifactory/registry-rubygems": "workspace:*",
     "@hootifactory/registry-cargo": "workspace:*",
+    "@hootifactory/registry-dart": "workspace:*",
     "@hootifactory/registry-go": "workspace:*",
+    "@hootifactory/registry-homebrew": "workspace:*",
+    "@hootifactory/registry-scoop": "workspace:*",
+    "@hootifactory/registry-rpm": "workspace:*",
     "@hootifactory/registry-npm": "workspace:*",
     "@hootifactory/registry-nuget": "workspace:*",
     "@hootifactory/registry-oci": "workspace:*",
     "@hootifactory/registry-pypi": "workspace:*",
-    "@hootifactory/registry-rpm": "workspace:*"
+    "@hootifactory/registry-swift": "workspace:*"
   }
 }

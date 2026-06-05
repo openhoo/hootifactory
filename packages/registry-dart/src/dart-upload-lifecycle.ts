@@ -1,0 +1,88 @@
+import {
+  digestHex,
+  findRegistryPackage,
+  publishImmutableVersionBlob,
+  type RegistryRequestContext,
+} from "@hootifactory/registry";
+import { dartErrorResponse } from "./dart-errors";
+import { dartArchiveFile } from "./dart-metadata";
+import { type DartUploadPlan, parseDartUploadRequest } from "./dart-publish";
+import type { DartVersionMeta } from "./dart-validation";
+
+const ARCHIVE_MEDIA_TYPE = "application/gzip";
+
+/**
+ * Both `archiveDigest` (resolves the download blob) and the advertised
+ * `archiveSha256` are derived from the *stored* blob digest so the two can never
+ * disagree — pub verifies `archive_sha256` against the bytes it downloads, which
+ * are served by `archiveDigest`. Storage hashes with sha256 (`sha256:<hex>`), so
+ * `digestHex(stored.digest)` is exactly the archive's sha256.
+ */
+export function buildDartVersionMetadata(plan: DartUploadPlan, digest: string): DartVersionMeta {
+  return {
+    archiveDigest: digest,
+    archiveSha256: digestHex(digest),
+    pubspec: plan.pubspec,
+    published: new Date().toISOString(),
+  };
+}
+
+/**
+ * Handle POST /api/packages/versions/newUpload: read the archive, parse the
+ * pubspec, reject a duplicate version, store the blob immutably, and respond with
+ * a 303 redirect to the finish endpoint (the pub client follows `Location`).
+ */
+export async function handleDartUpload(
+  req: Request,
+  ctx: RegistryRequestContext,
+): Promise<Response> {
+  const parsed = await parseDartUploadRequest(req);
+  if (!parsed.ok) {
+    return dartErrorResponse(parsed.error.code, parsed.error.message, parsed.error.status);
+  }
+  const { plan } = parsed;
+  const { packageName, version, scope } = plan;
+
+  const existingPkg = await findRegistryPackage(ctx, packageName);
+  if (existingPkg && (await ctx.data.versions.exists(existingPkg, version))) {
+    return dartErrorResponse(
+      "PackageExists",
+      `version ${version} of package ${packageName} already exists`,
+      409,
+    );
+  }
+
+  const result = await publishImmutableVersionBlob(ctx, {
+    package: { name: packageName },
+    version,
+    kind: "dart_archive",
+    scope,
+    blob: {
+      data: plan.archiveBytes,
+      kind: "dart_archive",
+      scope,
+      mediaType: ARCHIVE_MEDIA_TYPE,
+    },
+    metadata: (stored) => buildDartVersionMetadata(plan, stored.digest),
+    sizeBytes: plan.archiveBytes.length,
+    scan: { name: packageName, version, mediaType: ARCHIVE_MEDIA_TYPE },
+    asset: () => ({
+      role: "dart_archive",
+      scope,
+      path: dartArchiveFile(packageName, version),
+      mediaType: ARCHIVE_MEDIA_TYPE,
+      metadata: { package: packageName },
+    }),
+    versionConflict: (pkg) => ctx.data.versions.exists(pkg, version),
+  });
+  if (!result.ok) {
+    return dartErrorResponse(
+      "PackageExists",
+      `version ${version} of package ${packageName} already exists`,
+      409,
+    );
+  }
+
+  const finishUrl = `${ctx.baseUrl}/${ctx.repo.mountPath}/api/packages/versions/newUploadFinish`;
+  return new Response(null, { status: 303, headers: { location: finishUrl } });
+}
