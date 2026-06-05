@@ -105,6 +105,19 @@ describe("Chocolatey adapter", () => {
       action: "read",
       resource: { type: "artifact", packageName: "git", artifactRef: "git.2.43.0.nupkg" },
     });
+    expect(
+      adapter.requiredPermission(
+        "GET",
+        match(
+          { method: "GET", pattern: "/api/v2/:resource", handlerId: "packageEntry" },
+          { resource: "Packages(Id='Git',Version='2.43.0')" },
+          "/api/v2/Packages(Id='Git',Version='2.43.0')",
+        ),
+      ),
+    ).toEqual({
+      action: "read",
+      resource: { type: "artifact", packageName: "git", artifactRef: "git.2.43.0.nupkg" },
+    });
     expect(adapter.authChallenge().header).toBe('Basic realm="hootifactory"');
     expect([...adapter.apiKeyHeaders]).toEqual(["x-nuget-apikey"]);
   });

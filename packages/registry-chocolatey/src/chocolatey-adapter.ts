@@ -163,21 +163,24 @@ export class ChocolateyAdapter implements RegistryPlugin {
     const permission = readWritePermission(method);
     const id = match?.params.id?.toLowerCase();
     const version = match?.params.version;
-    if (id && version) {
+    const odataKey = match?.params.resource ? parseODataKey(match.params.resource) : null;
+    const keyedId = id ?? odataKey?.id.toLowerCase();
+    const keyedVersion = version ?? odataKey?.version;
+    if (keyedId && keyedVersion) {
       // Normalize the version so the artifact ref matches the stored asset scope
       // (which is keyed by the normalized version). Fall back to the raw value if
       // it cannot be normalized so the authorize check still scopes to an artifact.
-      const norm = normalizeChocolateyVersion(version) ?? version;
+      const norm = normalizeChocolateyVersion(keyedVersion) ?? keyedVersion;
       return {
         ...permission,
         resource: {
           type: "artifact",
-          packageName: id,
-          artifactRef: chocolateyBlobScope(id, norm),
+          packageName: keyedId,
+          artifactRef: chocolateyBlobScope(keyedId, norm),
         },
       };
     }
-    if (id) return { ...permission, resource: { type: "package", packageName: id } };
+    if (keyedId) return { ...permission, resource: { type: "package", packageName: keyedId } };
     return permission;
   }
 

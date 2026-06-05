@@ -47,7 +47,7 @@ export interface ChocolateyVersionMeta {
 
 const ChocolateyDependencySchema = z.strictObject({
   id: ChocolateyIdSchema,
-  range: z.string().min(1).max(512),
+  range: z.string().max(512),
 });
 
 export const ChocolateyVersionMetaSchema = z.strictObject({
@@ -177,8 +177,43 @@ export function escapeXml(value: string): string {
  * decomposed into both keys.
  */
 export function parseODataKey(segment: string): { id: string; version: string } | null {
-  const id = segment.match(/Id=\s*'([^']*)'/i)?.[1];
-  const version = segment.match(/Version=\s*'([^']*)'/i)?.[1];
+  const open = segment.indexOf("(");
+  const close = segment.endsWith(")") ? segment.length - 1 : segment.length;
+  if (open >= 0) segment = segment.slice(open + 1, close);
+  const values: Record<string, string> = {};
+  let i = 0;
+  while (i < segment.length) {
+    while (segment[i] === " " || segment[i] === ",") i += 1;
+    const keyStart = i;
+    while (i < segment.length && /[A-Za-z]/.test(segment[i] ?? "")) i += 1;
+    const key = segment.slice(keyStart, i).toLowerCase();
+    while (segment[i] === " ") i += 1;
+    if (!key || segment[i] !== "=") return null;
+    i += 1;
+    while (segment[i] === " ") i += 1;
+    if (segment[i] !== "'") return null;
+    i += 1;
+    let value = "";
+    while (i < segment.length) {
+      const char = segment[i] ?? "";
+      if (char === "'") {
+        if (segment[i + 1] === "'") {
+          value += "'";
+          i += 2;
+          continue;
+        }
+        i += 1;
+        break;
+      }
+      value += char;
+      i += 1;
+    }
+    values[key] = value;
+    while (segment[i] === " ") i += 1;
+    if (i < segment.length && segment[i] !== ",") return null;
+  }
+  const id = values.id;
+  const version = values.version;
   if (id === undefined || version === undefined) return null;
   return { id, version };
 }

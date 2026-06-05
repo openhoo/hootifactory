@@ -43,6 +43,10 @@ describe("Chocolatey OData parsing", () => {
   test("parses Id/Version from an OData key segment", () => {
     expect(parseODataKey("Id='git',Version='2.43.0'")).toEqual({ id: "git", version: "2.43.0" });
     expect(parseODataKey("Version='2.43.0',Id='git'")).toEqual({ id: "git", version: "2.43.0" });
+    expect(parseODataKey("Id='o''brien',Version='1.0.0'")).toEqual({
+      id: "o'brien",
+      version: "1.0.0",
+    });
     expect(parseODataKey("git")).toBeNull();
   });
 
@@ -81,6 +85,11 @@ describe("Chocolatey metadata + XML helpers", () => {
       listed: true,
     };
     expect(parseChocolateyVersionMeta(meta)).toEqual(meta);
+    expect(
+      parseChocolateyVersionMeta({ ...meta, dependencies: [{ id: "chocolatey", range: "" }] }),
+    ).toMatchObject({
+      dependencies: [{ id: "chocolatey", range: "" }],
+    });
     expect(parseChocolateyVersionMeta({ id: "git" })).toBeNull();
   });
 });
