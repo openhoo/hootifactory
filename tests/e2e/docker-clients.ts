@@ -12,6 +12,7 @@ export const CLI_IMAGES = {
   helm: process.env.E2E_HELM_IMAGE ?? "alpine/helm:3.19.0",
   node: process.env.E2E_NODE_IMAGE ?? "node:22-bookworm-slim",
   oras: process.env.E2E_ORAS_IMAGE ?? "ghcr.io/oras-project/oras:v1.3.0",
+  ruby: process.env.E2E_RUBY_IMAGE ?? "ruby:3.3-bookworm",
 };
 
 const PYTHON_CLIENT_IMAGE = process.env.E2E_PYTHON_IMAGE ?? "hootifactory/e2e-python-client:local";
