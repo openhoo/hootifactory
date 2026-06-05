@@ -1,5 +1,6 @@
 import {
   asJsonRecord,
+  BoundedLruCache,
   basicAuthChallenge,
   delegateRegistryPlugin,
   type HttpMethod,
@@ -128,7 +129,9 @@ export class NpmAdapter implements RegistryPlugin {
     ])
     .build();
   private readonly delegate = delegateRegistryPlugin(this.plugin);
-  private readonly packumentCache = new Map<string, CachedPackument>();
+  private readonly packumentCache = new BoundedLruCache<string, CachedPackument>(
+    PACKUMENT_CACHE_MAX_ENTRIES,
+  );
 
   get displayName() {
     return this.plugin.displayName;
@@ -239,11 +242,10 @@ export class NpmAdapter implements RegistryPlugin {
     body: string,
   ): CachedPackument {
     const cached = { token, body, etag: textEtag(body) };
+    // BoundedLruCache self-bounds and evicts the least-recently-used entry, so a
+    // hot package read early stays cached (the old FIFO Map evicted by insertion
+    // order, dropping hot entries under multi-tenant load).
     this.packumentCache.set(this.packumentCacheKey(ctx, pkg), cached);
-    if (this.packumentCache.size > PACKUMENT_CACHE_MAX_ENTRIES) {
-      const oldest = this.packumentCache.keys().next().value;
-      if (oldest) this.packumentCache.delete(oldest);
-    }
     return cached;
   }
 
