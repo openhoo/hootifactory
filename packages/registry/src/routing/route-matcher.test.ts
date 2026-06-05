@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { RouteEntry } from "../format/adapter";
+import type { RouteEntry } from "../plugin/adapter";
 import { compileRoutes, matchRoute } from "./route-matcher";
 
 const dockerRoutes: RouteEntry[] = [

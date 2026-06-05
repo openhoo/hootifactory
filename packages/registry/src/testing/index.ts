@@ -4,8 +4,8 @@ import type {
   ResolvedRepo,
   RouteEntry,
   RouteMatch,
-} from "../format/adapter";
-import type { RegistryDataService } from "../format/data";
+} from "../plugin/adapter";
+import type { RegistryDataService } from "../plugin/data";
 
 function unimplemented(name: string): never {
   throw new Error(`unimplemented registry test context method: ${name}`);

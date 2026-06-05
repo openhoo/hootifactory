@@ -30,11 +30,11 @@ export {
   z,
   zodIssueTree,
 } from "@hootifactory/core";
-export * from "./format/adapter";
-export * from "./format/auth";
-export * from "./format/data";
-export * from "./format/errors";
-export * from "./format/helpers";
-export * from "./format/plugin";
-export * from "./format/registry";
+export * from "./plugin/adapter";
+export * from "./plugin/auth";
+export * from "./plugin/data";
+export * from "./plugin/errors";
+export * from "./plugin/helpers";
+export * from "./plugin/plugin";
+export * from "./plugin/registry";
 export * from "./routing/route-matcher";

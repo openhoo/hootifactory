@@ -1,4 +1,4 @@
-import type { HttpMethod, RouteEntry, RouteMatch } from "../format/adapter";
+import type { HttpMethod, RouteEntry, RouteMatch } from "../plugin/adapter";
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
