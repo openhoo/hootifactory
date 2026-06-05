@@ -311,7 +311,7 @@ test.describe("docker registry protocol authorization", () => {
       await (
         await createToken(owner.ctx, owner.orgId, {
           name: "oci-reader",
-          scopes: [{ repository: imageName, actions: ["read"] }],
+          grants: [{ resource: "repository", repository: imageName, actions: ["read"] }],
         })
       ).json()
     ).secret as string;
@@ -348,7 +348,7 @@ test.describe("docker registry protocol authorization", () => {
       await (
         await createToken(owner.ctx, owner.orgId, {
           name: "repo-name-only",
-          scopes: [{ repository: "containers", actions: ["read"] }],
+          grants: [{ resource: "repository", repository: "containers", actions: ["read"] }],
         })
       ).json()
     ).secret as string;
@@ -386,7 +386,13 @@ test.describe("docker registry protocol authorization", () => {
       await (
         await createToken(owner.ctx, owner.orgId, {
           name: "app-reader",
-          scopes: [{ repository: `${owner.orgSlug}/containers/app`, actions: ["read"] }],
+          grants: [
+            {
+              resource: "repository",
+              repository: `${owner.orgSlug}/containers/app`,
+              actions: ["read"],
+            },
+          ],
         })
       ).json()
     ).secret as string;
@@ -404,7 +410,13 @@ test.describe("docker registry protocol authorization", () => {
       await (
         await createToken(owner.ctx, owner.orgId, {
           name: "other-reader",
-          scopes: [{ repository: `${owner.orgSlug}/containers/other`, actions: ["read"] }],
+          grants: [
+            {
+              resource: "repository",
+              repository: `${owner.orgSlug}/containers/other`,
+              actions: ["read"],
+            },
+          ],
         })
       ).json()
     ).secret as string;
@@ -430,8 +442,12 @@ test.describe("docker registry protocol authorization", () => {
       await (
         await createToken(owner.ctx, owner.orgId, {
           name: "other-deleter",
-          scopes: [
-            { repository: `${owner.orgSlug}/containers/other`, actions: ["read", "delete"] },
+          grants: [
+            {
+              resource: "repository",
+              repository: `${owner.orgSlug}/containers/other`,
+              actions: ["read", "delete"],
+            },
           ],
         })
       ).json()
@@ -862,7 +878,13 @@ test.describe("docker registry protocol authorization", () => {
       await (
         await createToken(owner.ctx, owner.orgId, {
           name: "resumable-reader",
-          scopes: [{ repository: `${owner.orgSlug}/containers/resumable`, actions: ["read"] }],
+          grants: [
+            {
+              resource: "repository",
+              repository: `${owner.orgSlug}/containers/resumable`,
+              actions: ["read"],
+            },
+          ],
         })
       ).json()
     ).secret as string;

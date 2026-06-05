@@ -1,9 +1,8 @@
 import { BoundedLruCache } from "@hootifactory/core";
 import { and, apiTokens, db, desc, eq, users } from "@hootifactory/db";
-import type { TokenGrant, TokenScope, TokenType } from "@hootifactory/types";
+import type { TokenGrant, TokenType } from "@hootifactory/types";
 import type { RoleName } from "./permissions";
 import type { Principal } from "./principal";
-import { repositoryGrantsAsScopes } from "./scope";
 import { randomSecret, sha256hex } from "./secret";
 
 export const TOKEN_PREFIX = "hoot_";
@@ -30,8 +29,6 @@ export interface CreateTokenInput {
   name: string;
   type?: TokenType;
   grants?: TokenGrant[];
-  /** Legacy pre-v1 input, normalized to repository grants before storage. */
-  scopes?: TokenScope[];
   role?: RoleName | null;
   expiresAt?: Date | null;
 }
@@ -51,16 +48,7 @@ export async function createApiToken(
   input: CreateTokenInput,
 ): Promise<{ token: ApiTokenRow; secret: string }> {
   const { secret, prefix, hash } = generateTokenSecret();
-  const grants =
-    input.grants ??
-    input.scopes?.map(
-      (scope): TokenGrant => ({
-        resource: "repository",
-        repository: scope.repository,
-        actions: [...scope.actions],
-      }),
-    ) ??
-    [];
+  const grants = input.grants ?? [];
   const [token] = await db
     .insert(apiTokens)
     .values({
@@ -159,7 +147,6 @@ export async function resolveToken(secret: string): Promise<Principal | null> {
     ownerUserId: row.token.ownerUserId,
     ownerUsername,
     grants,
-    scopes: repositoryGrantsAsScopes(grants),
     role: row.token.role,
     isRobot: row.token.type === "robot",
   };

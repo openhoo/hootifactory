@@ -18,7 +18,7 @@ import { authEmailTokenPurposeEnum, roleNameEnum, tokenTypeEnum } from "./enums"
 import { repositories } from "./repositories";
 import { organizations, users } from "./tenancy";
 
-export type { TokenAction, TokenGrant, TokenScope } from "@hootifactory/types";
+export type { TokenAction, TokenGrant } from "@hootifactory/types";
 
 /**
  * Opaque API tokens for CLI/registry clients. The secret is shown once at

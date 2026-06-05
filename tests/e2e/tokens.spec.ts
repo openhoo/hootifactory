@@ -132,10 +132,19 @@ test.describe("api tokens", () => {
     for (const data of [
       { name: "bad-type", type: "magic" },
       { name: "bad-role", role: "superuser" },
-      { name: "bad-scopes", scopes: "repo" },
-      { name: "bad-actions-shape", scopes: [{ repository: "repo", actions: "read" }] },
-      { name: "bad-repository", scopes: [{ repository: "", actions: ["read"] }] },
-      { name: "bad-action", scopes: [{ repository: "repo", actions: ["execute"] }] },
+      { name: "bad-grants", grants: "repo" },
+      {
+        name: "bad-actions-shape",
+        grants: [{ resource: "repository", repository: "repo", actions: "read" }],
+      },
+      {
+        name: "bad-repository",
+        grants: [{ resource: "repository", repository: "", actions: ["read"] }],
+      },
+      {
+        name: "bad-action",
+        grants: [{ resource: "repository", repository: "repo", actions: ["execute"] }],
+      },
       { name: "bad-expiry", expiresAt: 42 },
     ]) {
       const res = await createToken(owner.ctx, owner.orgId, data);
@@ -186,13 +195,13 @@ test.describe("api tokens", () => {
     expect(revoked.status()).toBe(200);
   });
 
-  test("scopes are reflected in the resolved principal", async ({ baseURL }) => {
+  test("grants are reflected in the resolved principal", async ({ baseURL }) => {
     const owner = await setupOwner(baseURL!);
     const secret = (
       await (
         await createToken(owner.ctx, owner.orgId, {
           name: "scoped",
-          scopes: [{ repository: "acme/*", actions: ["read"] }],
+          grants: [{ resource: "repository", repository: "acme/*", actions: ["read"] }],
         })
       ).json()
     ).secret as string;
@@ -203,7 +212,10 @@ test.describe("api tokens", () => {
         headers: { authorization: `Bearer ${secret}` },
       })
     ).json();
-    expect(me.principal.scopes[0].repository).toBe("acme/*");
+    expect(me.principal.grants[0]).toMatchObject({
+      resource: "repository",
+      repository: "acme/*",
+    });
   });
 
   test("a token cannot mint another token (login required)", async ({ baseURL }) => {
@@ -233,7 +245,7 @@ test.describe("api tokens", () => {
       await (
         await createToken(owner.ctx, owner.orgId, {
           name: "repo-reader",
-          scopes: [{ repository: repo.name, actions: ["read"] }],
+          grants: [{ resource: "repository", repository: repo.name, actions: ["read"] }],
         })
       ).json()
     ).secret as string;
@@ -241,7 +253,7 @@ test.describe("api tokens", () => {
       await (
         await createToken(owner.ctx, owner.orgId, {
           name: "wrong-reader",
-          scopes: [{ repository: `${repo.name}-other`, actions: ["read"] }],
+          grants: [{ resource: "repository", repository: `${repo.name}-other`, actions: ["read"] }],
         })
       ).json()
     ).secret as string;
@@ -307,7 +319,7 @@ test.describe("api tokens", () => {
 
     const scopedWrite = await createToken(owner.ctx, owner.orgId, {
       name: "repo-writer",
-      scopes: [{ repository: repo.name, actions: ["write"] }],
+      grants: [{ resource: "repository", repository: repo.name, actions: ["write"] }],
     });
     expect(scopedWrite.status()).toBe(403);
     expect(await scopedWrite.json()).toMatchObject({
@@ -321,7 +333,7 @@ test.describe("api tokens", () => {
     expect(roleToken.status()).toBe(403);
   });
 
-  test("repo-scoped demotion also caps OCI image-style token scopes", async ({ baseURL }) => {
+  test("repo-scoped demotion also caps image-path token grants", async ({ baseURL }) => {
     const owner = await setupOwner(baseURL!);
     const me = (await (await owner.ctx.get("/api/me")).json()) as {
       principal: { userId: string };
@@ -348,7 +360,13 @@ test.describe("api tokens", () => {
 
     const scopedWrite = await createToken(owner.ctx, owner.orgId, {
       name: "oci-writer",
-      scopes: [{ repository: `${owner.orgSlug}/${repo.name}/app`, actions: ["write"] }],
+      grants: [
+        {
+          resource: "repository",
+          repository: `${owner.orgSlug}/${repo.name}/app`,
+          actions: ["write"],
+        },
+      ],
     });
     expect(scopedWrite.status()).toBe(403);
     expect(await scopedWrite.json()).toMatchObject({
@@ -357,7 +375,13 @@ test.describe("api tokens", () => {
 
     const scopedRead = await createToken(owner.ctx, owner.orgId, {
       name: "oci-reader",
-      scopes: [{ repository: `${owner.orgSlug}/${repo.name}/app`, actions: ["read"] }],
+      grants: [
+        {
+          resource: "repository",
+          repository: `${owner.orgSlug}/${repo.name}/app`,
+          actions: ["read"],
+        },
+      ],
     });
     expect(scopedRead.status()).toBe(201);
   });

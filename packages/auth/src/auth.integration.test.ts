@@ -80,7 +80,7 @@ describe("api tokens (DB)", () => {
       orgId,
       ownerUserId: userId,
       name: "ci",
-      scopes: [{ repository: "acme/*", actions: ["read", "write"] }],
+      grants: [{ resource: "repository", repository: "acme/*", actions: ["read", "write"] }],
     });
     expect(secret.startsWith("hoot_")).toBe(true);
 
@@ -89,7 +89,7 @@ describe("api tokens (DB)", () => {
     if (principal?.kind === "token") {
       expect(principal.orgId).toBe(orgId);
       expect(principal.ownerUsername).not.toBeNull();
-      expect(principal.scopes[0]?.repository).toBe("acme/*");
+      expect(principal.grants[0]).toMatchObject({ resource: "repository", repository: "acme/*" });
     }
 
     await revokeToken(token.id);
@@ -164,7 +164,7 @@ describe("api tokens (DB)", () => {
       orgId,
       ownerUserId: userId,
       name: "repo-capped",
-      scopes: [{ repository: repo!.name, actions: ["read", "write"] }],
+      grants: [{ resource: "repository", repository: repo!.name, actions: ["read", "write"] }],
       role: "owner",
     });
     await db.insert(roleBindings).values({
@@ -180,7 +180,6 @@ describe("api tokens (DB)", () => {
       orgId,
       ownerUserId: userId,
       grants: token.grants,
-      scopes: [],
       role: token.role,
       isRobot: false,
     };
@@ -209,7 +208,7 @@ describe("api tokens (DB)", () => {
       orgId,
       ownerUserId: userId,
       name: "repo-capped-authorize",
-      scopes: [{ repository: repo!.name, actions: ["read", "write"] }],
+      grants: [{ resource: "repository", repository: repo!.name, actions: ["read", "write"] }],
       role: "owner",
     });
     await db.insert(roleBindings).values({
@@ -225,7 +224,6 @@ describe("api tokens (DB)", () => {
       orgId,
       ownerUserId: userId,
       grants: token.grants,
-      scopes: [],
       role: token.role,
       isRobot: false,
     };
@@ -310,7 +308,6 @@ describe("api tokens (DB)", () => {
       orgId,
       ownerUserId: null,
       grants: [],
-      scopes: [],
       role: "admin",
       isRobot: true,
     };

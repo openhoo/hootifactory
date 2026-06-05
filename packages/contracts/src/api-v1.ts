@@ -435,13 +435,6 @@ export const V1OrgQuotaSchema = z
   })
   .describe("Organization quota state.");
 
-export const V1TokenScopeSchema = z
-  .strictObject({
-    repository: z.string().describe("Legacy repository scope pattern."),
-    actions: z.array(V1ActionSchema).describe("Legacy repository scope actions."),
-  })
-  .describe("Legacy repository token scope.");
-
 export const V1ApiTokenSchema = z
   .strictObject({
     id: V1UuidSchema.describe("API token identifier."),
@@ -451,7 +444,6 @@ export const V1ApiTokenSchema = z
     prefix: z.string().describe("Non-secret token prefix for display and lookup."),
     type: V1TokenTypeSchema,
     grants: z.array(V1TokenGrantSchema).describe("Fine-grained token grants."),
-    scopes: z.array(V1TokenScopeSchema).describe("Legacy repository scopes derived from grants."),
     role: V1RoleNameSchema.nullable().describe("Token RBAC role, if set."),
     expiresAt: V1WireTimestampSchema.nullable().describe("Expiration timestamp, if any."),
     revokedAt: V1WireTimestampSchema.nullable().describe("Revocation timestamp, if any."),
@@ -484,7 +476,6 @@ export const V1PrincipalSchema = z
         ownerUserId: V1UuidSchema.nullable().describe("Token owner user identifier, if any."),
         ownerUsername: z.string().nullable().optional().describe("Token owner username, if known."),
         grants: z.array(V1TokenGrantSchema).describe("Token grants."),
-        scopes: z.array(V1TokenScopeSchema).describe("Legacy repository scopes."),
         role: V1RoleNameSchema.nullable().describe("Token role, if set."),
         isRobot: z.boolean().describe("Whether the token is a robot token."),
       })

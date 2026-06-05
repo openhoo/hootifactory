@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { can } from "./can";
 import { roleAllows } from "./permissions";
 import { httpStatusForDenial, type Principal } from "./principal";
-import { patternMatches, scopeGrants } from "./scope";
+import { patternMatches } from "./scope";
 
 const anon: Principal = { kind: "anonymous" };
 const user: Principal = { kind: "user", userId: "u1", username: "alice" };
@@ -12,7 +12,6 @@ const tokenScoped: Principal = {
   orgId: "orgA",
   ownerUserId: "u1",
   grants: [{ resource: "repository", repository: "acme/*", actions: ["read", "write"] }],
-  scopes: [{ repository: "acme/*", actions: ["read", "write"] }],
   role: null,
   isRobot: false,
 };
@@ -22,7 +21,6 @@ const tokenRobot: Principal = {
   orgId: "orgA",
   ownerUserId: null,
   grants: [],
-  scopes: [],
   role: "developer",
   isRobot: true,
 };
@@ -50,12 +48,6 @@ describe("scope matching", () => {
     expect(patternMatches("acme/*", "other/app")).toBe(false);
     expect(patternMatches("acme/app", "acme/app")).toBe(true);
     expect(patternMatches("acme/app", "acme/app2")).toBe(false);
-  });
-  test("scopeGrants", () => {
-    const scopes = [{ repository: "acme/*", actions: ["read"] as const }];
-    expect(scopeGrants(scopes as never, "acme/app", "read")).toBe(true);
-    expect(scopeGrants(scopes as never, "acme/app", "write")).toBe(false);
-    expect(scopeGrants(scopes as never, "other/app", "read")).toBe(false);
   });
 });
 

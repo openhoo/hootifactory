@@ -1,7 +1,7 @@
 import type { Action, RoleName } from "./permissions";
 import { roleAllows } from "./permissions";
 import type { Decision, Principal, ResourceRef } from "./principal";
-import { grantGrants, scopeGrants } from "./scope";
+import { grantGrants } from "./scope";
 
 export interface CanInput {
   principal: Principal;
@@ -52,14 +52,10 @@ export function can({ principal, action, resource, effectiveRole }: CanInput): D
     if (resource.orgId && principal.orgId !== resource.orgId) {
       return { allowed: false, code: "cross_org", reason: "token not valid for this organization" };
     }
-    // Explicit grants are a hard ceiling: when present, ONLY matching grants
-    // apply. Legacy repository scopes still behave as repository-only grants.
-    if (principal.grants.length > 0 || principal.scopes.length > 0) {
+    // Explicit grants are a hard ceiling: when present, ONLY matching grants apply.
+    if (principal.grants.length > 0) {
       const name = resource.repositoryName;
-      const grantsAllowed = grantGrants(principal.grants, resource, action, principal.tokenId);
-      const legacyScopeAllowed =
-        principal.grants.length === 0 && name && scopeGrants(principal.scopes, name, action);
-      if (grantsAllowed || legacyScopeAllowed) {
+      if (grantGrants(principal.grants, resource, action, principal.tokenId)) {
         const role = tokenRole(principal, effectiveRole);
         if (!role || !roleAllows(role, action)) {
           return denyRole(`token role does not grant '${action}'`);

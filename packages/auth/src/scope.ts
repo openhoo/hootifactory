@@ -1,4 +1,4 @@
-import type { TokenGrant, TokenScope } from "@hootifactory/types";
+import type { TokenGrant } from "@hootifactory/types";
 import type { Action } from "./permissions";
 import type { ResourceRef } from "./principal";
 
@@ -49,11 +49,6 @@ export function scopeSpecificity(pattern: string): number {
   if (pattern === "*") return 0;
   if (pattern.endsWith("*")) return pattern.length; // longer prefix => more specific
   return 100_000 + pattern.length; // exact dominates any glob
-}
-
-/** Does any scope grant `action` for `name`? (scopes only grant, never deny.) */
-export function scopeGrants(scopes: TokenScope[], name: string, action: Action): boolean {
-  return scopes.some((s) => patternMatches(s.repository, name) && s.actions.includes(action));
 }
 
 function repositoryGrantMatches(
@@ -143,13 +138,4 @@ export function grantGrants(
     }
     return false;
   });
-}
-
-export function repositoryGrantsAsScopes(grants: TokenGrant[]): TokenScope[] {
-  return grants
-    .filter(
-      (grant): grant is Extract<TokenGrant, { resource: "repository" }> =>
-        grant.resource === "repository",
-    )
-    .map((grant) => ({ repository: grant.repository, actions: grant.actions }));
 }

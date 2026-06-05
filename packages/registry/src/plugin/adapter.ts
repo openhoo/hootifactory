@@ -20,7 +20,6 @@ export type {
   RoleName,
   TokenAction,
   TokenGrant,
-  TokenScope,
   TokenTarget,
 } from "@hootifactory/types";
 

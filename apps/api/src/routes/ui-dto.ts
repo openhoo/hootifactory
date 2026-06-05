@@ -36,9 +36,6 @@ export function tokenDto(token: ApiTokenRow, ownerUsername?: string | null): Api
     prefix: token.tokenPrefix,
     type: token.type,
     grants: token.grants,
-    scopes: token.grants
-      .filter((grant) => grant.resource === "repository")
-      .map((grant) => ({ repository: grant.repository, actions: grant.actions })),
     role: token.role,
     expiresAt: nullableWireTimestamp(token.expiresAt),
     revokedAt: nullableWireTimestamp(token.revokedAt),

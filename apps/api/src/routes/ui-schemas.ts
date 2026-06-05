@@ -9,11 +9,9 @@ import {
   TOKEN_TARGETS,
   TOKEN_TYPES,
   type TokenGrant,
-  type TokenScope,
   VISIBILITIES,
 } from "@hootifactory/types";
 
-export type ParsedTokenScope = TokenScope;
 export type ParsedTokenGrant = TokenGrant;
 
 const RoleNameSchema = z.enum(ROLE_NAMES);
@@ -95,15 +93,6 @@ export const CreateRepositoryBodySchema = z.strictObject({
 });
 export type CreateRepositoryBody = z.output<typeof CreateRepositoryBodySchema>;
 
-const TokenScopeSchema = z
-  .strictObject({
-    repository: TokenPatternSchema,
-    actions: TokenActionsSchema,
-  })
-  .transform((scope): ParsedTokenScope => {
-    return { repository: scope.repository, actions: scope.actions };
-  });
-
 export const TokenGrantSchema = z.discriminatedUnion("resource", [
   z.strictObject({
     resource: z.literal("org"),
@@ -143,7 +132,6 @@ export const CreateTokenBodySchema = z.strictObject({
   name: z.string().trim().min(1).max(256),
   type: TokenTypeSchema.default("personal"),
   grants: z.array(TokenGrantSchema).max(100).optional(),
-  scopes: z.array(TokenScopeSchema).max(100).default([]),
   role: RoleNameSchema.optional(),
   expiresAt: z.union([z.iso.datetime().transform((value) => new Date(value)), z.null()]).optional(),
 });

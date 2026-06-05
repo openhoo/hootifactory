@@ -105,7 +105,6 @@ export interface ApiTokenDto {
   prefix: string;
   type: string;
   grants: TokenGrantDto[];
-  scopes: { repository: string; actions: string[] }[];
   role: string | null;
   expiresAt: WireTimestamp | null;
   revokedAt: WireTimestamp | null;

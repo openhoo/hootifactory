@@ -1,4 +1,4 @@
-export type { TokenGrant, TokenScope } from "@hootifactory/types";
+export type { TokenGrant } from "@hootifactory/types";
 export * from "./audit";
 export * from "./authorize";
 export * from "./can";

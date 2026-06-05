@@ -1,12 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { TokenScope } from "@hootifactory/types";
-import {
-  grantGrants,
-  patternMatches,
-  scopeGrants,
-  scopeMayTargetRepo,
-  scopeSpecificity,
-} from "./scope";
+import { grantGrants, patternMatches, scopeMayTargetRepo, scopeSpecificity } from "./scope";
 
 describe("token scope helpers", () => {
   test("matches exact, prefix, slash-prefix, and org-wide patterns", () => {
@@ -21,17 +14,6 @@ describe("token scope helpers", () => {
   test("orders exact patterns above globs and org-wide scopes", () => {
     expect(scopeSpecificity("*")).toBeLessThan(scopeSpecificity("team/*"));
     expect(scopeSpecificity("team/*")).toBeLessThan(scopeSpecificity("team/api"));
-  });
-
-  test("grants only matching actions for matching repositories", () => {
-    const scopes = [
-      { repository: "team/*", actions: ["read"] },
-      { repository: "team/api", actions: ["write"] },
-    ] satisfies TokenScope[];
-
-    expect(scopeGrants(scopes, "team/web", "read")).toBe(true);
-    expect(scopeGrants(scopes, "team/web", "write")).toBe(false);
-    expect(scopeGrants(scopes, "team/api", "write")).toBe(true);
   });
 
   test("structured grants match resource-specific targets", () => {
@@ -94,16 +76,18 @@ describe("token scope helpers", () => {
     ).toBe(false);
   });
 
-  test("matches token scope patterns against OCI mount prefixes", () => {
-    const npmRepo = { name: "packages", mountPath: "npm/acme/packages" };
-    expect(scopeMayTargetRepo("packages", npmRepo)).toBe(true);
-    expect(scopeMayTargetRepo("pack*", npmRepo)).toBe(true);
-    expect(scopeMayTargetRepo("other*", npmRepo)).toBe(false);
+  test("matches token scope patterns against mount-relative paths", () => {
+    const namedRepo = { name: "packages", mountPath: "mod/acme/packages" };
+    expect(scopeMayTargetRepo("packages", namedRepo)).toBe(true);
+    expect(scopeMayTargetRepo("pack*", namedRepo)).toBe(true);
+    expect(scopeMayTargetRepo("other*", namedRepo)).toBe(false);
 
-    const dockerRepo = { name: "containers", mountPath: "v2/acme/containers" };
-    expect(scopeMayTargetRepo("acme/containers", dockerRepo)).toBe(true);
-    expect(scopeMayTargetRepo("acme/containers/app", dockerRepo)).toBe(true);
-    expect(scopeMayTargetRepo("acme/*", dockerRepo)).toBe(true);
-    expect(scopeMayTargetRepo("other/*", dockerRepo)).toBe(false);
+    // A module whose clients address it by mount-relative path: the first mount
+    // segment is stripped and the remainder is matched.
+    const pathAddressedRepo = { name: "containers", mountPath: "mod/acme/containers" };
+    expect(scopeMayTargetRepo("acme/containers", pathAddressedRepo)).toBe(true);
+    expect(scopeMayTargetRepo("acme/containers/app", pathAddressedRepo)).toBe(true);
+    expect(scopeMayTargetRepo("acme/*", pathAddressedRepo)).toBe(true);
+    expect(scopeMayTargetRepo("other/*", pathAddressedRepo)).toBe(false);
   });
 });

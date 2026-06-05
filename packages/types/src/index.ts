@@ -130,12 +130,6 @@ export function isEmailTemplate(value: unknown): value is EmailTemplate {
   return isOneOf(EMAIL_TEMPLATES, value);
 }
 
-/** Legacy repository-scope token shape accepted by pre-v1 UI/API callers. */
-export interface TokenScope {
-  repository: string;
-  actions: TokenAction[];
-}
-
 export type TokenGrant =
   | { resource: "org"; actions: TokenAction[] }
   | { resource: "repository"; repository: string; actions: TokenAction[] }
@@ -163,7 +157,6 @@ export type Principal =
       ownerUsername?: string | null;
       tokenName?: string;
       grants: TokenGrant[];
-      scopes: TokenScope[];
       role: RoleName | null;
       isRobot: boolean;
     }
