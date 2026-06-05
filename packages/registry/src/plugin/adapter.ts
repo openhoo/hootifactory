@@ -99,6 +99,12 @@ export interface RouteEntry {
   searchable?: boolean;
   /** This route serves immutable, content-addressed bytes (long-cacheable). */
   immutableContentAddressed?: boolean;
+  /**
+   * Names the route param that carries the package name (default "pkg"). The
+   * agnostic proxy-refresh and virtual-metadata paths read it to identify the
+   * package without assuming any module's param naming.
+   */
+  packageParam?: string;
 }
 
 export interface RouteMatch {

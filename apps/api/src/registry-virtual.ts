@@ -41,7 +41,7 @@ export async function dispatchVirtual(
       if (match.entry.searchable) return dispatchVirtualSearch(adapter, match, req, ctx);
       const metadataName = virtualMetadataPackageName(match);
       if (metadataName && adapter.generateMetadata && adapter.mergeMetadata) {
-        return dispatchVirtualMetadata(adapter, metadataName, req, ctx);
+        return dispatchVirtualMetadata(adapter, match, metadataName, req, ctx);
       }
       const members = await loadVirtualMembers(ctx.repo.id);
       span.setAttribute("registry.virtual.member_count", members.length);

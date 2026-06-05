@@ -166,7 +166,7 @@ export async function dispatchProxy(
       const upstream = await loadUpstream(ctx.repo.id);
       span.setAttribute("registry.proxy.has_upstream", Boolean(upstream));
       let refreshed = false;
-      const packageName = match.params.pkg ?? "";
+      const packageName = match.params[match.entry.packageParam ?? "pkg"] ?? "";
       if (
         upstream &&
         adapter.proxyIngest &&

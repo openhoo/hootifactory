@@ -124,7 +124,7 @@ export class NpmAdapter implements RegistryPlugin {
         "/:pkg+",
         "packument",
         ({ params, req, ctx }) => this.packument(params.pkg, req, ctx),
-        { proxyRefreshTrigger: true, metadataMergeable: true },
+        { proxyRefreshTrigger: true, metadataMergeable: true, packageParam: "pkg" },
       ),
     ])
     .build();

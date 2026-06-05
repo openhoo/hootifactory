@@ -21,11 +21,12 @@ import {
 
 export function virtualMetadataPackageName(match: RouteMatch): string | null {
   if (!match.entry.metadataMergeable) return null;
-  return match.params.pkg ?? null;
+  return match.params[match.entry.packageParam ?? "pkg"] ?? null;
 }
 
 export async function dispatchVirtualMetadata(
   adapter: RegistryPlugin,
+  match: RouteMatch,
   name: string,
   req: Request,
   ctx: RegistryRequestContext,
@@ -41,20 +42,13 @@ export async function dispatchVirtualMetadata(
       span.setAttribute("registry.virtual.metadata_cache_hit", 0);
       const members = await loadVirtualMembers(ctx.repo.id);
       span.setAttribute("registry.virtual.member_count", members.length);
-      const memberRoute: RouteMatch = {
-        entry: {
-          method: "GET",
-          pattern: "/:pkg+",
-          handlerId: "packument",
-          metadataMergeable: true,
-        },
-        params: { pkg: name },
-        path: name,
-      };
+      // Authorize members against the REAL matched route, not a fabricated one:
+      // a module's requiredPermission keys off its own handlerId/pattern/params,
+      // so a synthetic npm route would mis-authorize any other metadata module.
       const authorizations = await authorizeVirtualMembers(
         adapter,
         req.method as HttpMethod,
-        memberRoute,
+        match,
         members,
         ctx,
         "registry.virtual.metadata_member",
