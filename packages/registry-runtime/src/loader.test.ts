@@ -19,6 +19,7 @@ describe("loadConfiguredRegistryPlugins", () => {
       "composer",
       "maven",
       "apt",
+      "dart",
     ]) {
       expect(registry.has(id)).toBe(true);
     }
@@ -41,6 +42,7 @@ describe("loadConfiguredRegistryPlugins", () => {
       "composer",
       "maven",
       "apt",
+      "dart",
       "oci",
       "helm",
     ]);
