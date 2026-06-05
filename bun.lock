@@ -282,6 +282,14 @@
         "@hootifactory/registry-nuget": "workspace:*",
         "@hootifactory/registry-oci": "workspace:*",
         "@hootifactory/registry-pypi": "workspace:*",
+        "@hootifactory/registry-scoop": "workspace:*",
+      },
+    },
+    "packages/registry-scoop": {
+      "name": "@hootifactory/registry-scoop",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/registry": "workspace:*",
       },
     },
     "packages/scan-core": {
@@ -570,6 +578,8 @@
     "@hootifactory/registry-pypi": ["@hootifactory/registry-pypi@workspace:packages/registry-pypi"],
 
     "@hootifactory/registry-runtime": ["@hootifactory/registry-runtime@workspace:packages/registry-runtime"],
+
+    "@hootifactory/registry-scoop": ["@hootifactory/registry-scoop@workspace:packages/registry-scoop"],
 
     "@hootifactory/scan-core": ["@hootifactory/scan-core@workspace:packages/scan-core"],
 

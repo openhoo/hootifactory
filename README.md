@@ -2,7 +2,7 @@
 
 A self-hostable, **multi-format artifact & package manager** — an open-source alternative to JFrog Artifactory + Harbor + a standalone scanner, in one tool.
 
-- **Formats:** npm, Docker, OCI, PyPI, Helm, Go, Cargo, NuGet (8 total). npm,
+- **Formats:** npm, Docker, OCI, PyPI, Helm, Go, Cargo, NuGet, Scoop (9 total). npm,
   Docker, OCI, PyPI, Helm, Go, Cargo and NuGet are verified end-to-end against
   Dockerized real clients.
 - **Repository kinds:** hosted, proxy (pull-through cache), virtual (group/aggregate).
@@ -75,7 +75,7 @@ packages/
   registry-application/  platform use cases split by slice: routing, runtime,
                          repositories, content, inventory, assets, governance, oci
   registry-runtime/      built-in registry manifest + config-driven loader
-  registry-npm/  registry-oci/  registry-pypi/  registry-go/  registry-cargo/  registry-nuget/
+  registry-npm/  registry-oci/  registry-pypi/  registry-go/  registry-cargo/  registry-nuget/  registry-scoop/
   scanner/               scanner plugin SDK (ScannerPlugin contract + registry + runners)
   scanner-runtime/       built-in scanner manifest + config-driven loader
   scanner-grype/  scanner-trivy/  scanner-clamav/  scanner-osv/  scanner-heuristic/
