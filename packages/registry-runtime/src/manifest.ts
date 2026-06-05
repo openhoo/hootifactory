@@ -1,6 +1,7 @@
 import type { RegistryPlugin } from "@hootifactory/registry";
 import { cargoRegistryPlugin } from "@hootifactory/registry-cargo";
 import { goRegistryPlugin } from "@hootifactory/registry-go";
+import { homebrewRegistryPlugin } from "@hootifactory/registry-homebrew";
 import { npmRegistryPlugin } from "@hootifactory/registry-npm";
 import { nugetRegistryPlugin } from "@hootifactory/registry-nuget";
 import { dockerRegistryPlugin } from "@hootifactory/registry-oci";
@@ -27,4 +28,5 @@ export const REGISTRY_PLUGIN_MANIFEST: RegistryPluginEntry[] = [
   { plugin: goRegistryPlugin },
   { plugin: cargoRegistryPlugin },
   { plugin: nugetRegistryPlugin },
+  { plugin: homebrewRegistryPlugin },
 ];

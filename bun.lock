@@ -242,6 +242,13 @@
         "@hootifactory/registry": "workspace:*",
       },
     },
+    "packages/registry-homebrew": {
+      "name": "@hootifactory/registry-homebrew",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/registry": "workspace:*",
+      },
+    },
     "packages/registry-npm": {
       "name": "@hootifactory/registry-npm",
       "version": "0.0.0",
@@ -278,6 +285,7 @@
         "@hootifactory/registry": "workspace:*",
         "@hootifactory/registry-cargo": "workspace:*",
         "@hootifactory/registry-go": "workspace:*",
+        "@hootifactory/registry-homebrew": "workspace:*",
         "@hootifactory/registry-npm": "workspace:*",
         "@hootifactory/registry-nuget": "workspace:*",
         "@hootifactory/registry-oci": "workspace:*",
@@ -560,6 +568,8 @@
     "@hootifactory/registry-cargo": ["@hootifactory/registry-cargo@workspace:packages/registry-cargo"],
 
     "@hootifactory/registry-go": ["@hootifactory/registry-go@workspace:packages/registry-go"],
+
+    "@hootifactory/registry-homebrew": ["@hootifactory/registry-homebrew@workspace:packages/registry-homebrew"],
 
     "@hootifactory/registry-npm": ["@hootifactory/registry-npm@workspace:packages/registry-npm"],
 

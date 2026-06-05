@@ -17,6 +17,7 @@
     "@hootifactory/registry": "workspace:*",
     "@hootifactory/registry-cargo": "workspace:*",
     "@hootifactory/registry-go": "workspace:*",
+    "@hootifactory/registry-homebrew": "workspace:*",
     "@hootifactory/registry-npm": "workspace:*",
     "@hootifactory/registry-nuget": "workspace:*",
     "@hootifactory/registry-oci": "workspace:*",
