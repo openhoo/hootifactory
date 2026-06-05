@@ -22,6 +22,7 @@ describe("loadConfiguredRegistryPlugins", () => {
       "dart",
       "swift",
       "chocolatey",
+      "winget",
     ]) {
       expect(registry.has(id)).toBe(true);
     }
@@ -47,6 +48,7 @@ describe("loadConfiguredRegistryPlugins", () => {
       "dart",
       "swift",
       "chocolatey",
+      "winget",
       "oci",
       "helm",
     ]);

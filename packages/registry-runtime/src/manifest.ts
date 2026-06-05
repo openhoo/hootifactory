@@ -12,6 +12,7 @@ import { dockerRegistryPlugin } from "@hootifactory/registry-oci";
 import { pypiRegistryPlugin } from "@hootifactory/registry-pypi";
 import { rubygemsRegistryPlugin } from "@hootifactory/registry-rubygems";
 import { swiftRegistryPlugin } from "@hootifactory/registry-swift";
+import { wingetRegistryPlugin } from "@hootifactory/registry-winget";
 
 /** A built-in registry plugin plus any extra module ids it serves. */
 export interface RegistryPluginEntry {
@@ -41,4 +42,5 @@ export const REGISTRY_PLUGIN_MANIFEST: RegistryPluginEntry[] = [
   { plugin: dartRegistryPlugin },
   { plugin: swiftRegistryPlugin },
   { plugin: chocolateyRegistryPlugin },
+  { plugin: wingetRegistryPlugin },
 ];
