@@ -10,6 +10,7 @@ import {
   roleBindings,
   users,
 } from "@hootifactory/db";
+import { SignJWT } from "jose";
 import { authorize, createRequestAuthorizer, effectiveRoleFor, resolveUserRole } from "./authorize";
 import {
   consumeAuthEmailToken,
@@ -26,6 +27,7 @@ import { hashPassword, verifyPassword } from "./password";
 import type { Principal } from "./principal";
 import { issueRegistryToken, registryJwks, verifyRegistryToken } from "./registry-jwt";
 import { createSession, resolveSession, revokeSession } from "./sessions";
+import { validateTokenGrant } from "./token-grants";
 import { createApiToken, recordTokenLastUsed, resolveToken, revokeToken } from "./tokens";
 import {
   authenticateUserPassword,
@@ -626,6 +628,96 @@ describe("OIDC user sync (DB)", () => {
   });
 });
 
+describe("validateTokenGrant issuance ceiling (DB)", () => {
+  // A dedicated org isolates the per-repo loop (which iterates ALL repos in the
+  // org) from fixtures other tests leave behind.
+  let devOrgId = "";
+  let devUserId = "";
+  let repoId = "";
+  const repoName = "scoped-app";
+
+  beforeAll(async () => {
+    const [org] = await db
+      .insert(organizations)
+      .values({ slug: `tg-${crypto.randomUUID().slice(0, 8)}`, displayName: "TokenGrant Org" })
+      .returning();
+    devOrgId = org!.id;
+    const [u] = await db
+      .insert(users)
+      .values({
+        email: `${crypto.randomUUID()}@test.dev`,
+        username: `dev-${crypto.randomUUID().slice(0, 8)}`,
+      })
+      .returning();
+    devUserId = u!.id;
+    // Creator is a *developer* at org scope (read + write, no delete/admin).
+    await db.insert(memberships).values({ orgId: devOrgId, userId: devUserId, role: "developer" });
+    const [repo] = await db
+      .insert(repositories)
+      .values({
+        orgId: devOrgId,
+        name: repoName,
+        moduleId: "generic",
+        mountPath: `generic/${repoName}`,
+        storagePrefix: repoName,
+      })
+      .returning();
+    repoId = repo!.id;
+    // Demote the creator to viewer on this one repo (read only).
+    await db
+      .insert(roleBindings)
+      .values({ orgId: devOrgId, userId: devUserId, repositoryId: repoId, role: "viewer" });
+  });
+
+  afterAll(async () => {
+    if (devOrgId) await db.delete(organizations).where(eq(organizations.id, devOrgId));
+    if (devUserId) await db.delete(users).where(eq(users.id, devUserId));
+  });
+
+  test("rejects requesting a role above the creator's own", async () => {
+    const result = await validateTokenGrant({
+      userId: devUserId,
+      orgId: devOrgId,
+      requestedRole: "owner",
+      grants: [],
+    });
+    expect(result).toEqual({ ok: false, error: "cannot grant a role above your own" });
+  });
+
+  test("rejects a grant action beyond the creator's org role", async () => {
+    const result = await validateTokenGrant({
+      userId: devUserId,
+      orgId: devOrgId,
+      grants: [{ resource: "repository", repository: repoName, actions: ["delete"] }],
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toBe("cannot grant scope action 'delete' beyond your role");
+    }
+  });
+
+  test("rejects write on a repo where the creator is only a viewer, but allows read", async () => {
+    const writeGrant = await validateTokenGrant({
+      userId: devUserId,
+      orgId: devOrgId,
+      grants: [{ resource: "repository", repository: repoName, actions: ["write"] }],
+    });
+    expect(writeGrant.ok).toBe(false);
+    if (!writeGrant.ok) {
+      expect(writeGrant.error).toBe(
+        `cannot grant scope action 'write' on repository '${repoName}'`,
+      );
+    }
+
+    const readGrant = await validateTokenGrant({
+      userId: devUserId,
+      orgId: devOrgId,
+      grants: [{ resource: "repository", repository: repoName, actions: ["read"] }],
+    });
+    expect(readGrant).toEqual({ ok: true });
+  });
+});
+
 describe("registry JWT (RS256)", () => {
   test("issue -> verify round-trips access claims", async () => {
     const jwt = await issueRegistryToken({
@@ -643,6 +735,39 @@ describe("registry JWT (RS256)", () => {
     const jwks = await registryJwks();
     expect(jwks.keys.length).toBeGreaterThan(0);
     expect(jwks.keys[0]?.alg).toBe("RS256");
+  });
+
+  test("rejects a token verified against the wrong audience", async () => {
+    const jwt = await issueRegistryToken({
+      subject: "alice",
+      audience: "hootifactory-registry",
+      access: [],
+    });
+    await expect(verifyRegistryToken(jwt, "wrong-audience")).rejects.toThrow();
+  });
+
+  test("rejects an expired token", async () => {
+    const jwt = await issueRegistryToken({
+      subject: "alice",
+      audience: "hootifactory-registry",
+      access: [],
+      ttlSeconds: -1,
+    });
+    await expect(verifyRegistryToken(jwt, "hootifactory-registry")).rejects.toThrow();
+  });
+
+  test("rejects a non-RS256 (alg-confusion) token", async () => {
+    // Forge an HS256 token with the same claims and a random secret. The
+    // algorithms:["RS256"] pin must reject it before any signature/claim check —
+    // defending against alg-confusion / alg:none.
+    const forged = await new SignJWT({ access: [] })
+      .setProtectedHeader({ alg: "HS256" })
+      .setIssuer("https://registry.test")
+      .setAudience("hootifactory-registry")
+      .setSubject("mallory")
+      .setExpirationTime("5m")
+      .sign(new TextEncoder().encode("attacker-secret"));
+    await expect(verifyRegistryToken(forged, "hootifactory-registry")).rejects.toThrow();
   });
 });
 
