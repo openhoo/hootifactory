@@ -6,7 +6,24 @@ describe("loadConfiguredRegistryPlugins", () => {
   test("registers every module id (including aliases) when no allowlist is given", () => {
     const registry = new RegistryPluginRegistry();
     const { registered } = loadConfiguredRegistryPlugins(registry, { enabled: undefined });
-    for (const id of ["npm", "docker", "oci", "helm", "pypi", "go", "cargo", "nuget"]) {
+    for (const id of [
+      "npm",
+      "docker",
+      "oci",
+      "helm",
+      "pypi",
+      "go",
+      "cargo",
+      "nuget",
+      "rubygems",
+      "composer",
+      "maven",
+      "apt",
+      "dart",
+      "swift",
+      "chocolatey",
+      "winget",
+    ]) {
       expect(registry.has(id)).toBe(true);
     }
     expect(registered).toContain("oci");
@@ -17,7 +34,24 @@ describe("loadConfiguredRegistryPlugins", () => {
     const { registered } = loadConfiguredRegistryPlugins(registry, { enabled: undefined });
     // The registry preserves registration order and the UI module dropdown
     // reflects it; primaries must precede the alias module ids.
-    expect(registered).toEqual(["npm", "docker", "pypi", "go", "cargo", "nuget", "oci", "helm"]);
+    expect(registered).toEqual([
+      "npm",
+      "docker",
+      "pypi",
+      "go",
+      "cargo",
+      "nuget",
+      "rubygems",
+      "composer",
+      "maven",
+      "apt",
+      "dart",
+      "swift",
+      "chocolatey",
+      "winget",
+      "oci",
+      "helm",
+    ]);
   });
 
   test("honors the allowlist over module ids including aliases", () => {
