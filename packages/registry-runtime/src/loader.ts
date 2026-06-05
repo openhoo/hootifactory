@@ -1,5 +1,9 @@
 import { env } from "@hootifactory/config";
-import { type RegistryPluginRegistry, registryPlugins } from "@hootifactory/registry";
+import {
+  type RegistryPlugin,
+  type RegistryPluginRegistry,
+  registryPlugins,
+} from "@hootifactory/registry";
 import { REGISTRY_PLUGIN_MANIFEST } from "./manifest";
 
 export interface LoadRegistryPluginsResult {
@@ -25,15 +29,25 @@ export function loadConfiguredRegistryPlugins(
   const allowed = enabled ? new Set(enabled) : null;
   const manifestModuleIds = new Set<string>();
   const registered: string[] = [];
+  const registerModule = (moduleId: string, plugin: RegistryPlugin) => {
+    manifestModuleIds.add(moduleId);
+    if (allowed && !allowed.has(moduleId)) return;
+    if (registry.has(moduleId)) return;
+    // registerAs(plugin.id, plugin) is equivalent to register(plugin), so this
+    // one call handles both primary ids and aliases.
+    registry.registerAs(moduleId, plugin);
+    registered.push(moduleId);
+  };
+  // Register every plugin's primary module id first, then every alias, so the
+  // registered order — which the registry preserves and the user-facing module
+  // list reflects — groups the primary formats ahead of alias module ids,
+  // matching the pre-plugin registration order the UI depends on.
   for (const entry of REGISTRY_PLUGIN_MANIFEST) {
-    for (const moduleId of [entry.plugin.id, ...(entry.aliases ?? [])]) {
-      manifestModuleIds.add(moduleId);
-      if (allowed && !allowed.has(moduleId)) continue;
-      if (registry.has(moduleId)) continue;
-      // registerAs(plugin.id, plugin) is equivalent to register(plugin), so this
-      // one call handles both primary ids and aliases.
-      registry.registerAs(moduleId, entry.plugin);
-      registered.push(moduleId);
+    registerModule(entry.plugin.id, entry.plugin);
+  }
+  for (const entry of REGISTRY_PLUGIN_MANIFEST) {
+    for (const alias of entry.aliases ?? []) {
+      registerModule(alias, entry.plugin);
     }
   }
   const unknown = allowed ? [...allowed].filter((id) => !manifestModuleIds.has(id)) : [];

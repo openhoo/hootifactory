@@ -12,6 +12,14 @@ describe("loadConfiguredRegistryPlugins", () => {
     expect(registered).toContain("oci");
   });
 
+  test("registers primary module ids ahead of aliases, so the module list groups primaries first", () => {
+    const registry = new RegistryPluginRegistry();
+    const { registered } = loadConfiguredRegistryPlugins(registry, { enabled: undefined });
+    // The registry preserves registration order and the UI module dropdown
+    // reflects it; primaries must precede the alias module ids.
+    expect(registered).toEqual(["npm", "docker", "pypi", "go", "cargo", "nuget", "oci", "helm"]);
+  });
+
   test("honors the allowlist over module ids including aliases", () => {
     const registry = new RegistryPluginRegistry();
     const { registered, unknown } = loadConfiguredRegistryPlugins(registry, {
