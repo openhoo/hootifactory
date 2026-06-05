@@ -29,6 +29,6 @@ export const REGISTRY_PLUGIN_MANIFEST: RegistryPluginEntry[] = [
   { plugin: goRegistryPlugin },
   { plugin: cargoRegistryPlugin },
   { plugin: nugetRegistryPlugin },
-  { plugin: composerRegistryPlugin },
   { plugin: rubygemsRegistryPlugin },
+  { plugin: composerRegistryPlugin },
 ];
