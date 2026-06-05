@@ -2,7 +2,7 @@ import { BoundedLruCache, InFlightDeduper } from "@hootifactory/core";
 import { logger, withSpan } from "@hootifactory/observability";
 import {
   Errors,
-  type OciErrorCode,
+  type RegistryErrorCode,
   RegistryError,
   type RegistryPlugin,
   type RegistryRequestContext,
@@ -13,7 +13,7 @@ import { loadUpstream } from "../repositories/upstreams";
 import { isReadMethod, repoModuleSpanAttributes } from "./telemetry";
 
 const PROXY_REFRESH_FRESHNESS_CACHE_LIMIT = 2048;
-const REGISTRY_MISS_CODES = new Set<OciErrorCode>([
+const REGISTRY_MISS_CODES = new Set<RegistryErrorCode>([
   "BLOB_UNKNOWN",
   "MANIFEST_UNKNOWN",
   "NAME_UNKNOWN",

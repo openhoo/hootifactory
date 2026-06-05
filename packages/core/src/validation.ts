@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { type OciErrorCode, RegistryError } from "./errors";
+import { type RegistryErrorCode, RegistryError } from "./errors";
 
 export type { ZodError, ZodType } from "zod";
 export { z };
@@ -44,7 +44,7 @@ export function parseRegistryInput<T extends z.ZodType>(
   schema: T,
   input: unknown,
   opts: {
-    code?: OciErrorCode;
+    code?: RegistryErrorCode;
     message?: string;
     status?: number;
   } = {},

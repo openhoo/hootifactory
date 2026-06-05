@@ -1,5 +1,11 @@
-/** OCI distribution error codes (also reused as a generic registry error envelope). */
-export type OciErrorCode =
+/**
+ * The shared registry error-code vocabulary. Format-neutral codes
+ * (NOT_FOUND, UNAUTHORIZED, DENIED, UNSUPPORTED, ...) are used across every
+ * module; the BLOB_, MANIFEST_, and TAG_ members are the content-addressable
+ * codes emitted on the wire by content-addressable modules (and reused by
+ * other modules such as cargo manifests and npm/nuget pagination).
+ */
+export type RegistryErrorCode =
   | "BLOB_UNKNOWN"
   | "BLOB_UPLOAD_INVALID"
   | "BLOB_UPLOAD_UNKNOWN"
@@ -21,7 +27,7 @@ export type OciErrorCode =
 export class RegistryError extends Error {
   constructor(
     public readonly status: number,
-    public readonly code: OciErrorCode,
+    public readonly code: RegistryErrorCode,
     message: string,
     public readonly detail?: unknown,
   ) {

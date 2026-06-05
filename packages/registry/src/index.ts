@@ -17,7 +17,7 @@ export {
   jsonRecordOrEmpty,
   mapWithBoundedConcurrency,
   memoizeByKey,
-  type OciErrorCode,
+  type RegistryErrorCode,
   parseJsonWithSchema,
   parseRegistryInput,
   RegistryError,

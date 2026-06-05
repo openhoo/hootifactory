@@ -1,11 +1,11 @@
-import type { OciErrorCode, RegistryError } from "@hootifactory/core";
+import type { RegistryErrorCode, RegistryError } from "@hootifactory/core";
 import type { RegistryErrorResponseKind, RegistryPlugin } from "./adapter";
 
 export function registryErrorResponseForKind(
   kind: RegistryErrorResponseKind,
   input: {
     status: number;
-    code?: OciErrorCode;
+    code?: RegistryErrorCode;
     message: string;
     detail?: unknown;
     headers?: Record<string, string>;
