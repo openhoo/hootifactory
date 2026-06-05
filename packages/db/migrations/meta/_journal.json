@@ -148,6 +148,13 @@
       "when": 1780591873600,
       "tag": "0020_rename_oci_tables_to_content",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1780591873700,
+      "tag": "0021_rename_oci_constraints_to_content",
+      "breakpoints": true
     }
   ]
 }
