@@ -19,6 +19,7 @@ import type {
   RegistryTagListOptions,
   RegistryTagListPage,
 } from "@hootifactory/registry";
+import { SHA256_PREFIX } from "@hootifactory/registry";
 import { adjustArtifactsUsedTx, type Tx } from "../governance/quota";
 import { lockDigestTx } from "./blobs";
 
@@ -281,7 +282,7 @@ export async function resolveContentManifest(
   ctx: RegistryRequestContext,
   opts: { packageId: string; reference: string },
 ): Promise<ContentManifestRow | null> {
-  if (opts.reference.startsWith("sha256:")) {
+  if (opts.reference.startsWith(SHA256_PREFIX)) {
     const [tagged] = await db
       .select({ manifest: contentManifests })
       .from(contentTags)

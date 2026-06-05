@@ -8,7 +8,7 @@ import {
   repositories,
   sql,
 } from "@hootifactory/db";
-import { registryPlugins, z } from "@hootifactory/registry";
+import { DIGEST_RE, registryPlugins, z } from "@hootifactory/registry";
 import { blobStore } from "@hootifactory/storage";
 import { deleteUnreferencedCasBlob } from "../content";
 import { adjustArtifactsUsedTx, adjustStorageUsedTx } from "../governance/quota";
@@ -20,7 +20,7 @@ import {
   stringField,
 } from "../runtime/raw-rows";
 
-const DigestRefSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
+const DigestRefSchema = z.string().regex(DIGEST_RE);
 
 /** Extracts a module's metadata-referenced CAS blob digest candidates. */
 export type VersionDigestExtractor = (metadata: Record<string, unknown>) => string[];
