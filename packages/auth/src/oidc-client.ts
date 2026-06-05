@@ -36,6 +36,12 @@ export async function oidcClientConfig(config: OidcProviderConfig): Promise<clie
       oidcDiscoveryOptions(config.issuer),
     );
     configCache.set(cacheKey, cached);
+    // Evict a rejected discovery promise so a transient IdP/DNS blip does not
+    // poison the cache and break every subsequent login. The identity guard
+    // avoids deleting a newer entry created after this one was replaced.
+    void cached.catch(() => {
+      if (configCache.get(cacheKey) === cached) configCache.delete(cacheKey);
+    });
   }
   return cached;
 }
