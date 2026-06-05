@@ -3,13 +3,14 @@ import { buildMinimalRpm } from "./rpm-fixtures";
 import { readRpmHeaderInfo } from "./rpm-header";
 
 describe("RPM header reader", () => {
-  test("reads name/version/release/arch/summary/epoch from the main header", () => {
+  test("reads name/version/release/arch/summary/epoch/build time from the main header", () => {
     const rpm = buildMinimalRpm({
       name: "hello",
       version: "2.10",
       release: "3.el9",
       arch: "x86_64",
       epoch: 1,
+      buildTime: 1_700_000_123,
       summary: "A friendly greeting",
     });
     expect(readRpmHeaderInfo(rpm)).toEqual({
@@ -18,6 +19,7 @@ describe("RPM header reader", () => {
       release: "3.el9",
       arch: "x86_64",
       epoch: 1,
+      buildTime: 1_700_000_123,
       summary: "A friendly greeting",
     });
   });

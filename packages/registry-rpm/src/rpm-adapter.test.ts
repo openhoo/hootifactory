@@ -38,6 +38,7 @@ const versionMeta: RpmVersionMeta = {
   epoch: 0,
   sha256: "c".repeat(64),
   size: 42,
+  buildTime: 1_700_000_123,
   summary: "A greeting",
 };
 
@@ -133,6 +134,8 @@ describe("RPM adapter", () => {
     // The primary itself references the package download path.
     const primaryXml = new TextDecoder().decode(Bun.gunzipSync(gzBytes));
     expect(primaryXml).toContain('<location href="packages/hello-1.2.3-4.el9.x86_64.rpm"/>');
+    expect(primaryXml).toContain('<time file="1700000123" build="1700000123"/>');
+    expect(repomd).toContain("<revision>1700000123</revision>");
   });
 
   test("download resolves the stored digest via the rpm_package asset", async () => {
@@ -206,6 +209,7 @@ describe("RPM adapter", () => {
       release: "4.el9",
       arch: "x86_64",
       epoch: 0,
+      buildTime: 1_700_000_456,
       summary: "A greeting",
     });
     const expectedDigest = computeDigest(rpm);
@@ -259,6 +263,7 @@ describe("RPM adapter", () => {
       rel: "4.el9",
       arch: "x86_64",
       epoch: 0,
+      buildTime: 1_700_000_456,
       rpmDigest: expectedDigest,
       sha256: digestHex(expectedDigest),
       file: "hello-1.2.3-4.el9.x86_64.rpm",
@@ -347,6 +352,53 @@ describe("RPM adapter", () => {
     // The stored bytes are the .rpm, NOT the leading "somevalue" text field.
     expect(Buffer.from(storedData as unknown as Uint8Array).equals(Buffer.from(rpm))).toBe(true);
     expect(computeDigest(storedData as unknown as Uint8Array)).toBe(expectedDigest);
+  });
+
+  test("publish via root multipart derives identity from the uploaded filename fallback", async () => {
+    const ctx = rpmCtx();
+    const rpm = buildMinimalRpm({});
+    ctx.data.packages.findOrCreate = async ({ name }) => {
+      expect(name).toBe("hello");
+      return pkg;
+    };
+    ctx.data.versions.find = async () => null;
+    ctx.data.content.storeBlobWithRef = async (input): Promise<RegistryStoredBlob> => ({
+      digest: computeDigest(input.data),
+      size: input.data.length,
+      deduped: false,
+      refCreated: true,
+      blobRefId: "ref_1",
+    });
+    let committedVersion: string | undefined;
+    ctx.data.versions.commitOrReleaseBlob = async (input) => {
+      committedVersion = input.version;
+      return { versionId: "ver_1" };
+    };
+
+    const boundary = "----rpmfallback";
+    const enc = new TextEncoder();
+    const fileHead = enc.encode(
+      `--${boundary}\r\ncontent-disposition: form-data; name="file"; filename="hello-1.2.3-4.el9.x86_64.rpm"\r\n\r\n`,
+    );
+    const fileTail = enc.encode(`\r\n--${boundary}--\r\n`);
+    const multipartBody = new Uint8Array([...fileHead, ...rpm, ...fileTail]);
+
+    const res = await new RpmAdapter().handle(
+      {
+        entry: { method: "POST", pattern: "/", handlerId: "publishRoot" },
+        params: {},
+        path: "/",
+      },
+      new Request("https://registry.test/", {
+        method: "POST",
+        headers: { "content-type": `multipart/form-data; boundary=${boundary}` },
+        body: multipartBody,
+      }),
+      ctx,
+    );
+
+    expect(res.status).toBe(201);
+    expect(committedVersion).toBe("0:1.2.3-4.el9.x86_64");
   });
 
   test("publish via POST /packages/:file stores the rpm", async () => {

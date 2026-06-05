@@ -124,7 +124,7 @@ export class RpmAdapter implements RegistryPlugin {
         out.push({
           meta,
           href: `packages/${meta.file}`,
-          buildTime: Math.floor(row.createdAt.getTime() / 1000),
+          buildTime: meta.buildTime ?? Math.floor(row.createdAt.getTime() / 1000),
         });
       }
     }

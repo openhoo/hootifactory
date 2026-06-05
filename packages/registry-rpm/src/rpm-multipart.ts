@@ -27,12 +27,28 @@ function isFilePart(headers: string): boolean {
   return /;\s*name\s*=\s*"?(?:file|package)"?/.test(disposition);
 }
 
+function contentDispositionParam(headers: string, name: string): string | undefined {
+  const disposition = headers
+    .split("\r\n")
+    .find((line) => line.toLowerCase().startsWith("content-disposition:"));
+  if (!disposition) return undefined;
+  const match = new RegExp(`;\\s*${name}\\s*=\\s*(?:"([^"]*)"|([^;\\s]+))`, "i").exec(disposition);
+  return match?.[1] ?? match?.[2];
+}
+
 /**
  * Extract the first file part (the one whose Content-Disposition names a file)
  * from a multipart/form-data body, skipping any preceding plain form fields.
  * Returns null if no file part is found.
  */
 export function extractMultipartFile(contentType: string, body: Uint8Array): Uint8Array | null {
+  return extractMultipartFilePart(contentType, body)?.bytes ?? null;
+}
+
+export function extractMultipartFilePart(
+  contentType: string,
+  body: Uint8Array,
+): { bytes: Uint8Array; filename?: string } | null {
   const boundary = multipartBoundary(contentType);
   if (!boundary) return null;
 
@@ -50,12 +66,17 @@ export function extractMultipartFile(contentType: string, body: Uint8Array): Uin
 
     const headerEnd = searchableBody.indexOf(HEADER_END, cursor);
     if (headerEnd < 0) return null;
-    const headers = decoder.decode(body.subarray(cursor, headerEnd)).toLowerCase();
+    const headers = decoder.decode(body.subarray(cursor, headerEnd));
     const dataStart = headerEnd + HEADER_END.length;
     const next = searchableBody.indexOf(delimiter, dataStart);
     if (next < 0) return null;
-    if (next >= dataStart && isFilePart(headers)) {
-      return body.subarray(dataStart, next);
+    if (next >= dataStart && isFilePart(headers.toLowerCase())) {
+      return {
+        bytes: body.subarray(dataStart, next),
+        ...(contentDispositionParam(headers, "filename")
+          ? { filename: contentDispositionParam(headers, "filename") }
+          : {}),
+      };
     }
     // Not a file part (e.g. a plain `name="meta"` text field): keep scanning. The
     // next iteration re-enters at the start of the following `--boundary` marker.

@@ -37,6 +37,7 @@ export const RPM_TAG_VERSION = 1001;
 export const RPM_TAG_RELEASE = 1002;
 export const RPM_TAG_EPOCH = 1003;
 export const RPM_TAG_SUMMARY = 1004;
+export const RPM_TAG_BUILDTIME = 1006;
 export const RPM_TAG_ARCH = 1022;
 
 // Defensive bounds so a malformed/huge header cannot exhaust memory.
@@ -145,6 +146,8 @@ export interface RpmHeaderInfo {
   summary?: string;
   /** Epoch as an integer; absent when the package declares no epoch. */
   epoch?: number;
+  /** Build time as epoch seconds; absent when the package declares no build time. */
+  buildTime?: number;
 }
 
 /**
@@ -191,6 +194,11 @@ export function readRpmHeaderInfo(rpm: Uint8Array): RpmHeaderInfo {
   if (epochEntry) {
     const epoch = readIntTag(main, epochEntry);
     if (epoch !== null && epoch >= 0) info.epoch = epoch;
+  }
+  const buildTimeEntry = main.entries.get(RPM_TAG_BUILDTIME);
+  if (buildTimeEntry) {
+    const buildTime = readIntTag(main, buildTimeEntry);
+    if (buildTime !== null && buildTime >= 0) info.buildTime = buildTime;
   }
   return info;
 }

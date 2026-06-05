@@ -59,6 +59,7 @@ describe("RPM validation", () => {
       epoch: 0,
       sha256: "a".repeat(64),
       size: 1234,
+      buildTime: 1_700_000_123,
       summary: "A greeting",
     };
     expect(parseRpmVersionMeta(meta)).toEqual(meta);

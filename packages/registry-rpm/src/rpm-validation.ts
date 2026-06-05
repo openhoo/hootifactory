@@ -6,7 +6,7 @@ import { z } from "@hootifactory/registry";
  * be rebuilt deterministically and the `.rpm` blob resolved on download.
  */
 export interface RpmVersionMeta {
-  /** Stored package version string: `<epoch>:<ver>-<rel>.<arch>`. */
+  /** CAS blob digest of the RPM payload (`sha256:<hex>`). */
   rpmDigest: string;
   file: string;
   name: string;
@@ -17,6 +17,8 @@ export interface RpmVersionMeta {
   /** sha256 hex of the whole `.rpm` (matches `digestHex(rpmDigest)`). */
   sha256: string;
   size: number;
+  /** RPM BUILDTIME tag as epoch seconds, when present. */
+  buildTime?: number;
   summary?: string;
 }
 
@@ -48,6 +50,7 @@ export const RpmVersionMetaSchema = z.strictObject({
   epoch: z.number().int().min(0),
   sha256: Sha256HexSchema,
   size: z.number().int().min(0),
+  buildTime: z.number().int().min(0).optional(),
   summary: z.string().max(8192).optional(),
 });
 

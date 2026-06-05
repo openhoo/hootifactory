@@ -1,11 +1,12 @@
 import { computeDigest, digestHex, parseRegistryInput } from "@hootifactory/registry";
 import { readRpmHeaderInfo } from "./rpm-header";
-import { extractMultipartFile, MultipartContentTypeSchema } from "./rpm-multipart";
+import { extractMultipartFilePart, MultipartContentTypeSchema } from "./rpm-multipart";
 import {
   parseRpmFileName,
   RpmFileSchema,
   RpmNameSchema,
   type RpmVersionMeta,
+  RpmVersionMetaSchema,
   rpmFileName,
   rpmVersionKey,
 } from "./rpm-validation";
@@ -36,7 +37,9 @@ export type RpmPublishPlanResult =
 async function readPackageBytes(
   req: Request,
   routeFile: string | undefined,
-): Promise<{ ok: true; bytes: Uint8Array } | { ok: false; error: RpmPublishError }> {
+): Promise<
+  { ok: true; bytes: Uint8Array; filename?: string } | { ok: false; error: RpmPublishError }
+> {
   const contentType = req.headers.get("content-type") ?? "";
   if (contentType.includes("multipart/form-data")) {
     parseRegistryInput(MultipartContentTypeSchema, contentType, {
@@ -44,9 +47,9 @@ async function readPackageBytes(
       message: "invalid multipart content-type",
     });
     const body = new Uint8Array(await req.arrayBuffer());
-    const file = extractMultipartFile(contentType, body);
+    const file = extractMultipartFilePart(contentType, body);
     if (!file) return { ok: false, error: { error: "missing package file", status: 400 } };
-    return { ok: true, bytes: file };
+    return { ok: true, bytes: file.bytes, ...(file.filename ? { filename: file.filename } : {}) };
   }
   void routeFile;
   return { ok: true, bytes: new Uint8Array(await req.arrayBuffer()) };
@@ -76,7 +79,15 @@ export async function parseRpmPublishRequest(
   if (bytes.length === 0) return { ok: false, error: { error: "empty package", status: 400 } };
 
   const header = readRpmHeaderInfo(bytes);
-  const fromName = fileHint ? parseRpmFileName(fileHint) : null;
+  const multipartFileHint =
+    fileHint ??
+    (read.filename
+      ? parseRegistryInput(RpmFileSchema, read.filename, {
+          code: "NAME_INVALID",
+          message: "invalid RPM filename",
+        })
+      : undefined);
+  const fromName = multipartFileHint ? parseRpmFileName(multipartFileHint) : null;
 
   const name = header.name ?? fromName?.name;
   const ver = header.version ?? fromName?.ver;
@@ -114,18 +125,23 @@ export async function parseRpmPublishRequest(
     epoch,
     sha256: digestHex(digest),
     size: bytes.length,
+    ...(header.buildTime !== undefined ? { buildTime: header.buildTime } : {}),
     ...(header.summary ? { summary: header.summary } : {}),
   };
+  const validMetadata = parseRegistryInput(RpmVersionMetaSchema, metadata, {
+    code: "MANIFEST_INVALID",
+    message: "invalid RPM metadata",
+  });
 
   return {
     ok: true,
     plan: {
       name: validName,
-      version: rpmVersionKey({ epoch, ver, rel, arch }),
+      version: rpmVersionKey(validMetadata),
       file,
       bytes,
       digest,
-      metadata,
+      metadata: validMetadata,
     },
   };
 }

@@ -55,6 +55,7 @@ export interface MinimalRpmInput {
   arch?: string;
   summary?: string;
   epoch?: number;
+  buildTime?: number;
   /** Extra trailing payload bytes appended after the headers (the "archive"). */
   payload?: Uint8Array;
 }
@@ -64,6 +65,7 @@ const RPM_TAG_VERSION = 1001;
 const RPM_TAG_RELEASE = 1002;
 const RPM_TAG_EPOCH = 1003;
 const RPM_TAG_SUMMARY = 1004;
+const RPM_TAG_BUILDTIME = 1006;
 const RPM_TAG_ARCH = 1022;
 
 /** Construct a minimal but structurally-valid `.rpm` buffer. */
@@ -85,6 +87,8 @@ export function buildMinimalRpm(input: MinimalRpmInput): Uint8Array {
     tags.push({ tag: RPM_TAG_RELEASE, type: TYPE_STRING, value: input.release });
   if (input.epoch !== undefined)
     tags.push({ tag: RPM_TAG_EPOCH, type: TYPE_INT32, value: input.epoch });
+  if (input.buildTime !== undefined)
+    tags.push({ tag: RPM_TAG_BUILDTIME, type: TYPE_INT32, value: input.buildTime });
   if (input.summary !== undefined)
     tags.push({ tag: RPM_TAG_SUMMARY, type: TYPE_STRING, value: input.summary });
   if (input.arch !== undefined)
