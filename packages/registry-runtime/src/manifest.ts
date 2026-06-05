@@ -5,6 +5,7 @@ import { chocolateyRegistryPlugin } from "@hootifactory/registry-chocolatey";
 import { composerRegistryPlugin } from "@hootifactory/registry-composer";
 import { dartRegistryPlugin } from "@hootifactory/registry-dart";
 import { goRegistryPlugin } from "@hootifactory/registry-go";
+import { homebrewRegistryPlugin } from "@hootifactory/registry-homebrew";
 import { mavenRegistryPlugin } from "@hootifactory/registry-maven";
 import { npmRegistryPlugin } from "@hootifactory/registry-npm";
 import { nugetRegistryPlugin } from "@hootifactory/registry-nuget";
@@ -43,4 +44,5 @@ export const REGISTRY_PLUGIN_MANIFEST: RegistryPluginEntry[] = [
   { plugin: swiftRegistryPlugin },
   { plugin: chocolateyRegistryPlugin },
   { plugin: wingetRegistryPlugin },
+  { plugin: homebrewRegistryPlugin },
 ];

@@ -2,14 +2,14 @@
 
 A self-hostable, **multi-format artifact & package manager** — an open-source alternative to JFrog Artifactory + Harbor + a standalone scanner, in one tool.
 
-- **Formats:** npm, Docker, OCI, PyPI, Helm, Go, Cargo, NuGet, RubyGems, Composer, Maven, APT, Dart, Swift, Chocolatey, winget (16 total)
+- **Formats:** npm, Docker, OCI, PyPI, Helm, Go, Cargo, NuGet, RubyGems, Composer, Maven, APT, Dart, Swift, Chocolatey, winget, Homebrew (17 total)
   — all verified end-to-end against Dockerized real clients (RubyGems is consumed
   via Bundler's compact index, Composer publishes via a custom upload endpoint,
   Maven is a coordinate-addressed file store with POM-driven package projection,
   APT serves unsigned `Release` files consumed with `[trusted=yes]`, Dart follows
   the pub.dev publish handshake, Swift serves the package-registry protocol, and
   Chocolatey serves NuGet v2/OData package feeds, and winget serves Windows
-  Package Manager REST sources.
+  Package Manager REST sources, and Homebrew serves formula bottle metadata.
 - **Repository kinds:** hosted, proxy (pull-through cache), virtual (group/aggregate).
 - **Supply-chain security:** dependency/malware scanning (heuristic + optional
   Syft/Grype/Trivy/OSV/ClamAV), policy gates (audit / enforce) that quarantine or
@@ -31,7 +31,7 @@ bun run test:e2e:clients # real-client specs only; Docker supplies the external 
 ```
 
 Docker is the integration boundary for external CLIs. The e2e real-client specs
-run npm, Docker, ORAS, pip/twine, Helm, Go, Cargo, dotnet, gem/bundler, composer, mvn, apt, dart, swift, chocolatey and winget through pinned
+run npm, Docker, ORAS, pip/twine, Helm, Go, Cargo, dotnet, gem/bundler, composer, mvn, apt, dart, swift, chocolatey, winget and brew through pinned
 container images, and the optional scanner CLIs default to Docker images for
 Syft, Grype, Trivy and ClamAV (`SCANNER_CLI_RUNTIME=docker`).
 
@@ -81,7 +81,7 @@ packages/
                          repositories, content, inventory, assets, governance, oci
   registry-runtime/      built-in registry manifest + config-driven loader
   registry-npm/  registry-oci/  registry-pypi/  registry-go/  registry-cargo/  registry-nuget/
-  registry-rubygems/  registry-composer/  registry-maven/  registry-apt/  registry-dart/  registry-swift/  registry-chocolatey/  registry-winget/
+  registry-rubygems/  registry-composer/  registry-maven/  registry-apt/  registry-dart/  registry-swift/  registry-chocolatey/  registry-winget/  registry-homebrew/
   scanner/               scanner plugin SDK (ScannerPlugin contract + registry + runners)
   scanner-runtime/       built-in scanner manifest + config-driven loader
   scanner-grype/  scanner-trivy/  scanner-clamav/  scanner-osv/  scanner-heuristic/

@@ -23,6 +23,7 @@ describe("loadConfiguredRegistryPlugins", () => {
       "swift",
       "chocolatey",
       "winget",
+      "homebrew",
     ]) {
       expect(registry.has(id)).toBe(true);
     }
@@ -49,6 +50,7 @@ describe("loadConfiguredRegistryPlugins", () => {
       "swift",
       "chocolatey",
       "winget",
+      "homebrew",
       "oci",
       "helm",
     ]);
