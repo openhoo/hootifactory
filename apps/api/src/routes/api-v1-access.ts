@@ -1,4 +1,5 @@
 import { authorize, createRequestAuthorizer } from "@hootifactory/auth";
+import { mapWithBoundedConcurrency } from "@hootifactory/core";
 import type { ResolvedRepo } from "@hootifactory/registry";
 import {
   type ArtifactWithRepositoryRow,
@@ -147,17 +148,20 @@ export async function listAccessibleRepositories(
   }
 
   const rows = await listRepositoriesForOrg(orgId);
-  const accessible = [];
-  for (const repo of rows) {
-    const decision = await requestAuthorize("read", {
+  // Each authorize resolves role bindings via the DB, so the previous serial loop
+  // was O(n) sequential round-trips. Run them with bounded concurrency instead.
+  // (An accurate `total` of accessible repos still requires scanning the org's
+  // repos; pushing the visibility/role filter into SQL would be a larger follow-up.)
+  const decisions = await mapWithBoundedConcurrency(rows, 16, (repo) =>
+    requestAuthorize("read", {
       type: "repository",
       orgId: repo.orgId,
       repositoryId: repo.id,
       repositoryName: repo.name,
       visibility: repo.visibility,
-    });
-    if (decision.allowed) accessible.push(repo);
-  }
+    }),
+  );
+  const accessible = rows.filter((_, i) => decisions[i]?.allowed);
   return {
     rows: accessible.slice(pagination.offset, pagination.offset + pagination.limit),
     total: accessible.length,
