@@ -30,12 +30,6 @@ export interface RegistryKindDispatchOptions {
   dispatchVirtual?: VirtualRegistryDispatch;
 }
 
-function isRegistryMiss(err: unknown): err is RegistryError {
-  // A 404 from a module is a "miss" (telemetry classification only); keyed off
-  // status rather than enumerating any module's error-code vocabulary.
-  return err instanceof RegistryError && err.status === 404;
-}
-
 export async function adapterResponse(
   adapter: RegistryPlugin,
   match: RouteMatch,
@@ -61,30 +55,30 @@ export async function adapterResponse(
         });
         return response;
       } catch (err) {
-        if (isRegistryMiss(err)) {
-          const response = registryErrorToModuleResponse(adapter, err);
-          span.setAttribute("http.response.status_code", response.status);
-          span.addEvent("registry.adapter.miss", {
-            "registry.error.code": err.code,
-            "registry.error.message": err.message,
-          });
-          logger.debug("registry adapter miss", {
-            moduleId: adapter.id,
-            repo: ctx.repo.name,
-            handler: match.entry.handlerId,
-            code: err.code,
-          });
-          return response;
-        }
         if (err instanceof RegistryError) {
           const response = registryErrorToModuleResponse(adapter, err);
           span.setAttribute("http.response.status_code", response.status);
-          logger.debug("registry adapter error", {
-            moduleId: adapter.id,
-            repo: ctx.repo.name,
-            handler: match.entry.handlerId,
-            code: err.code,
-          });
+          // A 404 is a "miss" (telemetry classification only), keyed off status
+          // rather than any module's error-code vocabulary.
+          if (err.status === 404) {
+            span.addEvent("registry.adapter.miss", {
+              "registry.error.code": err.code,
+              "registry.error.message": err.message,
+            });
+            logger.debug("registry adapter miss", {
+              moduleId: adapter.id,
+              repo: ctx.repo.name,
+              handler: match.entry.handlerId,
+              code: err.code,
+            });
+          } else {
+            logger.debug("registry adapter error", {
+              moduleId: adapter.id,
+              repo: ctx.repo.name,
+              handler: match.entry.handlerId,
+              code: err.code,
+            });
+          }
           return response;
         }
         throw err;
@@ -140,7 +134,7 @@ async function refreshProxyPackage(
     if (ok) {
       proxyRefreshFreshUntil.set(key, Date.now() + Math.max(0, upstream.cacheTtlSeconds) * 1000);
     }
-    return Boolean(ok);
+    return ok;
   });
 }
 
@@ -182,13 +176,13 @@ export async function dispatchProxy(
           },
           async (refreshSpan) => {
             const ok = await refreshProxyPackage(adapter, packageName, upstream, ctx);
-            refreshSpan.setAttribute("registry.proxy.refreshed", Boolean(ok));
+            refreshSpan.setAttribute("registry.proxy.refreshed", ok);
             logger.debug("proxy refresh attempted", {
               repo: ctx.repo.name,
               package: packageName,
-              refreshed: Boolean(ok),
+              refreshed: ok,
             });
-            return Boolean(ok);
+            return ok;
           },
         );
       }
@@ -210,8 +204,8 @@ export async function dispatchProxy(
           },
           async (retrySpan) => {
             const refreshedOnRetry = await refreshProxyPackage(adapter, packageName, upstream, ctx);
-            retrySpan.setAttribute("registry.proxy.refreshed", Boolean(refreshedOnRetry));
-            return Boolean(refreshedOnRetry);
+            retrySpan.setAttribute("registry.proxy.refreshed", refreshedOnRetry);
+            return refreshedOnRetry;
           },
         );
         if (ok) return adapterResponse(adapter, match, req, ctx);
