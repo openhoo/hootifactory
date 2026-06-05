@@ -1,7 +1,8 @@
 import { ACTIONS, type Action } from "@hootifactory/types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { KeyRound } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { toast } from "sonner";
 import { Code, EmptyState, Field, PageTitle, Pill, SubmitButton } from "@/components/common";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -15,16 +16,25 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useOrg } from "@/features/orgs/context";
-import { api } from "@/lib/api";
+import { api, apiErrorMessage } from "@/lib/api";
 
 export function TokensPage() {
   const { selected } = useOrg();
   const qc = useQueryClient();
   const [name, setName] = useState("");
   const [secret, setSecret] = useState("");
+  const [error, setError] = useState("");
   const [grantResource, setGrantResource] = useState<"org" | "repository">("org");
   const [repositoryPattern, setRepositoryPattern] = useState("*");
   const [grantActions, setGrantActions] = useState<Action[]>(["read", "write"]);
+
+  // The org switcher swaps the active org without remounting this page, so clear
+  // the one-time secret (and any stale error) when the selected org changes.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: selected?.id is the intentional reset trigger, not read in the body.
+  useEffect(() => {
+    setSecret("");
+    setError("");
+  }, [selected?.id]);
 
   const tokensQ = useQuery({
     queryKey: ["tokens", selected?.id],
@@ -44,12 +54,15 @@ export function TokensPage() {
     onSuccess: async (res) => {
       setSecret(res.secret);
       setName("");
+      setError("");
       await qc.invalidateQueries({ queryKey: ["tokens", selected?.id] });
     },
+    onError: (e) => setError(apiErrorMessage(e)),
   });
   const revoke = useMutation({
     mutationFn: (id: string) => api.revokeToken(selected!.id, id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["tokens", selected?.id] }),
+    onError: (e) => toast.error(apiErrorMessage(e)),
   });
 
   const tokens = tokensQ.data?.tokens ?? [];
@@ -87,6 +100,8 @@ export function TokensPage() {
             className="flex flex-wrap items-end gap-3"
             onSubmit={(e) => {
               e.preventDefault();
+              if (!selected) return;
+              setError("");
               create.mutate();
             }}
           >
@@ -141,10 +156,17 @@ export function TokensPage() {
                 </div>
               </Field>
             </div>
-            <SubmitButton pending={create.isPending} className="h-9" data-testid="token-create">
+            <SubmitButton
+              pending={create.isPending}
+              disabled={!selected}
+              className="h-9"
+              data-testid="token-create"
+            >
               Create token
             </SubmitButton>
           </form>
+
+          {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
 
           {secret && (
             <div
