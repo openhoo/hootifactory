@@ -235,6 +235,13 @@
         "@hootifactory/registry": "workspace:*",
       },
     },
+    "packages/registry-chocolatey": {
+      "name": "@hootifactory/registry-chocolatey",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/registry": "workspace:*",
+      },
+    },
     "packages/registry-go": {
       "name": "@hootifactory/registry-go",
       "version": "0.0.0",
@@ -277,6 +284,7 @@
         "@hootifactory/config": "workspace:*",
         "@hootifactory/registry": "workspace:*",
         "@hootifactory/registry-cargo": "workspace:*",
+        "@hootifactory/registry-chocolatey": "workspace:*",
         "@hootifactory/registry-go": "workspace:*",
         "@hootifactory/registry-npm": "workspace:*",
         "@hootifactory/registry-nuget": "workspace:*",
@@ -558,6 +566,8 @@
     "@hootifactory/registry-application": ["@hootifactory/registry-application@workspace:packages/registry-application"],
 
     "@hootifactory/registry-cargo": ["@hootifactory/registry-cargo@workspace:packages/registry-cargo"],
+
+    "@hootifactory/registry-chocolatey": ["@hootifactory/registry-chocolatey@workspace:packages/registry-chocolatey"],
 
     "@hootifactory/registry-go": ["@hootifactory/registry-go@workspace:packages/registry-go"],
 
