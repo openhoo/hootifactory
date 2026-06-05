@@ -96,7 +96,7 @@ export interface RegistryRouteSpec<Params extends Record<string, string> = Recor
 type AnyRegistryRouteSpec = RegistryRouteSpec<any>;
 
 export type RegistryRouteOptions<Params extends Record<string, string> = Record<string, string>> =
-  Omit<RegistryRouteSpec<Params>, keyof RouteEntry | "handler">;
+  Omit<RegistryRouteSpec<Params>, "method" | "pattern" | "handlerId" | "handler">;
 
 export interface RegistryRouteFactory {
   <Pattern extends string>(
@@ -209,6 +209,11 @@ class DefinedRegistryPlugin implements RegistryPlugin {
       method: spec.method,
       pattern: spec.pattern,
       handlerId: spec.handlerId,
+      proxyRefreshTrigger: spec.proxyRefreshTrigger,
+      metadataMergeable: spec.metadataMergeable,
+      serviceIndex: spec.serviceIndex,
+      searchable: spec.searchable,
+      immutableContentAddressed: spec.immutableContentAddressed,
     }));
     routes.forEach((spec, index) => {
       const entry = this.entries[index];

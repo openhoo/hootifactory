@@ -1,5 +1,5 @@
 import { env } from "@hootifactory/config";
-import { registryPlugins } from "@hootifactory/registry";
+import { isImmutableContentPath, registryPlugins } from "@hootifactory/registry";
 import type { MiddlewareHandler } from "hono";
 import type { AppEnv } from "../types";
 
@@ -43,16 +43,6 @@ function hasRequestCredentials(headers: Headers): boolean {
   );
 }
 
-function isImmutableContentAddressableBlobPath(pathname: string): boolean {
-  return registryPlugins
-    .all()
-    .filter((plugin) => plugin.capabilities.contentAddressable)
-    .some((plugin) => {
-      const prefix = `/${plugin.mountSegment}/`;
-      return pathname.startsWith(prefix) && /\/blobs\/sha256:[a-fA-F0-9]{64}$/.test(pathname);
-    });
-}
-
 function isImmutableCacheControl(value: string | null): boolean {
   return value?.toLowerCase().includes("immutable") ?? false;
 }
@@ -76,7 +66,7 @@ export function securityHeadersForRequest(
 ): Record<string, string> {
   const shouldForceNoStore =
     isApiOrTokenPath(pathname) ||
-    (hasRequestCredentials(request.headers) && !isImmutableContentAddressableBlobPath(pathname));
+    (hasRequestCredentials(request.headers) && !isImmutableContentPath(pathname));
   return {
     ...securityHeadersForNodeEnv(nodeEnv),
     ...(shouldForceNoStore ? sensitiveCacheHeaders() : {}),

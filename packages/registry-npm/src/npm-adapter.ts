@@ -95,7 +95,9 @@ export class NpmAdapter implements RegistryPlugin {
       route.get("/-/whoami", "whoami", ({ ctx }) =>
         Response.json({ username: this.whoamiUsername(ctx) }),
       ),
-      route.get("/-/v1/search", "search", ({ req, ctx }) => this.searchHandler(req, ctx)),
+      route.get("/-/v1/search", "search", ({ req, ctx }) => this.searchHandler(req, ctx), {
+        searchable: true,
+      }),
       route.post("/-/npm/v1/security/advisories/bulk", "auditBulk", () => Response.json({})),
       route.post("/-/npm/v1/security/audits/quick", "auditQuick", () =>
         Response.json({ advisories: {}, vulnerabilities: {}, metadata: {} }),
@@ -113,8 +115,11 @@ export class NpmAdapter implements RegistryPlugin {
         this.tarball(params.pkg, params.filename, req, ctx),
       ),
       route.put("/:pkg+", "publish", ({ params, req, ctx }) => this.publish(params.pkg, req, ctx)),
-      route.get("/:pkg+", "packument", ({ params, req, ctx }) =>
-        this.packument(params.pkg, req, ctx),
+      route.get(
+        "/:pkg+",
+        "packument",
+        ({ params, req, ctx }) => this.packument(params.pkg, req, ctx),
+        { proxyRefreshTrigger: true, metadataMergeable: true },
       ),
     ])
     .build();

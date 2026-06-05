@@ -20,7 +20,7 @@ import {
 } from "./registry-virtual-rewrite";
 
 export function virtualMetadataPackageName(match: RouteMatch): string | null {
-  if (match.entry.handlerId !== "packument") return null;
+  if (!match.entry.metadataMergeable) return null;
   return match.params.pkg ?? null;
 }
 
@@ -42,7 +42,7 @@ export async function dispatchVirtualMetadata(
       const members = await loadVirtualMembers(ctx.repo.id);
       span.setAttribute("registry.virtual.member_count", members.length);
       const memberRoute: RouteMatch = {
-        entry: { method: "GET", pattern: "/:pkg+", handlerId: "packument" },
+        entry: { method: "GET", pattern: "/:pkg+", handlerId: "packument", metadataMergeable: true },
         params: { pkg: name },
         path: name,
       };

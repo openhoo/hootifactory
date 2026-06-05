@@ -47,3 +47,25 @@ export class RegistryPluginRegistry {
 
 /** Process-wide plugin registry. */
 export const registryPlugins = new RegistryPluginRegistry();
+
+/**
+ * Whether an absolute request path serves immutable, content-addressed bytes,
+ * derived from the registered content-addressable modules' route tables (routes
+ * flagged `immutableContentAddressed`). Lets agnostic middleware long-cache such
+ * responses without knowing any module's URL grammar.
+ */
+export function isImmutableContentPath(
+  pathname: string,
+  registry: RegistryPluginRegistry = registryPlugins,
+): boolean {
+  for (const plugin of registry.all()) {
+    if (!plugin.capabilities.contentAddressable) continue;
+    const prefix = `/${plugin.mountSegment}`;
+    if (!pathname.startsWith(`${prefix}/`)) continue;
+    const relative = pathname.slice(prefix.length);
+    for (const route of registry.routesFor(plugin.id)) {
+      if (route.entry.immutableContentAddressed && route.regex.test(relative)) return true;
+    }
+  }
+  return false;
+}

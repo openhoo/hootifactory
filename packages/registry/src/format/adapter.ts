@@ -87,6 +87,20 @@ export interface RouteEntry {
   /** Supports `:param` (one segment) and `:param+` (greedy, may include slashes). */
   pattern: string;
   handlerId: string;
+  /**
+   * Declarative route semantics consumed by the agnostic runtime, so it never
+   * has to branch on module-specific handlerId strings.
+   */
+  /** Reading this route from a proxy repo should trigger an upstream refresh of `params.pkg`. */
+  proxyRefreshTrigger?: boolean;
+  /** This route returns module metadata that can be merged across virtual members. */
+  metadataMergeable?: boolean;
+  /** This route serves a module service-index document directly from a virtual repo. */
+  serviceIndex?: boolean;
+  /** This route is a search endpoint whose virtual dispatch fans out across members. */
+  searchable?: boolean;
+  /** This route serves immutable, content-addressed bytes (long-cacheable). */
+  immutableContentAddressed?: boolean;
 }
 
 export interface RouteMatch {

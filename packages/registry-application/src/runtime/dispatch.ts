@@ -174,7 +174,7 @@ export async function dispatchProxy(
       if (
         upstream &&
         adapter.proxyIngest &&
-        match.entry.handlerId === "packument" &&
+        match.entry.proxyRefreshTrigger &&
         req.method === "GET" &&
         !isProxyRefreshFresh(ctx, packageName)
       ) {
@@ -205,7 +205,7 @@ export async function dispatchProxy(
       // Do not fall back to transparent passthrough: returning upstream bytes
       // directly would bypass local artifact records, scan policy, quotas, and
       // retention semantics.
-      if (!refreshed && adapter.proxyIngest && match.entry.handlerId === "packument") {
+      if (!refreshed && adapter.proxyIngest && match.entry.proxyRefreshTrigger) {
         const ok = await withSpan(
           "registry.proxy.retry_refresh",
           {

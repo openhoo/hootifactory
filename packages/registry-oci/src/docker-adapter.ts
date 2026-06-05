@@ -109,8 +109,11 @@ export class DockerAdapter implements RegistryPlugin {
       route.head("/:name+/blobs/:digest", "headBlob", ({ params, req, ctx }) =>
         this.getBlob(params.name, params.digest, req, ctx, true),
       ),
-      route.get("/:name+/blobs/:digest", "getBlob", ({ params, req, ctx }) =>
-        this.getBlob(params.name, params.digest, req, ctx, false),
+      route.get(
+        "/:name+/blobs/:digest",
+        "getBlob",
+        ({ params, req, ctx }) => this.getBlob(params.name, params.digest, req, ctx, false),
+        { immutableContentAddressed: true },
       ),
       route.delete("/:name+/blobs/:digest", "deleteBlob", ({ params, ctx }) =>
         this.deleteBlob(params.name, params.digest, ctx),

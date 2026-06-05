@@ -122,10 +122,12 @@ export class NugetAdapter implements RegistryPlugin {
     .authChallenge(this.authChallenge)
     .virtualSearch((input) => this.handleVirtualSearch(input))
     .routes((route) => [
-      route.get("/v3/index.json", "serviceIndex", ({ req, ctx }) => this.serviceIndex(req, ctx)),
-      route.get("/v3/query", "search", ({ req, ctx }) =>
-        this.nugetSearch(req, this.base(ctx), ctx),
-      ),
+      route.get("/v3/index.json", "serviceIndex", ({ req, ctx }) => this.serviceIndex(req, ctx), {
+        serviceIndex: true,
+      }),
+      route.get("/v3/query", "search", ({ req, ctx }) => this.nugetSearch(req, this.base(ctx), ctx), {
+        searchable: true,
+      }),
       route.put("/v3/package", "publish", ({ req, ctx }) => this.publish(req, ctx)),
       route.delete("/v3/package/:id/:version", "delete", ({ params, ctx }) =>
         this.setListed(params.id, params.version, false, ctx),
