@@ -6,6 +6,10 @@ export function shouldRewriteVirtualBody(contentType: string): boolean {
   return normalized.includes("json") || normalized.includes("text/html");
 }
 
+function metadataBodyText(part: RegistryMetadata): string {
+  return typeof part.body === "string" ? part.body : new TextDecoder().decode(part.body);
+}
+
 function rewriteMountPathInText(
   body: string,
   memberMountPath: string,
@@ -42,7 +46,7 @@ export function rewriteVirtualMetadata(
   if (memberMountPath === virtualMountPath || !shouldRewriteVirtualBody(part.contentType)) {
     return part;
   }
-  const body = typeof part.body === "string" ? part.body : new TextDecoder().decode(part.body);
+  const body = metadataBodyText(part);
   return {
     ...part,
     body: rewriteMountPathInText(body, memberMountPath, virtualMountPath),
@@ -58,7 +62,7 @@ export function metadataResponse(part: RegistryMetadata): Response {
 }
 
 export function metadataResponseEtag(part: RegistryMetadata): string {
-  const body = typeof part.body === "string" ? part.body : new TextDecoder().decode(part.body);
+  const body = metadataBodyText(part);
   return textEtag(body);
 }
 
@@ -67,7 +71,7 @@ export function metadataResponseWithEtag(
   part: RegistryMetadata,
   etag = metadataResponseEtag(part),
 ): Response {
-  const body = typeof part.body === "string" ? part.body : new TextDecoder().decode(part.body);
+  const body = metadataBodyText(part);
   const headers = new Headers(part.headers);
   headers.set("content-type", part.contentType);
   headers.delete("content-length");

@@ -96,14 +96,7 @@ export async function dispatchVirtualMetadata(
       const parts: RegistryMetadata[] = results.flatMap((result) =>
         result.part ? [result.part] : [],
       );
-      let last: Response | null = null;
-      for (let index = results.length - 1; index >= 0; index -= 1) {
-        const result = results[index];
-        if (result?.last) {
-          last = result.last;
-          break;
-        }
-      }
+      const last = results.findLast((result) => result.last)?.last ?? null;
       if (parts.length === 0) {
         return last ?? virtualNotFound(adapter);
       }

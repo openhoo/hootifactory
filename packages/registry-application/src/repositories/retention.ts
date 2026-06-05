@@ -132,13 +132,12 @@ export async function applyRetention(repositoryId: string, keepLastN: number): P
         }),
       ),
     ];
-    const prunedDigests = new Set<string>();
-    for (const d of collectVersionDigests(
+    // collectVersionDigests returns a fresh Set; reuse it directly (it stays
+    // mutable for the asset-digest additions below).
+    const prunedDigests = collectVersionDigests(
       prunedRows.map((row) => ({ metadata: metadataField(row) })),
       extractDigests,
-    )) {
-      prunedDigests.add(d);
-    }
+    );
 
     await adjustArtifactsUsedTx(tx, repo.orgId, -prunedRows.length);
 
