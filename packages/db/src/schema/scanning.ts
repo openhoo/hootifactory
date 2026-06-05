@@ -145,39 +145,6 @@ export const findings = pgTable(
   ],
 );
 
-export const sbomComponents = pgTable(
-  "sbom_components",
-  {
-    id: primaryId(),
-    scanId: uuid()
-      .notNull()
-      .references(() => scans.id, { onDelete: "cascade" }),
-    purl: text(),
-    name: text().notNull(),
-    version: text(),
-    type: text(),
-    licenses: jsonb().$type<string[]>().notNull().default([]),
-    ...timestamps(),
-  },
-  (t) => [index("sbom_components_scan_idx").on(t.scanId)],
-);
-
-/** Triage annotations on findings (VEX). */
-export const vexAnnotations = pgTable(
-  "vex_annotations",
-  {
-    id: primaryId(),
-    findingId: uuid()
-      .notNull()
-      .references(() => findings.id, { onDelete: "cascade" }),
-    analysisState: text().notNull(),
-    justification: text(),
-    detail: text(),
-    ...timestamps(),
-  },
-  (t) => [index("vex_annotations_finding_idx").on(t.findingId)],
-);
-
 /** Per-org/repo scan gating policy. mode=audit serves now; mode=enforce blocks until clean. */
 export const scanPolicies = pgTable(
   "scan_policies",
@@ -199,22 +166,3 @@ export const scanPolicies = pgTable(
     index("scan_policies_org_idx").on(t.orgId),
   ],
 );
-
-export const osvCache = pgTable(
-  "osv_cache",
-  {
-    id: primaryId(),
-    ecosystem: text().notNull(),
-    packageName: text().notNull(),
-    version: text().notNull(),
-    response: jsonb().$type<Record<string, unknown>>().notNull(),
-    fetchedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
-  },
-  (t) => [uniqueIndex("osv_cache_uq").on(t.ecosystem, t.packageName, t.version)],
-);
-
-export const scannerDbState = pgTable("scanner_db_state", {
-  scanner: text().primaryKey(),
-  dbVersion: text().notNull(),
-  updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
-});
