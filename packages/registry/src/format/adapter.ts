@@ -216,7 +216,7 @@ export interface RegistryCapabilities {
   virtualizable: boolean;
 }
 
-export type RegistryErrorResponseKind = "registry" | "singleError" | "cargo";
+export type RegistryErrorResponseKind = "registry" | "singleError" | "errorsDetail";
 
 export interface RegistryUsageSnippetInput {
   baseUrl: string;

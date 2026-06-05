@@ -11,7 +11,7 @@ export function registryErrorResponseForKind(
     headers?: Record<string, string>;
   },
 ): Response {
-  if (kind === "cargo") {
+  if (kind === "errorsDetail") {
     return Response.json(
       { errors: [{ detail: input.message }] },
       { status: input.status, headers: input.headers },

@@ -54,7 +54,7 @@ export class CargoAdapter implements RegistryPlugin {
     .module({
       displayName: "Cargo",
       mountSegment: "cargo",
-      errorResponseKind: "cargo",
+      errorResponseKind: "errorsDetail",
       compressibleHandlers: ["config", "index", "ownersList"],
       scan: {
         defaultOsvEcosystem: "crates.io",

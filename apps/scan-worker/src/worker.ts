@@ -26,8 +26,8 @@ const workerBatchSize = intEnv("SCAN_WORKER_BATCH_SIZE", 16, 1);
 const workerConcurrency = Math.min(workerBatchSize, intEnv("SCAN_WORKER_CONCURRENCY", 4, 1));
 const pollingIntervalSeconds = intEnv("SCAN_WORKER_POLL_INTERVAL_SECONDS", 0.5, 0.5);
 const maxAttempts = intEnv("SCAN_WORKER_MAX_ATTEMPTS", 5, 1);
-const uploadReaperIntervalSeconds = intEnv("OCI_UPLOAD_REAPER_INTERVAL_SECONDS", 300, 1);
-const uploadReaperBatchSize = intEnv("OCI_UPLOAD_REAPER_BATCH_SIZE", 100, 1);
+const uploadReaperIntervalSeconds = intEnv("UPLOAD_REAPER_INTERVAL_SECONDS", 300, 1);
+const uploadReaperBatchSize = intEnv("UPLOAD_REAPER_BATCH_SIZE", 100, 1);
 const blobGcIntervalSeconds = intEnv("BLOB_GC_INTERVAL_SECONDS", 300, 1);
 const blobGcBatchSize = intEnv("BLOB_GC_BATCH_SIZE", 100, 1);
 const blobGcGraceSeconds = intEnv("BLOB_GC_GRACE_SECONDS", 60, 0);
@@ -149,15 +149,15 @@ ready = true;
 async function reapExpiredUploads(): Promise<void> {
   try {
     const result = await withSpan(
-      "oci.upload_sessions.reap_expired",
-      { "oci.upload_reaper.batch_size": uploadReaperBatchSize },
+      "upload_sessions.reap_expired",
+      { "upload_reaper.batch_size": uploadReaperBatchSize },
       () => reapExpiredContentUploadSessions({ limit: uploadReaperBatchSize }),
     );
     if (result.aborted > 0) {
-      logger.info("expired OCI upload sessions reaped", { aborted: result.aborted });
+      logger.info("expired upload sessions reaped", { aborted: result.aborted });
     }
   } catch (err) {
-    logger.error("expired OCI upload session reaper failed", { error: err });
+    logger.error("expired upload session reaper failed", { error: err });
   }
 }
 
@@ -185,7 +185,7 @@ async function sweepBlobs(): Promise<void> {
 
 const maintenance = createMaintenanceScheduler([
   {
-    name: "oci.upload_sessions.reap_expired",
+    name: "upload_sessions.reap_expired",
     intervalMs: uploadReaperIntervalSeconds * 1000,
     run: reapExpiredUploads,
   },

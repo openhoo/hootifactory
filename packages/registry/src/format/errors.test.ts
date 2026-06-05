@@ -13,8 +13,8 @@ describe("registry error formatting", () => {
     expect(await res.json()).toEqual({ error: "access denied" });
   });
 
-  test("formats cargo error arrays", async () => {
-    const res = registryErrorResponseForKind("cargo", {
+  test("formats detail-only error arrays", async () => {
+    const res = registryErrorResponseForKind("errorsDetail", {
       status: 401,
       message: "authentication required",
     });
