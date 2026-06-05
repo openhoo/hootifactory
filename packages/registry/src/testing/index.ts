@@ -86,17 +86,16 @@ function createTestDataService(): RegistryDataService {
       findByScope: () => Promise.resolve(null),
       list: () => Promise.resolve({ assets: [], total: 0 }),
     },
-    contentAddressable: {
+    contentStore: {
       createUploadSession: () => Promise.resolve(),
       loadUploadSession: () => Promise.resolve(null),
-      withLockedUploadSession: () =>
-        unimplemented("data.contentAddressable.withLockedUploadSession"),
+      withLockedUploadSession: () => unimplemented("data.contentStore.withLockedUploadSession"),
       markUploadSessionAborted: () => Promise.resolve(),
       listMountSources: () => Promise.resolve([]),
       listExistingBlobRefDigests: () => Promise.resolve([]),
       listExistingManifestDigests: () => Promise.resolve([]),
       blobRefExists: () => Promise.resolve(false),
-      upsertManifest: () => unimplemented("data.contentAddressable.upsertManifest"),
+      upsertManifest: () => unimplemented("data.contentStore.upsertManifest"),
       upsertTag: () => Promise.resolve(),
       replaceManifestBlobRefs: () => Promise.resolve(),
       listManifestDigestsReferencingBlob: () => Promise.resolve([]),

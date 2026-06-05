@@ -295,7 +295,7 @@ export function createRegistryDataService(ctx: RegistryRequestContext): Registry
           offset: input?.offset,
         }),
     },
-    contentAddressable: {
+    contentStore: {
       createUploadSession: (input) => createContentUploadSession(ctx, input),
       loadUploadSession: (input) => loadContentUploadSession(ctx, input),
       withLockedUploadSession: (input) => withLockedContentUploadSession(ctx, input),

@@ -82,8 +82,8 @@ describe("OCI manifest lifecycle helpers", () => {
           ...base.data.assets,
           upsert: () => Promise.resolve({} as never),
         },
-        contentAddressable: {
-          ...base.data.contentAddressable,
+        contentStore: {
+          ...base.data.contentStore,
           listExistingManifestDigests: (input) => {
             batchedInputs.push({ packageId: input.package.id, digests: input.digests });
             return Promise.resolve(input.digests);
@@ -153,8 +153,8 @@ describe("OCI manifest lifecycle helpers", () => {
           ...base.data.assets,
           upsert: () => Promise.resolve({} as never),
         },
-        contentAddressable: {
-          ...base.data.contentAddressable,
+        contentStore: {
+          ...base.data.contentStore,
           listExistingBlobRefDigests: (input) => Promise.resolve(input.digests),
           upsertManifest: (input) =>
             Promise.resolve({ id: "manifest_1", repositoryId: base.repo.id, digest: input.digest }),
@@ -225,8 +225,8 @@ describe("OCI manifest lifecycle helpers", () => {
             return Promise.resolve(true);
           },
         },
-        contentAddressable: {
-          ...base.data.contentAddressable,
+        contentStore: {
+          ...base.data.contentStore,
           listManifestDigestsReferencingBlob: (input) => {
             referenceLookups += 1;
             expect(input.package.id).toBe(pkg.id);

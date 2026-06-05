@@ -191,7 +191,7 @@ describe("Docker adapter contract", () => {
       expect(name).toBe(pkg.name);
       return pkg;
     };
-    ctx.data.contentAddressable.listTags = async (inputPkg, opts) => {
+    ctx.data.contentStore.listTags = async (inputPkg, opts) => {
       expect(inputPkg.id).toBe(pkg.id);
       expect(opts).toEqual({ last: "latest", pageSize: 1 });
       return { tags: ["v1"], truncated: true };
@@ -227,18 +227,18 @@ describe("Docker adapter contract", () => {
       expect(name).toBe(pkg.name);
       return pkg;
     };
-    ctx.data.contentAddressable.listSubjectManifests = async (subjectDigest) => {
+    ctx.data.contentStore.listSubjectManifests = async (subjectDigest) => {
       subjectLookups += 1;
       expect(subjectDigest).toBe(DIGEST);
       return [referrerRow(REFERRER_DIGEST), referrerRow(OTHER_REFERRER_DIGEST)];
     };
-    ctx.data.contentAddressable.listExistingManifestDigests = async (input) => {
+    ctx.data.contentStore.listExistingManifestDigests = async (input) => {
       batchLookups += 1;
       expect(input.package.id).toBe(pkg.id);
       expect(input.digests).toEqual([REFERRER_DIGEST, OTHER_REFERRER_DIGEST]);
       return [REFERRER_DIGEST];
     };
-    ctx.data.contentAddressable.resolveManifest = async () => {
+    ctx.data.contentStore.resolveManifest = async () => {
       throw new Error("referrers should not resolve manifests one at a time");
     };
 
@@ -276,7 +276,7 @@ describe("Docker adapter contract", () => {
     let committedOffset = 0;
     const uploaded: RegistryUploadedBlob = { digest: UPLOAD_DIGEST, size: 5, deduped: false };
 
-    ctx.data.contentAddressable.withLockedUploadSession = async ({ scope, uuid, run }) => {
+    ctx.data.contentStore.withLockedUploadSession = async ({ scope, uuid, run }) => {
       expect(scope).toBe(pkg.name);
       expect(uuid).toBe(UPLOAD_UUID);
       calls.push("lock:start");
@@ -381,7 +381,7 @@ describe("Docker adapter contract", () => {
     let lockDepth = 0;
     let session = uploadSession();
 
-    ctx.data.contentAddressable.withLockedUploadSession = async ({ scope, uuid, run }) => {
+    ctx.data.contentStore.withLockedUploadSession = async ({ scope, uuid, run }) => {
       expect(scope).toBe(pkg.name);
       expect(uuid).toBe(UPLOAD_UUID);
       calls.push("lock:start");
@@ -520,7 +520,7 @@ describe("Docker adapter contract", () => {
       expect(name).toBe(pkg.name);
       return pkg;
     };
-    ctx.data.contentAddressable.resolveManifest = async (input) => {
+    ctx.data.contentStore.resolveManifest = async (input) => {
       expect(input.package.id).toBe(pkg.id);
       expect(input.reference).toBe(DIGEST);
       return manifestRow();

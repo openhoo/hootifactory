@@ -403,7 +403,7 @@ export interface RegistryDataService {
       offset?: number;
     }): Promise<{ assets: RegistryAssetRow[]; total: number }>;
   };
-  contentAddressable: {
+  contentStore: {
     createUploadSession(input: {
       id: string;
       scope: string;

@@ -75,7 +75,7 @@ export async function startUpload(
 
   const uuid = crypto.randomUUID();
   const key = stagingKey(uuid);
-  await ctx.data.contentAddressable.createUploadSession({
+  await ctx.data.contentStore.createUploadSession({
     id: uuid,
     scope: image,
     storageKey: key,
@@ -103,7 +103,7 @@ export async function patchUpload(
 ): Promise<Response> {
   const parsedUuid = parseUploadUuid(uuid);
   const chunk = await bodyBytes(req);
-  const pending = await ctx.data.contentAddressable.withLockedUploadSession({
+  const pending = await ctx.data.contentStore.withLockedUploadSession({
     scope: image,
     uuid: parsedUuid,
     run: async (session, mutations) => {
@@ -128,7 +128,7 @@ export async function patchUpload(
   try {
     if (stagedKey) await ctx.data.content.staging.putKey(stagedKey, chunk);
 
-    const offset = await ctx.data.contentAddressable.withLockedUploadSession({
+    const offset = await ctx.data.contentStore.withLockedUploadSession({
       scope: image,
       uuid: parsedUuid,
       run: async (session, mutations) => {
@@ -179,7 +179,7 @@ export async function putUpload(
 
   const chunk = await bodyBytes(req);
   const parsedUuid = parseUploadUuid(uuid);
-  const pending = await ctx.data.contentAddressable.withLockedUploadSession({
+  const pending = await ctx.data.contentStore.withLockedUploadSession({
     scope: image,
     uuid: parsedUuid,
     run: async (session, mutations) => {
@@ -212,7 +212,7 @@ export async function putUpload(
         throw err;
       });
 
-    const committed = await ctx.data.contentAddressable.withLockedUploadSession({
+    const committed = await ctx.data.contentStore.withLockedUploadSession({
       scope: image,
       uuid: parsedUuid,
       run: async (session, mutations) => {
@@ -268,7 +268,7 @@ export async function cancelUpload(
   ctx: RegistryRequestContext,
 ): Promise<Response> {
   const parsedUuid = parseUploadUuid(uuid);
-  await ctx.data.contentAddressable.withLockedUploadSession({
+  await ctx.data.contentStore.withLockedUploadSession({
     scope: image,
     uuid: parsedUuid,
     run: async (session, mutations) => {
@@ -293,7 +293,7 @@ async function tryCrossRepositoryMount(input: {
   from?: string;
   ctx: RegistryRequestContext;
 }): Promise<Response | null> {
-  const sources = (await input.ctx.data.contentAddressable.listMountSources(input.mount)).map(
+  const sources = (await input.ctx.data.contentStore.listMountSources(input.mount)).map(
     (source) => ({
       ...source,
       full: `${source.mountPath.replace(/^v2\//, "")}/${source.scope}`,
@@ -331,7 +331,7 @@ async function tryCrossRepositoryMount(input: {
 }
 
 async function loadSession(image: string, uuid: string, ctx: RegistryRequestContext) {
-  return ctx.data.contentAddressable.loadUploadSession({ scope: image, uuid });
+  return ctx.data.contentStore.loadUploadSession({ scope: image, uuid });
 }
 
 async function loadOpenSession(image: string, uuid: string, ctx: RegistryRequestContext) {
@@ -342,7 +342,7 @@ async function loadOpenSession(image: string, uuid: string, ctx: RegistryRequest
     uuid,
     ctx,
     session,
-    markAborted: () => ctx.data.contentAddressable.markUploadSessionAborted({ scope: image, uuid }),
+    markAborted: () => ctx.data.contentStore.markUploadSessionAborted({ scope: image, uuid }),
   });
   return session;
 }
