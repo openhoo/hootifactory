@@ -6,6 +6,7 @@ import { npmRegistryPlugin } from "@hootifactory/registry-npm";
 import { nugetRegistryPlugin } from "@hootifactory/registry-nuget";
 import { dockerRegistryPlugin } from "@hootifactory/registry-oci";
 import { pypiRegistryPlugin } from "@hootifactory/registry-pypi";
+import { rubygemsRegistryPlugin } from "@hootifactory/registry-rubygems";
 
 /** A built-in registry plugin plus any extra module ids it serves. */
 export interface RegistryPluginEntry {
@@ -29,4 +30,5 @@ export const REGISTRY_PLUGIN_MANIFEST: RegistryPluginEntry[] = [
   { plugin: cargoRegistryPlugin },
   { plugin: nugetRegistryPlugin },
   { plugin: composerRegistryPlugin },
+  { plugin: rubygemsRegistryPlugin },
 ];

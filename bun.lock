@@ -277,6 +277,13 @@
         "@hootifactory/registry": "workspace:*",
       },
     },
+    "packages/registry-rubygems": {
+      "name": "@hootifactory/registry-rubygems",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/registry": "workspace:*",
+      },
+    },
     "packages/registry-runtime": {
       "name": "@hootifactory/registry-runtime",
       "version": "0.0.0",
@@ -290,6 +297,7 @@
         "@hootifactory/registry-nuget": "workspace:*",
         "@hootifactory/registry-oci": "workspace:*",
         "@hootifactory/registry-pypi": "workspace:*",
+        "@hootifactory/registry-rubygems": "workspace:*",
       },
     },
     "packages/scan-core": {
@@ -578,6 +586,8 @@
     "@hootifactory/registry-oci": ["@hootifactory/registry-oci@workspace:packages/registry-oci"],
 
     "@hootifactory/registry-pypi": ["@hootifactory/registry-pypi@workspace:packages/registry-pypi"],
+
+    "@hootifactory/registry-rubygems": ["@hootifactory/registry-rubygems@workspace:packages/registry-rubygems"],
 
     "@hootifactory/registry-runtime": ["@hootifactory/registry-runtime@workspace:packages/registry-runtime"],
 
