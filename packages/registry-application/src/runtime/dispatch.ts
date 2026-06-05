@@ -2,8 +2,8 @@ import { BoundedLruCache, InFlightDeduper } from "@hootifactory/core";
 import { logger, withSpan } from "@hootifactory/observability";
 import {
   Errors,
-  type RegistryErrorCode,
   RegistryError,
+  type RegistryErrorCode,
   type RegistryPlugin,
   type RegistryRequestContext,
   type RouteMatch,

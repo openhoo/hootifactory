@@ -2,22 +2,22 @@ import {
   and,
   asc,
   blobRefs,
+  contentBlobRefs,
+  contentManifests,
+  contentTags,
   db,
   eq,
   gt,
   inArray,
   isNull,
-  contentBlobRefs,
-  contentManifests,
-  contentTags,
   packages,
   packageVersions,
   sql,
 } from "@hootifactory/db";
 import type {
+  RegistryRequestContext,
   RegistryTagListOptions,
   RegistryTagListPage,
-  RegistryRequestContext,
 } from "@hootifactory/registry";
 import { adjustArtifactsUsedTx } from "../governance/quota";
 
@@ -266,7 +266,9 @@ export async function resolveContentManifest(
       .select({ manifest: contentManifests })
       .from(contentTags)
       .innerJoin(contentManifests, eq(contentTags.manifestId, contentManifests.id))
-      .where(and(eq(contentTags.packageId, opts.packageId), eq(contentManifests.digest, opts.reference)))
+      .where(
+        and(eq(contentTags.packageId, opts.packageId), eq(contentManifests.digest, opts.reference)),
+      )
       .limit(1);
     if (tagged) return tagged.manifest;
 
@@ -287,7 +289,10 @@ export async function resolveContentManifest(
       .select()
       .from(contentManifests)
       .where(
-        and(eq(contentManifests.repositoryId, ctx.repo.id), eq(contentManifests.digest, opts.reference)),
+        and(
+          eq(contentManifests.repositoryId, ctx.repo.id),
+          eq(contentManifests.digest, opts.reference),
+        ),
       )
       .limit(1);
     return manifest ?? null;
@@ -308,7 +313,9 @@ export async function deleteContentTagsForManifest(opts: {
 }): Promise<void> {
   await db
     .delete(contentTags)
-    .where(and(eq(contentTags.packageId, opts.packageId), eq(contentTags.manifestId, opts.manifestId)));
+    .where(
+      and(eq(contentTags.packageId, opts.packageId), eq(contentTags.manifestId, opts.manifestId)),
+    );
 }
 
 export async function markContentPackageVersionsDeletedByDigest(opts: {
@@ -339,15 +346,17 @@ export async function deleteContentManifestIfUnassociated(
   ctx: RegistryRequestContext,
   opts: { manifestId: string; digest: string },
 ): Promise<boolean> {
-  if (await ociManifestHasLiveAssociations(ctx, opts)) return false;
+  if (await contentManifestHasLiveAssociations(ctx, opts)) return false;
   const deleted = await db
     .delete(contentManifests)
-    .where(and(eq(contentManifests.repositoryId, ctx.repo.id), eq(contentManifests.digest, opts.digest)))
+    .where(
+      and(eq(contentManifests.repositoryId, ctx.repo.id), eq(contentManifests.digest, opts.digest)),
+    )
     .returning({ id: contentManifests.id });
   return deleted.length > 0;
 }
 
-async function ociManifestHasLiveAssociations(
+async function contentManifestHasLiveAssociations(
   ctx: RegistryRequestContext,
   opts: { manifestId: string; digest: string },
 ): Promise<boolean> {
@@ -408,7 +417,10 @@ export async function listLiveContentManifestsForPackage(
     .select({ digest: contentManifests.digest, raw: contentManifests.raw })
     .from(contentManifests)
     .where(
-      and(eq(contentManifests.repositoryId, ctx.repo.id), inArray(contentManifests.digest, [...digests])),
+      and(
+        eq(contentManifests.repositoryId, ctx.repo.id),
+        inArray(contentManifests.digest, [...digests]),
+      ),
     );
 }
 

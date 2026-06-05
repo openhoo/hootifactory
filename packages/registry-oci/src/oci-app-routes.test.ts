@@ -26,7 +26,6 @@ const repo = {
 function parseOne(raw: string) {
   const parsed = parseDockerScopes([raw]);
   if (!parsed.success) throw new Error("test scope failed to parse");
-  // biome-ignore lint/style/noNonNullAssertion: test fixture
   return parsed.data[0]!;
 }
 

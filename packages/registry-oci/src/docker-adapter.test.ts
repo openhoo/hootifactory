@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import type {
   RegistryManifestRow,
-  RegistryUploadSessionMutations,
-  RegistryUploadSessionRow,
   RegistryPackageRow,
   RegistryRequestContext,
   RegistryUploadedBlob,
+  RegistryUploadSessionMutations,
+  RegistryUploadSessionRow,
   RouteMatch,
 } from "@hootifactory/registry";
 import { createTestRegistryContext } from "@hootifactory/registry/testing";

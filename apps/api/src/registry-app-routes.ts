@@ -22,24 +22,32 @@ type AppRouteHandler = RegistryAppRoute["handler"];
  * otherwise contribute /v2 and /token.
  */
 function appRouteMap(): Map<string, AppRouteHandler> {
-  const map = new Map<string, AppRouteHandler>();
-  for (const plugin of registryPlugins.all()) {
-    for (const route of plugin.appRoutes?.() ?? []) {
-      const key = `${route.method} ${route.pattern}`;
-      if (!map.has(key)) map.set(key, route.handler);
+  // Memoized on the plugin set (immutable after bootstrap), so registry traffic
+  // doesn't rebuild this map on every request just to do one lookup.
+  return registryPlugins.derive("appRouteHandlers", () => {
+    const map = new Map<string, AppRouteHandler>();
+    for (const plugin of registryPlugins.all()) {
+      for (const route of plugin.appRoutes?.() ?? []) {
+        const key = `${route.method} ${route.pattern}`;
+        if (!map.has(key)) map.set(key, route.handler);
+      }
     }
-  }
-  return map;
+    return map;
+  });
 }
 
 /** Whether an absolute path is served by some module's app-level route table. */
 export function isRegistryAppPath(pathname: string): boolean {
-  for (const plugin of registryPlugins.all()) {
-    for (const route of plugin.appRoutes?.() ?? []) {
-      if (route.pattern === pathname) return true;
-    }
-  }
-  return false;
+  const patterns = registryPlugins.derive(
+    "appRoutePatterns",
+    () =>
+      new Set(
+        registryPlugins
+          .all()
+          .flatMap((plugin) => (plugin.appRoutes?.() ?? []).map((r) => r.pattern)),
+      ),
+  );
+  return patterns.has(pathname);
 }
 
 /**
@@ -48,12 +56,13 @@ export function isRegistryAppPath(pathname: string): boolean {
  * the path, so the caller can fall through to repo-mounted registry dispatch.
  */
 export async function tryHandleAppRoute(c: Context<AppEnv>): Promise<Response | null> {
-  const url = new URL(c.req.url);
-  const handler = appRouteMap().get(`${c.req.method} ${url.pathname}`);
+  // Look up by path without parsing a URL (the common case is a miss); only
+  // build the URL once a module route actually owns this path.
+  const handler = appRouteMap().get(`${c.req.method} ${c.req.path}`);
   if (!handler) return null;
   const ctx: RegistryAppRouteContext = {
     req: c.req.raw,
-    url,
+    url: new URL(c.req.url),
     principal: c.get("principal"),
     baseUrl: env.REGISTRY_PUBLIC_URL,
     registryServiceName: REGISTRY_TOKEN_SERVICE,

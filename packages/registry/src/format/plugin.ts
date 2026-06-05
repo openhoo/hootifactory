@@ -207,16 +207,15 @@ class DefinedRegistryPlugin implements RegistryPlugin {
     this.search = input.search;
     this.virtualSearch = input.virtualSearch;
     this.proxyIngest = input.proxyIngest;
-    this.entries = routes.map((spec) => ({
-      method: spec.method,
-      pattern: spec.pattern,
-      handlerId: spec.handlerId,
-      proxyRefreshTrigger: spec.proxyRefreshTrigger,
-      metadataMergeable: spec.metadataMergeable,
-      serviceIndex: spec.serviceIndex,
-      searchable: spec.searchable,
-      immutableContentAddressed: spec.immutableContentAddressed,
-    }));
+    this.entries = routes.map((spec) => {
+      // Carry every RouteEntry field (method/pattern/handlerId + declarative
+      // flags) into the compiled entry by stripping only the spec-only members,
+      // so a newly-added RouteEntry flag is never silently dropped here.
+      const { permission, handler, ...entry } = spec;
+      void permission;
+      void handler;
+      return entry;
+    });
     routes.forEach((spec, index) => {
       const entry = this.entries[index];
       if (!entry) return;

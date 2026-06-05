@@ -293,10 +293,12 @@ async function tryCrossRepositoryMount(input: {
   from?: string;
   ctx: RegistryRequestContext;
 }): Promise<Response | null> {
-  const sources = (await input.ctx.data.contentAddressable.listMountSources(input.mount)).map((source) => ({
-    ...source,
-    full: `${source.mountPath.replace(/^v2\//, "")}/${source.scope}`,
-  }));
+  const sources = (await input.ctx.data.contentAddressable.listMountSources(input.mount)).map(
+    (source) => ({
+      ...source,
+      full: `${source.mountPath.replace(/^v2\//, "")}/${source.scope}`,
+    }),
+  );
   const pool = input.from ? sources.filter((source) => source.full === input.from) : sources;
   for (const source of pool) {
     const decision = await input.ctx.authorize("read", {

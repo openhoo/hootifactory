@@ -89,7 +89,8 @@ function createTestDataService(): RegistryDataService {
     contentAddressable: {
       createUploadSession: () => Promise.resolve(),
       loadUploadSession: () => Promise.resolve(null),
-      withLockedUploadSession: () => unimplemented("data.contentAddressable.withLockedUploadSession"),
+      withLockedUploadSession: () =>
+        unimplemented("data.contentAddressable.withLockedUploadSession"),
       markUploadSessionAborted: () => Promise.resolve(),
       listMountSources: () => Promise.resolve([]),
       listExistingBlobRefDigests: () => Promise.resolve([]),

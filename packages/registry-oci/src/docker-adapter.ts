@@ -14,8 +14,8 @@ import {
   registryPlugin,
 } from "@hootifactory/registry";
 import { ociAppRoutes } from "./oci-app-routes";
-import { ociManifestReferences } from "./oci-manifest-graph";
 import { buildOciBlobResponse } from "./oci-blobs";
+import { ociManifestReferences } from "./oci-manifest-graph";
 import {
   deleteOciBlobReference,
   deleteOciManifestReference,

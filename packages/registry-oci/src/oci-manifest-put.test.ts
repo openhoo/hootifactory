@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { computeDigest } from "@hootifactory/registry";
-import { OCI_MEDIA_TYPES, type OciManifest } from "./oci-media-types";
 import { parseOciManifestPutRequest } from "./oci-manifest-put";
+import { OCI_MEDIA_TYPES, type OciManifest } from "./oci-media-types";
 
 const CONFIG_DIGEST = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 const LAYER_DIGEST = "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";

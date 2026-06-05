@@ -74,9 +74,11 @@ describe("registry route match resolution", () => {
     }
   });
 
-  test("uses Docker name-unknown errors for OCI route misses", () => {
+  test("uses name-unknown errors for content-addressable route misses", () => {
     try {
-      resolveRegistryRouteMatch(dockerRepo, routes, "DELETE", "/team/api/manifests/latest");
+      resolveRegistryRouteMatch(dockerRepo, routes, "DELETE", "/team/api/manifests/latest", {
+        nameUnknownOnMiss: true,
+      });
     } catch (err) {
       expect(err).toBeInstanceOf(RegistryError);
       expect((err as RegistryError).code).toBe("NAME_UNKNOWN");

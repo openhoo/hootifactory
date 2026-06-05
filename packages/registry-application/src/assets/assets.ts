@@ -37,7 +37,7 @@ export async function upsertRegistryAsset(
       set: {
         packageId: input.package?.id ?? null,
         packageVersionId: input.packageVersion?.id ?? null,
-          blobRefId: input.blobRefId ?? null,
+        blobRefId: input.blobRefId ?? null,
         path: input.path ?? null,
         mediaType: input.mediaType ?? null,
         sizeBytes: input.sizeBytes ?? 0,

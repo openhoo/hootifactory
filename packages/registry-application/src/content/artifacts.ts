@@ -1,4 +1,4 @@
-import { and, artifacts, db, eq, inArray, contentManifests } from "@hootifactory/db";
+import { and, artifacts, contentManifests, db, eq, inArray } from "@hootifactory/db";
 import {
   immutableRegistryBlobCacheControl,
   type RegistryRequestContext,
@@ -82,7 +82,10 @@ export async function loadContentAddressableManifestRaw(input: {
     .select({ raw: contentManifests.raw })
     .from(contentManifests)
     .where(
-      and(eq(contentManifests.repositoryId, input.repositoryId), eq(contentManifests.digest, input.digest)),
+      and(
+        eq(contentManifests.repositoryId, input.repositoryId),
+        eq(contentManifests.digest, input.digest),
+      ),
     )
     .limit(1);
   return manifest ?? null;

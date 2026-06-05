@@ -31,11 +31,22 @@ export function registryRouteSpanAttributes(
   };
 }
 
+export interface RegistryRouteMatchOptions {
+  /**
+   * Emit the NAME_UNKNOWN miss code (content-addressable distribution clients
+   * expect it) instead of the generic NOT_FOUND. The caller derives this from
+   * the resolved module's capability, so no module-specific mount grammar leaks
+   * into this agnostic router.
+   */
+  nameUnknownOnMiss?: boolean;
+}
+
 export function resolveRegistryRouteMatch(
   repo: ResolvedRepo,
   routes: CompiledRoute[],
   method: HttpMethod,
   rest: string,
+  options: RegistryRouteMatchOptions = {},
 ): RegistryRouteMatchResolution {
   let match = matchRoute(routes, method, rest);
   let fellBackToGet = false;
@@ -45,7 +56,7 @@ export function resolveRegistryRouteMatch(
   }
   if (!match) {
     logger.debug("registry route not found", { repo: repo.name, moduleId: repo.moduleId, rest });
-    if (repo.mountPath.startsWith("v2/")) throw Errors.nameUnknown({ path: rest });
+    if (options.nameUnknownOnMiss) throw Errors.nameUnknown({ path: rest });
     throw Errors.notFound({ path: rest });
   }
   return {

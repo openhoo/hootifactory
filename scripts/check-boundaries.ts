@@ -230,23 +230,28 @@ const rules: BoundaryRule[] = [
     ],
     ignoreTests: true,
     forbidden: [
-      /\bOci[A-Z]/,
+      // Case-insensitive so a lowercase identifier (e.g. ociManifestFoo) cannot
+      // slip past, while still allowing words that merely contain "oci"
+      // (associate, velocity) via the leading word boundary.
+      /\b[Oo]ci[A-Z]/,
       /\bOCI_MEDIA_TYPES\b/,
       /\bdata\.oci\b/,
       /\boci_manifests\b/,
       /\boci_tags\b/,
       /\boci_manifest_blob_refs\b/,
       /\bociManifestId\b/,
+      // The OCI distribution mount prefix is module grammar; it must not appear
+      // in any agnostic package (route matching, scope matching, etc.).
+      /["']v2\//,
     ],
   },
   {
-    // Agnostic auth must never re-acquire a module's scope/action grammar
-    // (e.g. the Docker pull/push verbs or the v2/ mount prefix). Modules own
-    // their grammar; auth reasons over generic read/write/delete actions.
-    name: "agnostic auth stays free of module-specific scope/action grammar",
+    // Agnostic auth must never re-acquire a module's action grammar (e.g. the
+    // Docker pull/push verbs). Auth reasons over generic read/write/delete.
+    name: "agnostic auth stays free of module-specific action grammar",
     roots: ["packages/auth/src"],
     ignoreTests: true,
-    forbidden: [/["'](?:pull|push)["']/, /["']v2\//],
+    forbidden: [/["'](?:pull|push)["']/],
   },
 ];
 

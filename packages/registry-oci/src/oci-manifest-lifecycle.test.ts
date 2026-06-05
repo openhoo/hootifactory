@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { createTestRegistryContext } from "@hootifactory/registry/testing";
-import { OCI_MEDIA_TYPES } from "./oci-media-types";
 import {
   buildOciManifestCreatedHeaders,
   isOciBlobBlocked,
   putOciManifest,
 } from "./oci-manifest-lifecycle";
+import { OCI_MEDIA_TYPES } from "./oci-media-types";
 
 const DIGEST = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const SUBJECT_DIGEST = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";

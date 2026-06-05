@@ -17,6 +17,7 @@ function aliasRegistryPlugin(plugin: RegistryPlugin, id: RegistryModuleId): Regi
 export class RegistryPluginRegistry {
   private readonly adapters = new Map<RegistryModuleId, RegistryPlugin>();
   private readonly compiled = new Map<RegistryModuleId, CompiledRoute[]>();
+  private readonly derived = new Map<string, unknown>();
 
   register(plugin: RegistryPlugin): void {
     this.registerAs(plugin.id, plugin);
@@ -26,6 +27,7 @@ export class RegistryPluginRegistry {
   registerAs(moduleId: RegistryModuleId, plugin: RegistryPlugin): void {
     this.adapters.set(moduleId, aliasRegistryPlugin(plugin, moduleId));
     this.compiled.set(moduleId, compileRoutes(plugin.routes()));
+    this.derived.clear();
   }
 
   lookup(moduleId: RegistryModuleId): RegistryPlugin | undefined {
@@ -43,6 +45,17 @@ export class RegistryPluginRegistry {
   all(): RegistryPlugin[] {
     return [...this.adapters.values()];
   }
+
+  /**
+   * Memoize data derived from the registered plugin set, which is immutable
+   * after bootstrap. The cache is invalidated whenever a plugin is
+   * (re)registered, so hot-path consumers can avoid rescanning every plugin on
+   * each request/response.
+   */
+  derive<T>(key: string, build: () => T): T {
+    if (!this.derived.has(key)) this.derived.set(key, build());
+    return this.derived.get(key) as T;
+  }
 }
 
 /** Process-wide plugin registry. */
@@ -58,13 +71,26 @@ export function isImmutableContentPath(
   pathname: string,
   registry: RegistryPluginRegistry = registryPlugins,
 ): boolean {
-  for (const plugin of registry.all()) {
-    if (!plugin.capabilities.contentAddressable) continue;
-    const prefix = `/${plugin.mountSegment}`;
-    if (!pathname.startsWith(`${prefix}/`)) continue;
-    const relative = pathname.slice(prefix.length);
-    for (const route of registry.routesFor(plugin.id)) {
-      if (route.entry.immutableContentAddressed && route.regex.test(relative)) return true;
+  // Precompute (once per plugin-set) the content-addressable modules' mount
+  // prefixes and their immutable-content routes, so the hot response path only
+  // does prefix checks + regex tests.
+  const matchers = registry.derive("immutableContentMatchers", () =>
+    registry
+      .all()
+      .filter((plugin) => plugin.capabilities.contentAddressable)
+      .map((plugin) => ({
+        prefix: `/${plugin.mountSegment}`,
+        routes: registry
+          .routesFor(plugin.id)
+          .filter((route) => route.entry.immutableContentAddressed),
+      }))
+      .filter((matcher) => matcher.routes.length > 0),
+  );
+  for (const matcher of matchers) {
+    if (!pathname.startsWith(`${matcher.prefix}/`)) continue;
+    const relative = pathname.slice(matcher.prefix.length);
+    for (const route of matcher.routes) {
+      if (route.regex.test(relative)) return true;
     }
   }
   return false;

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { OCI_MEDIA_TYPES } from "./oci-media-types";
 import { ociManifestReferences, ociManifestReferencesFromValue } from "./oci-manifest-graph";
+import { OCI_MEDIA_TYPES } from "./oci-media-types";
 
 describe("oci manifest graph", () => {
   test("extracts OCI artifact blob descriptors separately from child manifests", () => {

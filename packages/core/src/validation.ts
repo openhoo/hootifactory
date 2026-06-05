@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { type RegistryErrorCode, RegistryError } from "./errors";
+import { RegistryError, type RegistryErrorCode } from "./errors";
 
 export type { ZodError, ZodType } from "zod";
 export { z };

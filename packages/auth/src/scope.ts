@@ -35,7 +35,8 @@ export function scopeMayTargetRepo(pattern: string, repo: TokenScopeRepository):
   const slash = repo.mountPath.indexOf("/");
   const mountRelative = slash >= 0 ? repo.mountPath.slice(slash + 1) : null;
   if (!mountRelative) return false;
-  if (patternMatches(pattern, mountRelative) || pattern.startsWith(`${mountRelative}/`)) return true;
+  if (patternMatches(pattern, mountRelative) || pattern.startsWith(`${mountRelative}/`))
+    return true;
   if (pattern.endsWith("*")) {
     const prefix = pattern.slice(0, -1);
     return prefix.startsWith(`${mountRelative}/`) || mountRelative.startsWith(prefix);

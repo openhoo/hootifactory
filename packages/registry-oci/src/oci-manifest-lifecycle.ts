@@ -196,7 +196,10 @@ export async function deleteOciManifestReference(
     return;
   }
 
-  const deleted = await ctx.data.contentAddressable.deleteTag({ package: pkg, tag: opts.reference });
+  const deleted = await ctx.data.contentAddressable.deleteTag({
+    package: pkg,
+    tag: opts.reference,
+  });
   if (!deleted) throw Errors.manifestUnknown({ reference: opts.reference });
 }
 
@@ -230,7 +233,9 @@ export async function deleteOciBlobReference(
   ctx: RegistryRequestContext,
   opts: { image: string; digest: string },
 ): Promise<void> {
-  if (!(await ctx.data.contentAddressable.blobRefExists({ scope: opts.image, digest: opts.digest }))) {
+  if (
+    !(await ctx.data.contentAddressable.blobRefExists({ scope: opts.image, digest: opts.digest }))
+  ) {
     throw Errors.blobUnknown({ digest: opts.digest });
   }
   await releaseRegistryBlobRef(ctx, {

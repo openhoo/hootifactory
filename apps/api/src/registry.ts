@@ -79,6 +79,7 @@ export async function handleRegistryRequest(c: Context<AppEnv>): Promise<Respons
         registryPlugins.routesFor(repo.moduleId),
         method,
         rest,
+        { nameUnknownOnMiss: adapter.capabilities.contentAddressable },
       );
       c.get("httpTelemetry").setRoute(httpRoute);
       setActiveSpanAttributes(spanAttributes);

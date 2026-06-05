@@ -1,9 +1,9 @@
 import { withSpan } from "@hootifactory/observability";
 import {
   Errors,
-  type RegistryMetadata,
   type HttpMethod,
   RegistryError,
+  type RegistryMetadata,
   type RegistryPlugin,
   type RegistryRequestContext,
   type RouteMatch,
@@ -42,7 +42,12 @@ export async function dispatchVirtualMetadata(
       const members = await loadVirtualMembers(ctx.repo.id);
       span.setAttribute("registry.virtual.member_count", members.length);
       const memberRoute: RouteMatch = {
-        entry: { method: "GET", pattern: "/:pkg+", handlerId: "packument", metadataMergeable: true },
+        entry: {
+          method: "GET",
+          pattern: "/:pkg+",
+          handlerId: "packument",
+          metadataMergeable: true,
+        },
         params: { pkg: name },
         path: name,
       };

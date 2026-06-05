@@ -1,9 +1,9 @@
 import {
   asJsonRecord,
-  type RegistryMetadata,
   JsonRecordSchema,
   jsonRecordOrEmpty,
   parseJsonWithSchema,
+  type RegistryMetadata,
 } from "@hootifactory/registry";
 
 export interface VersionRow {

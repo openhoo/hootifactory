@@ -16,14 +16,21 @@ const CONTENT_SECURITY_POLICY = [
 ].join("; ");
 
 function registryApiKeyHeaders(): string[] {
-  return registryPlugins.all().flatMap((plugin) => [...plugin.apiKeyHeaders]);
+  // Memoized on the plugin set so the credentialed-response hot path doesn't
+  // re-flatMap every plugin's headers on each request.
+  return registryPlugins.derive("apiKeyHeaders", () =>
+    registryPlugins.all().flatMap((plugin) => [...plugin.apiKeyHeaders]),
+  );
+}
+
+function sensitiveVaryHeader(): string {
+  return registryPlugins.derive("sensitiveVary", () =>
+    ["Authorization", "Cookie", ...registryApiKeyHeaders()].join(", "),
+  );
 }
 
 function sensitiveCacheHeaders(): Record<string, string> {
-  return {
-    "cache-control": "no-store",
-    vary: ["Authorization", "Cookie", ...registryApiKeyHeaders()].join(", "),
-  };
+  return { "cache-control": "no-store", vary: sensitiveVaryHeader() };
 }
 
 function isApiOrTokenPath(pathname: string): boolean {

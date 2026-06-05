@@ -86,7 +86,10 @@ export async function withLockedContentUploadSession<T>(
   opts: {
     scope: string;
     uuid: string;
-    run: (session: ContentUploadSessionRow | null, mutations: ContentUploadSessionMutations) => Promise<T>;
+    run: (
+      session: ContentUploadSessionRow | null,
+      mutations: ContentUploadSessionMutations,
+    ) => Promise<T>;
   },
 ): Promise<T> {
   return db.transaction(async (tx) => {

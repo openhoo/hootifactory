@@ -1,4 +1,4 @@
-import type { RegistryErrorCode, RegistryError } from "@hootifactory/core";
+import type { RegistryError, RegistryErrorCode } from "@hootifactory/core";
 import type { RegistryErrorResponseKind, RegistryPlugin } from "./adapter";
 
 export function registryErrorResponseForKind(

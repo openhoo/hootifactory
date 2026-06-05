@@ -38,10 +38,7 @@ export type RegistryPackageVersionHandle = Pick<
   RegistryPackageVersionRow,
   "id" | "packageId" | "version"
 >;
-export type RegistryManifestHandle = Pick<
-  RegistryManifestRow,
-  "id" | "repositoryId" | "digest"
->;
+export type RegistryManifestHandle = Pick<RegistryManifestRow, "id" | "repositoryId" | "digest">;
 
 export interface RegistryPackageNameRow {
   name: string;
