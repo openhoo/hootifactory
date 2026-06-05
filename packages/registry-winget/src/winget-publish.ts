@@ -1,5 +1,6 @@
 import { parseRegistryInput } from "@hootifactory/registry";
 import {
+  WingetFilenameSchema,
   WingetPackageIdentifierSchema,
   WingetPublishManifestSchema,
   type WingetVersionMeta,
@@ -31,7 +32,8 @@ function sanitizeFilename(name: string | undefined): string {
   const base = name.split(/[\\/]/).pop() ?? "";
   const cleaned = base.replace(/[^A-Za-z0-9._-]/g, "_");
   if (!cleaned || cleaned.startsWith(".")) return DEFAULT_FILENAME;
-  return cleaned.slice(0, 256);
+  const candidate = cleaned.slice(0, 256);
+  return WingetFilenameSchema.safeParse(candidate).success ? candidate : DEFAULT_FILENAME;
 }
 
 /**

@@ -532,6 +532,38 @@ describe("WingetAdapter", () => {
     expect(meta.metadata.architecture).toBe("x64");
   });
 
+  test("PUT publish falls back when sanitized installer filename is invalid", async () => {
+    const ctx = wingetCtx();
+    ctx.data.versions.find = async () => null;
+    ctx.data.packages.findOrCreate = async () => pkg;
+    ctx.data.content.storeBlobWithRef = async () => ({
+      digest: `sha256:${"b".repeat(64)}`,
+      size: 3,
+      deduped: false,
+      refCreated: true,
+      blobRefId: "ref_1",
+    });
+    let filename: unknown;
+    ctx.data.versions.commitOrReleaseBlob = async (input) => {
+      filename = input.metadata.filename;
+      return { versionId: "ver_new" };
+    };
+
+    const res = await new WingetAdapter().handle(
+      publishMatch,
+      publishRequest(
+        "https://registry.test/api/packageManifests/Acme.Widget",
+        PUBLISH_MANIFEST,
+        new Uint8Array([1, 2, 3]),
+        "_widget.exe",
+      ),
+      ctx,
+    );
+
+    expect(res.status).toBe(201);
+    expect(filename).toBe("installer.bin");
+  });
+
   test("PUT publish returns 409 when the version already exists", async () => {
     const ctx = wingetCtx();
     ctx.data.versions.find = async () => versionRow("1.0.0", META);
