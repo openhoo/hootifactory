@@ -25,25 +25,6 @@ export function buildOciBlobHeaders(input: {
   };
 }
 
-type ResponseBody = ConstructorParameters<typeof Response>[0];
-
-function streamResponseBody(stream: ReadableStream<Uint8Array>): ResponseBody {
-  return {
-    async *[Symbol.asyncIterator]() {
-      const reader = stream.getReader();
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          yield value;
-        }
-      } finally {
-        reader.releaseLock();
-      }
-    },
-  } as ResponseBody;
-}
-
 export async function buildOciBlobResponse(input: OciBlobResponseInput): Promise<Response> {
   const headers = buildOciBlobHeaders({
     digest: input.digest,
@@ -66,7 +47,10 @@ export async function buildOciBlobResponse(input: OciBlobResponseInput): Promise
 
   headers["content-range"] = `bytes ${range.start}-${range.end}/${input.size}`;
   headers["content-length"] = String(range.end - range.start + 1);
-  return new Response(streamResponseBody(input.getRange(range.start, range.end + 1)), {
+  // Pass the source stream straight to Response so Bun propagates client
+  // cancellation (aborted/partial pulls) down to the S3 stream; wrapping it in an
+  // async generator would only releaseLock() on abort, leaking the S3 connection.
+  return new Response(input.getRange(range.start, range.end + 1), {
     status: 206,
     headers,
   });
