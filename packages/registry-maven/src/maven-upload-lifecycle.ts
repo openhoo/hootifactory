@@ -15,8 +15,31 @@ export async function handleMavenUpload(
   req: Request,
   ctx: RegistryRequestContext,
 ): Promise<Response> {
-  const bytes = new Uint8Array(await req.arrayBuffer());
   const mediaType = contentTypeForPath(path);
+  const coords = parseMavenCoordinates(path);
+  const primaryPom = coords && isPrimaryPom(coords) ? coords : null;
+
+  if (!primaryPom) {
+    if (!req.body) return new Response("empty request body", { status: 400 });
+    const stored = await ctx.data.content.storeBlobStreamWithRef({
+      data: req.body,
+      kind: MAVEN_FILE_KIND,
+      scope: path,
+      mediaType,
+    });
+    await ctx.data.assets.upsert({
+      digest: stored.digest,
+      blobRefId: stored.blobRefId,
+      role: MAVEN_FILE_KIND,
+      scope: path,
+      path,
+      mediaType,
+      sizeBytes: stored.size,
+    });
+    return new Response(null, { status: 201 });
+  }
+
+  const bytes = new Uint8Array(await req.arrayBuffer());
   const stored = await ctx.data.content.storeBlobWithRef({
     data: bytes,
     kind: MAVEN_FILE_KIND,
@@ -33,17 +56,16 @@ export async function handleMavenUpload(
     sizeBytes: bytes.byteLength,
   });
 
-  const coords = parseMavenCoordinates(path);
-  if (coords && isPrimaryPom(coords)) {
-    const name = `${coords.groupId}:${coords.artifactId}`;
-    const pkg = await ctx.data.packages.findOrCreate({ name, namespace: coords.groupId });
+  if (primaryPom) {
+    const name = `${primaryPom.groupId}:${primaryPom.artifactId}`;
+    const pkg = await ctx.data.packages.findOrCreate({ name, namespace: primaryPom.groupId });
     await ctx.data.versions.upsert({
       package: pkg,
-      version: coords.version,
+      version: primaryPom.version,
       metadata: {
-        groupId: coords.groupId,
-        artifactId: coords.artifactId,
-        version: coords.version,
+        groupId: primaryPom.groupId,
+        artifactId: primaryPom.artifactId,
+        version: primaryPom.version,
         deps: parsePomDependencies(new TextDecoder().decode(bytes)),
         pomDigest: stored.digest,
       },
@@ -52,7 +74,7 @@ export async function handleMavenUpload(
     await ctx.enqueueScan({
       digest: stored.digest,
       name,
-      version: coords.version,
+      version: primaryPom.version,
       mediaType: "application/xml",
     });
   }

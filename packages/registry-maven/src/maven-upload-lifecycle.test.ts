@@ -59,10 +59,19 @@ function setup() {
   const ctx = createTestRegistryContext();
   const captured: {
     assetScopes: string[];
+    storeModes: string[];
     version?: UpsertPackageVersionInput;
     scanName?: string;
-  } = { assetScopes: [] };
-  ctx.data.content.storeBlobWithRef = async () => stored;
+  } = { assetScopes: [], storeModes: [] };
+  ctx.data.content.storeBlobWithRef = async () => {
+    captured.storeModes.push("buffer");
+    return stored;
+  };
+  ctx.data.content.storeBlobStreamWithRef = async (input) => {
+    captured.storeModes.push("stream");
+    expect(input.data).toBeInstanceOf(ReadableStream);
+    return stored;
+  };
   ctx.data.assets.upsert = async (input) => {
     captured.assetScopes.push(input.scope ?? "");
     return assetRow(input.scope ?? "");
@@ -90,6 +99,7 @@ describe("handleMavenUpload", () => {
       ctx,
     );
     expect(res.status).toBe(201);
+    expect(captured.storeModes).toEqual(["buffer"]);
     expect(captured.assetScopes).toEqual(["com/example/app/1.0.0/app-1.0.0.pom"]);
     expect(captured.version?.package.name).toBe("com.example:app");
     expect(captured.version?.version).toBe("1.0.0");
@@ -108,6 +118,7 @@ describe("handleMavenUpload", () => {
       ctx,
     );
     expect(res.status).toBe(201);
+    expect(captured.storeModes).toEqual(["stream"]);
     expect(captured.assetScopes).toEqual(["com/example/app/1.0.0/app-1.0.0.jar"]);
     expect(captured.version).toBeUndefined();
     expect(captured.scanName).toBeUndefined();

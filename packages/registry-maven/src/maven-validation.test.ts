@@ -11,6 +11,7 @@ describe("maven path validation", () => {
   test("accepts coordinate paths and rejects traversal", () => {
     expect(isSafeMavenPath("com/example/app/1.0.0/app-1.0.0.jar")).toBe(true);
     expect(isSafeMavenPath("com/example/app/maven-metadata.xml")).toBe(true);
+    expect(isSafeMavenPath("com/./app/1.0.0/app-1.0.0.jar")).toBe(false);
     expect(isSafeMavenPath("../secret")).toBe(false);
     expect(isSafeMavenPath("a//b")).toBe(false);
     expect(isSafeMavenPath("a/b/")).toBe(false);

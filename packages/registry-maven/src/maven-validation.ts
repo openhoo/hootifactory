@@ -2,13 +2,28 @@ import { z } from "@hootifactory/registry";
 
 /** Repository path safety: no traversal, no absolute/empty/dir paths. */
 export function isSafeMavenPath(path: string): boolean {
-  return (
-    path.length <= 1024 &&
-    /^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(path) &&
-    !path.includes("..") &&
-    !path.includes("//") &&
-    !path.endsWith("/")
-  );
+  if (path.length === 0 || path.length > 1024 || path.startsWith("/") || path.endsWith("/")) {
+    return false;
+  }
+  const segments = path.split("/");
+  for (const segment of segments) {
+    if (segment === "" || segment === "." || segment === "..") return false;
+    for (const char of segment) {
+      if (
+        !(
+          (char >= "A" && char <= "Z") ||
+          (char >= "a" && char <= "z") ||
+          (char >= "0" && char <= "9") ||
+          char === "." ||
+          char === "_" ||
+          char === "-"
+        )
+      ) {
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
 export const MavenPathSchema = z
