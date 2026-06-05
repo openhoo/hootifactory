@@ -1,11 +1,14 @@
 import type { RegistryPlugin } from "@hootifactory/registry";
 import { aptRegistryPlugin } from "@hootifactory/registry-apt";
 import { cargoRegistryPlugin } from "@hootifactory/registry-cargo";
+import { composerRegistryPlugin } from "@hootifactory/registry-composer";
 import { goRegistryPlugin } from "@hootifactory/registry-go";
+import { mavenRegistryPlugin } from "@hootifactory/registry-maven";
 import { npmRegistryPlugin } from "@hootifactory/registry-npm";
 import { nugetRegistryPlugin } from "@hootifactory/registry-nuget";
 import { dockerRegistryPlugin } from "@hootifactory/registry-oci";
 import { pypiRegistryPlugin } from "@hootifactory/registry-pypi";
+import { rubygemsRegistryPlugin } from "@hootifactory/registry-rubygems";
 
 /** A built-in registry plugin plus any extra module ids it serves. */
 export interface RegistryPluginEntry {
@@ -28,5 +31,8 @@ export const REGISTRY_PLUGIN_MANIFEST: RegistryPluginEntry[] = [
   { plugin: goRegistryPlugin },
   { plugin: cargoRegistryPlugin },
   { plugin: nugetRegistryPlugin },
+  { plugin: rubygemsRegistryPlugin },
+  { plugin: composerRegistryPlugin },
+  { plugin: mavenRegistryPlugin },
   { plugin: aptRegistryPlugin },
 ];

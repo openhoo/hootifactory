@@ -6,7 +6,20 @@ describe("loadConfiguredRegistryPlugins", () => {
   test("registers every module id (including aliases) when no allowlist is given", () => {
     const registry = new RegistryPluginRegistry();
     const { registered } = loadConfiguredRegistryPlugins(registry, { enabled: undefined });
-    for (const id of ["npm", "docker", "oci", "helm", "pypi", "go", "cargo", "nuget", "apt"]) {
+    for (const id of [
+      "npm",
+      "docker",
+      "oci",
+      "helm",
+      "pypi",
+      "go",
+      "cargo",
+      "nuget",
+      "rubygems",
+      "composer",
+      "maven",
+      "apt",
+    ]) {
       expect(registry.has(id)).toBe(true);
     }
     expect(registered).toContain("oci");
@@ -24,6 +37,9 @@ describe("loadConfiguredRegistryPlugins", () => {
       "go",
       "cargo",
       "nuget",
+      "rubygems",
+      "composer",
+      "maven",
       "apt",
       "oci",
       "helm",

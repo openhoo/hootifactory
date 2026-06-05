@@ -10,7 +10,17 @@ describe("registry plugin bootstrap", () => {
     expect(npm?.capabilities.proxyable).toBe(true);
     expect(npm?.proxyIngest).toBeInstanceOf(Function);
 
-    for (const moduleId of ["docker", "pypi", "go", "cargo", "nuget", "apt"] as const) {
+    for (const moduleId of [
+      "docker",
+      "pypi",
+      "go",
+      "cargo",
+      "nuget",
+      "rubygems",
+      "composer",
+      "maven",
+      "apt",
+    ] as const) {
       const plugin = registryPlugins.lookup(moduleId);
       expect(plugin?.capabilities.proxyable).toBe(false);
       expect(plugin?.proxyIngest).toBeUndefined();
