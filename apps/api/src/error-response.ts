@@ -37,12 +37,13 @@ export function planApplicationErrorResponse(
   const status = safeErrorStatus(isHttpError ? err.status : 500);
   const code = isHttpError ? err.code : INTERNAL_ERROR_CODE;
   const message = isHttpError && err.expose ? err.message : INTERNAL_ERROR_MESSAGE;
-  const body = isApiV1Path(input.path)
-    ? { error: { code, message } }
-    : {
-        errors: [{ code, message }],
-        ...(input.requestId ? { requestId: input.requestId } : {}),
-      };
+  // App routes (api/v1, ui, auth, health) all use the object error envelope the web
+  // client parses ({ error: { code, message } }); only the registry/OCI paths use the
+  // array envelope, and those are handled separately (RegistryError / request-safety).
+  const body = {
+    error: { code, message },
+    ...(!isApiV1Path(input.path) && input.requestId ? { requestId: input.requestId } : {}),
+  };
 
   return {
     body,

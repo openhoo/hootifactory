@@ -106,7 +106,7 @@ export async function enforceRequestBodyLimits(
     if (isRegistryPath) {
       return new RegistryError(400, "SIZE_INVALID", "invalid content-length").toResponse();
     }
-    return c.json({ errors: [{ code: "BAD_REQUEST", message: "invalid content-length" }] }, 400);
+    return c.json({ error: { code: "BAD_REQUEST", message: "invalid content-length" } }, 400);
   }
   if (contentLength != null && contentLength > env.REGISTRY_MAX_UPLOAD_BYTES) {
     addSpanEvent("http.request.payload_too_large", {
@@ -128,12 +128,10 @@ export async function enforceRequestBodyLimits(
     }
     return c.json(
       {
-        errors: [
-          {
-            code: "PAYLOAD_TOO_LARGE",
-            message: `request body exceeds ${env.REGISTRY_MAX_UPLOAD_BYTES} bytes`,
-          },
-        ],
+        error: {
+          code: "PAYLOAD_TOO_LARGE",
+          message: `request body exceeds ${env.REGISTRY_MAX_UPLOAD_BYTES} bytes`,
+        },
       },
       413,
     );

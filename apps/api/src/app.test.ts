@@ -132,12 +132,10 @@ describe("request body guard", () => {
 
     expect(response.status).toBe(413);
     await expect(response.json()).resolves.toEqual({
-      errors: [
-        {
-          code: "PAYLOAD_TOO_LARGE",
-          message: `request body exceeds ${env.REGISTRY_MAX_UPLOAD_BYTES} bytes`,
-        },
-      ],
+      error: {
+        code: "PAYLOAD_TOO_LARGE",
+        message: `request body exceeds ${env.REGISTRY_MAX_UPLOAD_BYTES} bytes`,
+      },
     });
   });
 
@@ -152,7 +150,7 @@ describe("request body guard", () => {
 
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toEqual({
-      errors: [{ code: "BAD_REQUEST", message: "invalid content-length" }],
+      error: { code: "BAD_REQUEST", message: "invalid content-length" },
     });
   });
 

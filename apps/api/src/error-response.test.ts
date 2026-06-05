@@ -30,7 +30,7 @@ describe("application error responses", () => {
     expect(plan.logLevel).toBe("error");
     expect(plan.error).toBe(err);
     expect(plan.body).toEqual({
-      errors: [{ code: "INTERNAL", message: "internal server error" }],
+      error: { code: "INTERNAL", message: "internal server error" },
       requestId: "req-500",
     });
   });
@@ -50,7 +50,7 @@ describe("application error responses", () => {
     expect(plan.code).toBe("DATABASE_UNAVAILABLE");
     expect(plan.error).toBe(err);
     expect(plan.body).toEqual({
-      errors: [{ code: "DATABASE_UNAVAILABLE", message: "internal server error" }],
+      error: { code: "DATABASE_UNAVAILABLE", message: "internal server error" },
       requestId: "req-db",
     });
   });
