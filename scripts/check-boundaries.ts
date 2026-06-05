@@ -112,6 +112,8 @@ const rules: BoundaryRule[] = [
       /\bregistryErrorResponseForFormat\b/,
       /\bregistryErrorToFormatResponse\b/,
       /\b(?:format|moduleId)\s*[:=]\s*["'](?:npm|pypi|cargo|nuget|oci|helm|maven|generic)["']/,
+      /\b[Oo]ci[A-Z]/,
+      /["']v2\//,
     ],
   },
   {

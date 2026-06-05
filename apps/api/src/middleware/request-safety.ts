@@ -1,6 +1,7 @@
 import { env } from "@hootifactory/config";
 import { RegistryError, z } from "@hootifactory/core";
 import { addSpanEvent } from "@hootifactory/observability";
+import { isRegistryMountPath } from "@hootifactory/registry";
 import type { Context } from "hono";
 import { logger } from "../lib/logger";
 import { isRegistryAppPath } from "../registry-app-routes";
@@ -20,14 +21,6 @@ function parseContentLength(value: string | undefined): number | "invalid" | nul
   if (value == null) return null;
   const parsed = ContentLengthHeaderSchema.safeParse(value);
   return parsed.success ? parsed.data : "invalid";
-}
-
-// NOTE: the "/v2/" coupling here selects the OCI error-envelope shape for an
-// oversized/invalid registry upload body (vs the generic JSON envelope). Fully
-// generalizing it depends on the per-module renderError envelope hook, which is
-// deferred; until then this stays the one residual OCI reference in this file.
-function registryPathname(pathname: string): string | null {
-  return pathname.startsWith("/v2/") && pathname !== "/v2/" ? pathname : null;
 }
 
 function isExplicitAppPath(pathname: string): boolean {
@@ -101,14 +94,16 @@ export async function enforceRequestBodyLimits(
 ): Promise<Response | undefined> {
   const pathname = c.req.path;
   const contentLength = parseContentLength(c.req.header("content-length"));
-  const registryPath = registryPathname(pathname);
+  // Registry-protocol uploads (any module's mount tree) get the registry error
+  // envelope; everything else gets the generic API JSON envelope.
+  const isRegistryPath = isRegistryMountPath(pathname);
   if (contentLength === "invalid") {
     addSpanEvent("http.request.invalid_content_length");
     logger.debug("invalid content-length rejected", {
       method: c.req.method,
       path: pathname,
     });
-    if (registryPath) {
+    if (isRegistryPath) {
       return new RegistryError(400, "SIZE_INVALID", "invalid content-length").toResponse();
     }
     return c.json({ errors: [{ code: "BAD_REQUEST", message: "invalid content-length" }] }, 400);
@@ -124,10 +119,10 @@ export async function enforceRequestBodyLimits(
       contentLength,
       limit: env.REGISTRY_MAX_UPLOAD_BYTES,
     });
-    if (registryPath) {
+    if (isRegistryPath) {
       return new RegistryError(
         413,
-        registryPath.includes("/manifests/") ? "MANIFEST_INVALID" : "SIZE_INVALID",
+        "SIZE_INVALID",
         `request body exceeds ${env.REGISTRY_MAX_UPLOAD_BYTES} bytes`,
       ).toResponse();
     }

@@ -101,3 +101,23 @@ export function isImmutableContentPath(
   }
   return false;
 }
+
+/**
+ * Whether an absolute path addresses some registered module's mount tree (deeper
+ * than the bare segment root). Lets agnostic middleware recognize registry
+ * traffic from the registered modules' mount segments instead of a hardcoded
+ * mount prefix.
+ */
+export function isRegistryMountPath(
+  pathname: string,
+  registry: RegistryPluginRegistry = registryPlugins,
+): boolean {
+  const prefixes = registry.derive(
+    "mountPrefixes",
+    () => new Set(registry.all().map((plugin) => `/${plugin.mountSegment}/`)),
+  );
+  for (const prefix of prefixes) {
+    if (pathname.startsWith(prefix) && pathname !== prefix) return true;
+  }
+  return false;
+}
