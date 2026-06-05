@@ -25,6 +25,30 @@ export function buildOciBlobHeaders(input: {
   };
 }
 
+type ResponseBody = ConstructorParameters<typeof Response>[0];
+
+// Serve the range as an async-iterable body (not a raw ReadableStream): Bun honors
+// the explicit content-length header for an async iterable, whereas a raw stream is
+// sent chunked with content-length stripped. On early termination (client aborts a
+// partial pull) the generator's return() runs the finally, which CANCELS the source
+// — tearing down the S3/MinIO connection — rather than only releasing the lock.
+function streamResponseBody(stream: ReadableStream<Uint8Array>): ResponseBody {
+  return {
+    async *[Symbol.asyncIterator]() {
+      const reader = stream.getReader();
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          yield value;
+        }
+      } finally {
+        await reader.cancel().catch(() => {});
+      }
+    },
+  } as ResponseBody;
+}
+
 export async function buildOciBlobResponse(input: OciBlobResponseInput): Promise<Response> {
   const headers = buildOciBlobHeaders({
     digest: input.digest,
@@ -47,10 +71,7 @@ export async function buildOciBlobResponse(input: OciBlobResponseInput): Promise
 
   headers["content-range"] = `bytes ${range.start}-${range.end}/${input.size}`;
   headers["content-length"] = String(range.end - range.start + 1);
-  // Pass the source stream straight to Response so Bun propagates client
-  // cancellation (aborted/partial pulls) down to the S3 stream; wrapping it in an
-  // async generator would only releaseLock() on abort, leaking the S3 connection.
-  return new Response(input.getRange(range.start, range.end + 1), {
+  return new Response(streamResponseBody(input.getRange(range.start, range.end + 1)), {
     status: 206,
     headers,
   });
