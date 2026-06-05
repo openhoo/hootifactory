@@ -34,7 +34,7 @@ import {
   listContentSubjectManifests,
   listContentTags,
   markContentPackageVersionsDeletedByDigest,
-  ociBlobRefExists,
+  contentBlobRefExists,
   replaceContentManifestBlobRefs,
   resolveContentManifest,
   upsertContentManifest,
@@ -87,7 +87,6 @@ import {
   assertPackageInRepo,
   assertVersionForPackage,
   assetForWrite,
-  assetRoleForBlobKind,
   assetWithDefaults,
   deleteReplacedAssetRef,
   packageId,
@@ -272,7 +271,7 @@ export function createRegistryDataService(ctx: RegistryRequestContext): Registry
         await deleteRegistryAssetRef(ctx, {
           digest: input.digest,
           scope: input.scope,
-          role: assetRoleForBlobKind(input.kind),
+          role: input.kind,
         });
       },
       staging: {
@@ -308,7 +307,7 @@ export function createRegistryDataService(ctx: RegistryRequestContext): Registry
           packageId: packageId(ctx, input.package),
           digests: input.digests,
         }),
-      blobRefExists: (input) => ociBlobRefExists(ctx, input),
+      blobRefExists: (input) => contentBlobRefExists(ctx, input),
       upsertManifest: (input) => upsertContentManifest(ctx, input),
       upsertTag: (input) => {
         assertPackageInRepo(ctx, input.package);

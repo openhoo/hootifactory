@@ -212,6 +212,42 @@ const rules: BoundaryRule[] = [
       /@hootifactory\/storage\b/,
     ],
   },
+  {
+    // Lock in the registry-type-plugin refactor: the foundational, SDK, auth,
+    // persistence, contract, and application packages must never re-acquire
+    // OCI/format-specific identity (types, media types, the data namespace, or
+    // the format-named tables). Only registry-<type> plugins + registry-builtins
+    // may name a format.
+    name: "agnostic packages stay free of OCI/format-specific identity",
+    roots: [
+      "packages/types/src",
+      "packages/core/src",
+      "packages/registry/src",
+      "packages/auth/src",
+      "packages/db/src",
+      "packages/contracts/src",
+      "packages/registry-application/src",
+    ],
+    ignoreTests: true,
+    forbidden: [
+      /\bOci[A-Z]/,
+      /\bOCI_MEDIA_TYPES\b/,
+      /\bdata\.oci\b/,
+      /\boci_manifests\b/,
+      /\boci_tags\b/,
+      /\boci_manifest_blob_refs\b/,
+      /\bociManifestId\b/,
+    ],
+  },
+  {
+    // Agnostic auth must never re-acquire a module's scope/action grammar
+    // (e.g. the Docker pull/push verbs or the v2/ mount prefix). Modules own
+    // their grammar; auth reasons over generic read/write/delete actions.
+    name: "agnostic auth stays free of module-specific scope/action grammar",
+    roots: ["packages/auth/src"],
+    ignoreTests: true,
+    forbidden: [/["'](?:pull|push)["']/, /["']v2\//],
+  },
 ];
 
 const failures: string[] = [];

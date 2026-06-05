@@ -185,7 +185,7 @@ export async function listContentManifestDigestsReferencingBlob(
   return [...new Set([...taggedRows, ...versionRows].map((row) => row.digest))];
 }
 
-export async function ociBlobRefExists(
+export async function contentBlobRefExists(
   ctx: RegistryRequestContext,
   opts: { scope: string; digest: string },
 ): Promise<boolean> {
@@ -235,7 +235,7 @@ export async function upsertContentManifest(
       repositoryId: contentManifests.repositoryId,
       digest: contentManifests.digest,
     });
-  if (!manifest) throw new Error("failed to upsert OCI manifest");
+  if (!manifest) throw new Error("failed to upsert content manifest");
   return manifest;
 }
 

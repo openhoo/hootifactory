@@ -28,7 +28,7 @@ export function assertManifestInRepo(
   manifest: RegistryManifestHandle,
 ): void {
   if (manifest.repositoryId !== ctx.repo.id) {
-    throw new Error("registry OCI manifest handle does not belong to this repository");
+    throw new Error("registry content manifest handle does not belong to this repository");
   }
 }
 
@@ -73,15 +73,6 @@ export function assetWithDefaults(
   });
 }
 
-export function assetRoleForBlobKind(kind: string): string | undefined {
-  if (kind === "oci_layer") return "oci_layer";
-  if (kind === "oci_config") return "oci_config";
-  if (kind === "oci_manifest") return "oci_manifest";
-  if (kind === "npm_tarball") return "npm_tarball";
-  if (kind === "pypi_file") return "pypi_file";
-  return undefined;
-}
-
 export function replacedAssetRef(input: {
   previousDigest?: string | null;
   currentDigest: string;
@@ -93,7 +84,7 @@ export function replacedAssetRef(input: {
   return {
     digest: input.previousDigest,
     scope: input.asset?.scope ?? input.scope,
-    role: input.asset?.role ?? assetRoleForBlobKind(input.kind),
+    role: input.asset?.role ?? input.kind,
   };
 }
 
