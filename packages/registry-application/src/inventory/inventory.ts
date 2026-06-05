@@ -56,10 +56,10 @@ export type ArtifactFindingRow = Pick<
 >;
 
 export async function countRepositoryPackages(repositoryId: string): Promise<number> {
-  const rows = (await db
+  const rows = await db
     .select({ value: count() })
     .from(packages)
-    .where(eq(packages.repositoryId, repositoryId))) as Array<{ value: number }>;
+    .where(eq(packages.repositoryId, repositoryId));
   return rows[0]?.value ?? 0;
 }
 
@@ -106,14 +106,10 @@ export async function listLivePackageVersionSummaries(
 }
 
 export async function countLivePackageVersions(packageId: string): Promise<number> {
-  const rows = (await db
+  const rows = await db
     .select({ value: count() })
     .from(packageVersions)
-    .where(
-      and(eq(packageVersions.packageId, packageId), isNull(packageVersions.deletedAt)),
-    )) as Array<{
-    value: number;
-  }>;
+    .where(and(eq(packageVersions.packageId, packageId), isNull(packageVersions.deletedAt)));
   return rows[0]?.value ?? 0;
 }
 
@@ -139,10 +135,10 @@ export async function listRepositoryArtifactSummaries(
 }
 
 export async function countRepositoryArtifacts(repositoryId: string): Promise<number> {
-  const rows = (await db
+  const rows = await db
     .select({ value: count() })
     .from(artifacts)
-    .where(eq(artifacts.repositoryId, repositoryId))) as Array<{ value: number }>;
+    .where(eq(artifacts.repositoryId, repositoryId));
   return rows[0]?.value ?? 0;
 }
 
@@ -169,10 +165,10 @@ export async function countArtifactFindings(
   artifactId: string,
   input: { severity?: Severity } = {},
 ): Promise<number> {
-  const rows = (await db
+  const rows = await db
     .select({ value: count() })
     .from(findings)
-    .where(artifactFindingsWhere(artifactId, input.severity))) as Array<{ value: number }>;
+    .where(artifactFindingsWhere(artifactId, input.severity));
   return rows[0]?.value ?? 0;
 }
 

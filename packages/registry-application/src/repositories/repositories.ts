@@ -41,10 +41,10 @@ export async function getRepositoryById(id: string): Promise<ResolvedRepo | null
 }
 
 export async function countRepositoriesForOrg(orgId: string): Promise<number> {
-  const rows = (await db
+  const rows = await db
     .select({ value: count() })
     .from(repositories)
-    .where(eq(repositories.orgId, orgId))) as Array<{ value: number }>;
+    .where(eq(repositories.orgId, orgId));
   return rows[0]?.value ?? 0;
 }
 

@@ -1,6 +1,4 @@
 export {
-  type DistTagVersionPackageRow,
-  type DistTagVersionRow,
   deleteDistTag,
   listLiveDistTags,
   listLiveDistTagsForPackages,
