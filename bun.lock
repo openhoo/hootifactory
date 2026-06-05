@@ -228,8 +228,22 @@
         "@hootifactory/types": "workspace:*",
       },
     },
+    "packages/registry-apt": {
+      "name": "@hootifactory/registry-apt",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/registry": "workspace:*",
+      },
+    },
     "packages/registry-cargo": {
       "name": "@hootifactory/registry-cargo",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/registry": "workspace:*",
+      },
+    },
+    "packages/registry-composer": {
+      "name": "@hootifactory/registry-composer",
       "version": "0.0.0",
       "dependencies": {
         "@hootifactory/registry": "workspace:*",
@@ -244,6 +258,13 @@
     },
     "packages/registry-go": {
       "name": "@hootifactory/registry-go",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/registry": "workspace:*",
+      },
+    },
+    "packages/registry-maven": {
+      "name": "@hootifactory/registry-maven",
       "version": "0.0.0",
       "dependencies": {
         "@hootifactory/registry": "workspace:*",
@@ -277,19 +298,30 @@
         "@hootifactory/registry": "workspace:*",
       },
     },
+    "packages/registry-rubygems": {
+      "name": "@hootifactory/registry-rubygems",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/registry": "workspace:*",
+      },
+    },
     "packages/registry-runtime": {
       "name": "@hootifactory/registry-runtime",
       "version": "0.0.0",
       "dependencies": {
         "@hootifactory/config": "workspace:*",
         "@hootifactory/registry": "workspace:*",
+        "@hootifactory/registry-apt": "workspace:*",
         "@hootifactory/registry-cargo": "workspace:*",
+        "@hootifactory/registry-composer": "workspace:*",
         "@hootifactory/registry-dart": "workspace:*",
         "@hootifactory/registry-go": "workspace:*",
+        "@hootifactory/registry-maven": "workspace:*",
         "@hootifactory/registry-npm": "workspace:*",
         "@hootifactory/registry-nuget": "workspace:*",
         "@hootifactory/registry-oci": "workspace:*",
         "@hootifactory/registry-pypi": "workspace:*",
+        "@hootifactory/registry-rubygems": "workspace:*",
       },
     },
     "packages/scan-core": {
@@ -565,11 +597,17 @@
 
     "@hootifactory/registry-application": ["@hootifactory/registry-application@workspace:packages/registry-application"],
 
+    "@hootifactory/registry-apt": ["@hootifactory/registry-apt@workspace:packages/registry-apt"],
+
     "@hootifactory/registry-cargo": ["@hootifactory/registry-cargo@workspace:packages/registry-cargo"],
+
+    "@hootifactory/registry-composer": ["@hootifactory/registry-composer@workspace:packages/registry-composer"],
 
     "@hootifactory/registry-dart": ["@hootifactory/registry-dart@workspace:packages/registry-dart"],
 
     "@hootifactory/registry-go": ["@hootifactory/registry-go@workspace:packages/registry-go"],
+
+    "@hootifactory/registry-maven": ["@hootifactory/registry-maven@workspace:packages/registry-maven"],
 
     "@hootifactory/registry-npm": ["@hootifactory/registry-npm@workspace:packages/registry-npm"],
 
@@ -578,6 +616,8 @@
     "@hootifactory/registry-oci": ["@hootifactory/registry-oci@workspace:packages/registry-oci"],
 
     "@hootifactory/registry-pypi": ["@hootifactory/registry-pypi@workspace:packages/registry-pypi"],
+
+    "@hootifactory/registry-rubygems": ["@hootifactory/registry-rubygems@workspace:packages/registry-rubygems"],
 
     "@hootifactory/registry-runtime": ["@hootifactory/registry-runtime@workspace:packages/registry-runtime"],
 
