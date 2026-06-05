@@ -1,7 +1,6 @@
 import type { TokenGrant } from "@hootifactory/types";
 import { sql } from "drizzle-orm";
 import {
-  boolean,
   check,
   index,
   integer,
@@ -170,23 +169,6 @@ export const roleBindings = pgTable(
       .on(t.orgId, t.tokenId)
       .where(sql`${t.tokenId} is not null and ${t.repositoryId} is null`),
   ],
-);
-
-/** OIDC providers (Phase 4). Global when orgId is null. */
-export const oidcProviders = pgTable(
-  "oidc_providers",
-  {
-    id: primaryId(),
-    orgId: uuid().references(() => organizations.id, { onDelete: "cascade" }),
-    name: text().notNull(),
-    issuer: text().notNull(),
-    clientId: text().notNull(),
-    clientSecret: text().notNull(),
-    groupClaim: text().notNull().default("groups"),
-    enabled: boolean().notNull().default(true),
-    ...timestamps(),
-  },
-  (t) => [index("oidc_providers_org_idx").on(t.orgId)],
 );
 
 /** External identity links for SSO providers. */
