@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createTestRegistryContext } from "@hootifactory/registry/testing";
-import { OCI_MEDIA_TYPES } from "@hootifactory/types";
+import { OCI_MEDIA_TYPES } from "./oci-media-types";
 import {
   buildOciManifestCreatedHeaders,
   isOciBlobBlocked,

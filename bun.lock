@@ -272,7 +272,6 @@
       "version": "0.0.0",
       "dependencies": {
         "@hootifactory/registry": "workspace:*",
-        "@hootifactory/types": "workspace:*",
       },
     },
     "packages/registry-pypi": {
@@ -310,9 +309,6 @@
     "packages/types": {
       "name": "@hootifactory/types",
       "version": "0.0.0",
-      "dependencies": {
-        "zod": "^4.4.3",
-      },
     },
   },
   "packages": {

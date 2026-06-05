@@ -5,13 +5,12 @@ import {
   parseRegistryInput,
   z,
 } from "@hootifactory/registry";
+import { OCI_MEDIA_TYPES, type OciDescriptor } from "./oci-media-types";
 import {
-  OCI_MEDIA_TYPES,
-  type OciDescriptor,
   type OciManifestReferenceLists,
   ociManifestReferences,
   ociManifestReferencesFromValue,
-} from "@hootifactory/types";
+} from "./oci-manifest-graph";
 
 const OCI_ARTIFACT_MANIFEST_MEDIA_TYPE = "application/vnd.oci.artifact.manifest.v1+json";
 const SUPPORTED_MANIFEST_MEDIA_TYPES = new Set<string>([

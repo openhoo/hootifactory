@@ -13,7 +13,7 @@ import {
   registryCapabilities,
   registryPlugin,
 } from "@hootifactory/registry";
-import { ociManifestReferences } from "@hootifactory/types";
+import { ociManifestReferences } from "./oci-manifest-graph";
 import { buildOciBlobResponse } from "./oci-blobs";
 import {
   deleteOciBlobReference,

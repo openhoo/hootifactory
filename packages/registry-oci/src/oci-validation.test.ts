@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { RegistryError } from "@hootifactory/registry";
-import { OCI_MEDIA_TYPES } from "@hootifactory/types";
+import { OCI_MEDIA_TYPES } from "./oci-media-types";
 import {
   acceptsMediaType,
   MAX_OCI_DESCRIPTOR_ARRAY_ITEMS,

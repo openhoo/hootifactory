@@ -13,7 +13,6 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@hootifactory/registry": "workspace:*",
-    "@hootifactory/types": "workspace:*"
+    "@hootifactory/registry": "workspace:*"
   }
 }

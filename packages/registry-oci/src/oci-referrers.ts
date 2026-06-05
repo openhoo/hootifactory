@@ -1,5 +1,5 @@
 import { parseRegistryInput } from "@hootifactory/registry";
-import { OCI_MEDIA_TYPES } from "@hootifactory/types";
+import { OCI_MEDIA_TYPES } from "./oci-media-types";
 import {
   manifestAnnotations,
   OciReferrersQuerySchema,

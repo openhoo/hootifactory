@@ -11,8 +11,5 @@
     "test:unit": "bun run ../../scripts/package-tests.ts unit",
     "test:integration": "bun run ../../scripts/package-tests.ts integration",
     "typecheck": "tsc --noEmit"
-  },
-  "dependencies": {
-    "zod": "^4.4.3"
   }
 }
