@@ -1,4 +1,4 @@
-import { and, artifacts, db, eq, inArray, ociManifests } from "@hootifactory/db";
+import { and, artifacts, db, eq, inArray, contentManifests } from "@hootifactory/db";
 import {
   immutableRegistryBlobCacheControl,
   type RegistryRequestContext,
@@ -79,10 +79,10 @@ export async function loadContentAddressableManifestRaw(input: {
   digest: string;
 }): Promise<{ raw: string } | null> {
   const [manifest] = await db
-    .select({ raw: ociManifests.raw })
-    .from(ociManifests)
+    .select({ raw: contentManifests.raw })
+    .from(contentManifests)
     .where(
-      and(eq(ociManifests.repositoryId, input.repositoryId), eq(ociManifests.digest, input.digest)),
+      and(eq(contentManifests.repositoryId, input.repositoryId), eq(contentManifests.digest, input.digest)),
     )
     .limit(1);
   return manifest ?? null;

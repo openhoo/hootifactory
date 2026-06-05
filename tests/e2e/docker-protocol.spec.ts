@@ -192,8 +192,8 @@ function reapExpiredUploadSessions(): { aborted: number } {
     [
       "-e",
       [
-        'import { reapExpiredOciUploadSessions } from "@hootifactory/registry-application";',
-        "console.log(JSON.stringify(await reapExpiredOciUploadSessions({ limit: 10 })));",
+        'import { reapExpiredContentUploadSessions } from "@hootifactory/registry-application";',
+        "console.log(JSON.stringify(await reapExpiredContentUploadSessions({ limit: 10 })));",
       ].join("\n"),
     ],
     {

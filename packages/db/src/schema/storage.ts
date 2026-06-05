@@ -66,11 +66,12 @@ export const blobRefs = pgTable(
 );
 
 /**
- * OCI manifests. `raw` holds the EXACT manifest bytes (never re-marshalled) so
- * Docker-Content-Digest stays byte-exact. Parsed fields are denormalized.
+ * Content-addressable manifests. `raw` holds the EXACT manifest bytes (never
+ * re-marshalled) so the content digest stays byte-exact. Parsed fields are
+ * denormalized. Owned by content-addressable registry modules.
  */
-export const ociManifests = pgTable(
-  "oci_manifests",
+export const contentManifests = pgTable(
+  "content_manifests",
   {
     id: primaryId(),
     repositoryId: uuid()
@@ -87,8 +88,8 @@ export const ociManifests = pgTable(
     ...timestamps(),
   },
   (t) => [
-    uniqueIndex("oci_manifests_repo_digest_uq").on(t.repositoryId, t.digest),
-    index("oci_manifests_subject_idx").on(t.repositoryId, t.subjectDigest),
+    uniqueIndex("content_manifests_repo_digest_uq").on(t.repositoryId, t.digest),
+    index("content_manifests_subject_idx").on(t.repositoryId, t.subjectDigest),
   ],
 );
 
@@ -137,9 +138,9 @@ export const registryAssets = pgTable(
   ],
 );
 
-/** Mutable OCI tag -> manifest pointers. */
-export const ociTags = pgTable(
-  "oci_tags",
+/** Mutable tag -> content-manifest pointers. */
+export const contentTags = pgTable(
+  "content_tags",
   {
     id: primaryId(),
     repositoryId: uuid()
@@ -151,19 +152,19 @@ export const ociTags = pgTable(
     tag: text().notNull(),
     manifestId: uuid()
       .notNull()
-      .references(() => ociManifests.id, { onDelete: "cascade" }),
+      .references(() => contentManifests.id, { onDelete: "cascade" }),
     ...timestamps(),
   },
   (t) => [
-    uniqueIndex("oci_tags_pkg_tag_uq").on(t.packageId, t.tag),
-    index("oci_tags_repo_idx").on(t.repositoryId),
-    index("oci_tags_manifest_idx").on(t.manifestId),
+    uniqueIndex("content_tags_pkg_tag_uq").on(t.packageId, t.tag),
+    index("content_tags_repo_idx").on(t.repositoryId),
+    index("content_tags_manifest_idx").on(t.manifestId),
   ],
 );
 
-/** Manifest-to-layer references used for OCI blob policy checks. */
-export const ociManifestBlobRefs = pgTable(
-  "oci_manifest_blob_refs",
+/** Manifest-to-layer references used for content-addressable blob policy checks. */
+export const contentBlobRefs = pgTable(
+  "content_blob_refs",
   {
     id: primaryId(),
     repositoryId: uuid()
@@ -174,19 +175,19 @@ export const ociManifestBlobRefs = pgTable(
       .references(() => packages.id, { onDelete: "cascade" }),
     manifestId: uuid()
       .notNull()
-      .references(() => ociManifests.id, { onDelete: "cascade" }),
+      .references(() => contentManifests.id, { onDelete: "cascade" }),
     blobDigest: varchar({ length: 80 }).notNull(),
     ...timestamps(),
   },
   (t) => [
-    uniqueIndex("oci_manifest_blob_refs_pkg_manifest_blob_uq").on(
+    uniqueIndex("content_blob_refs_pkg_manifest_blob_uq").on(
       t.packageId,
       t.manifestId,
       t.blobDigest,
     ),
-    index("oci_manifest_blob_refs_pkg_blob_idx").on(t.packageId, t.blobDigest),
-    index("oci_manifest_blob_refs_repo_blob_idx").on(t.repositoryId, t.blobDigest),
-    index("oci_manifest_blob_refs_manifest_idx").on(t.manifestId),
+    index("content_blob_refs_pkg_blob_idx").on(t.packageId, t.blobDigest),
+    index("content_blob_refs_repo_blob_idx").on(t.repositoryId, t.blobDigest),
+    index("content_blob_refs_manifest_idx").on(t.manifestId),
   ],
 );
 

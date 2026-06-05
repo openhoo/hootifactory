@@ -325,7 +325,6 @@ async function checkRegistryApplicationShape(): Promise<void> {
     "content",
     "governance",
     "inventory",
-    "oci",
     "packages",
     "repositories",
     "routing",

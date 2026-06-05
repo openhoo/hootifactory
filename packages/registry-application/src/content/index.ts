@@ -23,3 +23,4 @@ export {
   sweepUnreferencedCasBlobs,
   uploadBlobStream,
 } from "./blobs";
+export { reapExpiredContentUploadSessions } from "./upload-sessions";

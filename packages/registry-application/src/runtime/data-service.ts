@@ -24,29 +24,29 @@ import {
   uploadBlobStream,
 } from "../content";
 import {
-  deleteOciManifestIfUnassociated,
-  deleteOciTag,
-  deleteOciTagsForManifest,
-  listExistingOciBlobRefDigests,
-  listExistingOciManifestDigests,
-  listLiveOciManifestsForPackage,
-  listOciManifestDigestsReferencingBlob,
-  listOciSubjectManifests,
-  listOciTags,
-  markOciPackageVersionsDeletedByDigest,
+  deleteContentManifestIfUnassociated,
+  deleteContentTag,
+  deleteContentTagsForManifest,
+  listExistingContentBlobRefDigests,
+  listExistingContentManifestDigests,
+  listLiveContentManifestsForPackage,
+  listContentManifestDigestsReferencingBlob,
+  listContentSubjectManifests,
+  listContentTags,
+  markContentPackageVersionsDeletedByDigest,
   ociBlobRefExists,
-  replaceOciManifestBlobRefs,
-  resolveOciManifest,
-  upsertOciManifest,
-  upsertOciTag,
-} from "../oci/manifests";
+  replaceContentManifestBlobRefs,
+  resolveContentManifest,
+  upsertContentManifest,
+  upsertContentTag,
+} from "../content/manifest-store";
 import {
-  createOciUploadSession,
-  listOciMountSources,
-  loadOciUploadSession,
-  markOciUploadSessionAborted,
-  withLockedOciUploadSession,
-} from "../oci/uploads";
+  createContentUploadSession,
+  listContentMountSources,
+  loadContentUploadSession,
+  markContentUploadSessionAborted,
+  withLockedContentUploadSession,
+} from "../content/upload-sessions";
 import {
   deleteDistTag,
   listLiveDistTags,
@@ -297,23 +297,23 @@ export function createRegistryDataService(ctx: RegistryRequestContext): Registry
         }),
     },
     contentAddressable: {
-      createUploadSession: (input) => createOciUploadSession(ctx, input),
-      loadUploadSession: (input) => loadOciUploadSession(ctx, input),
-      withLockedUploadSession: (input) => withLockedOciUploadSession(ctx, input),
-      markUploadSessionAborted: (input) => markOciUploadSessionAborted(ctx, input),
-      listMountSources: listOciMountSources,
-      listExistingBlobRefDigests: (input) => listExistingOciBlobRefDigests(ctx, input),
+      createUploadSession: (input) => createContentUploadSession(ctx, input),
+      loadUploadSession: (input) => loadContentUploadSession(ctx, input),
+      withLockedUploadSession: (input) => withLockedContentUploadSession(ctx, input),
+      markUploadSessionAborted: (input) => markContentUploadSessionAborted(ctx, input),
+      listMountSources: listContentMountSources,
+      listExistingBlobRefDigests: (input) => listExistingContentBlobRefDigests(ctx, input),
       listExistingManifestDigests: (input) =>
-        listExistingOciManifestDigests(ctx, {
+        listExistingContentManifestDigests(ctx, {
           packageId: packageId(ctx, input.package),
           digests: input.digests,
         }),
       blobRefExists: (input) => ociBlobRefExists(ctx, input),
-      upsertManifest: (input) => upsertOciManifest(ctx, input),
+      upsertManifest: (input) => upsertContentManifest(ctx, input),
       upsertTag: (input) => {
         assertPackageInRepo(ctx, input.package);
         assertManifestInRepo(ctx, input.manifest);
-        return upsertOciTag(ctx, {
+        return upsertContentTag(ctx, {
           packageId: input.package.id,
           tag: input.tag,
           manifestId: input.manifest.id,
@@ -322,49 +322,49 @@ export function createRegistryDataService(ctx: RegistryRequestContext): Registry
       replaceManifestBlobRefs: (input) => {
         assertPackageInRepo(ctx, input.package);
         assertManifestInRepo(ctx, input.manifest);
-        return replaceOciManifestBlobRefs(ctx, {
+        return replaceContentManifestBlobRefs(ctx, {
           packageId: input.package.id,
           manifestId: input.manifest.id,
           digests: input.digests,
         });
       },
       listManifestDigestsReferencingBlob: (input) =>
-        listOciManifestDigestsReferencingBlob(ctx, {
+        listContentManifestDigestsReferencingBlob(ctx, {
           packageId: packageId(ctx, input.package),
           digest: input.digest,
         }),
       resolveManifest: (input) =>
-        resolveOciManifest(ctx, {
+        resolveContentManifest(ctx, {
           packageId: packageId(ctx, input.package),
           reference: input.reference,
         }),
       deleteTagsForManifest: (input) => {
         assertPackageInRepo(ctx, input.package);
         assertManifestInRepo(ctx, input.manifest);
-        return deleteOciTagsForManifest({
+        return deleteContentTagsForManifest({
           packageId: input.package.id,
           manifestId: input.manifest.id,
         });
       },
       markPackageVersionsDeletedByDigest: (input) =>
-        markOciPackageVersionsDeletedByDigest({
+        markContentPackageVersionsDeletedByDigest({
           orgId: ctx.repo.orgId,
           packageId: packageId(ctx, input.package),
           digest: input.digest,
         }),
       deleteManifestIfUnassociated: (input) => {
         assertManifestInRepo(ctx, input.manifest);
-        return deleteOciManifestIfUnassociated(ctx, {
+        return deleteContentManifestIfUnassociated(ctx, {
           manifestId: input.manifest.id,
           digest: input.digest,
         });
       },
       deleteTag: (input) =>
-        deleteOciTag({ packageId: packageId(ctx, input.package), tag: input.tag }),
+        deleteContentTag({ packageId: packageId(ctx, input.package), tag: input.tag }),
       listLiveManifestsForPackage: (pkg) =>
-        listLiveOciManifestsForPackage(ctx, packageId(ctx, pkg)),
-      listTags: (pkg, opts) => listOciTags(packageId(ctx, pkg), opts),
-      listSubjectManifests: (subjectDigest) => listOciSubjectManifests(ctx, subjectDigest),
+        listLiveContentManifestsForPackage(ctx, packageId(ctx, pkg)),
+      listTags: (pkg, opts) => listContentTags(packageId(ctx, pkg), opts),
+      listSubjectManifests: (subjectDigest) => listContentSubjectManifests(ctx, subjectDigest),
     },
   };
 }

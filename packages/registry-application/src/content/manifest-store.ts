@@ -7,9 +7,9 @@ import {
   gt,
   inArray,
   isNull,
-  ociManifestBlobRefs,
-  ociManifests,
-  ociTags,
+  contentBlobRefs,
+  contentManifests,
+  contentTags,
   packages,
   packageVersions,
   sql,
@@ -21,26 +21,26 @@ import type {
 } from "@hootifactory/registry";
 import { adjustArtifactsUsedTx } from "../governance/quota";
 
-export type OciManifestRow = typeof ociManifests.$inferSelect;
+export type ContentManifestRow = typeof contentManifests.$inferSelect;
 
-export interface OciManifestRawRow {
+export interface ContentManifestRawRow {
   digest: string;
   raw: string;
 }
 
-interface OciDigestRow {
+interface ContentDigestRow {
   digest: string;
 }
 
-interface OciTagRow {
+interface ContentTagRow {
   tag: string;
 }
 
-interface OciVersionMetadataRow {
+interface ContentVersionMetadataRow {
   metadata: { digest?: unknown };
 }
 
-export interface UpsertOciManifestInput {
+export interface UpsertContentManifestInput {
   digest: string;
   mediaType: string;
   artifactType: string | null;
@@ -54,7 +54,7 @@ function packageVersionDigestEquals(digest: string) {
   return sql`jsonb_extract_path_text((${packageVersions.metadata} #>> '{}')::jsonb, ${"digest"}) = ${digest}`;
 }
 
-export async function listExistingOciBlobRefDigests(
+export async function listExistingContentBlobRefDigests(
   ctx: RegistryRequestContext,
   opts: { scope: string; digests: string[] },
 ): Promise<string[]> {
@@ -68,34 +68,34 @@ export async function listExistingOciBlobRefDigests(
         eq(blobRefs.scope, opts.scope),
         inArray(blobRefs.digest, opts.digests),
       ),
-    )) as OciDigestRow[];
+    )) as ContentDigestRow[];
   return rows.map((row) => row.digest);
 }
 
-export async function listExistingOciManifestDigests(
+export async function listExistingContentManifestDigests(
   ctx: RegistryRequestContext,
   opts: { packageId: string; digests: string[] },
 ): Promise<string[]> {
   if (opts.digests.length === 0) return [];
   const taggedRows = (await db
-    .select({ digest: ociManifests.digest })
-    .from(ociTags)
-    .innerJoin(ociManifests, eq(ociTags.manifestId, ociManifests.id))
+    .select({ digest: contentManifests.digest })
+    .from(contentTags)
+    .innerJoin(contentManifests, eq(contentTags.manifestId, contentManifests.id))
     .where(
       and(
-        eq(ociTags.packageId, opts.packageId),
-        eq(ociManifests.repositoryId, ctx.repo.id),
-        inArray(ociManifests.digest, opts.digests),
+        eq(contentTags.packageId, opts.packageId),
+        eq(contentManifests.repositoryId, ctx.repo.id),
+        inArray(contentManifests.digest, opts.digests),
       ),
-    )) as OciDigestRow[];
+    )) as ContentDigestRow[];
   const versionRows = (await db
     .select({ digest: packageVersions.version })
     .from(packageVersions)
     .innerJoin(
-      ociManifests,
+      contentManifests,
       and(
-        eq(ociManifests.repositoryId, ctx.repo.id),
-        eq(ociManifests.digest, packageVersions.version),
+        eq(contentManifests.repositoryId, ctx.repo.id),
+        eq(contentManifests.digest, packageVersions.version),
       ),
     )
     .where(
@@ -104,28 +104,28 @@ export async function listExistingOciManifestDigests(
         isNull(packageVersions.deletedAt),
         inArray(packageVersions.version, opts.digests),
       ),
-    )) as OciDigestRow[];
+    )) as ContentDigestRow[];
   return [...new Set([...taggedRows, ...versionRows].map((row) => row.digest))];
 }
 
-export async function replaceOciManifestBlobRefs(
+export async function replaceContentManifestBlobRefs(
   ctx: RegistryRequestContext,
   opts: { packageId: string; manifestId: string; digests: string[] },
 ): Promise<void> {
   const digests = [...new Set(opts.digests)];
   await db.transaction(async (tx) => {
     await tx
-      .delete(ociManifestBlobRefs)
+      .delete(contentBlobRefs)
       .where(
         and(
-          eq(ociManifestBlobRefs.repositoryId, ctx.repo.id),
-          eq(ociManifestBlobRefs.packageId, opts.packageId),
-          eq(ociManifestBlobRefs.manifestId, opts.manifestId),
+          eq(contentBlobRefs.repositoryId, ctx.repo.id),
+          eq(contentBlobRefs.packageId, opts.packageId),
+          eq(contentBlobRefs.manifestId, opts.manifestId),
         ),
       );
     if (digests.length === 0) return;
     await tx
-      .insert(ociManifestBlobRefs)
+      .insert(contentBlobRefs)
       .values(
         digests.map((digest) => ({
           repositoryId: ctx.repo.id,
@@ -138,38 +138,38 @@ export async function replaceOciManifestBlobRefs(
   });
 }
 
-export async function listOciManifestDigestsReferencingBlob(
+export async function listContentManifestDigestsReferencingBlob(
   ctx: RegistryRequestContext,
   opts: { packageId: string; digest: string },
 ): Promise<string[]> {
   const taggedRows = (await db
-    .select({ digest: ociManifests.digest })
-    .from(ociManifestBlobRefs)
-    .innerJoin(ociManifests, eq(ociManifestBlobRefs.manifestId, ociManifests.id))
+    .select({ digest: contentManifests.digest })
+    .from(contentBlobRefs)
+    .innerJoin(contentManifests, eq(contentBlobRefs.manifestId, contentManifests.id))
     .innerJoin(
-      ociTags,
+      contentTags,
       and(
-        eq(ociTags.packageId, ociManifestBlobRefs.packageId),
-        eq(ociTags.manifestId, ociManifestBlobRefs.manifestId),
+        eq(contentTags.packageId, contentBlobRefs.packageId),
+        eq(contentTags.manifestId, contentBlobRefs.manifestId),
       ),
     )
     .where(
       and(
-        eq(ociManifestBlobRefs.repositoryId, ctx.repo.id),
-        eq(ociManifestBlobRefs.packageId, opts.packageId),
-        eq(ociManifestBlobRefs.blobDigest, opts.digest),
+        eq(contentBlobRefs.repositoryId, ctx.repo.id),
+        eq(contentBlobRefs.packageId, opts.packageId),
+        eq(contentBlobRefs.blobDigest, opts.digest),
       ),
-    )) as OciDigestRow[];
+    )) as ContentDigestRow[];
   const versionRows = (await db
-    .select({ digest: ociManifests.digest })
-    .from(ociManifestBlobRefs)
-    .innerJoin(ociManifests, eq(ociManifestBlobRefs.manifestId, ociManifests.id))
+    .select({ digest: contentManifests.digest })
+    .from(contentBlobRefs)
+    .innerJoin(contentManifests, eq(contentBlobRefs.manifestId, contentManifests.id))
     .innerJoin(
       packageVersions,
       and(
-        eq(packageVersions.packageId, ociManifestBlobRefs.packageId),
+        eq(packageVersions.packageId, contentBlobRefs.packageId),
         eq(
-          ociManifests.digest,
+          contentManifests.digest,
           sql`jsonb_extract_path_text((${packageVersions.metadata} #>> '{}')::jsonb, ${"digest"})`,
         ),
         isNull(packageVersions.deletedAt),
@@ -177,11 +177,11 @@ export async function listOciManifestDigestsReferencingBlob(
     )
     .where(
       and(
-        eq(ociManifestBlobRefs.repositoryId, ctx.repo.id),
-        eq(ociManifestBlobRefs.packageId, opts.packageId),
-        eq(ociManifestBlobRefs.blobDigest, opts.digest),
+        eq(contentBlobRefs.repositoryId, ctx.repo.id),
+        eq(contentBlobRefs.packageId, opts.packageId),
+        eq(contentBlobRefs.blobDigest, opts.digest),
       ),
-    )) as OciDigestRow[];
+    )) as ContentDigestRow[];
   return [...new Set([...taggedRows, ...versionRows].map((row) => row.digest))];
 }
 
@@ -203,12 +203,12 @@ export async function ociBlobRefExists(
   return Boolean(ref);
 }
 
-export async function upsertOciManifest(
+export async function upsertContentManifest(
   ctx: RegistryRequestContext,
-  input: UpsertOciManifestInput,
+  input: UpsertContentManifestInput,
 ): Promise<{ id: string; repositoryId: string; digest: string }> {
   const [manifest] = await db
-    .insert(ociManifests)
+    .insert(contentManifests)
     .values({
       repositoryId: ctx.repo.id,
       digest: input.digest,
@@ -220,7 +220,7 @@ export async function upsertOciManifest(
       configDigest: input.configDigest,
     })
     .onConflictDoUpdate({
-      target: [ociManifests.repositoryId, ociManifests.digest],
+      target: [contentManifests.repositoryId, contentManifests.digest],
       set: {
         raw: input.raw,
         mediaType: input.mediaType,
@@ -231,20 +231,20 @@ export async function upsertOciManifest(
       },
     })
     .returning({
-      id: ociManifests.id,
-      repositoryId: ociManifests.repositoryId,
-      digest: ociManifests.digest,
+      id: contentManifests.id,
+      repositoryId: contentManifests.repositoryId,
+      digest: contentManifests.digest,
     });
   if (!manifest) throw new Error("failed to upsert OCI manifest");
   return manifest;
 }
 
-export async function upsertOciTag(
+export async function upsertContentTag(
   ctx: RegistryRequestContext,
   opts: { packageId: string; tag: string; manifestId: string },
 ): Promise<void> {
   await db
-    .insert(ociTags)
+    .insert(contentTags)
     .values({
       repositoryId: ctx.repo.id,
       packageId: opts.packageId,
@@ -252,21 +252,21 @@ export async function upsertOciTag(
       manifestId: opts.manifestId,
     })
     .onConflictDoUpdate({
-      target: [ociTags.packageId, ociTags.tag],
+      target: [contentTags.packageId, contentTags.tag],
       set: { manifestId: opts.manifestId },
     });
 }
 
-export async function resolveOciManifest(
+export async function resolveContentManifest(
   ctx: RegistryRequestContext,
   opts: { packageId: string; reference: string },
-): Promise<OciManifestRow | null> {
+): Promise<ContentManifestRow | null> {
   if (opts.reference.startsWith("sha256:")) {
     const [tagged] = await db
-      .select({ manifest: ociManifests })
-      .from(ociTags)
-      .innerJoin(ociManifests, eq(ociTags.manifestId, ociManifests.id))
-      .where(and(eq(ociTags.packageId, opts.packageId), eq(ociManifests.digest, opts.reference)))
+      .select({ manifest: contentManifests })
+      .from(contentTags)
+      .innerJoin(contentManifests, eq(contentTags.manifestId, contentManifests.id))
+      .where(and(eq(contentTags.packageId, opts.packageId), eq(contentManifests.digest, opts.reference)))
       .limit(1);
     if (tagged) return tagged.manifest;
 
@@ -285,33 +285,33 @@ export async function resolveOciManifest(
 
     const [manifest] = await db
       .select()
-      .from(ociManifests)
+      .from(contentManifests)
       .where(
-        and(eq(ociManifests.repositoryId, ctx.repo.id), eq(ociManifests.digest, opts.reference)),
+        and(eq(contentManifests.repositoryId, ctx.repo.id), eq(contentManifests.digest, opts.reference)),
       )
       .limit(1);
     return manifest ?? null;
   }
 
   const [tagged] = await db
-    .select({ manifest: ociManifests })
-    .from(ociTags)
-    .innerJoin(ociManifests, eq(ociTags.manifestId, ociManifests.id))
-    .where(and(eq(ociTags.packageId, opts.packageId), eq(ociTags.tag, opts.reference)))
+    .select({ manifest: contentManifests })
+    .from(contentTags)
+    .innerJoin(contentManifests, eq(contentTags.manifestId, contentManifests.id))
+    .where(and(eq(contentTags.packageId, opts.packageId), eq(contentTags.tag, opts.reference)))
     .limit(1);
   return tagged?.manifest ?? null;
 }
 
-export async function deleteOciTagsForManifest(opts: {
+export async function deleteContentTagsForManifest(opts: {
   packageId: string;
   manifestId: string;
 }): Promise<void> {
   await db
-    .delete(ociTags)
-    .where(and(eq(ociTags.packageId, opts.packageId), eq(ociTags.manifestId, opts.manifestId)));
+    .delete(contentTags)
+    .where(and(eq(contentTags.packageId, opts.packageId), eq(contentTags.manifestId, opts.manifestId)));
 }
 
-export async function markOciPackageVersionsDeletedByDigest(opts: {
+export async function markContentPackageVersionsDeletedByDigest(opts: {
   orgId: string;
   packageId: string;
   digest: string;
@@ -335,15 +335,15 @@ export async function markOciPackageVersionsDeletedByDigest(opts: {
   });
 }
 
-export async function deleteOciManifestIfUnassociated(
+export async function deleteContentManifestIfUnassociated(
   ctx: RegistryRequestContext,
   opts: { manifestId: string; digest: string },
 ): Promise<boolean> {
   if (await ociManifestHasLiveAssociations(ctx, opts)) return false;
   const deleted = await db
-    .delete(ociManifests)
-    .where(and(eq(ociManifests.repositoryId, ctx.repo.id), eq(ociManifests.digest, opts.digest)))
-    .returning({ id: ociManifests.id });
+    .delete(contentManifests)
+    .where(and(eq(contentManifests.repositoryId, ctx.repo.id), eq(contentManifests.digest, opts.digest)))
+    .returning({ id: contentManifests.id });
   return deleted.length > 0;
 }
 
@@ -352,9 +352,9 @@ async function ociManifestHasLiveAssociations(
   opts: { manifestId: string; digest: string },
 ): Promise<boolean> {
   const [tag] = await db
-    .select({ id: ociTags.id })
-    .from(ociTags)
-    .where(eq(ociTags.manifestId, opts.manifestId))
+    .select({ id: contentTags.id })
+    .from(contentTags)
+    .where(eq(contentTags.manifestId, opts.manifestId))
     .limit(1);
   if (tag) return true;
 
@@ -373,29 +373,29 @@ async function ociManifestHasLiveAssociations(
   return Boolean(version);
 }
 
-export async function deleteOciTag(opts: { packageId: string; tag: string }): Promise<boolean> {
+export async function deleteContentTag(opts: { packageId: string; tag: string }): Promise<boolean> {
   const deleted = await db
-    .delete(ociTags)
-    .where(and(eq(ociTags.packageId, opts.packageId), eq(ociTags.tag, opts.tag)))
-    .returning({ id: ociTags.id });
+    .delete(contentTags)
+    .where(and(eq(contentTags.packageId, opts.packageId), eq(contentTags.tag, opts.tag)))
+    .returning({ id: contentTags.id });
   return deleted.length > 0;
 }
 
-export async function listLiveOciManifestsForPackage(
+export async function listLiveContentManifestsForPackage(
   ctx: RegistryRequestContext,
   packageId: string,
-): Promise<OciManifestRawRow[]> {
+): Promise<ContentManifestRawRow[]> {
   const tagRows = (await db
-    .select({ digest: ociManifests.digest })
-    .from(ociTags)
-    .innerJoin(ociManifests, eq(ociTags.manifestId, ociManifests.id))
-    .where(eq(ociTags.packageId, packageId))) as OciDigestRow[];
+    .select({ digest: contentManifests.digest })
+    .from(contentTags)
+    .innerJoin(contentManifests, eq(contentTags.manifestId, contentManifests.id))
+    .where(eq(contentTags.packageId, packageId))) as ContentDigestRow[];
   const versionRows = (await db
     .select({ metadata: packageVersions.metadata })
     .from(packageVersions)
     .where(
       and(eq(packageVersions.packageId, packageId), isNull(packageVersions.deletedAt)),
-    )) as OciVersionMetadataRow[];
+    )) as ContentVersionMetadataRow[];
 
   const digests = new Set<string>(tagRows.map((row) => row.digest));
   for (const row of versionRows) {
@@ -405,29 +405,29 @@ export async function listLiveOciManifestsForPackage(
   if (digests.size === 0) return [];
 
   return db
-    .select({ digest: ociManifests.digest, raw: ociManifests.raw })
-    .from(ociManifests)
+    .select({ digest: contentManifests.digest, raw: contentManifests.raw })
+    .from(contentManifests)
     .where(
-      and(eq(ociManifests.repositoryId, ctx.repo.id), inArray(ociManifests.digest, [...digests])),
+      and(eq(contentManifests.repositoryId, ctx.repo.id), inArray(contentManifests.digest, [...digests])),
     );
 }
 
-export async function listOciTags(
+export async function listContentTags(
   packageId: string,
   opts: RegistryTagListOptions = {},
 ): Promise<RegistryTagListPage> {
   const where =
     opts.last === undefined
-      ? eq(ociTags.packageId, packageId)
-      : and(eq(ociTags.packageId, packageId), gt(ociTags.tag, opts.last));
+      ? eq(contentTags.packageId, packageId)
+      : and(eq(contentTags.packageId, packageId), gt(contentTags.tag, opts.last));
   const query = db
-    .select({ tag: ociTags.tag })
-    .from(ociTags)
+    .select({ tag: contentTags.tag })
+    .from(contentTags)
     .where(where)
-    .orderBy(asc(ociTags.tag));
+    .orderBy(asc(contentTags.tag));
   const rows = (await (opts.pageSize === undefined
     ? query
-    : query.limit(opts.pageSize + 1))) as OciTagRow[];
+    : query.limit(opts.pageSize + 1))) as ContentTagRow[];
   const truncated = opts.pageSize !== undefined && rows.length > opts.pageSize;
   const pageRows = opts.pageSize === undefined ? rows : rows.slice(0, opts.pageSize);
   return {
@@ -436,17 +436,17 @@ export async function listOciTags(
   };
 }
 
-export async function listOciSubjectManifests(
+export async function listContentSubjectManifests(
   ctx: RegistryRequestContext,
   subjectDigest: string,
-): Promise<OciManifestRow[]> {
+): Promise<ContentManifestRow[]> {
   return db
     .select()
-    .from(ociManifests)
+    .from(contentManifests)
     .where(
       and(
-        eq(ociManifests.repositoryId, ctx.repo.id),
-        eq(ociManifests.subjectDigest, subjectDigest),
+        eq(contentManifests.repositoryId, ctx.repo.id),
+        eq(contentManifests.subjectDigest, subjectDigest),
       ),
     );
 }

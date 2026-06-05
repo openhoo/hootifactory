@@ -9,7 +9,6 @@
     "./content": "./src/content/index.ts",
     "./governance": "./src/governance/index.ts",
     "./inventory": "./src/inventory/index.ts",
-    "./oci": "./src/oci/index.ts",
     "./packages": "./src/packages/index.ts",
     "./repositories": "./src/repositories/index.ts",
     "./routing": "./src/routing/index.ts",

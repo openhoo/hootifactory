@@ -141,6 +141,13 @@
       "when": 1780591873500,
       "tag": "0019_drop_registry_asset_oci_manifest_fk",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1780591873600,
+      "tag": "0020_rename_oci_tables_to_content",
+      "breakpoints": true
     }
   ]
 }

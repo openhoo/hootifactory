@@ -12,9 +12,9 @@ import { commitUploadedBlobRefTx } from "../content";
 import { assertStorageQuotaRowAllows, lockOrgQuotaTx, type Tx } from "../governance/quota";
 import { rowsFromExecute, stringField } from "../runtime/raw-rows";
 
-export type OciUploadSessionRow = typeof uploadSessions.$inferSelect;
+export type ContentUploadSessionRow = typeof uploadSessions.$inferSelect;
 
-export interface OciMountSourceRow {
+export interface ContentMountSourceRow {
   orgId: string;
   id: string;
   mountPath: string;
@@ -28,15 +28,15 @@ interface ExpiredUploadSessionRow {
   multipart: string | null;
 }
 
-const OciUploadChunkCandidateSchema = z.looseObject({
+const ContentUploadChunkCandidateSchema = z.looseObject({
   key: z.string().min(1),
 });
 
-const OciUploadChunkListSchema = z.looseObject({
+const ContentUploadChunkListSchema = z.looseObject({
   chunks: z.array(z.unknown()).optional(),
 });
 
-export interface OciUploadSessionMutations {
+export interface ContentUploadSessionMutations {
   assertStagingBudget(input: {
     nextOffsetBytes: number;
     maxStagedUploadBytes: number;
@@ -53,7 +53,7 @@ export interface OciUploadSessionMutations {
   deleteSession(): Promise<void>;
 }
 
-export async function createOciUploadSession(
+export async function createContentUploadSession(
   ctx: RegistryRequestContext,
   input: {
     id: string;
@@ -74,24 +74,24 @@ export async function createOciUploadSession(
   });
 }
 
-export async function loadOciUploadSession(
+export async function loadContentUploadSession(
   ctx: RegistryRequestContext,
   opts: { scope: string; uuid: string },
-): Promise<OciUploadSessionRow | null> {
-  return loadOciUploadSessionWith(opts.scope, opts.uuid, ctx);
+): Promise<ContentUploadSessionRow | null> {
+  return loadContentUploadSessionWith(opts.scope, opts.uuid, ctx);
 }
 
-export async function withLockedOciUploadSession<T>(
+export async function withLockedContentUploadSession<T>(
   ctx: RegistryRequestContext,
   opts: {
     scope: string;
     uuid: string;
-    run: (session: OciUploadSessionRow | null, mutations: OciUploadSessionMutations) => Promise<T>;
+    run: (session: ContentUploadSessionRow | null, mutations: ContentUploadSessionMutations) => Promise<T>;
   },
 ): Promise<T> {
   return db.transaction(async (tx) => {
-    const session = await loadOciUploadSessionWith(opts.scope, opts.uuid, ctx, tx);
-    const mutations: OciUploadSessionMutations = {
+    const session = await loadContentUploadSessionWith(opts.scope, opts.uuid, ctx, tx);
+    const mutations: ContentUploadSessionMutations = {
       assertStagingBudget: async (input) => {
         const quota = await lockOrgQuotaTx(tx, ctx.repo.orgId);
         const otherStagedBytes = await sumOpenUploadBytesForOrgTx(tx, ctx.repo.orgId, opts.uuid);
@@ -109,7 +109,7 @@ export async function withLockedOciUploadSession<T>(
         await tx
           .update(uploadSessions)
           .set({ offsetBytes: patch.offsetBytes, multipart: patch.multipart })
-          .where(openOciUploadSessionWhere(ctx, opts.scope, opts.uuid));
+          .where(openContentUploadSessionWhere(ctx, opts.scope, opts.uuid));
       },
       commitBlobWithRef: async (input) =>
         commitUploadedBlobRefTx(tx, ctx, input.blob, {
@@ -121,13 +121,13 @@ export async function withLockedOciUploadSession<T>(
         await tx
           .update(uploadSessions)
           .set({ state: UPLOAD_STATE.committed, offsetBytes })
-          .where(openOciUploadSessionWhere(ctx, opts.scope, opts.uuid));
+          .where(openContentUploadSessionWhere(ctx, opts.scope, opts.uuid));
       },
       markAborted: async () => {
         await tx
           .update(uploadSessions)
           .set({ state: UPLOAD_STATE.aborted })
-          .where(openOciUploadSessionWhere(ctx, opts.scope, opts.uuid));
+          .where(openContentUploadSessionWhere(ctx, opts.scope, opts.uuid));
       },
       deleteSession: async () => {
         await tx
@@ -145,17 +145,17 @@ export async function withLockedOciUploadSession<T>(
   });
 }
 
-export async function markOciUploadSessionAborted(
+export async function markContentUploadSessionAborted(
   ctx: RegistryRequestContext,
   opts: { scope: string; uuid: string },
 ): Promise<void> {
   await db
     .update(uploadSessions)
     .set({ state: UPLOAD_STATE.aborted })
-    .where(openOciUploadSessionWhere(ctx, opts.scope, opts.uuid));
+    .where(openContentUploadSessionWhere(ctx, opts.scope, opts.uuid));
 }
 
-export async function reapExpiredOciUploadSessions(
+export async function reapExpiredContentUploadSessions(
   input: { limit?: number; now?: Date } = {},
 ): Promise<{ aborted: number }> {
   const limit = Math.max(1, Math.floor(input.limit ?? 100));
@@ -178,7 +178,7 @@ export async function reapExpiredOciUploadSessions(
 
     let aborted = 0;
     for (const session of sessions) {
-      await deleteOciUploadSessionStorage(session);
+      await deleteContentUploadSessionStorage(session);
       const rows = await tx
         .update(uploadSessions)
         .set({ state: UPLOAD_STATE.aborted, updatedAt: new Date() })
@@ -190,7 +190,7 @@ export async function reapExpiredOciUploadSessions(
   });
 }
 
-export async function listOciMountSources(digest: string): Promise<OciMountSourceRow[]> {
+export async function listContentMountSources(digest: string): Promise<ContentMountSourceRow[]> {
   return db
     .select({
       orgId: repositories.orgId,
@@ -213,14 +213,14 @@ function expiredUploadSessionRow(row: unknown): ExpiredUploadSessionRow | null {
 
 function uploadChunkKeys(raw: string | null): string[] {
   if (!raw) return [];
-  const decoded = parseJsonWithSchema(OciUploadChunkListSchema, raw);
+  const decoded = parseJsonWithSchema(ContentUploadChunkListSchema, raw);
   return (decoded?.chunks ?? []).flatMap((chunk) => {
-    const parsed = OciUploadChunkCandidateSchema.safeParse(chunk);
+    const parsed = ContentUploadChunkCandidateSchema.safeParse(chunk);
     return parsed.success ? [parsed.data.key] : [];
   });
 }
 
-async function deleteOciUploadSessionStorage(session: {
+async function deleteContentUploadSessionStorage(session: {
   storageKey: string;
   multipart: string | null;
 }): Promise<void> {
@@ -230,12 +230,12 @@ async function deleteOciUploadSessionStorage(session: {
   );
 }
 
-async function loadOciUploadSessionWith(
+async function loadContentUploadSessionWith(
   scope: string,
   uuid: string,
   ctx: RegistryRequestContext,
   tx?: Tx,
-): Promise<OciUploadSessionRow | null> {
+): Promise<ContentUploadSessionRow | null> {
   const query = (tx ?? db)
     .select()
     .from(uploadSessions)
@@ -269,7 +269,7 @@ async function sumOpenUploadBytesForOrgTx(
   return Number(row?.bytes ?? 0);
 }
 
-function openOciUploadSessionWhere(ctx: RegistryRequestContext, scope: string, uuid: string) {
+function openContentUploadSessionWhere(ctx: RegistryRequestContext, scope: string, uuid: string) {
   return and(
     eq(uploadSessions.id, uuid),
     eq(uploadSessions.repositoryId, ctx.repo.id),

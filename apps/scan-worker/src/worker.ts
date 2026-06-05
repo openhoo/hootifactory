@@ -8,8 +8,10 @@ import {
   withSpan,
 } from "@hootifactory/observability";
 import { createMaintenanceScheduler, intEnv } from "@hootifactory/queue";
-import { sweepUnreferencedCasBlobs } from "@hootifactory/registry-application/content";
-import { reapExpiredOciUploadSessions } from "@hootifactory/registry-application/oci";
+import {
+  reapExpiredContentUploadSessions,
+  sweepUnreferencedCasBlobs,
+} from "@hootifactory/registry-application/content";
 import { registerBuiltInRegistryPlugins } from "@hootifactory/registry-builtins";
 import { SCAN_OUTBOX_STATUS } from "@hootifactory/scan-core";
 import { processScan, recordScanFailure, scannerRuntimeFromEnv } from "./pipeline";
@@ -149,7 +151,7 @@ async function reapExpiredUploads(): Promise<void> {
     const result = await withSpan(
       "oci.upload_sessions.reap_expired",
       { "oci.upload_reaper.batch_size": uploadReaperBatchSize },
-      () => reapExpiredOciUploadSessions({ limit: uploadReaperBatchSize }),
+      () => reapExpiredContentUploadSessions({ limit: uploadReaperBatchSize }),
     );
     if (result.aborted > 0) {
       logger.info("expired OCI upload sessions reaped", { aborted: result.aborted });
