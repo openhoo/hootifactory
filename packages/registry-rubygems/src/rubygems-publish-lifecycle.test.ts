@@ -3,11 +3,12 @@ import type { RegistryPackageRow, RegistryStoredBlob } from "@hootifactory/regis
 import { createTestRegistryContext } from "@hootifactory/registry/testing";
 import { gemFilename, handleGemPush } from "./rubygems-publish-lifecycle";
 
-const GEMSPEC = `--- !ruby/object:Gem::Specification
+function gemspec(platform = "ruby"): string {
+  return `--- !ruby/object:Gem::Specification
 name: hooty
 version: !ruby/object:Gem::Version
   version: 1.0.0
-platform: ruby
+platform: ${platform}
 dependencies:
 - !ruby/object:Gem::Dependency
   name: json
@@ -19,9 +20,10 @@ dependencies:
   type: :runtime
 description: test
 `;
+}
 
-function gemBytes(): Uint8Array {
-  const metaGz = Bun.gzipSync(new TextEncoder().encode(GEMSPEC));
+function gemBytes(platform?: string): Uint8Array {
+  const metaGz = Bun.gzipSync(new TextEncoder().encode(gemspec(platform)));
   const header = new Uint8Array(512);
   header.set(new TextEncoder().encode("metadata.gz"), 0);
   header.set(new TextEncoder().encode(`${metaGz.byteLength.toString(8).padStart(11, "0")}\0`), 124);
@@ -88,6 +90,44 @@ describe("handleGemPush", () => {
     expect(captured.metadata?.sha256).toBe("d".repeat(64));
     expect(captured.assetRole).toBe("rubygems_gem");
     expect(captured.assetScope).toBe(gemFilename("hooty", "1.0.0"));
+  });
+
+  test("stores native platform gems under platform-qualified filenames and version keys", async () => {
+    const ctx = createTestRegistryContext();
+    ctx.data.packages.findOrCreate = async () => packageRow();
+    ctx.data.versions.find = async (_pkg, version) => {
+      expect(version).toBe("1.0.0-x86_64-linux");
+      return null;
+    };
+    ctx.data.content.storeBlobWithRef = async () => stored;
+    const captured: {
+      version?: string;
+      metadata?: Record<string, unknown>;
+      assetScope?: string;
+    } = {};
+    ctx.data.versions.commitOrReleaseBlob = async (input) => {
+      captured.version = input.version;
+      captured.metadata = input.metadata;
+      captured.assetScope = input.asset?.scope;
+      return { versionId: "ver_1" };
+    };
+
+    const res = await handleGemPush(
+      new Request("https://registry.test/api/v1/gems", {
+        method: "POST",
+        body: gemBytes("x86_64-linux"),
+      }),
+      ctx,
+    );
+
+    expect(res.status).toBe(200);
+    expect(captured.version).toBe("1.0.0-x86_64-linux");
+    expect(captured.metadata?.index).toMatchObject({
+      name: "hooty",
+      version: "1.0.0",
+      platform: "x86_64-linux",
+    });
+    expect(captured.assetScope).toBe(gemFilename("hooty", "1.0.0", "x86_64-linux"));
   });
 
   test("rejects a re-push of an existing version with 409", async () => {

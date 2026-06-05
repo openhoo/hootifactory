@@ -9,6 +9,7 @@ import type { GemDependency } from "./rubygems-gem";
 
 export interface GemVersionEntry {
   version: string;
+  platform?: string;
   deps: GemDependency[];
   /** Hex sha256 of the `.gem` file (Bundler verifies the download against this). */
   sha256: string;
@@ -26,7 +27,7 @@ export function buildInfoFile(versions: GemVersionEntry[]): string {
   for (const entry of versions) {
     if (entry.yanked) continue;
     const deps = entry.deps.map((dep) => `${dep.name}:${dep.requirements}`).join(",");
-    lines.push(`${entry.version} ${deps}|checksum:${entry.sha256}`);
+    lines.push(`${gemVersionIdentifier(entry)} ${deps}|checksum:${entry.sha256}`);
   }
   return `${lines.join("\n")}\n`;
 }
@@ -46,16 +47,22 @@ export function buildVersionsFile(createdAt: string, gems: GemVersionsSummary[])
   return `${lines.join("\n")}\n`;
 }
 
+export function gemVersionIdentifier(entry: Pick<GemVersionEntry, "platform" | "version">): string {
+  return entry.platform ? `${entry.version}-${entry.platform}` : entry.version;
+}
+
 /** Reconstruct a compact-index version entry from a stored version-metadata record. */
 export function readGemVersionEntry(metadata: unknown, createdAt: Date): GemVersionEntry | null {
   const record = asJsonRecord(metadata);
   const index = record ? asJsonRecord(record.index) : null;
   if (!index) return null;
   const version = typeof index.version === "string" ? index.version : null;
+  const platform = typeof index.platform === "string" ? index.platform : undefined;
   const sha256 = typeof record?.sha256 === "string" ? record.sha256 : null;
   if (!version || !sha256) return null;
   return {
     version,
+    ...(platform ? { platform } : {}),
     sha256,
     yanked: index.yanked === true,
     createdAt,

@@ -79,6 +79,11 @@ describe("gemspec YAML parsing", () => {
     });
   });
 
+  test("preserves non-ruby platform metadata", () => {
+    const meta = parseGemspecYaml(GEMSPEC.replace("platform: ruby", "platform: x86_64-linux"));
+    expect(meta?.platform).toBe("x86_64-linux");
+  });
+
   test("returns null when name or version is absent", () => {
     expect(parseGemspecYaml("platform: ruby\n")).toBeNull();
   });

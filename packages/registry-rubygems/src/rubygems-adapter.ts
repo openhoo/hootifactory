@@ -21,6 +21,7 @@ import {
   buildVersionsFile,
   type GemVersionEntry,
   type GemVersionsSummary,
+  gemVersionIdentifier,
   md5Hex,
   readGemName,
   readGemVersionEntry,
@@ -260,7 +261,7 @@ export function buildVersionsBody(rows: RegistryVersionMetadataRow[]): string {
     if (live.length === 0) continue;
     summaries.push({
       name,
-      versions: live.map((entry) => entry.version),
+      versions: live.map((entry) => gemVersionIdentifier(entry)),
       infoChecksum: md5Hex(buildInfoFile(entries)),
     });
   }

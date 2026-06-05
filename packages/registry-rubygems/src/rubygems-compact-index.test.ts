@@ -34,6 +34,13 @@ describe("compact index info file", () => {
     );
   });
 
+  test("uses platform-qualified identifiers for native gems", () => {
+    const body = buildInfoFile([
+      entry({ version: "1.0.0", platform: "x86_64-linux", sha256: "a".repeat(64) }),
+    ]);
+    expect(body).toBe(`---\n1.0.0-x86_64-linux |checksum:${"a".repeat(64)}\n`);
+  });
+
   test("omits yanked versions", () => {
     const body = buildInfoFile([
       entry({ version: "1.0.0" }),
@@ -50,6 +57,7 @@ describe("readGemVersionEntry", () => {
         index: {
           name: "hooty",
           version: "1.2.3",
+          platform: "x86_64-linux",
           deps: [{ name: "json", requirements: "~> 2.0" }],
           yanked: false,
         },
@@ -59,6 +67,7 @@ describe("readGemVersionEntry", () => {
     );
     expect(got).toEqual({
       version: "1.2.3",
+      platform: "x86_64-linux",
       sha256: "c".repeat(64),
       yanked: false,
       createdAt: new Date("2026-01-03T00:00:00.000Z"),
@@ -93,6 +102,25 @@ describe("buildVersionsBody", () => {
     expect(lines[0]).toBe("created_at: 2026-01-02T00:00:00.000Z");
     expect(lines[1]).toBe("---");
     expect(lines[2]).toBe(`hooty 1.0.0,1.1.0 ${md5Hex(infoBody)}`);
+  });
+
+  test("keeps platform variants distinct in the versions summary", () => {
+    const body = buildVersionsBody([
+      {
+        version: "1.0.0",
+        createdAt: new Date("2026-01-01T00:00:00.000Z"),
+        metadata: { index: { name: "hooty", version: "1.0.0", deps: [] }, sha256: "a".repeat(64) },
+      },
+      {
+        version: "1.0.0-x86_64-linux",
+        createdAt: new Date("2026-01-02T00:00:00.000Z"),
+        metadata: {
+          index: { name: "hooty", version: "1.0.0", platform: "x86_64-linux", deps: [] },
+          sha256: "b".repeat(64),
+        },
+      },
+    ]);
+    expect(body.split("\n")[2]).toContain("hooty 1.0.0,1.0.0-x86_64-linux ");
   });
 
   test("omits gems whose only versions are yanked", () => {

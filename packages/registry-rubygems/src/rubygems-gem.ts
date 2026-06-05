@@ -87,21 +87,40 @@ function unquote(value: string): string {
   return trimmed;
 }
 
+function fieldValue(line: string, key: string): string | null {
+  if (!line.startsWith(`${key}:`)) return null;
+  return line.slice(key.length + 1).trim();
+}
+
 /** Lines belonging to a top-level `key:` block (everything until the next top-level key). */
 function topLevelSection(yaml: string, key: string): string | null {
-  const header = new RegExp(`^${key}:[^\\n]*\\n`, "m").exec(yaml);
-  if (!header) return null;
-  const rest = yaml.slice(header.index + header[0].length);
-  // Block-sequence items sit at column 0 (`- ...`); stop at the next non-list top-level key.
-  const stop = rest.search(/\n(?=[^ \t\n-])/);
-  return stop < 0 ? rest : rest.slice(0, stop);
+  const lines = yaml.split("\n");
+  const out: string[] = [];
+  let inSection = false;
+  for (const line of lines) {
+    if (!inSection) {
+      if (fieldValue(line, key) !== null) inSection = true;
+      continue;
+    }
+    if (line.length > 0 && line[0] !== " " && line[0] !== "\t" && line[0] !== "-") break;
+    out.push(line);
+  }
+  return inSection ? out.join("\n") : null;
 }
 
 function parseConstraints(section: string): string {
-  const operators = [...section.matchAll(/^\s*- - ["']?([><=~!]+)["']?\s*$/gm)].map((m) => m[1]);
-  const versions = [...section.matchAll(/^\s*version:\s*["']?([^"'\n]+?)["']?\s*$/gm)].map((m) =>
-    (m[1] ?? "").trim(),
-  );
+  const operators: string[] = [];
+  const versions: string[] = [];
+  for (const line of section.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("- - ")) {
+      const op = unquote(trimmed.slice(4));
+      if (/^[><=~!]+$/.test(op)) operators.push(op);
+      continue;
+    }
+    const value = fieldValue(trimmed, "version");
+    if (value !== null) versions.push(unquote(value));
+  }
   const parts = operators.map((op, i) => `${op} ${versions[i] ?? "0"}`);
   return parts.length > 0 ? parts.join("&") : ">= 0";
 }
@@ -112,36 +131,60 @@ function parseDependencies(yaml: string): GemDependency[] {
   const deps: GemDependency[] = [];
   for (const chunk of body.split(/\n(?=- )/)) {
     if (!/Gem::Dependency/.test(chunk)) continue;
-    const name = chunk.match(/^\s*name:\s*(.+)$/m)?.[1];
+    const name = chunk
+      .split("\n")
+      .map((line) => fieldValue(line.trim(), "name"))
+      .find((value): value is string => value !== null);
     if (!name) continue;
-    const type = chunk.match(/type:\s*:(\w+)/)?.[1] ?? "runtime";
+    const type =
+      chunk
+        .split("\n")
+        .map((line) => fieldValue(line.trim(), "type"))
+        .find((value): value is string => value !== null)
+        ?.replace(/^:/, "") ?? "runtime";
     if (type !== "runtime") continue;
     // The `requirement:` block precedes `type:`; `version_requirements:` follows it.
-    const typeIdx = chunk.search(/^\s*type:/m);
-    const reqSection = typeIdx >= 0 ? chunk.slice(0, typeIdx) : chunk;
+    const reqLines: string[] = [];
+    for (const line of chunk.split("\n")) {
+      if (fieldValue(line.trim(), "type") !== null) break;
+      reqLines.push(line);
+    }
+    const reqSection = reqLines.join("\n");
     deps.push({ name: unquote(name), requirements: parseConstraints(reqSection) });
   }
   return deps;
 }
 
 export function parseGemspecYaml(yaml: string): GemMetadata | null {
-  const nameMatch = yaml.match(/^name:[ \t]*(.+)$/m);
-  // The top-level version is a `Gem::Version` object: `version:` then an indented `version:`.
-  const versionMatch = yaml.match(/^version:[^\n]*\n[ \t]+version:[ \t]*(.+)$/m);
-  const name = nameMatch ? unquote(nameMatch[1] ?? "") : "";
-  const version = versionMatch ? unquote(versionMatch[1] ?? "") : "";
+  let name = "";
+  let version = "";
+  let platform = "";
+  let sawTopLevelVersion = false;
+  for (const line of yaml.split("\n")) {
+    if (line.length === 0) continue;
+    const topLevel = line[0] !== " " && line[0] !== "\t" && line[0] !== "-";
+    if (topLevel) {
+      sawTopLevelVersion = fieldValue(line, "version") !== null;
+      const nameValue = fieldValue(line, "name");
+      if (nameValue !== null) name = unquote(nameValue);
+      const platformValue = fieldValue(line, "platform");
+      if (platformValue !== null) platform = unquote(platformValue);
+      continue;
+    }
+    if (sawTopLevelVersion) {
+      const versionValue = fieldValue(line.trim(), "version");
+      if (versionValue !== null) {
+        version = unquote(versionValue);
+        sawTopLevelVersion = false;
+      }
+    }
+  }
   if (!name || !version) return null;
-
-  const platform = (() => {
-    const raw = yaml.match(/^platform:[ \t]*(.+)$/m)?.[1];
-    const value = raw ? unquote(raw) : "";
-    return value && value !== "ruby" ? value : undefined;
-  })();
 
   return {
     name,
     version,
-    ...(platform ? { platform } : {}),
+    ...(platform && platform !== "ruby" ? { platform } : {}),
     dependencies: parseDependencies(yaml),
   };
 }

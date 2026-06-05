@@ -4,13 +4,17 @@ import {
   type RegistryRequestContext,
 } from "@hootifactory/registry";
 import { readGemMetadata } from "./rubygems-gem";
-import { isValidGemName, isValidGemVersion } from "./rubygems-validation";
+import { isValidGemName, isValidGemPlatform, isValidGemVersion } from "./rubygems-validation";
 
 /** Blob/asset kind for stored `.gem` files; the scope is the `.gem` filename. */
 export const GEM_KIND = "rubygems_gem";
 
-export function gemFilename(name: string, version: string): string {
-  return `${name}-${version}.gem`;
+export function gemVersionKey(version: string, platform?: string): string {
+  return platform ? `${version}-${platform}` : version;
+}
+
+export function gemFilename(name: string, version: string, platform?: string): string {
+  return `${name}-${gemVersionKey(version, platform)}.gem`;
 }
 
 export async function handleGemPush(req: Request, ctx: RegistryRequestContext): Promise<Response> {
@@ -20,15 +24,21 @@ export async function handleGemPush(req: Request, ctx: RegistryRequestContext): 
   }
 
   const meta = readGemMetadata(bytes);
-  if (!meta || !isValidGemName(meta.name) || !isValidGemVersion(meta.version)) {
+  if (
+    !meta ||
+    !isValidGemName(meta.name) ||
+    !isValidGemVersion(meta.version) ||
+    (meta.platform && !isValidGemPlatform(meta.platform))
+  ) {
     return new Response("could not parse gem metadata", { status: 422 });
   }
-  const { name, version } = meta;
-  const filename = gemFilename(name, version);
+  const { name, platform, version } = meta;
+  const versionKey = gemVersionKey(version, platform);
+  const filename = gemFilename(name, version, platform);
 
   const result = await publishImmutableVersionBlob(ctx, {
     package: { name },
-    version,
+    version: versionKey,
     kind: GEM_KIND,
     scope: filename,
     blob: {
@@ -42,22 +52,22 @@ export async function handleGemPush(req: Request, ctx: RegistryRequestContext): 
       index: {
         name,
         version,
-        ...(meta.platform ? { platform: meta.platform } : {}),
+        ...(platform ? { platform } : {}),
         deps: meta.dependencies,
         yanked: false,
       },
       gemDigest: stored.digest,
       sha256: digestHex(stored.digest),
     }),
-    scan: { name, version, mediaType: "application/x-tar" },
+    scan: { name, version: versionKey, mediaType: "application/x-tar" },
     asset: () => ({
       role: GEM_KIND,
       scope: filename,
       path: filename,
       mediaType: "application/octet-stream",
-      metadata: { name, version },
+      metadata: { name, version, ...(platform ? { platform } : {}) },
     }),
-    versionConflict: async (pkg) => Boolean(await ctx.data.versions.find(pkg, version)),
+    versionConflict: async (pkg) => Boolean(await ctx.data.versions.find(pkg, versionKey)),
   });
 
   if (!result.ok) {
