@@ -13,6 +13,7 @@ import {
   sql,
 } from "@hootifactory/db";
 import type { Severity } from "@hootifactory/scan-core";
+import { lockOrgQuotaTx, type Tx } from "./quota";
 import { invalidateRegistryScanPolicyCache } from "./scan-policy";
 
 export type ScanPolicyRow = typeof scanPolicies.$inferSelect;
@@ -74,28 +75,36 @@ export async function getOrgQuota(orgId: string): Promise<OrgQuotaState> {
 }
 
 export async function setOrgQuota(orgId: string, limits: OrgQuotaLimits): Promise<OrgQuotaState> {
-  const usage = await calculateOrgQuotaUsage(orgId);
-  await upsertOrgQuota(orgId, limits, usage);
-  return { ...limits, ...usage };
+  // The publish/delete paths serialize quota mutations by taking the org quota
+  // row's FOR UPDATE lock and applying an incremental delta. setOrgQuota instead
+  // recomputes usage from scratch and writes absolute values, so it must take the
+  // same lock — otherwise a concurrent locked adjust can be silently overwritten,
+  // permanently drifting usage below true usage. Recompute + write run inside the
+  // lock-holding transaction so the absolute write reflects a consistent snapshot.
+  return db.transaction(async (tx) => {
+    await lockOrgQuotaTx(tx, orgId);
+    const usage = await calculateOrgQuotaUsage(tx, orgId);
+    await upsertOrgQuota(tx, orgId, limits, usage);
+    return { ...limits, ...usage };
+  });
 }
 
-export async function calculateOrgQuotaUsage(orgId: string): Promise<OrgQuotaUsage> {
-  const orgBlobDigests = db
+export async function calculateOrgQuotaUsage(tx: Tx, orgId: string): Promise<OrgQuotaUsage> {
+  const orgBlobDigests = tx
     .selectDistinct({ digest: blobRefs.digest })
     .from(blobRefs)
     .innerJoin(repositories, eq(blobRefs.repositoryId, repositories.id))
     .where(eq(repositories.orgId, orgId))
     .as("org_blob_digests");
-  const [storageRows, artifactRows] = await Promise.all([
-    db
-      .select({ used: sql<number>`coalesce(sum(${blobs.sizeBytes}), 0)` })
-      .from(orgBlobDigests)
-      .innerJoin(blobs, eq(orgBlobDigests.digest, blobs.digest)),
-    db
-      .select({ used: count() })
-      .from(packageVersions)
-      .where(and(eq(packageVersions.orgId, orgId), isNull(packageVersions.deletedAt))),
-  ]);
+  // Sequential (not Promise.all): both run on the transaction's single connection.
+  const storageRows = await tx
+    .select({ used: sql<number>`coalesce(sum(${blobs.sizeBytes}), 0)` })
+    .from(orgBlobDigests)
+    .innerJoin(blobs, eq(orgBlobDigests.digest, blobs.digest));
+  const artifactRows = await tx
+    .select({ used: count() })
+    .from(packageVersions)
+    .where(and(eq(packageVersions.orgId, orgId), isNull(packageVersions.deletedAt)));
   const storageAgg = storageRows[0];
   const artifactAgg = artifactRows[0];
 
@@ -106,19 +115,21 @@ export async function calculateOrgQuotaUsage(orgId: string): Promise<OrgQuotaUsa
 }
 
 async function upsertOrgQuota(
+  tx: Tx,
   orgId: string,
   limits: OrgQuotaLimits,
   usage: OrgQuotaUsage,
 ): Promise<void> {
-  const [existing] = await db
-    .select({ id: quotas.id })
-    .from(quotas)
-    .where(and(eq(quotas.orgId, orgId), isNull(quotas.repositoryId)))
-    .limit(1);
   const values = { ...limits, ...usage };
-  if (existing) {
-    await db.update(quotas).set(values).where(eq(quotas.id, existing.id));
-    return;
-  }
-  await db.insert(quotas).values({ orgId, ...values });
+  // Single atomic upsert on the partial unique index (org-level row is unique on
+  // orgId where repositoryId IS NULL) so two concurrent first-time sets cannot both
+  // insert a duplicate org row.
+  await tx
+    .insert(quotas)
+    .values({ orgId, ...values })
+    .onConflictDoUpdate({
+      target: quotas.orgId,
+      targetWhere: isNull(quotas.repositoryId),
+      set: values,
+    });
 }
