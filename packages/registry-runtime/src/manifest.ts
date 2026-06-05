@@ -12,6 +12,7 @@ import { nugetRegistryPlugin } from "@hootifactory/registry-nuget";
 import { dockerRegistryPlugin } from "@hootifactory/registry-oci";
 import { pypiRegistryPlugin } from "@hootifactory/registry-pypi";
 import { rubygemsRegistryPlugin } from "@hootifactory/registry-rubygems";
+import { scoopRegistryPlugin } from "@hootifactory/registry-scoop";
 import { swiftRegistryPlugin } from "@hootifactory/registry-swift";
 import { wingetRegistryPlugin } from "@hootifactory/registry-winget";
 
@@ -45,4 +46,5 @@ export const REGISTRY_PLUGIN_MANIFEST: RegistryPluginEntry[] = [
   { plugin: chocolateyRegistryPlugin },
   { plugin: wingetRegistryPlugin },
   { plugin: homebrewRegistryPlugin },
+  { plugin: scoopRegistryPlugin },
 ];

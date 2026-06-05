@@ -338,8 +338,16 @@
         "@hootifactory/registry-oci": "workspace:*",
         "@hootifactory/registry-pypi": "workspace:*",
         "@hootifactory/registry-rubygems": "workspace:*",
+        "@hootifactory/registry-scoop": "workspace:*",
         "@hootifactory/registry-swift": "workspace:*",
         "@hootifactory/registry-winget": "workspace:*",
+      },
+    },
+    "packages/registry-scoop": {
+      "name": "@hootifactory/registry-scoop",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/registry": "workspace:*",
       },
     },
     "packages/registry-swift": {
@@ -656,6 +664,8 @@
     "@hootifactory/registry-rubygems": ["@hootifactory/registry-rubygems@workspace:packages/registry-rubygems"],
 
     "@hootifactory/registry-runtime": ["@hootifactory/registry-runtime@workspace:packages/registry-runtime"],
+
+    "@hootifactory/registry-scoop": ["@hootifactory/registry-scoop@workspace:packages/registry-scoop"],
 
     "@hootifactory/registry-swift": ["@hootifactory/registry-swift@workspace:packages/registry-swift"],
 
