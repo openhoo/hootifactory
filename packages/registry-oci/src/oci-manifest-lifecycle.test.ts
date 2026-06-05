@@ -92,8 +92,12 @@ describe("OCI manifest lifecycle helpers", () => {
             resolveCalls += 1;
             return Promise.resolve(null);
           },
-          upsertManifest: (input) =>
-            Promise.resolve({ id: "manifest_1", repositoryId: base.repo.id, digest: input.digest }),
+          commitManifest: (input) =>
+            Promise.resolve({
+              id: "manifest_1",
+              repositoryId: base.repo.id,
+              digest: input.manifest.digest,
+            }),
         },
       },
     });
@@ -156,8 +160,12 @@ describe("OCI manifest lifecycle helpers", () => {
         contentStore: {
           ...base.data.contentStore,
           listExistingBlobRefDigests: (input) => Promise.resolve(input.digests),
-          upsertManifest: (input) =>
-            Promise.resolve({ id: "manifest_1", repositoryId: base.repo.id, digest: input.digest }),
+          commitManifest: (input) =>
+            Promise.resolve({
+              id: "manifest_1",
+              repositoryId: base.repo.id,
+              digest: input.manifest.digest,
+            }),
           replaceManifestBlobRefs: (input) => {
             recordedRefs.push(input.digests);
             return Promise.resolve();

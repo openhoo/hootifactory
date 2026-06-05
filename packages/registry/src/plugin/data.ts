@@ -431,20 +431,23 @@ export interface RegistryDataService {
       digests: string[];
     }): Promise<string[]>;
     blobRefExists(input: { scope: string; digest: string }): Promise<boolean>;
-    upsertManifest(input: {
-      digest: string;
-      mediaType: string;
-      artifactType: string | null;
-      subjectDigest: string | null;
-      raw: string;
-      sizeBytes: number;
-      configDigest: string | null;
-    }): Promise<RegistryManifestHandle>;
-    upsertTag(input: {
+    /**
+     * Atomically upsert a manifest and (re)point its tags in one transaction so a
+     * concurrent unassociated-delete cannot cascade-remove a just-created tag.
+     */
+    commitManifest(input: {
       package: RegistryPackageHandle;
-      tag: string;
-      manifest: RegistryManifestHandle;
-    }): Promise<void>;
+      tags: string[];
+      manifest: {
+        digest: string;
+        mediaType: string;
+        artifactType: string | null;
+        subjectDigest: string | null;
+        raw: string;
+        sizeBytes: number;
+        configDigest: string | null;
+      };
+    }): Promise<RegistryManifestHandle>;
     replaceManifestBlobRefs(input: {
       package: RegistryPackageHandle;
       manifest: RegistryManifestHandle;

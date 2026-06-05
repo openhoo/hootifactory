@@ -43,17 +43,25 @@ export async function putOciManifest(
   const pkg = await ctx.data.packages.findOrCreate({ name: image });
   await assertReferencedOciManifestsExist(ctx, pkg, manifestPut.referencedManifests);
 
-  const manifest = await ctx.data.contentStore.upsertManifest({
-    digest: manifestPut.digest,
-    mediaType: manifestPut.mediaType,
-    artifactType:
-      typeof manifestPut.parsed.artifactType === "string" ? manifestPut.parsed.artifactType : null,
-    subjectDigest: manifestPut.subjectDigest,
-    raw: manifestPut.raw,
-    sizeBytes: manifestPut.bytes.length,
-    configDigest: manifestPut.configDigest,
+  // Commit the manifest and its tags atomically so a concurrent manifest delete
+  // cannot cascade-remove a tag this push just created.
+  const manifest = await ctx.data.contentStore.commitManifest({
+    package: pkg,
+    tags: manifestPut.acceptedTags,
+    manifest: {
+      digest: manifestPut.digest,
+      mediaType: manifestPut.mediaType,
+      artifactType:
+        typeof manifestPut.parsed.artifactType === "string"
+          ? manifestPut.parsed.artifactType
+          : null,
+      subjectDigest: manifestPut.subjectDigest,
+      raw: manifestPut.raw,
+      sizeBytes: manifestPut.bytes.length,
+      configDigest: manifestPut.configDigest,
+    },
   });
-  const versionId = await recordOciManifestVersion(ctx, pkg, manifest, manifestPut);
+  const versionId = await recordOciManifestVersions(ctx, pkg, manifestPut);
   await ctx.data.contentStore.replaceManifestBlobRefs({
     package: pkg,
     manifest,
@@ -123,12 +131,13 @@ async function assertReferencedOciManifestsExist(
   if (missing.length > 0) throw Errors.manifestBlobUnknown({ missing });
 }
 
-async function recordOciManifestVersion(
+async function recordOciManifestVersions(
   ctx: RegistryRequestContext,
   pkg: { id: string; orgId: string; repositoryId: string; name: string },
-  manifest: { id: string; repositoryId: string; digest: string },
   manifestPut: OciManifestPutRequest,
 ): Promise<string> {
+  // Tags are created together with the manifest in commitManifest; here we only
+  // record the package-version rows (one per tag, or one for a digest push).
   const metadata = {
     digest: manifestPut.digest,
     mediaType: manifestPut.mediaType,
@@ -138,7 +147,6 @@ async function recordOciManifestVersion(
   let versionId: string | null = null;
   if (manifestPut.acceptedTags.length > 0) {
     for (const tag of manifestPut.acceptedTags) {
-      await ctx.data.contentStore.upsertTag({ package: pkg, tag, manifest });
       versionId = await ctx.data.versions.upsert({
         package: pkg,
         version: tag,

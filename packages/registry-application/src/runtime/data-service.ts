@@ -24,6 +24,7 @@ import {
   uploadBlobStream,
 } from "../content";
 import {
+  commitContentManifest,
   contentBlobRefExists,
   deleteContentManifestIfUnassociated,
   deleteContentTag,
@@ -37,8 +38,6 @@ import {
   markContentPackageVersionsDeletedByDigest,
   replaceContentManifestBlobRefs,
   resolveContentManifest,
-  upsertContentManifest,
-  upsertContentTag,
 } from "../content/manifest-store";
 import {
   createContentUploadSession,
@@ -308,14 +307,12 @@ export function createRegistryDataService(ctx: RegistryRequestContext): Registry
           digests: input.digests,
         }),
       blobRefExists: (input) => contentBlobRefExists(ctx, input),
-      upsertManifest: (input) => upsertContentManifest(ctx, input),
-      upsertTag: (input) => {
+      commitManifest: (input) => {
         assertPackageInRepo(ctx, input.package);
-        assertManifestInRepo(ctx, input.manifest);
-        return upsertContentTag(ctx, {
+        return commitContentManifest(ctx, {
+          manifest: input.manifest,
           packageId: input.package.id,
-          tag: input.tag,
-          manifestId: input.manifest.id,
+          tags: input.tags,
         });
       },
       replaceManifestBlobRefs: (input) => {

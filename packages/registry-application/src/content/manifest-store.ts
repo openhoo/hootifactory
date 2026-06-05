@@ -19,7 +19,8 @@ import type {
   RegistryTagListOptions,
   RegistryTagListPage,
 } from "@hootifactory/registry";
-import { adjustArtifactsUsedTx } from "../governance/quota";
+import { adjustArtifactsUsedTx, type Tx } from "../governance/quota";
+import { lockDigestTx } from "./blobs";
 
 export type ContentManifestRow = typeof contentManifests.$inferSelect;
 
@@ -52,6 +53,18 @@ export interface UpsertContentManifestInput {
 
 function packageVersionDigestEquals(digest: string) {
   return sql`jsonb_extract_path_text((${packageVersions.metadata} #>> '{}')::jsonb, ${"digest"}) = ${digest}`;
+}
+
+/**
+ * Advisory-lock key scoping a manifest to its repository+digest. The manifest
+ * write (commitContentManifest) and the unassociated-delete take this same lock
+ * so they serialize against each other.
+ */
+function manifestLockKey(repositoryId: string, digest: string): string {
+  // Postgres text (the bind type for the advisory-lock hash) cannot contain null
+  // bytes, so use a printable delimiter. repositoryId is a UUID, so ':' is
+  // unambiguous.
+  return `content_manifest:${repositoryId}:${digest}`;
 }
 
 export async function listExistingContentBlobRefDigests(
@@ -203,58 +216,65 @@ export async function contentBlobRefExists(
   return Boolean(ref);
 }
 
-export async function upsertContentManifest(
+/**
+ * Atomically upsert a manifest and (re)point its tags under a single advisory
+ * lock keyed on (repo, digest). Holding the manifest write and its tag writes in
+ * one locked transaction serializes them against deleteContentManifestIfUnassociated,
+ * so a concurrent delete cannot cascade-remove a tag this push just created
+ * (content_tags FKs onto content_manifests with ON DELETE CASCADE).
+ */
+export async function commitContentManifest(
   ctx: RegistryRequestContext,
-  input: UpsertContentManifestInput,
+  opts: { manifest: UpsertContentManifestInput; packageId: string; tags: string[] },
 ): Promise<{ id: string; repositoryId: string; digest: string }> {
-  const [manifest] = await db
-    .insert(contentManifests)
-    .values({
-      repositoryId: ctx.repo.id,
-      digest: input.digest,
-      mediaType: input.mediaType,
-      artifactType: input.artifactType,
-      subjectDigest: input.subjectDigest,
-      raw: input.raw,
-      sizeBytes: input.sizeBytes,
-      configDigest: input.configDigest,
-    })
-    .onConflictDoUpdate({
-      target: [contentManifests.repositoryId, contentManifests.digest],
-      set: {
-        raw: input.raw,
+  const input = opts.manifest;
+  return db.transaction(async (tx) => {
+    await lockDigestTx(tx, manifestLockKey(ctx.repo.id, input.digest));
+    const [manifest] = await tx
+      .insert(contentManifests)
+      .values({
+        repositoryId: ctx.repo.id,
+        digest: input.digest,
         mediaType: input.mediaType,
         artifactType: input.artifactType,
-        sizeBytes: input.sizeBytes,
         subjectDigest: input.subjectDigest,
+        raw: input.raw,
+        sizeBytes: input.sizeBytes,
         configDigest: input.configDigest,
-      },
-    })
-    .returning({
-      id: contentManifests.id,
-      repositoryId: contentManifests.repositoryId,
-      digest: contentManifests.digest,
-    });
-  if (!manifest) throw new Error("failed to upsert content manifest");
-  return manifest;
-}
-
-export async function upsertContentTag(
-  ctx: RegistryRequestContext,
-  opts: { packageId: string; tag: string; manifestId: string },
-): Promise<void> {
-  await db
-    .insert(contentTags)
-    .values({
-      repositoryId: ctx.repo.id,
-      packageId: opts.packageId,
-      tag: opts.tag,
-      manifestId: opts.manifestId,
-    })
-    .onConflictDoUpdate({
-      target: [contentTags.packageId, contentTags.tag],
-      set: { manifestId: opts.manifestId },
-    });
+      })
+      .onConflictDoUpdate({
+        target: [contentManifests.repositoryId, contentManifests.digest],
+        set: {
+          raw: input.raw,
+          mediaType: input.mediaType,
+          artifactType: input.artifactType,
+          sizeBytes: input.sizeBytes,
+          subjectDigest: input.subjectDigest,
+          configDigest: input.configDigest,
+        },
+      })
+      .returning({
+        id: contentManifests.id,
+        repositoryId: contentManifests.repositoryId,
+        digest: contentManifests.digest,
+      });
+    if (!manifest) throw new Error("failed to upsert content manifest");
+    for (const tag of opts.tags) {
+      await tx
+        .insert(contentTags)
+        .values({
+          repositoryId: ctx.repo.id,
+          packageId: opts.packageId,
+          tag,
+          manifestId: manifest.id,
+        })
+        .onConflictDoUpdate({
+          target: [contentTags.packageId, contentTags.tag],
+          set: { manifestId: manifest.id },
+        });
+    }
+    return manifest;
+  });
 }
 
 export async function resolveContentManifest(
@@ -346,28 +366,38 @@ export async function deleteContentManifestIfUnassociated(
   ctx: RegistryRequestContext,
   opts: { manifestId: string; digest: string },
 ): Promise<boolean> {
-  if (await contentManifestHasLiveAssociations(ctx, opts)) return false;
-  const deleted = await db
-    .delete(contentManifests)
-    .where(
-      and(eq(contentManifests.repositoryId, ctx.repo.id), eq(contentManifests.digest, opts.digest)),
-    )
-    .returning({ id: contentManifests.id });
-  return deleted.length > 0;
+  return db.transaction(async (tx) => {
+    // Serialize against commitContentManifest on the same (repo, digest) key and
+    // re-check associations *inside* the lock, so we never cascade-delete a tag a
+    // concurrent push created after the check.
+    await lockDigestTx(tx, manifestLockKey(ctx.repo.id, opts.digest));
+    if (await contentManifestHasLiveAssociations(tx, ctx, opts)) return false;
+    const deleted = await tx
+      .delete(contentManifests)
+      .where(
+        and(
+          eq(contentManifests.repositoryId, ctx.repo.id),
+          eq(contentManifests.digest, opts.digest),
+        ),
+      )
+      .returning({ id: contentManifests.id });
+    return deleted.length > 0;
+  });
 }
 
 async function contentManifestHasLiveAssociations(
+  tx: Tx,
   ctx: RegistryRequestContext,
   opts: { manifestId: string; digest: string },
 ): Promise<boolean> {
-  const [tag] = await db
+  const [tag] = await tx
     .select({ id: contentTags.id })
     .from(contentTags)
     .where(eq(contentTags.manifestId, opts.manifestId))
     .limit(1);
   if (tag) return true;
 
-  const [version] = await db
+  const [version] = await tx
     .select({ id: packageVersions.id })
     .from(packageVersions)
     .innerJoin(packages, eq(packageVersions.packageId, packages.id))
