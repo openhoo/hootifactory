@@ -37,7 +37,7 @@ export const apiTokens = pgTable(
     name: text().notNull(),
     tokenHash: varchar({ length: 64 }).notNull().unique(),
     tokenPrefix: varchar({ length: 16 }).notNull(),
-    /** Grants beyond the owner's role; null/empty => inherit owner role for legacy tokens. */
+    /** Fine-grained grants; an empty list means the token inherits its owner/robot role. */
     grants: jsonb().$type<TokenGrant[]>().notNull().default([]),
     /** Robot tokens may carry an explicit role at org scope. */
     role: roleNameEnum(),
