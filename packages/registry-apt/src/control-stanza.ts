@@ -22,9 +22,27 @@ export function parseControlFields(text: string): Record<string, string> {
       continue;
     }
     key = line.slice(0, idx).trim();
-    fields[key] = line.slice(idx + 1).replace(/^ /, "");
+    const value = line.slice(idx + 1);
+    fields[key] = value.startsWith(" ") ? value.slice(1) : value;
   }
   return fields;
+}
+
+function stripParenGroups(value: string): string {
+  let out = "";
+  let depth = 0;
+  for (const char of value) {
+    if (char === "(") {
+      depth += 1;
+      continue;
+    }
+    if (char === ")" && depth > 0) {
+      depth -= 1;
+      continue;
+    }
+    if (depth === 0) out += char;
+  }
+  return out;
 }
 
 /** Bare dependency names from a `Depends:` value (first alternative, no version/arch). */
@@ -32,12 +50,10 @@ export function parseDepends(value: string | undefined): string[] {
   if (!value) return [];
   return value
     .split(",")
-    .map((part) =>
-      (part.split("|")[0] ?? "")
-        .trim()
-        .replace(/\s*\([^)]*\)/g, "")
-        .replace(/:[A-Za-z0-9-]+/g, "")
-        .trim(),
-    )
+    .map((part) => {
+      const name = stripParenGroups(part.split("|")[0] ?? "").trim();
+      const colon = name.indexOf(":");
+      return (colon >= 0 ? name.slice(0, colon) : name).trim();
+    })
     .filter(Boolean);
 }

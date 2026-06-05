@@ -71,6 +71,16 @@ function extractControl(name: string, data: Uint8Array): ExtractControlResult {
   return { ok: true, text: new TextDecoder().decode(control) };
 }
 
+function trimTrailingWhitespace(value: string): string {
+  let end = value.length;
+  while (end > 0) {
+    const char = value[end - 1];
+    if (char !== " " && char !== "\t" && char !== "\n" && char !== "\r" && char !== "\f") break;
+    end -= 1;
+  }
+  return end === value.length ? value : value.slice(0, end);
+}
+
 export function parseDeb(bytes: Uint8Array): DebParseResult {
   if (bytes.byteLength < 8 || new TextDecoder().decode(bytes.subarray(0, 8)) !== AR_MAGIC) {
     return { ok: false, reason: "malformed" };
@@ -99,7 +109,7 @@ export function parseDeb(bytes: Uint8Array): DebParseResult {
   return {
     ok: true,
     info: {
-      controlText: controlText.replace(/\s+$/, ""),
+      controlText: trimTrailingWhitespace(controlText),
       md5: new Bun.CryptoHasher("md5").update(bytes).digest("hex"),
       sha256: new Bun.CryptoHasher("sha256").update(bytes).digest("hex"),
       size: bytes.byteLength,

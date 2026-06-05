@@ -9,7 +9,15 @@ export function isValidComponent(component: string): boolean {
 }
 
 export function isValidArch(arch: string): boolean {
-  return arch.length <= 32 && /^[a-z0-9][a-z0-9]*$/.test(arch);
+  if (arch.length === 0 || arch.length > 32 || arch.startsWith("-") || arch.endsWith("-")) {
+    return false;
+  }
+  for (const char of arch) {
+    if (!((char >= "a" && char <= "z") || (char >= "0" && char <= "9") || char === "-")) {
+      return false;
+    }
+  }
+  return true;
 }
 
 /** Pool path under `pool/`, ending in `.deb`, with no traversal. */

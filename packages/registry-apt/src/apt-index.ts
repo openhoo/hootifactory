@@ -84,9 +84,15 @@ function buildRelease(input: {
 
 export function buildAptSnapshot(suite: string, date: string, entries: AptDebEntry[]): AptSnapshot {
   const components = [...new Set(entries.map((entry) => entry.component))].sort(compare);
-  const architectures = [
+  const concreteArchitectures = [
     ...new Set(entries.filter((entry) => entry.architecture !== "all").map((e) => e.architecture)),
   ].sort(compare);
+  const architectures =
+    concreteArchitectures.length > 0
+      ? concreteArchitectures
+      : entries.some((entry) => entry.architecture === "all")
+        ? ["all"]
+        : [];
   const packages = new Map<string, { text: string; gz: Uint8Array }>();
   const files: ReleaseFile[] = [];
   for (const component of components) {

@@ -54,4 +54,14 @@ describe("apt index", () => {
     expect(snapshot.packages.get("main/binary-arm64")?.text).toContain("Package: common");
     expect(snapshot.packages.get("main/binary-amd64")?.text).not.toContain("Package: arm-only");
   });
+
+  test("arch=all-only suites still generate a Packages index", () => {
+    const snapshot = buildAptSnapshot("stable", "date", [
+      entry("common", "all", "pool/main/c/common/common_1.0_all.deb"),
+    ]);
+
+    expect(snapshot.release).toContain("Architectures: all");
+    expect(snapshot.release).toContain("main/binary-all/Packages");
+    expect(snapshot.packages.get("main/binary-all")?.text).toContain("Package: common");
+  });
 });

@@ -16,7 +16,10 @@ describe("apt validation", () => {
     expect(isValidComponent("non-free")).toBe(true);
     expect(isValidArch("amd64")).toBe(true);
     expect(isValidArch("all")).toBe(true);
+    expect(isValidArch("kfreebsd-amd64")).toBe(true);
+    expect(isValidArch("hurd-i386")).toBe(true);
     expect(isValidArch("AMD64")).toBe(false);
+    expect(isValidArch("-amd64")).toBe(false);
   });
 
   test("pool path requires pool/ prefix, .deb suffix, no traversal", () => {
