@@ -83,6 +83,7 @@ describe("Homebrew validation", () => {
   test("validates formula names, versions, and bottle tags", () => {
     expect(isValidFormulaName("hootcli")).toBe(true);
     expect(isValidFormulaName("foo-bar.baz+1")).toBe(true);
+    expect(isValidFormulaName("openssl@3")).toBe(true);
     expect(isValidFormulaName("Bad/Name")).toBe(false);
     expect(isValidFormulaName("../escape")).toBe(false);
 
@@ -113,12 +114,15 @@ describe("Homebrew validation", () => {
 
   test("validates bottle filenames and rejects traversal / wrong suffixes", () => {
     expect(isValidBottleFileName("hootcli-1.2.3.arm64_sonoma.bottle.tar.gz")).toBe(true);
+    expect(isValidBottleFileName("openssl@3-3.2.1.arm64_sonoma.bottle.tar.gz")).toBe(true);
     expect(isValidBottleFileName("foo-2.0.0-rc.1.ventura.bottle.tar.gz")).toBe(true);
     // Wrong suffix.
     expect(isValidBottleFileName("hootcli-1.2.3.tahoe.tar.gz")).toBe(false);
+    expect(isValidBottleFileName("foo.bottle.tar.gz")).toBe(false);
     // Path traversal / separators.
     expect(isValidBottleFileName("../escape.arm64.bottle.tar.gz")).toBe(false);
     expect(isValidBottleFileName("a/b.arm64.bottle.tar.gz")).toBe(false);
+    expect(isValidBottleFileName("a\\b.arm64.bottle.tar.gz")).toBe(false);
     // Just the suffix, no stem.
     expect(isValidBottleFileName(".bottle.tar.gz")).toBe(false);
   });

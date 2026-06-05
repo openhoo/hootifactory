@@ -4,7 +4,7 @@ import { z } from "@hootifactory/registry";
  * Homebrew formula names are lowercase tokens. The brew client mirrors a
  * formula name 1:1 into both `name` and `full_name` of the JSON API object.
  */
-const FORMULA_NAME_RE = /^[a-z0-9._+-]+$/;
+const FORMULA_NAME_RE = /^[a-z0-9._+@-]+$/;
 /** Bottle versions allow upper/lower alphanumerics plus the usual SemVer-ish punctuation. */
 const FORMULA_VERSION_RE = /^[A-Za-z0-9._+-]+$/;
 /** Bottle tags (platform identifiers), e.g. `arm64_sonoma`, `ventura`, `x86_64_linux`. */
@@ -106,7 +106,7 @@ const BOTTLE_FILE_SUFFIX = ".bottle.tar.gz";
  * (the stored asset/blob-ref scope) rather than re-deriving name/version. This
  * grammar only screens out path traversal and obviously-malformed requests.
  */
-const BOTTLE_FILE_RE = /^[A-Za-z0-9._+-]+\.bottle\.tar\.gz$/;
+const BOTTLE_FILE_RE = /^[A-Za-z0-9._+@-]+\.[a-z0-9_]+\.bottle\.tar\.gz$/;
 
 /** The canonical bottle filename brew downloads: `<name>-<ver>.<tag>.bottle.tar.gz`. */
 export function bottleFileName(name: string, version: string, tag: string): string {
@@ -125,7 +125,10 @@ export function bottleScope(name: string, version: string, tag: string): string 
  * name/version (the stem is ambiguous — see {@link BOTTLE_FILE_RE}).
  */
 export function isValidBottleFileName(file: string): boolean {
-  return file.length <= 512 && !file.includes("/") && file.length > BOTTLE_FILE_SUFFIX.length
+  return file.length <= 512 &&
+    !file.includes("/") &&
+    !file.includes("\\") &&
+    file.length > BOTTLE_FILE_SUFFIX.length
     ? BOTTLE_FILE_RE.test(file)
     : false;
 }
