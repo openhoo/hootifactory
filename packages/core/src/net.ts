@@ -74,7 +74,6 @@ async function publicResolvedAddress(
   url: URL,
   opts: { enforcePublicNetwork: boolean; lookupHost?: HostLookup },
 ): Promise<string | null> {
-  if (!opts.enforcePublicNetwork && !opts.lookupHost) return null;
   if (!opts.enforcePublicNetwork) return null;
   return resolvePublicAddress(url, opts.lookupHost);
 }
