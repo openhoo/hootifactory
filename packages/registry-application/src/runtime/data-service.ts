@@ -296,7 +296,7 @@ export function createRegistryDataService(ctx: RegistryRequestContext): Registry
           offset: input?.offset,
         }),
     },
-    oci: {
+    contentAddressable: {
       createUploadSession: (input) => createOciUploadSession(ctx, input),
       loadUploadSession: (input) => loadOciUploadSession(ctx, input),
       withLockedUploadSession: (input) => withLockedOciUploadSession(ctx, input),

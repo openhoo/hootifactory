@@ -1,6 +1,6 @@
 import type {
   RegistryAssetWriteInput,
-  RegistryOciManifestHandle,
+  RegistryManifestHandle,
   RegistryPackageHandle,
   RegistryPackageVersionHandle,
   RegistryRequestContext,
@@ -25,7 +25,7 @@ export function assertVersionForPackage(
 
 export function assertManifestInRepo(
   ctx: RegistryRequestContext,
-  manifest: RegistryOciManifestHandle,
+  manifest: RegistryManifestHandle,
 ): void {
   if (manifest.repositoryId !== ctx.repo.id) {
     throw new Error("registry OCI manifest handle does not belong to this repository");

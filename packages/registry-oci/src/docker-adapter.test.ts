@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import type {
-  RegistryOciManifestRow,
-  RegistryOciUploadSessionMutations,
-  RegistryOciUploadSessionRow,
+  RegistryManifestRow,
+  RegistryUploadSessionMutations,
+  RegistryUploadSessionRow,
   RegistryPackageRow,
   RegistryRequestContext,
   RegistryUploadedBlob,
@@ -49,7 +49,7 @@ const pkg = {
   updatedAt: new Date("2026-01-01T00:00:00.000Z"),
 } satisfies RegistryPackageRow;
 
-function manifestRow(): RegistryOciManifestRow {
+function manifestRow(): RegistryManifestRow {
   return {
     id: "manifest_1",
     repositoryId: "repo_1",
@@ -65,7 +65,7 @@ function manifestRow(): RegistryOciManifestRow {
   };
 }
 
-function referrerRow(digest: string): RegistryOciManifestRow {
+function referrerRow(digest: string): RegistryManifestRow {
   const raw = JSON.stringify({
     schemaVersion: 2,
     artifactType: REFERRER_ARTIFACT_TYPE,
@@ -105,8 +105,8 @@ async function readStreamText(stream: ReadableStream<Uint8Array>): Promise<strin
 }
 
 function uploadSession(
-  overrides: Partial<RegistryOciUploadSessionRow> = {},
-): RegistryOciUploadSessionRow {
+  overrides: Partial<RegistryUploadSessionRow> = {},
+): RegistryUploadSessionRow {
   return {
     id: UPLOAD_UUID,
     repositoryId: "repo_1",
@@ -191,7 +191,7 @@ describe("Docker adapter contract", () => {
       expect(name).toBe(pkg.name);
       return pkg;
     };
-    ctx.data.oci.listTags = async (inputPkg, opts) => {
+    ctx.data.contentAddressable.listTags = async (inputPkg, opts) => {
       expect(inputPkg.id).toBe(pkg.id);
       expect(opts).toEqual({ last: "latest", pageSize: 1 });
       return { tags: ["v1"], truncated: true };
@@ -227,18 +227,18 @@ describe("Docker adapter contract", () => {
       expect(name).toBe(pkg.name);
       return pkg;
     };
-    ctx.data.oci.listSubjectManifests = async (subjectDigest) => {
+    ctx.data.contentAddressable.listSubjectManifests = async (subjectDigest) => {
       subjectLookups += 1;
       expect(subjectDigest).toBe(DIGEST);
       return [referrerRow(REFERRER_DIGEST), referrerRow(OTHER_REFERRER_DIGEST)];
     };
-    ctx.data.oci.listExistingManifestDigests = async (input) => {
+    ctx.data.contentAddressable.listExistingManifestDigests = async (input) => {
       batchLookups += 1;
       expect(input.package.id).toBe(pkg.id);
       expect(input.digests).toEqual([REFERRER_DIGEST, OTHER_REFERRER_DIGEST]);
       return [REFERRER_DIGEST];
     };
-    ctx.data.oci.resolveManifest = async () => {
+    ctx.data.contentAddressable.resolveManifest = async () => {
       throw new Error("referrers should not resolve manifests one at a time");
     };
 
@@ -276,12 +276,12 @@ describe("Docker adapter contract", () => {
     let committedOffset = 0;
     const uploaded: RegistryUploadedBlob = { digest: UPLOAD_DIGEST, size: 5, deduped: false };
 
-    ctx.data.oci.withLockedUploadSession = async ({ scope, uuid, run }) => {
+    ctx.data.contentAddressable.withLockedUploadSession = async ({ scope, uuid, run }) => {
       expect(scope).toBe(pkg.name);
       expect(uuid).toBe(UPLOAD_UUID);
       calls.push("lock:start");
       lockDepth += 1;
-      const mutations: RegistryOciUploadSessionMutations = {
+      const mutations: RegistryUploadSessionMutations = {
         assertStagingBudget: async () => {},
         updateOpen: async () => {},
         commitBlobWithRef: async (input) => {
@@ -382,12 +382,12 @@ describe("Docker adapter contract", () => {
     let lockDepth = 0;
     let session = uploadSession();
 
-    ctx.data.oci.withLockedUploadSession = async ({ scope, uuid, run }) => {
+    ctx.data.contentAddressable.withLockedUploadSession = async ({ scope, uuid, run }) => {
       expect(scope).toBe(pkg.name);
       expect(uuid).toBe(UPLOAD_UUID);
       calls.push("lock:start");
       lockDepth += 1;
-      const mutations: RegistryOciUploadSessionMutations = {
+      const mutations: RegistryUploadSessionMutations = {
         assertStagingBudget: async (input) => {
           calls.push("budget");
           expect(lockDepth).toBe(1);
@@ -521,7 +521,7 @@ describe("Docker adapter contract", () => {
       expect(name).toBe(pkg.name);
       return pkg;
     };
-    ctx.data.oci.resolveManifest = async (input) => {
+    ctx.data.contentAddressable.resolveManifest = async (input) => {
       expect(input.package.id).toBe(pkg.id);
       expect(input.reference).toBe(DIGEST);
       return manifestRow();

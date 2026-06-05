@@ -1,4 +1,4 @@
-import { parseRegistryInput, type RegistryOciTagListOptions } from "@hootifactory/registry";
+import { parseRegistryInput, type RegistryTagListOptions } from "@hootifactory/registry";
 import { OciTagPageSizeSchema, OciTagSchema } from "./oci-validation";
 
 interface OciTagsListResponseInput {
@@ -8,10 +8,10 @@ interface OciTagsListResponseInput {
   name: string;
   tags: string[];
   truncated: boolean;
-  query: RegistryOciTagListOptions;
+  query: RegistryTagListOptions;
 }
 
-export function parseOciTagsListQuery(url: string): RegistryOciTagListOptions {
+export function parseOciTagsListQuery(url: string): RegistryTagListOptions {
   const searchParams = new URL(url).searchParams;
   const lastRaw = searchParams.get("last");
   const last =

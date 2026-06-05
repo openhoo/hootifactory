@@ -38,8 +38,8 @@ export type RegistryPackageVersionHandle = Pick<
   RegistryPackageVersionRow,
   "id" | "packageId" | "version"
 >;
-export type RegistryOciManifestHandle = Pick<
-  RegistryOciManifestRow,
+export type RegistryManifestHandle = Pick<
+  RegistryManifestRow,
   "id" | "repositoryId" | "digest"
 >;
 
@@ -128,7 +128,7 @@ export interface RegistryAssetRow {
   updatedAt: Date;
 }
 
-export interface RegistryOciManifestRow {
+export interface RegistryManifestRow {
   id: string;
   repositoryId: string;
   digest: string;
@@ -142,12 +142,12 @@ export interface RegistryOciManifestRow {
   updatedAt: Date;
 }
 
-export interface RegistryOciManifestRawRow {
+export interface RegistryManifestRawRow {
   digest: string;
   raw: string;
 }
 
-export interface RegistryOciUploadSessionRow {
+export interface RegistryUploadSessionRow {
   id: string;
   repositoryId: string;
   scope: string;
@@ -160,7 +160,7 @@ export interface RegistryOciUploadSessionRow {
   updatedAt: Date;
 }
 
-export interface RegistryOciMountSourceRow {
+export interface RegistryMountSourceRow {
   orgId: string;
   id: string;
   mountPath: string;
@@ -168,17 +168,17 @@ export interface RegistryOciMountSourceRow {
   scope: string;
 }
 
-export interface RegistryOciTagListOptions {
+export interface RegistryTagListOptions {
   last?: string;
   pageSize?: number;
 }
 
-export interface RegistryOciTagListPage {
+export interface RegistryTagListPage {
   tags: string[];
   truncated: boolean;
 }
 
-export interface RegistryOciUploadSessionMutations {
+export interface RegistryUploadSessionMutations {
   assertStagingBudget(input: {
     nextOffsetBytes: number;
     maxStagedUploadBytes: number;
@@ -260,7 +260,7 @@ export interface RegistryAssetWriteInput {
   role: RegistryAssetRole | string;
   package?: RegistryPackageHandle | null;
   packageVersion?: RegistryPackageVersionHandle | null;
-  ociManifest?: RegistryOciManifestHandle | null;
+  ociManifest?: RegistryManifestHandle | null;
   blobRefId?: string | null;
   digest?: string;
   scope?: string;
@@ -408,7 +408,7 @@ export interface RegistryDataService {
       offset?: number;
     }): Promise<{ assets: RegistryAssetRow[]; total: number }>;
   };
-  oci: {
+  contentAddressable: {
     createUploadSession(input: {
       id: string;
       scope: string;
@@ -419,17 +419,17 @@ export interface RegistryDataService {
     loadUploadSession(input: {
       scope: string;
       uuid: string;
-    }): Promise<RegistryOciUploadSessionRow | null>;
+    }): Promise<RegistryUploadSessionRow | null>;
     withLockedUploadSession<T>(input: {
       scope: string;
       uuid: string;
       run: (
-        session: RegistryOciUploadSessionRow | null,
-        mutations: RegistryOciUploadSessionMutations,
+        session: RegistryUploadSessionRow | null,
+        mutations: RegistryUploadSessionMutations,
       ) => Promise<T>;
     }): Promise<T>;
     markUploadSessionAborted(input: { scope: string; uuid: string }): Promise<void>;
-    listMountSources(digest: string): Promise<RegistryOciMountSourceRow[]>;
+    listMountSources(digest: string): Promise<RegistryMountSourceRow[]>;
     listExistingBlobRefDigests(input: { scope: string; digests: string[] }): Promise<string[]>;
     listExistingManifestDigests(input: {
       package: RegistryPackageHandle;
@@ -444,15 +444,15 @@ export interface RegistryDataService {
       raw: string;
       sizeBytes: number;
       configDigest: string | null;
-    }): Promise<RegistryOciManifestHandle>;
+    }): Promise<RegistryManifestHandle>;
     upsertTag(input: {
       package: RegistryPackageHandle;
       tag: string;
-      manifest: RegistryOciManifestHandle;
+      manifest: RegistryManifestHandle;
     }): Promise<void>;
     replaceManifestBlobRefs(input: {
       package: RegistryPackageHandle;
-      manifest: RegistryOciManifestHandle;
+      manifest: RegistryManifestHandle;
       digests: string[];
     }): Promise<void>;
     listManifestDigestsReferencingBlob(input: {
@@ -462,26 +462,26 @@ export interface RegistryDataService {
     resolveManifest(input: {
       package: RegistryPackageHandle;
       reference: string;
-    }): Promise<RegistryOciManifestRow | null>;
+    }): Promise<RegistryManifestRow | null>;
     deleteTagsForManifest(input: {
       package: RegistryPackageHandle;
-      manifest: RegistryOciManifestHandle;
+      manifest: RegistryManifestHandle;
     }): Promise<void>;
     markPackageVersionsDeletedByDigest(input: {
       package: RegistryPackageHandle;
       digest: string;
     }): Promise<number>;
     deleteManifestIfUnassociated(input: {
-      manifest: RegistryOciManifestHandle;
+      manifest: RegistryManifestHandle;
       digest: string;
     }): Promise<boolean>;
     deleteTag(input: { package: RegistryPackageHandle; tag: string }): Promise<boolean>;
-    listLiveManifestsForPackage(pkg: RegistryPackageHandle): Promise<RegistryOciManifestRawRow[]>;
+    listLiveManifestsForPackage(pkg: RegistryPackageHandle): Promise<RegistryManifestRawRow[]>;
     listTags(
       pkg: RegistryPackageHandle,
-      opts?: RegistryOciTagListOptions,
-    ): Promise<RegistryOciTagListPage>;
-    listSubjectManifests(subjectDigest: string): Promise<RegistryOciManifestRow[]>;
+      opts?: RegistryTagListOptions,
+    ): Promise<RegistryTagListPage>;
+    listSubjectManifests(subjectDigest: string): Promise<RegistryManifestRow[]>;
   };
 }
 

@@ -15,8 +15,8 @@ import {
   sql,
 } from "@hootifactory/db";
 import type {
-  RegistryOciTagListOptions,
-  RegistryOciTagListPage,
+  RegistryTagListOptions,
+  RegistryTagListPage,
   RegistryRequestContext,
 } from "@hootifactory/registry";
 import { adjustArtifactsUsedTx } from "../governance/quota";
@@ -414,8 +414,8 @@ export async function listLiveOciManifestsForPackage(
 
 export async function listOciTags(
   packageId: string,
-  opts: RegistryOciTagListOptions = {},
-): Promise<RegistryOciTagListPage> {
+  opts: RegistryTagListOptions = {},
+): Promise<RegistryTagListPage> {
   const where =
     opts.last === undefined
       ? eq(ociTags.packageId, packageId)

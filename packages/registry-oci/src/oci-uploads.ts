@@ -1,6 +1,6 @@
 import type {
-  RegistryOciUploadSessionMutations,
-  RegistryOciUploadSessionRow,
+  RegistryUploadSessionMutations,
+  RegistryUploadSessionRow,
 } from "@hootifactory/registry";
 import {
   Errors,
@@ -75,7 +75,7 @@ export async function startUpload(
 
   const uuid = crypto.randomUUID();
   const key = stagingKey(uuid);
-  await ctx.data.oci.createUploadSession({
+  await ctx.data.contentAddressable.createUploadSession({
     id: uuid,
     scope: image,
     storageKey: key,
@@ -103,7 +103,7 @@ export async function patchUpload(
 ): Promise<Response> {
   const parsedUuid = parseUploadUuid(uuid);
   const chunk = await bodyBytes(req);
-  const pending = await ctx.data.oci.withLockedUploadSession({
+  const pending = await ctx.data.contentAddressable.withLockedUploadSession({
     scope: image,
     uuid: parsedUuid,
     run: async (session, mutations) => {
@@ -128,7 +128,7 @@ export async function patchUpload(
   try {
     if (stagedKey) await ctx.data.content.staging.putKey(stagedKey, chunk);
 
-    const offset = await ctx.data.oci.withLockedUploadSession({
+    const offset = await ctx.data.contentAddressable.withLockedUploadSession({
       scope: image,
       uuid: parsedUuid,
       run: async (session, mutations) => {
@@ -179,7 +179,7 @@ export async function putUpload(
 
   const chunk = await bodyBytes(req);
   const parsedUuid = parseUploadUuid(uuid);
-  const pending = await ctx.data.oci.withLockedUploadSession({
+  const pending = await ctx.data.contentAddressable.withLockedUploadSession({
     scope: image,
     uuid: parsedUuid,
     run: async (session, mutations) => {
@@ -212,7 +212,7 @@ export async function putUpload(
         throw err;
       });
 
-    const committed = await ctx.data.oci.withLockedUploadSession({
+    const committed = await ctx.data.contentAddressable.withLockedUploadSession({
       scope: image,
       uuid: parsedUuid,
       run: async (session, mutations) => {
@@ -268,7 +268,7 @@ export async function cancelUpload(
   ctx: RegistryRequestContext,
 ): Promise<Response> {
   const parsedUuid = parseUploadUuid(uuid);
-  await ctx.data.oci.withLockedUploadSession({
+  await ctx.data.contentAddressable.withLockedUploadSession({
     scope: image,
     uuid: parsedUuid,
     run: async (session, mutations) => {
@@ -293,7 +293,7 @@ async function tryCrossRepositoryMount(input: {
   from?: string;
   ctx: RegistryRequestContext;
 }): Promise<Response | null> {
-  const sources = (await input.ctx.data.oci.listMountSources(input.mount)).map((source) => ({
+  const sources = (await input.ctx.data.contentAddressable.listMountSources(input.mount)).map((source) => ({
     ...source,
     full: `${source.mountPath.replace(/^v2\//, "")}/${source.scope}`,
   }));
@@ -329,7 +329,7 @@ async function tryCrossRepositoryMount(input: {
 }
 
 async function loadSession(image: string, uuid: string, ctx: RegistryRequestContext) {
-  return ctx.data.oci.loadUploadSession({ scope: image, uuid });
+  return ctx.data.contentAddressable.loadUploadSession({ scope: image, uuid });
 }
 
 async function loadOpenSession(image: string, uuid: string, ctx: RegistryRequestContext) {
@@ -340,7 +340,7 @@ async function loadOpenSession(image: string, uuid: string, ctx: RegistryRequest
     uuid,
     ctx,
     session,
-    markAborted: () => ctx.data.oci.markUploadSessionAborted({ scope: image, uuid }),
+    markAborted: () => ctx.data.contentAddressable.markUploadSessionAborted({ scope: image, uuid }),
   });
   return session;
 }
@@ -349,9 +349,9 @@ async function assertLoadedOpenSession(input: {
   image: string;
   uuid: string;
   ctx: RegistryRequestContext;
-  session: RegistryOciUploadSessionRow | null;
-  mutations: RegistryOciUploadSessionMutations;
-}): Promise<RegistryOciUploadSessionRow> {
+  session: RegistryUploadSessionRow | null;
+  mutations: RegistryUploadSessionMutations;
+}): Promise<RegistryUploadSessionRow> {
   const { image, uuid, ctx, session, mutations } = input;
   if (!session) throw Errors.blobUploadUnknown({ uuid });
   await assertOpenSession({

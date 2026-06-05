@@ -264,7 +264,7 @@ export class DockerAdapter implements RegistryPlugin {
     const pkg = await ctx.data.packages.findByName(image);
     if (!pkg) throw Errors.nameUnknown({ image });
     const query = parseOciTagsListQuery(req.url);
-    const tags = await ctx.data.oci.listTags(pkg, query);
+    const tags = await ctx.data.contentAddressable.listTags(pkg, query);
     return buildOciTagsListResponse({
       baseUrl: ctx.baseUrl,
       mountPath: ctx.repo.mountPath,
@@ -291,12 +291,12 @@ export class DockerAdapter implements RegistryPlugin {
     const pkg = await ctx.data.packages.findByName(image);
     if (!pkg) return buildOciReferrersResponse({ manifests: [], artifactTypeFilter });
 
-    const rows = await ctx.data.oci.listSubjectManifests(digest);
+    const rows = await ctx.data.contentAddressable.listSubjectManifests(digest);
     const referrerDigests = [...new Set(rows.map((row) => row.digest))];
     const associatedDigests =
       referrerDigests.length > 0
         ? new Set(
-            await ctx.data.oci.listExistingManifestDigests({
+            await ctx.data.contentAddressable.listExistingManifestDigests({
               package: pkg,
               digests: referrerDigests,
             }),
