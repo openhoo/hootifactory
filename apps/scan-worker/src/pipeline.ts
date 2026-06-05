@@ -255,11 +255,21 @@ async function processScanInner(artifactId: string, scannerRuntime: ScannerRunti
       "scan.osv_dependencies",
       { "scan.osv.api_url": env.OSV_API_URL },
       async (span) => {
-        const osvFindings = await osvScanDependencies(osvEcosystem, deps, env.OSV_API_URL, {
+        const osv = await osvScanDependencies(osvEcosystem, deps, env.OSV_API_URL, {
           timeoutMs: env.SCANNER_TIMEOUT_MS,
         });
-        found.push(...osvFindings);
-        span.setAttribute("scan.findings.count", osvFindings.length);
+        found.push(...osv.findings);
+        span.setAttribute("scan.findings.count", osv.findings.length);
+        if (osv.error !== undefined) {
+          // Fail-open: an unreachable OSV is treated as "no dependency vulns", but
+          // surface it so a total outage is observable rather than a silent clean.
+          span.setAttribute("scan.osv.failed", true);
+          addSpanEvent("scan.osv_unavailable", { "scan.osv.api_url": env.OSV_API_URL });
+          logger.warn("OSV dependency scan failed; treating as no dependency vulns", {
+            osvEcosystem,
+            error: osv.error,
+          });
+        }
       },
     );
   }

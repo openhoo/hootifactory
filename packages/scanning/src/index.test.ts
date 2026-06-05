@@ -91,7 +91,7 @@ describe("heuristic scanning", () => {
     }) as unknown as typeof fetch;
 
     try {
-      const findings = await osvScanDependencies(
+      const { findings } = await osvScanDependencies(
         "npm",
         { vulnerable: "^1.2.3", safe: ">=2.0.0" },
         "https://osv.test",
@@ -144,7 +144,7 @@ describe("heuristic scanning", () => {
     }) as unknown as typeof fetch;
 
     try {
-      const findings = await osvScanDependencies(
+      const { findings } = await osvScanDependencies(
         "npm",
         { first: "1.0.0", second: "2.0.0" },
         "https://osv.test",

@@ -43,15 +43,27 @@ async function mapWithConcurrency<T>(
   await Promise.all(workers);
 }
 
-/** Optional OSV.dev batch dependency vuln lookup (network). Returns [] on failure. */
+/**
+ * Result of an OSV dependency lookup. `error` is set when the lookup could not be
+ * completed (network/timeout/non-2xx); callers stay fail-open by treating empty
+ * `findings` as "no vulns" but should surface `error` so a total OSV outage is not
+ * silently indistinguishable from a clean result.
+ */
+export interface OsvScanResult {
+  findings: NormalizedFinding[];
+  error?: unknown;
+}
+
+/** Optional OSV.dev batch dependency vuln lookup (network). Fail-open: returns an
+ * empty `findings` with `error` set when the lookup cannot be completed. */
 export async function osvScanDependencies(
   ecosystem: string,
   deps: Record<string, string> | undefined,
   apiUrl = "https://api.osv.dev",
   options: { timeoutMs?: number } = {},
-): Promise<NormalizedFinding[]> {
+): Promise<OsvScanResult> {
   const entries = Object.entries(deps ?? {});
-  if (!entries.length) return [];
+  if (!entries.length) return { findings: [] };
   try {
     const res = await fetch(`${apiUrl}/v1/querybatch`, {
       method: "POST",
@@ -64,7 +76,7 @@ export async function osvScanDependencies(
         })),
       }),
     });
-    if (!res.ok) return [];
+    if (!res.ok) return { findings: [], error: new Error(`OSV querybatch failed: ${res.status}`) };
     const data = OsvBatchResponseSchema.safeParse(await res.json().catch(() => null));
     const severityCache = new Map<string, Severity>();
     async function osvSeverity(id: string): Promise<Severity> {
@@ -130,9 +142,9 @@ export async function osvScanDependencies(
         });
       }
     }
-    return out;
-  } catch {
-    return [];
+    return { findings: out };
+  } catch (err) {
+    return { findings: [], error: err };
   }
 }
 
