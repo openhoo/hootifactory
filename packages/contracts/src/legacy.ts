@@ -22,16 +22,18 @@ export interface RepositoryDto {
   updatedAt?: WireTimestamp;
 }
 
+export interface RegistryCapabilitiesDto {
+  contentAddressable: boolean;
+  resumableUploads: boolean;
+  proxyable: boolean;
+  virtualizable: boolean;
+}
+
 export interface RegistryModuleDto {
   id: string;
   displayName: string;
   mountSegment: string;
-  capabilities: {
-    contentAddressable: boolean;
-    resumableUploads: boolean;
-    proxyable: boolean;
-    virtualizable: boolean;
-  };
+  capabilities: RegistryCapabilitiesDto;
 }
 
 export interface PackageDto {

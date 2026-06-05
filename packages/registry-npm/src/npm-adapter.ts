@@ -2,7 +2,7 @@ import {
   asJsonRecord,
   basicAuthChallenge,
   delegateRegistryPlugin,
-  type FormatMetadata,
+  type RegistryMetadata,
   type HttpMethod,
   type Permission,
   parseRegistryInput,
@@ -251,7 +251,7 @@ export class NpmAdapter implements RegistryPlugin {
   async generateMetadata(
     name: string,
     ctx: RegistryRequestContext,
-  ): Promise<FormatMetadata | null> {
+  ): Promise<RegistryMetadata | null> {
     name = parseNpmName(name);
     const pkg = await this.findPackage(ctx, name);
     if (!pkg) return null;
@@ -277,7 +277,7 @@ export class NpmAdapter implements RegistryPlugin {
     };
   }
 
-  async mergeMetadata(parts: FormatMetadata[]): Promise<FormatMetadata> {
+  async mergeMetadata(parts: RegistryMetadata[]): Promise<RegistryMetadata> {
     return mergePackuments(parts);
   }
 

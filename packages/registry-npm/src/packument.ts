@@ -1,6 +1,6 @@
 import {
   asJsonRecord,
-  type FormatMetadata,
+  type RegistryMetadata,
   JsonRecordSchema,
   jsonRecordOrEmpty,
   parseJsonWithSchema,
@@ -53,7 +53,7 @@ export function buildPackument(
   };
 }
 
-export function mergePackuments(parts: FormatMetadata[]): FormatMetadata {
+export function mergePackuments(parts: RegistryMetadata[]): RegistryMetadata {
   const decoder = new TextDecoder();
   const docs = parts
     .map((part) => {

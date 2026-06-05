@@ -353,7 +353,7 @@ export const V1RegistryAssetSchema = z
     ociManifestId: V1UuidSchema.nullable().describe("Associated OCI manifest identifier, if any."),
     blobRefId: V1UuidSchema.nullable().describe("Associated blob reference identifier, if any."),
     digest: V1DigestSchema,
-    role: z.string().describe("Stable asset role, such as npm_tarball or oci_layer."),
+    role: z.string().describe("Stable asset role defined by the owning registry module."),
     scope: z.string().describe("Protocol-specific logical owner for the asset."),
     path: z.string().nullable().describe("Protocol-specific path or filename, if any."),
     mediaType: z.string().nullable().describe("Asset media type, if known."),

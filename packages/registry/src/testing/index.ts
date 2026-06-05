@@ -116,7 +116,7 @@ export function createTestResolvedRepo(overrides: Partial<ResolvedRepo> = {}): R
     id: "repo_1",
     orgId: "org_1",
     name: "repo",
-    moduleId: "npm",
+    moduleId: "test",
     kind: "hosted",
     visibility: "private",
     mountPath: "acme/repo",

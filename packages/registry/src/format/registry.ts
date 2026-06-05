@@ -45,11 +45,5 @@ export class RegistryPluginRegistry {
   }
 }
 
-/** @deprecated Use RegistryPluginRegistry for new code. */
-export class FormatRegistry extends RegistryPluginRegistry {}
-
 /** Process-wide plugin registry. */
 export const registryPlugins = new RegistryPluginRegistry();
-
-/** @deprecated Use registryPlugins for new code. */
-export const formatRegistry = registryPlugins;

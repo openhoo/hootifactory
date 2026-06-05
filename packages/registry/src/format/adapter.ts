@@ -161,7 +161,7 @@ export interface EnqueueScanInput {
   mediaType?: string;
 }
 
-export interface FormatMetadata {
+export interface RegistryMetadata {
   contentType: string;
   body: string | Uint8Array;
   headers?: Record<string, string>;
@@ -194,7 +194,7 @@ export interface RegistryVirtualSearchInput {
   ): Promise<RegistryVirtualMemberResponse[]>;
 }
 
-export interface FormatCapabilities {
+export interface RegistryCapabilities {
   contentAddressable: boolean;
   resumableUploads: boolean;
   proxyable: boolean;
@@ -271,7 +271,7 @@ export interface RegistryModuleDescriptor {
  * protocol-specific behavior behind this interface.
  */
 export interface RegistryPlugin extends RegistryModuleDescriptor {
-  readonly capabilities: FormatCapabilities;
+  readonly capabilities: RegistryCapabilities;
 
   /** Declarative routes, mounted under the repo's mount path. */
   routes(): RouteEntry[];
@@ -293,8 +293,8 @@ export interface RegistryPlugin extends RegistryModuleDescriptor {
   handle(match: RouteMatch, req: Request, ctx: RegistryRequestContext): Promise<Response>;
 
   // ── optional, for virtual repos (Phase 2) ────────────────────────────────
-  generateMetadata?(pkg: string, ctx: RegistryRequestContext): Promise<FormatMetadata | null>;
-  mergeMetadata?(parts: FormatMetadata[], ctx: RegistryRequestContext): Promise<FormatMetadata>;
+  generateMetadata?(pkg: string, ctx: RegistryRequestContext): Promise<RegistryMetadata | null>;
+  mergeMetadata?(parts: RegistryMetadata[], ctx: RegistryRequestContext): Promise<RegistryMetadata>;
   search?(query: SearchQuery, ctx: RegistryRequestContext): Promise<SearchResult>;
   virtualSearch?(input: RegistryVirtualSearchInput): Promise<Response>;
 

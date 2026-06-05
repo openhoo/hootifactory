@@ -1,6 +1,7 @@
 import {
   type HttpMethod,
   type Permission,
+  type RegistryCapabilities,
   type RegistryErrorResponseKind,
   type RegistryModuleDescriptor,
   type RegistryPlugin,
@@ -17,7 +18,6 @@ import {
 } from "./adapter";
 
 type MaybePromise<T> = T | Promise<T>;
-type RegistryCapabilities = RegistryPlugin["capabilities"];
 
 const DEFAULT_REGISTRY_CAPABILITIES: RegistryCapabilities = {
   contentAddressable: false,

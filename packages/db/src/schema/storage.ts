@@ -112,7 +112,7 @@ export const registryAssets = pgTable(
     ociManifestId: uuid().references(() => ociManifests.id, { onDelete: "cascade" }),
     blobRefId: uuid().references(() => blobRefs.id, { onDelete: "set null" }),
     digest: varchar({ length: 80 }).notNull(),
-    /** Stable role from the registry data contract, e.g. npm_tarball or oci_layer. */
+    /** Stable role from the registry data contract, defined by the owning registry module. */
     role: text().notNull(),
     /** Logical protocol owner: name@version, filename, image path, manifest digest. */
     scope: text().notNull().default(""),

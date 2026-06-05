@@ -1,7 +1,7 @@
 import { withSpan } from "@hootifactory/observability";
 import {
   Errors,
-  type FormatMetadata,
+  type RegistryMetadata,
   type HttpMethod,
   RegistryError,
   type RegistryPlugin,
@@ -80,7 +80,7 @@ export async function dispatchVirtualMetadata(
           );
         }),
       );
-      const parts: FormatMetadata[] = results.flatMap((result) =>
+      const parts: RegistryMetadata[] = results.flatMap((result) =>
         result.part ? [result.part] : [],
       );
       let last: Response | null = null;

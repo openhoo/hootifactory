@@ -112,7 +112,7 @@ async function authenticateAuthorization(
 }
 
 async function authenticateRegistryApiKey(c: Context<AppEnv>, token: string): Promise<Principal> {
-  const principal = await resolveHootToken(c, token, "nugetApiKey");
+  const principal = await resolveHootToken(c, token, "registryApiKey");
   if (principal) return principal;
   invalidCredentials();
 }

@@ -1,7 +1,7 @@
 import type { Principal } from "@hootifactory/auth";
 import type { HttpRequestTelemetry } from "@hootifactory/observability";
 
-export type AuthSource = "authorization" | "nugetApiKey" | "session" | "anonymous";
+export type AuthSource = "authorization" | "registryApiKey" | "session" | "anonymous";
 export type RegistryAuthFailure = "invalid_token";
 
 export type AppEnv = {

@@ -1,4 +1,4 @@
-import { type FormatMetadata, textEtag, textResponseWithEtag } from "@hootifactory/registry";
+import { type RegistryMetadata, textEtag, textResponseWithEtag } from "@hootifactory/registry";
 import { headersWithoutContentLength } from "./registry-utils";
 
 export function shouldRewriteVirtualBody(contentType: string): boolean {
@@ -35,10 +35,10 @@ export async function rewriteVirtualBody(
 }
 
 export function rewriteVirtualMetadata(
-  part: FormatMetadata,
+  part: RegistryMetadata,
   memberMountPath: string,
   virtualMountPath: string,
-): FormatMetadata {
+): RegistryMetadata {
   if (memberMountPath === virtualMountPath || !shouldRewriteVirtualBody(part.contentType)) {
     return part;
   }
@@ -50,21 +50,21 @@ export function rewriteVirtualMetadata(
   };
 }
 
-export function metadataResponse(part: FormatMetadata): Response {
+export function metadataResponse(part: RegistryMetadata): Response {
   const headers = new Headers(part.headers);
   headers.set("content-type", part.contentType);
   headers.delete("content-length");
   return new Response(part.body, { headers });
 }
 
-export function metadataResponseEtag(part: FormatMetadata): string {
+export function metadataResponseEtag(part: RegistryMetadata): string {
   const body = typeof part.body === "string" ? part.body : new TextDecoder().decode(part.body);
   return textEtag(body);
 }
 
 export function metadataResponseWithEtag(
   req: Request,
-  part: FormatMetadata,
+  part: RegistryMetadata,
   etag = metadataResponseEtag(part),
 ): Response {
   const body = typeof part.body === "string" ? part.body : new TextDecoder().decode(part.body);
