@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MutationCache, QueryCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   createRootRoute,
   createRoute,
@@ -9,8 +9,7 @@ import {
 } from "@tanstack/react-router";
 import { Toaster } from "@/components/ui/sonner";
 import { ForgotPasswordPage, LoginPage, ResetPasswordPage } from "@/features/auth/pages";
-
-const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+import { ApiError } from "@/lib/api";
 
 // ── router ─────────────────────────────────────────────────────────────────
 const rootRoute = createRootRoute({ component: () => <Outlet /> });
@@ -72,6 +71,25 @@ declare module "@tanstack/react-router" {
     router: typeof router;
   }
 }
+
+const AUTH_PATHS = new Set(["/login", "/forgot-password", "/reset-password"]);
+
+// Without this, an expired session mid-session surfaces only as ApiError(401) on
+// in-page queries/mutations, leaving the user stranded on a page silently showing
+// empty/stale data. Centralize 401 handling: drop the cached identity and redirect
+// to /login (guarding the auth routes themselves to avoid a redirect loop).
+function redirectOnUnauthorized(error: unknown) {
+  if (!(error instanceof ApiError) || error.status !== 401) return;
+  if (AUTH_PATHS.has(router.state.location.pathname)) return;
+  queryClient.removeQueries({ queryKey: ["me"] });
+  void router.navigate({ to: "/login" });
+}
+
+const queryClient = new QueryClient({
+  queryCache: new QueryCache({ onError: redirectOnUnauthorized }),
+  mutationCache: new MutationCache({ onError: redirectOnUnauthorized }),
+  defaultOptions: { queries: { retry: false } },
+});
 
 export function App() {
   return (
