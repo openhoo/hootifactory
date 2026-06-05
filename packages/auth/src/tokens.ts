@@ -108,11 +108,13 @@ export async function recordTokenLastUsed(tokenId: string, now = Date.now()): Pr
   if (previous !== undefined && now - previous < TOKEN_LAST_USED_WRITE_INTERVAL_MS) {
     return false;
   }
-  tokenLastUsedWrites.set(tokenId, now);
   await db
     .update(apiTokens)
     .set({ lastUsedAt: new Date(now) })
     .where(eq(apiTokens.id, tokenId));
+  // Advance the debounce marker only after a successful write so a failed update
+  // does not suppress the next attempt for the whole debounce interval.
+  tokenLastUsedWrites.set(tokenId, now);
   return true;
 }
 
