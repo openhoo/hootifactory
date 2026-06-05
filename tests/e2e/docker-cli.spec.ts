@@ -1,7 +1,8 @@
+import { randomBytes, randomUUID } from "node:crypto";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, test } from "@playwright/test";
+import { type APIRequestContext, expect, test } from "@playwright/test";
 import { CLI_IMAGES, dockerReachableUrl, dockerRun, ensureDockerAvailable } from "./docker-clients";
 import { createRepo, setupOwner, uniq } from "./helpers";
 
@@ -414,6 +415,201 @@ test.describe("docker registry error and edge scenarios (Dockerized real CLI)", 
 
     try {
       docker(["rmi", "-f", ref], dockerConfig);
+      docker(["logout", host], dockerConfig);
+    } catch {
+      /* ignore */
+    }
+  });
+});
+
+/** A FROM-scratch context whose N distinct COPY instructions each become a layer. */
+function multiLayerContext(layers: number, nonce: string): string {
+  const ctxDir = mkdtempSync(join(tmpdir(), "hoot-docker-multi-"));
+  const lines = ["FROM scratch"];
+  for (let i = 0; i < layers; i++) {
+    writeFileSync(join(ctxDir, `f${i}.txt`), `layer-${i}-${nonce}-${"x".repeat(64)}\n`);
+    lines.push(`COPY f${i}.txt /f${i}.txt`);
+  }
+  writeFileSync(join(ctxDir, "Dockerfile"), `${lines.join("\n")}\n`);
+  return ctxDir;
+}
+
+/** A FROM-scratch context with one large, incompressible layer of `bytes`. */
+function largeLayerContext(bytes: number): string {
+  const ctxDir = mkdtempSync(join(tmpdir(), "hoot-docker-large-"));
+  writeFileSync(join(ctxDir, "big.bin"), randomBytes(bytes));
+  writeFileSync(join(ctxDir, "Dockerfile"), "FROM scratch\nADD big.bin /big.bin\n");
+  return ctxDir;
+}
+
+const MANIFEST_ACCEPT = [
+  "application/vnd.oci.image.index.v1+json",
+  "application/vnd.docker.distribution.manifest.list.v2+json",
+  "application/vnd.oci.image.manifest.v1+json",
+  "application/vnd.docker.distribution.manifest.v2+json",
+].join(", ");
+
+/**
+ * Resolve a pushed tag to its concrete image manifest. Modern `docker build`
+ * (BuildKit) pushes an OCI image index, so follow it to the real platform image
+ * (skipping the attestation manifest, whose platform is `unknown`).
+ */
+async function imageManifest(
+  ctx: APIRequestContext,
+  orgSlug: string,
+  repoName: string,
+  app: string,
+  ref: string,
+): Promise<{ config: { digest: string }; layers: { digest: string; size: number }[] }> {
+  const base = `/v2/${orgSlug}/${repoName}/${app}/manifests`;
+  const top = await ctx.get(`${base}/${ref}`, { headers: { accept: MANIFEST_ACCEPT } });
+  expect(top.status()).toBe(200);
+  const doc = await top.json();
+  if (!Array.isArray(doc.manifests)) return doc;
+
+  const image = (doc.manifests as { digest: string; platform?: { os?: string } }[]).find(
+    (m) => m.platform?.os && m.platform.os !== "unknown",
+  );
+  expect(image, "image index must reference a concrete platform image").toBeTruthy();
+  const res = await ctx.get(`${base}/${image!.digest}`, { headers: { accept: MANIFEST_ACCEPT } });
+  expect(res.status()).toBe(200);
+  return res.json();
+}
+
+test.describe("docker registry streaming & connection transport (Dockerized real CLI)", () => {
+  test.beforeAll(ensureDockerAvailable);
+
+  test("multi-layer image pushes and pulls every distinct layer blob concurrently", async ({
+    baseURL,
+  }) => {
+    test.setTimeout(240_000);
+    const host = new URL(dockerReachableUrl(baseURL!)).host;
+    const dockerConfig = mkdtempSync(join(tmpdir(), "hoot-docker-config-"));
+    const owner = await setupOwner(baseURL!);
+    const repoName = uniq("docker-multi");
+    expect(
+      (await createRepo(owner.ctx, owner.orgId, { name: repoName, moduleId: "docker" })).status(),
+    ).toBe(201);
+
+    const ref = `${host}/${owner.orgSlug}/${repoName}/app:1.0`;
+    docker(["login", host, "-u", owner.username, "--password-stdin"], dockerConfig, owner.password);
+    docker(["build", "-t", ref, multiLayerContext(4, randomUUID())], dockerConfig);
+    docker(["push", ref], dockerConfig);
+
+    // The pushed manifest references the config plus every distinct layer blob,
+    // and each blob is independently readable (docker fetches them concurrently).
+    const manifest = await imageManifest(owner.ctx, owner.orgSlug, repoName, "app", "1.0");
+    expect(manifest.layers.length).toBeGreaterThanOrEqual(3);
+    const digests = [manifest.config.digest, ...manifest.layers.map((l) => l.digest)];
+    expect(new Set(digests).size).toBe(digests.length); // all distinct
+    for (const digest of digests) {
+      const blob = await owner.ctx.get(`/v2/${owner.orgSlug}/${repoName}/app/blobs/${digest}`);
+      expect(blob.status(), `blob ${digest}`).toBe(200);
+    }
+
+    // A clean pull must reassemble every layer; success proves all blobs streamed back.
+    docker(["rmi", "-f", ref], dockerConfig);
+    docker(["pull", ref], dockerConfig);
+    expect(docker(["image", "inspect", ref], dockerConfig)).toContain(
+      `${owner.orgSlug}/${repoName}/app`,
+    );
+
+    try {
+      docker(["rmi", "-f", ref], dockerConfig);
+      docker(["logout", host], dockerConfig);
+    } catch {
+      /* ignore */
+    }
+  });
+
+  test("a large layer blob streams through push and pull intact", async ({ baseURL }) => {
+    test.setTimeout(240_000);
+    const host = new URL(dockerReachableUrl(baseURL!)).host;
+    const dockerConfig = mkdtempSync(join(tmpdir(), "hoot-docker-config-"));
+    const owner = await setupOwner(baseURL!);
+    const repoName = uniq("docker-large");
+    expect(
+      (await createRepo(owner.ctx, owner.orgId, { name: repoName, moduleId: "docker" })).status(),
+    ).toBe(201);
+
+    const ref = `${host}/${owner.orgSlug}/${repoName}/app:1.0`;
+    docker(["login", host, "-u", owner.username, "--password-stdin"], dockerConfig, owner.password);
+    docker(["build", "-t", ref, largeLayerContext(16 * 1024 * 1024)], dockerConfig);
+    docker(["push", ref], dockerConfig);
+
+    // The large layer blob is served with a content-length and supports ranged
+    // reads (the OCI streaming/getRange path) even at multi-megabyte sizes.
+    const manifest = await imageManifest(owner.ctx, owner.orgSlug, repoName, "app", "1.0");
+    const layer = manifest.layers[0]!;
+    const blobUrl = `/v2/${owner.orgSlug}/${repoName}/app/blobs/${layer.digest}`;
+    const head = await owner.ctx.head(blobUrl);
+    expect(head.status()).toBe(200);
+    expect(Number(head.headers()["content-length"])).toBeGreaterThan(1_000_000);
+    expect(head.headers()["accept-ranges"]).toBe("bytes");
+    const tail = await owner.ctx.get(blobUrl, { headers: { range: "bytes=-1024" } });
+    expect(tail.status()).toBe(206);
+    expect(Buffer.from(await tail.body()).length).toBe(1024);
+
+    docker(["rmi", "-f", ref], dockerConfig);
+    docker(["pull", ref], dockerConfig);
+    expect(docker(["image", "inspect", ref], dockerConfig)).toContain(
+      `${owner.orgSlug}/${repoName}/app`,
+    );
+
+    try {
+      docker(["rmi", "-f", ref], dockerConfig);
+      docker(["logout", host], dockerConfig);
+    } catch {
+      /* ignore */
+    }
+  });
+
+  test("the same image pushed to two repos shares its layer blobs across both", async ({
+    baseURL,
+  }) => {
+    test.setTimeout(240_000);
+    const host = new URL(dockerReachableUrl(baseURL!)).host;
+    const dockerConfig = mkdtempSync(join(tmpdir(), "hoot-docker-config-"));
+    const owner = await setupOwner(baseURL!);
+    const repoA = uniq("docker-share-a");
+    const repoB = uniq("docker-share-b");
+    for (const name of [repoA, repoB]) {
+      expect(
+        (await createRepo(owner.ctx, owner.orgId, { name, moduleId: "docker" })).status(),
+      ).toBe(201);
+    }
+
+    const ctxDir = multiLayerContext(3, randomUUID());
+    const refA = `${host}/${owner.orgSlug}/${repoA}/app:1.0`;
+    const refB = `${host}/${owner.orgSlug}/${repoB}/app:1.0`;
+    docker(["login", host, "-u", owner.username, "--password-stdin"], dockerConfig, owner.password);
+    docker(["build", "-t", refA, ctxDir], dockerConfig);
+    docker(["tag", refA, refB], dockerConfig);
+    docker(["push", refA], dockerConfig);
+    // Pushing the identical image to a second repo reuses the already-stored
+    // layer blobs (docker mounts them cross-repo); the push still succeeds.
+    docker(["push", refB], dockerConfig);
+
+    const manifestA = await imageManifest(owner.ctx, owner.orgSlug, repoA, "app", "1.0");
+    const manifestB = await imageManifest(owner.ctx, owner.orgSlug, repoB, "app", "1.0");
+    expect(manifestB.layers.map((l) => l.digest)).toEqual(manifestA.layers.map((l) => l.digest));
+    // The shared layer is readable from BOTH repositories.
+    for (const layer of manifestB.layers) {
+      const inA = await owner.ctx.get(`/v2/${owner.orgSlug}/${repoA}/app/blobs/${layer.digest}`);
+      const inB = await owner.ctx.get(`/v2/${owner.orgSlug}/${repoB}/app/blobs/${layer.digest}`);
+      expect(inA.status()).toBe(200);
+      expect(inB.status()).toBe(200);
+    }
+
+    // A clean pull from the second repo reassembles the shared layers.
+    docker(["rmi", "-f", refA, refB], dockerConfig);
+    docker(["pull", refB], dockerConfig);
+    expect(docker(["image", "inspect", refB], dockerConfig)).toContain(
+      `${owner.orgSlug}/${repoB}/app`,
+    );
+
+    try {
+      docker(["rmi", "-f", refB], dockerConfig);
       docker(["logout", host], dockerConfig);
     } catch {
       /* ignore */

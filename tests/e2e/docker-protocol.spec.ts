@@ -1071,3 +1071,281 @@ test.describe("docker registry protocol authorization", () => {
     expect(casBlobState(digest)).toEqual({ dbRows: 0, exists: false });
   });
 });
+
+test.describe("docker registry connection & streaming transport", () => {
+  async function dockerRepo(owner: Awaited<ReturnType<typeof setupOwner>>, name: string) {
+    const res = await createRepo(owner.ctx, owner.orgId, { name, moduleId: "docker" });
+    expect(res.status()).toBe(201);
+    return ((await res.json()).repository as { mountPath: string }).mountPath;
+  }
+
+  async function patchChunk(
+    ctx: APIRequestContext,
+    path: string,
+    start: number,
+    chunk: Buffer,
+  ): Promise<Awaited<ReturnType<APIRequestContext["patch"]>>> {
+    return ctx.patch(path, {
+      headers: {
+        "content-type": "application/octet-stream",
+        "content-range": `${start}-${start + chunk.length - 1}`,
+      },
+      data: chunk,
+    });
+  }
+
+  test("cross-repository blob mount links a blob without re-upload and charges storage once", async ({
+    baseURL,
+  }) => {
+    const owner = await setupOwner(baseURL!);
+    const sourceMount = await dockerRepo(owner, "mount-source");
+    const targetMount = await dockerRepo(owner, "mount-target");
+
+    const bytes = Buffer.from("cross-repo-mount-layer-payload-0123456789");
+    const digest = await uploadBlob(owner.ctx, sourceMount, "app", bytes);
+    const fromRef = `${sourceMount.replace(/^v2\//, "")}/app`;
+
+    // Mounting an existing blob from a readable repo links it without re-upload.
+    const mounted = await owner.ctx.post(
+      `/${targetMount}/app/blobs/uploads?mount=${digest}&from=${encodeURIComponent(fromRef)}`,
+    );
+    expect(mounted.status()).toBe(201);
+    expect(mounted.headers()["docker-content-digest"]).toBe(digest);
+    expect(mounted.headers().location).toContain(`/${targetMount}/app/blobs/${digest}`);
+
+    // The blob is immediately readable from the target without ever being re-sent.
+    const got = await owner.ctx.get(`/${targetMount}/app/blobs/${digest}`);
+    expect(got.status()).toBe(200);
+    expect(Buffer.from(await got.body())).toEqual(bytes);
+
+    // Dedup: both references point at a single physical CAS object.
+    expect(casBlobState(digest)).toEqual({ dbRows: 1, exists: true });
+
+    // A mount whose `from` matches no readable source falls back to a fresh
+    // resumable upload session (202 + an uploads Location) rather than 201.
+    const fallback = await owner.ctx.post(
+      `/${targetMount}/app/blobs/uploads?mount=${digest}&from=${encodeURIComponent("no/such/source")}`,
+    );
+    expect(fallback.status()).toBe(202);
+    expect(fallback.headers().location).toContain(`/${targetMount}/app/blobs/uploads/`);
+  });
+
+  test("out-of-order and overlapping resumable PATCH chunks are rejected and the session recovers", async ({
+    baseURL,
+  }) => {
+    const owner = await setupOwner(baseURL!);
+    const mount = await dockerRepo(owner, "chunk-order");
+    const upload = await startUpload(owner.ctx, mount, "chunked");
+
+    const accepted = await patchChunk(owner.ctx, upload.path, 0, Buffer.from("hello"));
+    expect(accepted.status()).toBe(202);
+    expect(accepted.headers().range).toBe("0-4");
+
+    // Forward gap: start (8) is past the committed offset (5).
+    const gap = await patchChunk(owner.ctx, upload.path, 8, Buffer.from("world"));
+    expect(gap.status()).toBe(416);
+    expect((await gap.json()).errors[0].code).toBe("BLOB_UPLOAD_INVALID");
+    expect((await owner.ctx.get(upload.path)).headers().range).toBe("0-4");
+
+    // Overlap: start (2) is before the committed offset (5).
+    const overlap = await patchChunk(owner.ctx, upload.path, 2, Buffer.from("XXXXX"));
+    expect(overlap.status()).toBe(416);
+    expect((await overlap.json()).errors[0].code).toBe("BLOB_UPLOAD_INVALID");
+    const status = await owner.ctx.get(upload.path);
+    expect(status.status()).toBe(204);
+    expect(status.headers().range).toBe("0-4");
+
+    // The next correctly-aligned chunk is accepted and the upload commits cleanly.
+    const resumed = await patchChunk(owner.ctx, upload.path, 5, Buffer.from(" world"));
+    expect(resumed.status()).toBe(202);
+    expect(resumed.headers().range).toBe("0-10");
+
+    const digest = sha256("hello world");
+    const committed = await owner.ctx.put(`${upload.path}?digest=${digest}`);
+    expect(committed.status()).toBe(201);
+    expect(committed.headers()["docker-content-digest"]).toBe(digest);
+    expect(
+      Buffer.from(await (await owner.ctx.get(`/${mount}/chunked/blobs/${digest}`)).body()),
+    ).toEqual(Buffer.from("hello world"));
+  });
+
+  test("a resumable upload can be cancelled with DELETE and the session is purged", async ({
+    baseURL,
+  }) => {
+    const owner = await setupOwner(baseURL!);
+    const mount = await dockerRepo(owner, "cancel-upload");
+    const upload = await startUpload(owner.ctx, mount, "cancelled");
+
+    expect((await patchChunk(owner.ctx, upload.path, 0, Buffer.from("hello"))).status()).toBe(202);
+    expect(uploadSessionState(upload.uuid)).toMatchObject({
+      chunkExists: [true],
+      offsetBytes: 5,
+      state: "open",
+    });
+
+    const cancelled = await owner.ctx.delete(upload.path);
+    expect(cancelled.status()).toBe(204);
+
+    // The session row is gone and its staged bytes are purged.
+    expect(uploadSessionState(upload.uuid).state).toBeNull();
+
+    const status = await owner.ctx.get(upload.path);
+    expect(status.status()).toBe(404);
+    expect((await status.json()).errors[0].code).toBe("BLOB_UPLOAD_UNKNOWN");
+
+    const patch = await patchChunk(owner.ctx, upload.path, 5, Buffer.from("!"));
+    expect(patch.status()).toBe(404);
+    expect((await patch.json()).errors[0].code).toBe("BLOB_UPLOAD_UNKNOWN");
+  });
+
+  test("monolithic and chunked uploads of the same bytes converge to one CAS object", async ({
+    baseURL,
+  }) => {
+    const owner = await setupOwner(baseURL!);
+    const mount = await dockerRepo(owner, "upload-equivalence");
+    const bytes = Buffer.from("monolithic-vs-chunked-equivalence-payload");
+    const digest = sha256(bytes);
+
+    // Path 1: a single monolithic POST ?digest upload.
+    const monoDigest = await uploadBlob(owner.ctx, mount, "mono", bytes);
+    expect(monoDigest).toBe(digest);
+
+    // Path 2: a two-PATCH resumable upload of the identical bytes.
+    const half = Math.floor(bytes.length / 2);
+    const upload = await startUpload(owner.ctx, mount, "chunked");
+    expect((await patchChunk(owner.ctx, upload.path, 0, bytes.subarray(0, half))).status()).toBe(
+      202,
+    );
+    expect((await patchChunk(owner.ctx, upload.path, half, bytes.subarray(half))).status()).toBe(
+      202,
+    );
+    const chunkedCommit = await owner.ctx.put(`${upload.path}?digest=${digest}`);
+    expect(chunkedCommit.status()).toBe(201);
+    expect(chunkedCommit.headers()["docker-content-digest"]).toBe(digest);
+
+    // Both framings produced the same digest, both blobs read back identically,
+    // and they share a single deduplicated CAS object.
+    for (const image of ["mono", "chunked"]) {
+      const blob = await owner.ctx.get(`/${mount}/${image}/blobs/${digest}`);
+      expect(blob.status()).toBe(200);
+      expect(Buffer.from(await blob.body())).toEqual(bytes);
+    }
+    expect(casBlobState(digest)).toEqual({ dbRows: 1, exists: true });
+  });
+
+  test("an empty final PUT commits a chunked upload whose bytes were fully sent via PATCH", async ({
+    baseURL,
+  }) => {
+    const owner = await setupOwner(baseURL!);
+    const mount = await dockerRepo(owner, "empty-commit");
+    const upload = await startUpload(owner.ctx, mount, "staged");
+
+    expect((await patchChunk(owner.ctx, upload.path, 0, Buffer.from("hello"))).status()).toBe(202);
+    expect((await patchChunk(owner.ctx, upload.path, 5, Buffer.from(" world"))).status()).toBe(202);
+
+    // Commit with no trailing body — all bytes are already staged.
+    const digest = sha256("hello world");
+    const committed = await owner.ctx.put(`${upload.path}?digest=${digest}`);
+    expect(committed.status()).toBe(201);
+    expect(committed.headers()["docker-content-digest"]).toBe(digest);
+    expect(committed.headers()["content-range"]).toBe("0-10");
+
+    const blob = await owner.ctx.get(`/${mount}/staged/blobs/${digest}`);
+    expect(Buffer.from(await blob.body()).toString("utf8")).toBe("hello world");
+  });
+
+  test("GET upload status reports the committed offset progressing across PATCH chunks", async ({
+    baseURL,
+  }) => {
+    const owner = await setupOwner(baseURL!);
+    const mount = await dockerRepo(owner, "status-progress");
+    const upload = await startUpload(owner.ctx, mount, "progress");
+
+    const initial = await owner.ctx.get(upload.path);
+    expect(initial.status()).toBe(204);
+    expect(initial.headers().range).toBe("0-0");
+    expect(initial.headers()["docker-upload-uuid"]).toBe(upload.uuid);
+
+    const steps: [Buffer, number, string][] = [
+      [Buffer.from("0123"), 0, "0-3"],
+      [Buffer.from("456789"), 4, "0-9"],
+      [Buffer.from("A"), 10, "0-10"],
+    ];
+    for (const [chunk, start, expectedRange] of steps) {
+      expect((await patchChunk(owner.ctx, upload.path, start, chunk)).status()).toBe(202);
+      const status = await owner.ctx.get(upload.path);
+      expect(status.status()).toBe(204);
+      expect(status.headers().range).toBe(expectedRange);
+      expect(status.headers()["docker-upload-uuid"]).toBe(upload.uuid);
+    }
+
+    const digest = sha256("0123456789A");
+    expect((await owner.ctx.put(`${upload.path}?digest=${digest}`)).status()).toBe(201);
+  });
+
+  test("manifest GET honors conditional If-None-Match and HEAD echoes the digest ETag", async ({
+    baseURL,
+  }) => {
+    const owner = await setupOwner(baseURL!);
+    const mount = await dockerRepo(owner, "manifest-conditional");
+    const configDigest = await uploadBlob(owner.ctx, mount, "img", Buffer.from("{}"));
+    const layerDigest = await uploadBlob(owner.ctx, mount, "img", Buffer.from("layer-a"));
+    const manifestDigest = await putManifest(
+      owner.ctx,
+      mount,
+      "img",
+      "v1",
+      configDigest,
+      layerDigest,
+    );
+
+    const accept = { accept: OCI_MEDIA_TYPES.manifestV1 };
+    const url = `/${mount}/img/manifests/v1`;
+
+    const get = await owner.ctx.get(url, { headers: accept });
+    expect(get.status()).toBe(200);
+    const etag = get.headers().etag;
+    expect(etag).toBe(`"${manifestDigest}"`);
+    expect(get.headers()["docker-content-digest"]).toBe(manifestDigest);
+
+    const matched = await owner.ctx.get(url, { headers: { ...accept, "if-none-match": etag } });
+    expect(matched.status()).toBe(304);
+    expect(Buffer.from(await matched.body()).length).toBe(0);
+
+    const wildcard = await owner.ctx.get(url, { headers: { ...accept, "if-none-match": "*" } });
+    expect(wildcard.status()).toBe(304);
+
+    const stale = await owner.ctx.get(url, {
+      headers: { ...accept, "if-none-match": `"sha256:${"0".repeat(64)}"` },
+    });
+    expect(stale.status()).toBe(200);
+
+    const head = await owner.ctx.head(url, { headers: accept });
+    expect(head.status()).toBe(200);
+    expect(head.headers().etag).toBe(etag);
+    expect(head.headers()["docker-content-digest"]).toBe(manifestDigest);
+  });
+
+  test("aborting a blob download mid-stream leaves the server able to serve it again", async ({
+    baseURL,
+  }) => {
+    const owner = await setupOwner(baseURL!);
+    const mount = await dockerRepo(owner, "abortable");
+    const bytes = Buffer.alloc(1 << 20, 0x61); // 1 MiB
+    const digest = await uploadBlob(owner.ctx, mount, "big", bytes);
+    const path = `/${mount}/big/blobs/${digest}`;
+
+    // Several aborted reads (1 ms deadline) — each either throws or completes;
+    // either way the source must be torn down without wedging the server.
+    for (let i = 0; i < 3; i++) {
+      await owner.ctx.get(path, { timeout: 1 }).catch(() => {});
+    }
+
+    // A subsequent clean read still returns the full, correct blob.
+    const clean = await owner.ctx.get(path);
+    expect(clean.status()).toBe(200);
+    const body = Buffer.from(await clean.body());
+    expect(body.length).toBe(bytes.length);
+    expect(sha256(body)).toBe(digest);
+  });
+});

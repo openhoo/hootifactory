@@ -797,3 +797,42 @@ test.describe("npm registry error and edge scenarios (Dockerized real CLI)", () 
     expect(message).toMatch(/404|not found|E404/i);
   });
 });
+
+test.describe("npm registry streaming & concurrency (Dockerized real CLI)", () => {
+  test.beforeAll(ensureDockerAvailable);
+
+  test("a single install fans out concurrent fetches across many independent packages", async ({
+    baseURL,
+  }) => {
+    test.setTimeout(240_000);
+    const owner = await setupOwner(baseURL!);
+    const suffix = `${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
+    const repoName = `npm-fanout-${suffix}`;
+    expect(
+      (await createRepo(owner.ctx, owner.orgId, { name: repoName, moduleId: "npm" })).status(),
+    ).toBe(201);
+    const secret = (
+      await (await createToken(owner.ctx, owner.orgId, { name: `npm-fanout-${suffix}` })).json()
+    ).secret as string;
+    const env = npmEnv(baseURL!, owner.orgSlug, repoName, secret);
+
+    // Publish several independent packages, then install them all at once so the
+    // real npm client issues many concurrent packument + tarball GETs.
+    const deps: Record<string, string> = {};
+    const pkgs: string[] = [];
+    for (let i = 0; i < 6; i++) {
+      const pkg = `e2e-fanout-${suffix}-${i}`;
+      publishVersion(env, pkg, "1.0.0");
+      deps[pkg] = "1.0.0";
+      pkgs.push(pkg);
+    }
+
+    const dir = consumerDir(env, deps);
+    npm(["install", "--registry", env.registry, "--no-audit", "--no-fund"], dir);
+
+    for (const pkg of pkgs) {
+      expect(existsSync(join(dir, "node_modules", pkg, "index.js")), pkg).toBe(true);
+      expect(installedVersion(dir, pkg)).toBe("1.0.0");
+    }
+  });
+});
