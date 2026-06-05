@@ -14,7 +14,7 @@ const u32 = (b: Uint8Array, o: number): number =>
     ((b[o + 3] ?? 0) * 0x1000000)) >>>
   0;
 
-const MAX_MANIFEST_BYTES = 1024 * 1024;
+export const MAX_MANIFEST_BYTES = 1024 * 1024;
 
 /**
  * A source archive's entries are nested under a single top-level directory

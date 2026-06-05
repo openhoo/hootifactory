@@ -1,4 +1,5 @@
 import { asJsonRecord, z } from "@hootifactory/registry";
+import { MAX_MANIFEST_BYTES } from "./swift-manifest";
 
 /**
  * SwiftPM package scopes are 1-39 char alphanumeric runs separated by single
@@ -74,7 +75,7 @@ export const SwiftVersionMetaSchema = z.strictObject({
   archiveDigest: Sha256DigestSchema,
   checksum: Sha256HexSchema,
   metadata: z.record(z.string(), z.unknown()),
-  manifest: z.string().max(1_000_000).optional(),
+  manifest: z.string().max(MAX_MANIFEST_BYTES).optional(),
 });
 
 export type SwiftVersionMeta = z.output<typeof SwiftVersionMetaSchema>;

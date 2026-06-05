@@ -176,7 +176,7 @@ export class SwiftAdapter implements RegistryPlugin {
       if (err instanceof RegistryError) {
         return withContentVersion(problemResponse(err.status, err.message));
       }
-      throw err;
+      return withContentVersion(problemResponse(500, "internal server error"));
     }
   };
 
@@ -283,7 +283,7 @@ export class SwiftAdapter implements RegistryPlugin {
         "content-version": CONTENT_VERSION,
       },
       redirect: req.method === "GET",
-      blocked: () => new Response("blocked by scan policy", { status: 403 }),
+      blocked: () => problemResponse(403, "blocked by scan policy"),
     });
   }
 

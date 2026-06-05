@@ -7,10 +7,12 @@ import {
 } from "@hootifactory/registry";
 import { createTestRegistryContext } from "@hootifactory/registry/testing";
 import { SwiftAdapter } from "./swift-adapter";
+import { MAX_MANIFEST_BYTES } from "./swift-manifest";
 import {
   isValidSwiftName,
   isValidSwiftScope,
   isValidSwiftVersion,
+  parseSwiftVersionMeta,
   swiftPackageId,
 } from "./swift-validation";
 
@@ -96,6 +98,17 @@ describe("Swift adapter validation", () => {
     expect(swiftPackageId("mona", "LinkedList")).toBe("mona.linkedlist");
     // Differing casings of the same identifier collapse to one stored key.
     expect(swiftPackageId("Mona", "linkedlist")).toBe("mona.linkedlist");
+  });
+
+  test("accepts manifests up to the extractor byte limit", () => {
+    expect(
+      parseSwiftVersionMeta({
+        archiveDigest: ARCHIVE_DIGEST,
+        checksum: CHECKSUM,
+        metadata: {},
+        manifest: "a".repeat(MAX_MANIFEST_BYTES),
+      })?.manifest?.length,
+    ).toBe(MAX_MANIFEST_BYTES);
   });
 });
 
@@ -257,6 +270,28 @@ describe("Swift adapter handlers", () => {
     expect(res.headers.get("content-version")).toBe("1");
   });
 
+  test("download scan blocks are problem+json with Content-Version", async () => {
+    const ctx = ctxWithPackage();
+    ctx.data.versions.findLive = async () => versionRow(storedMeta);
+    ctx.data.content.blobRefExists = async () => true;
+    ctx.data.content.serveBlobIfClean = async ({ blocked }) =>
+      blocked ? blocked() : new Response("unexpected", { status: 500 });
+
+    const res = await new SwiftAdapter().handle(
+      archiveMatch,
+      new Request("https://registry.test/mona/LinkedList/1.0.0.zip"),
+      ctx,
+    );
+
+    expect(res.status).toBe(403);
+    expect(res.headers.get("content-type")).toBe("application/problem+json");
+    expect(res.headers.get("content-version")).toBe("1");
+    expect((await res.json()) as Record<string, unknown>).toMatchObject({
+      status: 403,
+      detail: "blocked by scan policy",
+    });
+  });
+
   test("serves the stored Package.swift manifest as text/x-swift", async () => {
     const ctx = ctxWithPackage();
     ctx.data.versions.findLive = async () => versionRow(storedMeta);
@@ -299,6 +334,27 @@ describe("Swift adapter handlers", () => {
     expect(res.headers.get("content-type")).toBe("application/problem+json");
     expect(res.headers.get("content-version")).toBe("1");
     expect((await res.json()) as Record<string, unknown>).toMatchObject({ status: 404 });
+  });
+
+  test("renders unexpected handler errors as problem+json 500 carrying Content-Version", async () => {
+    const ctx = ctxWithPackage();
+    ctx.data.packages.findByName = async () => {
+      throw new Error("database unavailable");
+    };
+
+    const res = await new SwiftAdapter().handle(
+      releasesMatch,
+      new Request("https://registry.test/mona/LinkedList"),
+      ctx,
+    );
+
+    expect(res.status).toBe(500);
+    expect(res.headers.get("content-type")).toBe("application/problem+json");
+    expect(res.headers.get("content-version")).toBe("1");
+    expect((await res.json()) as Record<string, unknown>).toMatchObject({
+      status: 500,
+      detail: "internal server error",
+    });
   });
 
   test("maps a repository url to identifiers", async () => {
