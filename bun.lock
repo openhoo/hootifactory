@@ -249,6 +249,13 @@
         "@hootifactory/registry": "workspace:*",
       },
     },
+    "packages/registry-maven": {
+      "name": "@hootifactory/registry-maven",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/registry": "workspace:*",
+      },
+    },
     "packages/registry-npm": {
       "name": "@hootifactory/registry-npm",
       "version": "0.0.0",
@@ -293,6 +300,7 @@
         "@hootifactory/registry-cargo": "workspace:*",
         "@hootifactory/registry-composer": "workspace:*",
         "@hootifactory/registry-go": "workspace:*",
+        "@hootifactory/registry-maven": "workspace:*",
         "@hootifactory/registry-npm": "workspace:*",
         "@hootifactory/registry-nuget": "workspace:*",
         "@hootifactory/registry-oci": "workspace:*",
@@ -578,6 +586,8 @@
     "@hootifactory/registry-composer": ["@hootifactory/registry-composer@workspace:packages/registry-composer"],
 
     "@hootifactory/registry-go": ["@hootifactory/registry-go@workspace:packages/registry-go"],
+
+    "@hootifactory/registry-maven": ["@hootifactory/registry-maven@workspace:packages/registry-maven"],
 
     "@hootifactory/registry-npm": ["@hootifactory/registry-npm@workspace:packages/registry-npm"],
 

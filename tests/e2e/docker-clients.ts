@@ -11,6 +11,7 @@ export const CLI_IMAGES = {
   dotnet: process.env.E2E_DOTNET_IMAGE ?? "mcr.microsoft.com/dotnet/sdk:9.0",
   go: process.env.E2E_GO_IMAGE ?? "golang:1.24-bookworm",
   helm: process.env.E2E_HELM_IMAGE ?? "alpine/helm:3.19.0",
+  maven: process.env.E2E_MAVEN_IMAGE ?? "maven:3.9-eclipse-temurin-21",
   node: process.env.E2E_NODE_IMAGE ?? "node:22-bookworm-slim",
   oras: process.env.E2E_ORAS_IMAGE ?? "ghcr.io/oras-project/oras:v1.3.0",
   ruby: process.env.E2E_RUBY_IMAGE ?? "ruby:3.3-bookworm",

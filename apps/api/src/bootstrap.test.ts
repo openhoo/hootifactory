@@ -18,6 +18,7 @@ describe("registry plugin bootstrap", () => {
       "nuget",
       "rubygems",
       "composer",
+      "maven",
     ] as const) {
       const plugin = registryPlugins.lookup(moduleId);
       expect(plugin?.capabilities.proxyable).toBe(false);
