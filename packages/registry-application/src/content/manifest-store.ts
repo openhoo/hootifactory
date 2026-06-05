@@ -53,6 +53,10 @@ export interface UpsertContentManifestInput {
 }
 
 function packageVersionDigestEquals(digest: string) {
+  // NOTE: metadata is stored double-encoded (a jsonb *string* holding JSON text,
+  // jsonb_typeof = 'string'), so `metadata ->> 'digest'` is always NULL. The
+  // `#>> '{}'` then `::jsonb` round-trip unwraps the string back into an object
+  // before extracting 'digest' — it is load-bearing, not a no-op. Do not simplify.
   return sql`jsonb_extract_path_text((${packageVersions.metadata} #>> '{}')::jsonb, ${"digest"}) = ${digest}`;
 }
 
@@ -91,34 +95,38 @@ export async function listExistingContentManifestDigests(
   opts: { packageId: string; digests: string[] },
 ): Promise<string[]> {
   if (opts.digests.length === 0) return [];
-  const taggedRows = (await db
-    .select({ digest: contentManifests.digest })
-    .from(contentTags)
-    .innerJoin(contentManifests, eq(contentTags.manifestId, contentManifests.id))
-    .where(
-      and(
-        eq(contentTags.packageId, opts.packageId),
-        eq(contentManifests.repositoryId, ctx.repo.id),
-        inArray(contentManifests.digest, opts.digests),
+  // Two independent reads (tagged vs version-pinned) run on every manifest PUT
+  // and referrers request — fire them concurrently.
+  const [taggedRows, versionRows] = await Promise.all([
+    db
+      .select({ digest: contentManifests.digest })
+      .from(contentTags)
+      .innerJoin(contentManifests, eq(contentTags.manifestId, contentManifests.id))
+      .where(
+        and(
+          eq(contentTags.packageId, opts.packageId),
+          eq(contentManifests.repositoryId, ctx.repo.id),
+          inArray(contentManifests.digest, opts.digests),
+        ),
       ),
-    )) as ContentDigestRow[];
-  const versionRows = (await db
-    .select({ digest: packageVersions.version })
-    .from(packageVersions)
-    .innerJoin(
-      contentManifests,
-      and(
-        eq(contentManifests.repositoryId, ctx.repo.id),
-        eq(contentManifests.digest, packageVersions.version),
+    db
+      .select({ digest: packageVersions.version })
+      .from(packageVersions)
+      .innerJoin(
+        contentManifests,
+        and(
+          eq(contentManifests.repositoryId, ctx.repo.id),
+          eq(contentManifests.digest, packageVersions.version),
+        ),
+      )
+      .where(
+        and(
+          eq(packageVersions.packageId, opts.packageId),
+          isNull(packageVersions.deletedAt),
+          inArray(packageVersions.version, opts.digests),
+        ),
       ),
-    )
-    .where(
-      and(
-        eq(packageVersions.packageId, opts.packageId),
-        isNull(packageVersions.deletedAt),
-        inArray(packageVersions.version, opts.digests),
-      ),
-    )) as ContentDigestRow[];
+  ]);
   return [...new Set([...taggedRows, ...versionRows].map((row) => row.digest))];
 }
 
@@ -156,46 +164,51 @@ export async function listContentManifestDigestsReferencingBlob(
   ctx: RegistryRequestContext,
   opts: { packageId: string; digest: string },
 ): Promise<string[]> {
-  const taggedRows = (await db
-    .select({ digest: contentManifests.digest })
-    .from(contentBlobRefs)
-    .innerJoin(contentManifests, eq(contentBlobRefs.manifestId, contentManifests.id))
-    .innerJoin(
-      contentTags,
-      and(
-        eq(contentTags.packageId, contentBlobRefs.packageId),
-        eq(contentTags.manifestId, contentBlobRefs.manifestId),
-      ),
-    )
-    .where(
-      and(
-        eq(contentBlobRefs.repositoryId, ctx.repo.id),
-        eq(contentBlobRefs.packageId, opts.packageId),
-        eq(contentBlobRefs.blobDigest, opts.digest),
-      ),
-    )) as ContentDigestRow[];
-  const versionRows = (await db
-    .select({ digest: contentManifests.digest })
-    .from(contentBlobRefs)
-    .innerJoin(contentManifests, eq(contentBlobRefs.manifestId, contentManifests.id))
-    .innerJoin(
-      packageVersions,
-      and(
-        eq(packageVersions.packageId, contentBlobRefs.packageId),
-        eq(
-          contentManifests.digest,
-          sql`jsonb_extract_path_text((${packageVersions.metadata} #>> '{}')::jsonb, ${"digest"})`,
+  // Called on every blob GET/HEAD (isOciBlobBlocked) — the highest-frequency
+  // container-registry op. The tagged and version-pinned reads are independent;
+  // run them concurrently.
+  const [taggedRows, versionRows] = await Promise.all([
+    db
+      .select({ digest: contentManifests.digest })
+      .from(contentBlobRefs)
+      .innerJoin(contentManifests, eq(contentBlobRefs.manifestId, contentManifests.id))
+      .innerJoin(
+        contentTags,
+        and(
+          eq(contentTags.packageId, contentBlobRefs.packageId),
+          eq(contentTags.manifestId, contentBlobRefs.manifestId),
         ),
-        isNull(packageVersions.deletedAt),
+      )
+      .where(
+        and(
+          eq(contentBlobRefs.repositoryId, ctx.repo.id),
+          eq(contentBlobRefs.packageId, opts.packageId),
+          eq(contentBlobRefs.blobDigest, opts.digest),
+        ),
       ),
-    )
-    .where(
-      and(
-        eq(contentBlobRefs.repositoryId, ctx.repo.id),
-        eq(contentBlobRefs.packageId, opts.packageId),
-        eq(contentBlobRefs.blobDigest, opts.digest),
+    db
+      .select({ digest: contentManifests.digest })
+      .from(contentBlobRefs)
+      .innerJoin(contentManifests, eq(contentBlobRefs.manifestId, contentManifests.id))
+      .innerJoin(
+        packageVersions,
+        and(
+          eq(packageVersions.packageId, contentBlobRefs.packageId),
+          eq(
+            contentManifests.digest,
+            sql`jsonb_extract_path_text((${packageVersions.metadata} #>> '{}')::jsonb, ${"digest"})`,
+          ),
+          isNull(packageVersions.deletedAt),
+        ),
+      )
+      .where(
+        and(
+          eq(contentBlobRefs.repositoryId, ctx.repo.id),
+          eq(contentBlobRefs.packageId, opts.packageId),
+          eq(contentBlobRefs.blobDigest, opts.digest),
+        ),
       ),
-    )) as ContentDigestRow[];
+  ]);
   return [...new Set([...taggedRows, ...versionRows].map((row) => row.digest))];
 }
 
