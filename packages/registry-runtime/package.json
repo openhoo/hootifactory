@@ -16,6 +16,7 @@
     "@hootifactory/config": "workspace:*",
     "@hootifactory/registry": "workspace:*",
     "@hootifactory/registry-apt": "workspace:*",
+    "@hootifactory/registry-chocolatey": "workspace:*",
     "@hootifactory/registry-maven": "workspace:*",
     "@hootifactory/registry-composer": "workspace:*",
     "@hootifactory/registry-rubygems": "workspace:*",

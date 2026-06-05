@@ -1,6 +1,7 @@
 import type { RegistryPlugin } from "@hootifactory/registry";
 import { aptRegistryPlugin } from "@hootifactory/registry-apt";
 import { cargoRegistryPlugin } from "@hootifactory/registry-cargo";
+import { chocolateyRegistryPlugin } from "@hootifactory/registry-chocolatey";
 import { composerRegistryPlugin } from "@hootifactory/registry-composer";
 import { dartRegistryPlugin } from "@hootifactory/registry-dart";
 import { goRegistryPlugin } from "@hootifactory/registry-go";
@@ -39,4 +40,5 @@ export const REGISTRY_PLUGIN_MANIFEST: RegistryPluginEntry[] = [
   { plugin: aptRegistryPlugin },
   { plugin: dartRegistryPlugin },
   { plugin: swiftRegistryPlugin },
+  { plugin: chocolateyRegistryPlugin },
 ];
