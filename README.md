@@ -101,7 +101,11 @@ bind to `127.0.0.1` by default and it uses dev credentials; do not deploy
 host. Use a production manifest with `NODE_ENV=production` and real secrets.
 
 For production bootstrap, set `SEED_USER` and `SEED_PASS` explicitly before `bun run db:seed`.
-Production seed runs do not mint or print an owner token unless `SEED_PRINT_TOKEN=true` is set.
+Production seed runs never print passwords or owner token secrets.
+
+Keep database dumps outside the repository tree, or encrypt them before storing
+them under ignored local paths; dumps can contain token, session, and password
+hashes even when raw secrets are not present.
 
 Start with this README and the package entry points above for architecture
 orientation; the automated boundary check is the source of truth for enforced

@@ -7,6 +7,7 @@ import {
   addUpstream,
   addVirtualMember,
   getRepositoryById,
+  VirtualMemberLimitExceededError,
 } from "@hootifactory/registry-application/repositories";
 import type { Hono } from "hono";
 import type { AppEnv } from "../types";
@@ -108,11 +109,18 @@ export function registerApiV1RepositoryConfigRoutes(apiV1Router: Hono<AppEnv>) {
       }
       const memberResponse = await authorizeRepository(c, memberValidation.member, "read");
       if (memberResponse) return memberResponse;
-      await addVirtualMember(
-        access.repo.id,
-        parsedBody.data.memberRepoId,
-        parsedBody.data.position ?? 0,
-      );
+      try {
+        await addVirtualMember(
+          access.repo.id,
+          parsedBody.data.memberRepoId,
+          parsedBody.data.position ?? 0,
+        );
+      } catch (err) {
+        if (err instanceof VirtualMemberLimitExceededError) {
+          return errorResponse(c, 400, "BAD_REQUEST", err.message);
+        }
+        throw err;
+      }
       audit({
         orgId: access.repo.orgId,
         action: "repository.member.add",

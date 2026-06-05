@@ -3,6 +3,7 @@ import {
   addUpstream,
   addVirtualMember,
   getRepositoryById,
+  VirtualMemberLimitExceededError,
 } from "@hootifactory/registry-application/repositories";
 import type { Hono } from "hono";
 import type { AppEnv } from "../types";
@@ -42,7 +43,14 @@ export function registerRepositoryConfigRoutes(router: Hono<AppEnv>): void {
       return c.json({ error: "member repository is not readable" }, 403);
     }
 
-    await addVirtualMember(guard.repo.id, body.memberRepoId, body.position ?? 0);
+    try {
+      await addVirtualMember(guard.repo.id, body.memberRepoId, body.position ?? 0);
+    } catch (err) {
+      if (err instanceof VirtualMemberLimitExceededError) {
+        return c.json({ error: err.message }, 400);
+      }
+      throw err;
+    }
     audit({
       orgId: guard.repo.orgId,
       action: "repository.member.add",

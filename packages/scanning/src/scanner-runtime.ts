@@ -32,10 +32,13 @@ export interface ScannerRuntimeOptions {
 }
 
 export const DEFAULT_SCANNER_IMAGES = {
-  syft: "anchore/syft:latest",
-  grype: "anchore/grype:latest",
-  trivy: "aquasec/trivy:latest",
-  clamav: "clamav/clamav:latest",
+  syft: "anchore/syft:latest@sha256:c6d5719f48f5a5986acf2847eb1ed7c53176e712d5721fcd156184cfb262f6eb",
+  grype:
+    "anchore/grype:latest@sha256:e5b03c0ec0bc20a9eaaf84c2dcc97d9890f4dfb4381fce26bffc7dd8527c3d9d",
+  trivy:
+    "aquasec/trivy:latest@sha256:016eae51fdcf989332a5404af7e8f625cd5d95d7c0907a221d080a996f556500",
+  clamav:
+    "clamav/clamav:latest@sha256:d4000290254603e7ee45d4904425c7d98c015af727f402756198fe41a31e7777",
 } as const;
 
 /** Build the runtime scanner options from the process environment. */

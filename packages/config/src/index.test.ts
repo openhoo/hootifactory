@@ -39,6 +39,8 @@ describe("environment auth creation defaults", () => {
     expect(devEnv.REGISTRY_MAX_UPLOAD_BYTES).toBe(100 * 1024 * 1024);
     expect(devEnv.REGISTRY_MAX_STAGED_UPLOAD_BYTES).toBe(100 * 1024 * 1024);
     expect(devEnv.REGISTRY_MAX_INFLIGHT_UPLOAD_BYTES).toBe(256 * 1024 * 1024);
+    expect(devEnv.REGISTRY_MAX_VIRTUAL_MEMBERS).toBe(32);
+    expect(devEnv.REGISTRY_VIRTUAL_MEMBER_CONCURRENCY).toBe(8);
     expect(devEnv.REGISTRY_ALLOW_PRIVATE_UPSTREAMS).toBe(false);
     expect(devEnv.S3_PUBLIC_ENDPOINT).toBeUndefined();
     expect(devEnv.SCAN_MAX_BYTES).toBe(100 * 1024 * 1024);
@@ -46,8 +48,8 @@ describe("environment auth creation defaults", () => {
     expect(devEnv.SCANNER_DOCKER_MEMORY).toBe("1g");
     expect(devEnv.SCANNER_DOCKER_CPUS).toBe("2");
     expect(devEnv.SCANNER_DOCKER_PIDS_LIMIT).toBe(512);
-    expect(devEnv.GRYPE_IMAGE).toBe("anchore/grype:latest");
-    expect(devEnv.TRIVY_IMAGE).toBe("aquasec/trivy:latest");
+    expect(devEnv.GRYPE_IMAGE).toMatch(/^anchore\/grype:latest@sha256:[a-f0-9]{64}$/);
+    expect(devEnv.TRIVY_IMAGE).toMatch(/^aquasec\/trivy:latest@sha256:[a-f0-9]{64}$/);
     expect(loadEnv({ NODE_ENV: "test" }).AUTH_ALLOW_REGISTRATION).toBe(true);
     expect(loadEnv({ NODE_ENV: "test" }).AUTH_ALLOW_ORG_CREATION).toBe(true);
   });
@@ -149,6 +151,28 @@ describe("environment auth creation defaults", () => {
     expect(() => loadEnv({ REGISTRY_MAX_UPLOAD_BYTES: "-1" })).toThrow();
     expect(() => loadEnv({ REGISTRY_MAX_STAGED_UPLOAD_BYTES: "0" })).toThrow();
     expect(() => loadEnv({ REGISTRY_MAX_INFLIGHT_UPLOAD_BYTES: "0" })).toThrow();
+    expect(() => loadEnv({ REGISTRY_MAX_VIRTUAL_MEMBERS: "0" })).toThrow();
+    expect(() => loadEnv({ REGISTRY_VIRTUAL_MEMBER_CONCURRENCY: "0" })).toThrow();
+  });
+
+  test("production Docker scanner images must be digest pinned", () => {
+    expect(() =>
+      loadEnv({
+        ...prodSource,
+        SCANNER_ENABLED: "true",
+        SCANNER_CLI_RUNTIME: "docker",
+        SYFT_IMAGE: "anchore/syft:latest",
+      }),
+    ).toThrow(/SYFT_IMAGE must be pinned with @sha256:/);
+
+    expect(
+      loadEnv({
+        ...prodSource,
+        SCANNER_ENABLED: "true",
+        SCANNER_CLI_RUNTIME: "host",
+        SYFT_IMAGE: "anchore/syft:latest",
+      }).SYFT_IMAGE,
+    ).toBe("anchore/syft:latest");
   });
 
   test("database and queue pool configuration is positive integer based", () => {

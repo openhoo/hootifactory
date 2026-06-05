@@ -13,6 +13,10 @@ interface TokenGrantRequest {
 
 type TokenGrantResult = { ok: true } | { ok: false; error: string };
 
+function isOrgTokenGrant(grant: TokenGrant): boolean {
+  return grant.resource === "token" && grant.target === "org";
+}
+
 export async function validateTokenGrant({
   userId,
   orgId,
@@ -68,6 +72,9 @@ export async function validateTokenGrant({
   }
 
   for (const grant of grants) {
+    if (isOrgTokenGrant(grant) && (!creatorRole || !roleAllows(creatorRole, "admin"))) {
+      return { ok: false, error: "cannot grant org token management beyond your role" };
+    }
     for (const action of grant.actions) {
       if (!creatorRole || !roleAllows(creatorRole, action)) {
         return { ok: false, error: `cannot grant scope action '${action}' beyond your role` };

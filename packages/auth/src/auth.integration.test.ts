@@ -696,6 +696,27 @@ describe("validateTokenGrant issuance ceiling (DB)", () => {
     }
   });
 
+  test("rejects org-wide token management grants from non-admin creators", async () => {
+    const result = await validateTokenGrant({
+      userId: devUserId,
+      orgId: devOrgId,
+      grants: [{ resource: "token", target: "org", actions: ["write"] }],
+    });
+    expect(result).toEqual({
+      ok: false,
+      error: "cannot grant org token management beyond your role",
+    });
+  });
+
+  test("allows self-token management grants from developer creators", async () => {
+    const result = await validateTokenGrant({
+      userId: devUserId,
+      orgId: devOrgId,
+      grants: [{ resource: "token", target: "self", actions: ["read", "write"] }],
+    });
+    expect(result).toEqual({ ok: true });
+  });
+
   test("rejects write on a repo where the creator is only a viewer, but allows read", async () => {
     const writeGrant = await validateTokenGrant({
       userId: devUserId,

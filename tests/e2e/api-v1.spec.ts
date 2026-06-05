@@ -393,6 +393,25 @@ test.describe("external api v1", () => {
     const denied = await developer.ctx.post(`/api/v1/tokens/${created.data.token.id}/rotate`);
     expect(denied.status()).toBe(403);
 
+    const blockedGrant = await developer.ctx.post(`/api/v1/orgs/${owner.orgId}/tokens`, {
+      data: {
+        name: "developer-token-manager",
+        grants: [{ resource: "token", target: "org", actions: ["write"] }],
+      },
+    });
+    expect(blockedGrant.status()).toBe(403);
+
+    const lowRoleManager = await createV1Token(owner.ctx, owner.orgId, {
+      name: "low-role-token-manager",
+      role: "developer",
+      grants: [{ resource: "token", target: "org", actions: ["write"] }],
+    });
+    const anon = await anonContext(baseURL!);
+    const tokenDenied = await anon.post(`/api/v1/tokens/${created.data.token.id}/rotate`, {
+      headers: { authorization: `Bearer ${lowRoleManager.data.secret}` },
+    });
+    expect(tokenDenied.status()).toBe(403);
+
     const rotated = await admin.ctx.post(`/api/v1/tokens/${created.data.token.id}/rotate`);
     expect(rotated.status()).toBe(200);
     const body = await rotated.json();

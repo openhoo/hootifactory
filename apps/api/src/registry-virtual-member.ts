@@ -1,3 +1,5 @@
+import { env } from "@hootifactory/config";
+import { mapWithBoundedConcurrency } from "@hootifactory/core";
 import { addSpanEvent, withSpan } from "@hootifactory/observability";
 import type {
   HttpMethod,
@@ -30,10 +32,8 @@ export function withVirtualMemberSpans<T>(
   spanName: string,
   handler: (member: ResolvedRepo, span: AuthAttributeSpan) => Promise<T>,
 ): Promise<T[]> {
-  return Promise.all(
-    members.map((member) =>
-      withSpan(spanName, repoSpanAttributes(member), (span) => handler(member, span)),
-    ),
+  return mapWithBoundedConcurrency(members, env.REGISTRY_VIRTUAL_MEMBER_CONCURRENCY, (member) =>
+    withSpan(spanName, repoSpanAttributes(member), (span) => handler(member, span)),
   );
 }
 
@@ -75,4 +75,15 @@ export function authorizeVirtualMembers(
     member,
     authorization: await authorizeVirtualMember(adapter, method, match, member, parentCtx, span),
   }));
+}
+
+export function mapVirtualMemberAuthorizations<T>(
+  authorizations: AuthorizedVirtualMember[],
+  handler: (authorization: AuthorizedVirtualMember) => Promise<T>,
+): Promise<T[]> {
+  return mapWithBoundedConcurrency(
+    authorizations,
+    env.REGISTRY_VIRTUAL_MEMBER_CONCURRENCY,
+    (authorization) => handler(authorization),
+  );
 }

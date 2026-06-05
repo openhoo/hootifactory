@@ -1,6 +1,7 @@
 /**
  * Seed a demo org + owner user. Idempotent for org/user/membership.
  * Non-production runs mint and print a fresh owner token for local setup.
+ * Production runs never print passwords or token secrets.
  *
  *   bun run db:seed
  */
@@ -32,7 +33,7 @@ async function main() {
   }
   const username = adminUser ?? "admin";
   const password = seedPassword();
-  const shouldMintToken = !isProduction || process.env.SEED_PRINT_TOKEN === "true";
+  const shouldMintToken = !isProduction;
 
   let [org] = await db.select().from(organizations).where(eq(organizations.slug, orgSlug)).limit(1);
   if (!org) {
@@ -84,16 +85,14 @@ async function main() {
   console.log(`  org:    ${org.slug}  (${org.id})`);
   if (createdUser) {
     console.log(
-      `  login:  ${username} / ${password.value}${password.generated ? "  (generated)" : ""}`,
+      isProduction
+        ? `  login:  ${username}  (password set from SEED_PASS)`
+        : `  login:  ${username} / ${password.value}${password.generated ? "  (generated)" : ""}`,
     );
   } else {
     console.log(`  login:  ${username}  (existing user; password unchanged)`);
   }
-  console.log(
-    token
-      ? `  token:  ${token.secret}`
-      : "  token:  not minted in production; set SEED_PRINT_TOKEN=true to print one",
-  );
+  console.log(token ? `  token:  ${token.secret}` : "  token:  not minted in production");
   console.log("───────────────────────────────────────────────");
   process.exit(0);
 }

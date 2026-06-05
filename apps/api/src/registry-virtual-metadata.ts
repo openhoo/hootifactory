@@ -11,7 +11,7 @@ import {
 import { loadVirtualMembers } from "@hootifactory/registry-application/repositories";
 import { repoSpanAttributes } from "@hootifactory/registry-application/runtime";
 import { registryErrorToModuleResponse } from "./registry-error-format";
-import { authorizeVirtualMembers } from "./registry-virtual-member";
+import { authorizeVirtualMembers, mapVirtualMemberAuthorizations } from "./registry-virtual-member";
 import { virtualMemberUnavailable, virtualNotFound } from "./registry-virtual-response";
 import {
   metadataResponseEtag,
@@ -53,8 +53,9 @@ export async function dispatchVirtualMetadata(
         ctx,
         "registry.virtual.metadata_member",
       );
-      const results = await Promise.all(
-        authorizations.map(({ member, authorization }) => {
+      const results = await mapVirtualMemberAuthorizations(
+        authorizations,
+        async ({ member, authorization }) => {
           if (!authorization.decision.allowed) return Promise.resolve({ part: null, last: null });
           return withSpan(
             "registry.virtual.metadata_member_response",
@@ -91,7 +92,7 @@ export async function dispatchVirtualMetadata(
               }
             },
           );
-        }),
+        },
       );
       const parts: RegistryMetadata[] = results.flatMap((result) =>
         result.part ? [result.part] : [],

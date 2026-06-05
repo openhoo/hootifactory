@@ -11,7 +11,7 @@ import {
   adapterResponseOrRegistryError,
   repoSpanAttributes,
 } from "@hootifactory/registry-application/runtime";
-import { authorizeVirtualMembers } from "./registry-virtual-member";
+import { authorizeVirtualMembers, mapVirtualMemberAuthorizations } from "./registry-virtual-member";
 
 export function dispatchVirtualSearch(
   adapter: RegistryPlugin,
@@ -48,8 +48,9 @@ export function dispatchVirtualSearch(
         ctx,
         collectMemberResponses: async (requestForMember) =>
           (
-            await Promise.all(
-              authorizations.map(({ member, authorization }) => {
+            await mapVirtualMemberAuthorizations(
+              authorizations,
+              async ({ member, authorization }) => {
                 if (!authorization.decision.allowed) return Promise.resolve(null);
                 return withSpan(
                   "registry.virtual.search_member_response",
@@ -79,7 +80,7 @@ export function dispatchVirtualSearch(
                     }
                   },
                 );
-              }),
+              },
             )
           ).flatMap((result) => (result ? [result] : [])),
       });

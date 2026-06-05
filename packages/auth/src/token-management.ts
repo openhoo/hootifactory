@@ -31,7 +31,7 @@ export function tokenResourceDecision(
   action: Action,
 ): Promise<Decision> {
   const tokenTarget = tokenTargetFor(principal, token);
-  const requiredAction = principal.kind === "user" && tokenTarget === "org" ? "admin" : action;
+  const requiredAction = tokenTarget === "org" ? "admin" : action;
   return authorize(principal, requiredAction, {
     type: "token",
     orgId: token.orgId,
@@ -82,11 +82,5 @@ export async function visibleTokensForPrincipal(
     return { ok: true, value: await listOrgTokensOwnedBy(orgId, principal.userId) };
   }
 
-  const readDecision = await authorize(principal, "read", {
-    type: "token",
-    orgId,
-    tokenTarget: "org",
-  });
-  if (!readDecision.allowed) return { ok: false, decision: readDecision };
-  return { ok: true, value: await listOrgTokens(orgId) };
+  return { ok: false, decision: adminDecision };
 }
