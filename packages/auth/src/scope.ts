@@ -28,12 +28,17 @@ export interface TokenScopeRepository {
 
 export function scopeMayTargetRepo(pattern: string, repo: TokenScopeRepository): boolean {
   if (patternMatches(pattern, repo.name)) return true;
-  const ociPrefix = repo.mountPath.startsWith("v2/") ? repo.mountPath.slice(3) : null;
-  if (!ociPrefix) return false;
-  if (patternMatches(pattern, ociPrefix) || pattern.startsWith(`${ociPrefix}/`)) return true;
+  // A token scope may also target a repo by its mount-relative path (the mount
+  // path with its leading mount segment removed) — e.g. a content-addressable
+  // module whose clients address it by image path rather than the repo name.
+  // Derived generically from the mount path so no module identity leaks here.
+  const slash = repo.mountPath.indexOf("/");
+  const mountRelative = slash >= 0 ? repo.mountPath.slice(slash + 1) : null;
+  if (!mountRelative) return false;
+  if (patternMatches(pattern, mountRelative) || pattern.startsWith(`${mountRelative}/`)) return true;
   if (pattern.endsWith("*")) {
     const prefix = pattern.slice(0, -1);
-    return prefix.startsWith(`${ociPrefix}/`) || ociPrefix.startsWith(prefix);
+    return prefix.startsWith(`${mountRelative}/`) || mountRelative.startsWith(prefix);
   }
   return false;
 }

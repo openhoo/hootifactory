@@ -36,7 +36,7 @@ async function getKeys(): Promise<Keys> {
       if (env.NODE_ENV !== "test") {
         console.warn(
           "[registry-jwt] REGISTRY_JWT_PRIVATE_KEY/PUBLIC_KEY unset — using an EPHEMERAL keypair. " +
-            "OCI Bearer tokens will not survive restarts and are invalid across multiple API replicas.",
+            "Delegated registry bearer tokens will not survive restarts and are invalid across multiple API replicas.",
         );
       }
       const { privateKey, publicKey } = await generateKeyPair("RS256", { extractable: true });

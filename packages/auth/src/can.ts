@@ -78,9 +78,11 @@ export function can({ principal, action, resource, effectiveRole }: CanInput): D
     return denyRole(`role does not grant '${action}'`);
   }
 
-  // ── registry token (OCI Bearer JWT) ───────────────────────────────────────
+  // ── delegated registry bearer token ───────────────────────────────────────
+  // The bearer claim carries generic actions (read/write/delete); the module
+  // that mints the token owns any protocol-specific action vocabulary, so this
+  // agnostic verifier matches the requested action directly.
   if (principal.kind === "registryToken") {
-    const want = action === "read" ? "pull" : action === "write" ? "push" : "delete";
     const name = resource.repositoryName;
     const granted =
       !!name &&
@@ -88,7 +90,7 @@ export function can({ principal, action, resource, effectiveRole }: CanInput): D
         (a) =>
           a.type === "repository" &&
           a.name === name &&
-          (a.actions.includes(want) || a.actions.includes("*")),
+          (a.actions.includes(action) || a.actions.includes("*")),
       );
     return granted
       ? { allowed: true }

@@ -57,7 +57,7 @@ describe("OCI token scope helpers", () => {
     ]);
   });
 
-  test("grants only authorized Docker actions and deduplicates access", async () => {
+  test("grants only authorized actions as generic RBAC verbs and deduplicates access", async () => {
     const calls: Action[] = [];
     const grant = await grantDockerScope(principal, parseOne("repository:acme/app:pull,*,pull"), {
       authorizeAction: async (_principal, action) => {
@@ -70,7 +70,7 @@ describe("OCI token scope helpers", () => {
     expect(calls).toEqual(["read", "read", "write", "delete", "read"]);
     expect(grant).toEqual({
       repositoryResolved: true,
-      access: { type: "repository", name: "acme/app", actions: ["pull", "delete"] },
+      access: { type: "repository", name: "acme/app", actions: ["read", "delete"] },
     });
   });
 

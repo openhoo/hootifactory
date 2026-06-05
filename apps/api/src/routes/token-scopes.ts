@@ -115,8 +115,10 @@ export async function grantDockerScope(
       repositoryName: scope.name,
       visibility: repo.visibility,
     });
-    if (decision.allowed && !access.actions.includes(dockerAction)) {
-      access.actions.push(dockerAction);
+    // Store the generic RBAC action in the bearer claim, not the module-specific
+    // Docker verb, so the agnostic verifier never has to speak Docker.
+    if (decision.allowed && !access.actions.includes(rbac)) {
+      access.actions.push(rbac);
     }
   }
   return { access, repositoryResolved: true };
