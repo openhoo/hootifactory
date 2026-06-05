@@ -15,6 +15,86 @@ export function intEnv(name: string, fallback: number, min: number): number {
   return Math.max(min, Number(process.env[name] ?? fallback) || fallback);
 }
 
+export interface HealthServer {
+  /** The Bun server, or null when WORKER_PORT is unset. */
+  server: ReturnType<typeof Bun.serve> | null;
+  /** Flip the readiness reported by the health endpoint. */
+  setReady(ready: boolean): void;
+}
+
+/**
+ * Optional readiness health endpoint so orchestrators can wait for the worker.
+ * Reports 503 until `setReady(true)`. A no-op (server: null) when WORKER_PORT is
+ * unset. Shared by every worker entrypoint so the endpoint stays consistent.
+ */
+export function startHealthServer(role: string): HealthServer {
+  let ready = false;
+  let server: ReturnType<typeof Bun.serve> | null = null;
+  if (process.env.WORKER_PORT) {
+    server = Bun.serve({
+      port: Number(process.env.WORKER_PORT),
+      hostname: "127.0.0.1",
+      fetch: (request) =>
+        instrumentHttpRequest(request, async (telemetry) => {
+          telemetry.setRoute("/worker/healthz");
+          telemetry.setAttribute("worker.role", role);
+          telemetry.setAttribute("worker.ready", ready);
+          const response = ready ? new Response("ok") : new Response("starting", { status: 503 });
+          telemetry.setStatusCode(response.status);
+          return response;
+        }),
+    });
+  }
+  return {
+    server,
+    setReady(value: boolean) {
+      ready = value;
+    },
+  };
+}
+
+export interface ShutdownController {
+  shutdown(signal: string, exitCode?: number, reason?: unknown): Promise<void>;
+  /** True once shutdown has begun; poll this to terminate a custom worker loop. */
+  isShuttingDown(): boolean;
+}
+
+/**
+ * Install the standard worker shutdown lifecycle: SIGTERM/SIGINT/uncaughtException/
+ * unhandledRejection handlers that run `cleanup` once (idempotent), then shut down
+ * observability and exit. `cleanup` runs between marking not-ready and exit.
+ */
+export function installShutdownHandlers(config: {
+  logLabel: string;
+  cleanup: () => void | Promise<void>;
+}): ShutdownController {
+  let shuttingDown = false;
+  const shutdown = async (signal: string, exitCode = 0, reason?: unknown) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    const meta = { signal, ...(reason !== undefined ? { error: reason } : {}) };
+    if (exitCode === 0) {
+      logger.info(`${config.logLabel} shutting down`, meta);
+    } else {
+      logger.error(`${config.logLabel} shutting down after fatal error`, meta);
+    }
+    try {
+      await config.cleanup();
+    } catch (err) {
+      exitCode = 1;
+      logger.error(`${config.logLabel} shutdown error`, { signal, error: err });
+    } finally {
+      await shutdownObservability();
+      process.exit(exitCode);
+    }
+  };
+  process.on("SIGTERM", () => void shutdown("SIGTERM"));
+  process.on("SIGINT", () => void shutdown("SIGINT"));
+  process.on("uncaughtException", (err) => void shutdown("uncaughtException", 1, err));
+  process.on("unhandledRejection", (reason) => void shutdown("unhandledRejection", 1, reason));
+  return { shutdown, isShuttingDown: () => shuttingDown };
+}
+
 export interface RunWorkerConfig<T extends object> {
   /** Telemetry role identifier (e.g. "scan-worker"); emitted as `worker.role`. */
   role: string;
@@ -50,23 +130,7 @@ export async function runWorker<T extends object>(config: RunWorkerConfig<T>): P
 
   // Optional health endpoint so orchestrators can wait for readiness. Reports 503
   // until the queue consumer is actually registered.
-  let ready = false;
-  let healthServer: ReturnType<typeof Bun.serve> | null = null;
-  if (process.env.WORKER_PORT) {
-    healthServer = Bun.serve({
-      port: Number(process.env.WORKER_PORT),
-      hostname: "127.0.0.1",
-      fetch: (request) =>
-        instrumentHttpRequest(request, async (telemetry) => {
-          telemetry.setRoute("/worker/healthz");
-          telemetry.setAttribute("worker.role", role);
-          telemetry.setAttribute("worker.ready", ready);
-          const response = ready ? new Response("ok") : new Response("starting", { status: 503 });
-          telemetry.setStatusCode(response.status);
-          return response;
-        }),
-    });
-  }
+  const health = startHealthServer(role);
 
   const main = async (): Promise<void> => {
     await withSpan(
@@ -107,7 +171,7 @@ export async function runWorker<T extends object>(config: RunWorkerConfig<T>): P
             }),
           { batchSize, pollingIntervalSeconds },
         );
-        ready = true;
+        health.setReady(true);
         span.setAttribute("worker.id", workerId);
         logger.info(`${logLabel} listening`, {
           queue,
@@ -119,35 +183,17 @@ export async function runWorker<T extends object>(config: RunWorkerConfig<T>): P
     );
   };
 
-  let shuttingDown = false;
-  const shutdown = async (signal: string, exitCode = 0, reason?: unknown) => {
-    if (shuttingDown) return;
-    shuttingDown = true;
-    const meta = { signal, ...(reason !== undefined ? { error: reason } : {}) };
-    if (exitCode === 0) {
-      logger.info(`${logLabel} shutting down`, meta);
-    } else {
-      logger.error(`${logLabel} shutting down after fatal error`, meta);
-    }
-    try {
-      ready = false;
-      await healthServer?.stop();
+  const controller = installShutdownHandlers({
+    logLabel,
+    cleanup: async () => {
+      health.setReady(false);
+      await health.server?.stop();
       await config.onShutdown?.();
       await stopBoss();
-    } catch (err) {
-      exitCode = 1;
-      logger.error(`${logLabel} shutdown error`, { signal, error: err });
-    } finally {
-      await shutdownObservability();
-      process.exit(exitCode);
-    }
-  };
-  process.on("SIGTERM", () => void shutdown("SIGTERM"));
-  process.on("SIGINT", () => void shutdown("SIGINT"));
-  process.on("uncaughtException", (err) => void shutdown("uncaughtException", 1, err));
-  process.on("unhandledRejection", (reason) => void shutdown("unhandledRejection", 1, reason));
+    },
+  });
 
   await main().catch((err) => {
-    void shutdown("startup_error", 1, err);
+    void controller.shutdown("startup_error", 1, err);
   });
 }

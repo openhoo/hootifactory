@@ -1,13 +1,12 @@
 import { mapWithBoundedConcurrency } from "@hootifactory/core";
 import { and, db, eq, scanOutbox, sql } from "@hootifactory/db";
+import { initializeObservability, logger, withSpan } from "@hootifactory/observability";
 import {
-  initializeObservability,
-  instrumentHttpRequest,
-  logger,
-  shutdownObservability,
-  withSpan,
-} from "@hootifactory/observability";
-import { createMaintenanceScheduler, intEnv } from "@hootifactory/queue";
+  createMaintenanceScheduler,
+  installShutdownHandlers,
+  intEnv,
+  startHealthServer,
+} from "@hootifactory/queue";
 import {
   reapExpiredContentUploadSessions,
   sweepUnreferencedCasBlobs,
@@ -94,49 +93,16 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-let ready = false;
-let healthServer: ReturnType<typeof Bun.serve> | null = null;
-if (process.env.WORKER_PORT) {
-  healthServer = Bun.serve({
-    port: Number(process.env.WORKER_PORT),
-    hostname: "127.0.0.1",
-    fetch: (request) =>
-      instrumentHttpRequest(request, async (telemetry) => {
-        telemetry.setRoute("/worker/healthz");
-        telemetry.setAttribute("worker.role", workerRole);
-        telemetry.setAttribute("worker.ready", ready);
-        const response = ready ? new Response("ok") : new Response("starting", { status: 503 });
-        telemetry.setStatusCode(response.status);
-        return response;
-      }),
-  });
-}
-
-let shuttingDown = false;
-async function shutdown(signal: string, exitCode = 0, reason?: unknown): Promise<void> {
-  if (shuttingDown) return;
-  shuttingDown = true;
-  if (exitCode === 0) {
-    logger.info("scan worker shutting down", { signal });
-  } else {
-    logger.error("scan worker shutting down after fatal error", { signal, error: reason });
-  }
-  try {
-    ready = false;
-    await healthServer?.stop();
-  } catch (err) {
-    exitCode = 1;
-    logger.error("scan worker shutdown error", { signal, error: err });
-  } finally {
-    await shutdownObservability();
-    process.exit(exitCode);
-  }
-}
-
-process.on("SIGTERM", () => void shutdown("SIGTERM"));
-process.on("SIGINT", () => void shutdown("SIGINT"));
-process.on("uncaughtException", (err) => void shutdown("uncaughtException", 1, err));
-process.on("unhandledRejection", (reason) => void shutdown("unhandledRejection", 1, reason));
+// This worker runs its own claim/process loop (not pg-boss), so it can't use
+// runWorker, but the readiness endpoint and signal/shutdown lifecycle are shared.
+const health = startHealthServer(workerRole);
+const lifecycle = installShutdownHandlers({
+  logLabel: "scan worker",
+  cleanup: async () => {
+    health.setReady(false);
+    await health.server?.stop();
+  },
+});
 
 logger.info("scan worker starting", {
   batchSize: workerBatchSize,
@@ -153,7 +119,7 @@ logger.info("scan worker starting", {
   workerPort: process.env.WORKER_PORT,
   externalScanners: scannerRuntime.scanners,
 });
-ready = true;
+health.setReady(true);
 
 async function reapExpiredUploads(): Promise<void> {
   try {
@@ -248,7 +214,7 @@ const maintenance = createMaintenanceScheduler([
   },
 ]);
 
-while (!shuttingDown) {
+while (!lifecycle.isShuttingDown()) {
   await maintenance.runDue();
   const intents = await withSpan(
     "scan.outbox.claim",

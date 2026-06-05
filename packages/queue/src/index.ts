@@ -74,5 +74,13 @@ export {
   type MaintenanceScheduler,
   type MaintenanceTask,
 } from "./maintenance";
-export { intEnv, type RunWorkerConfig, runWorker } from "./runtime";
+export {
+  type HealthServer,
+  installShutdownHandlers,
+  intEnv,
+  type RunWorkerConfig,
+  runWorker,
+  type ShutdownController,
+  startHealthServer,
+} from "./runtime";
 export type { PgBoss };
