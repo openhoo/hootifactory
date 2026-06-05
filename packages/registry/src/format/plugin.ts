@@ -1,6 +1,7 @@
 import {
   type HttpMethod,
   type Permission,
+  type RegistryAppRoute,
   type RegistryCapabilities,
   type RegistryErrorResponseKind,
   type RegistryModuleDescriptor,
@@ -138,6 +139,7 @@ export interface DefineRegistryPluginInput {
   compressibleContentTypes?: Iterable<string>;
   scan?: RegistryScanProvider;
   usageSnippets?: (input: RegistryUsageSnippetInput) => RegistryUsageSnippet[];
+  appRoutes?: RegistryAppRoute[];
   capabilities: RegistryPlugin["capabilities"];
   routes: RegistryRouteList;
   defaultPermission?: (input: RegistryPermissionInput) => Permission;
@@ -227,6 +229,10 @@ class DefinedRegistryPlugin implements RegistryPlugin {
     return this.entries;
   }
 
+  appRoutes(): RegistryAppRoute[] {
+    return this.input.appRoutes ?? [];
+  }
+
   requiredPermission(
     method: HttpMethod,
     match: RouteMatch,
@@ -306,6 +312,7 @@ export class RegistryPluginBuilder {
   private compressibleContentTypesValue?: Iterable<string>;
   private scanValue?: RegistryScanProvider;
   private usageSnippetsValue?: (input: RegistryUsageSnippetInput) => RegistryUsageSnippet[];
+  private appRoutesValue?: RegistryAppRoute[];
   private defaultPermissionValue?: DefineRegistryPluginInput["defaultPermission"];
   private authChallengeValue?: RegistryPlugin["authChallenge"];
   private generateMetadataValue?: RegistryPlugin["generateMetadata"];
@@ -328,6 +335,7 @@ export class RegistryPluginBuilder {
     compressibleContentTypes?: Iterable<string>;
     scan?: RegistryScanProvider;
     usageSnippets?: (input: RegistryUsageSnippetInput) => RegistryUsageSnippet[];
+    appRoutes?: RegistryAppRoute[];
   }): this {
     this.displayNameValue = input.displayName ?? this.displayNameValue;
     this.mountSegmentValue = input.mountSegment ?? this.mountSegmentValue;
@@ -341,6 +349,7 @@ export class RegistryPluginBuilder {
       input.compressibleContentTypes ?? this.compressibleContentTypesValue;
     this.scanValue = input.scan ?? this.scanValue;
     this.usageSnippetsValue = input.usageSnippets ?? this.usageSnippetsValue;
+    this.appRoutesValue = input.appRoutes ?? this.appRoutesValue;
     return this;
   }
 
@@ -555,6 +564,7 @@ export class RegistryPluginBuilder {
       compressibleContentTypes: this.compressibleContentTypesValue,
       scan: this.scanValue,
       usageSnippets: this.usageSnippetsValue,
+      appRoutes: this.appRoutesValue,
       capabilities: this.capabilitiesValue,
       routes: this.routeSpecs,
       defaultPermission: this.defaultPermissionValue,

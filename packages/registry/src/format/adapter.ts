@@ -2,6 +2,7 @@ import type {
   Action,
   Decision,
   Principal,
+  RegistryAccess,
   RegistryModuleId,
   RepoKind,
   ResourceRef,
@@ -265,6 +266,57 @@ export interface RegistryScanProvider {
   contentAddressableManifestGraph?: RegistryContentAddressableManifestGraph;
 }
 
+/** A repository resource an app-level route authorizes against. */
+export interface RegistryAppRouteResource {
+  type: "repository";
+  orgId: string;
+  repositoryId: string;
+  repositoryName: string;
+  visibility: Visibility;
+}
+
+/**
+ * Platform services injected into an app-level (non-repo-mounted) route handler.
+ * Lets a module own protocol-prelude endpoints (e.g. an auth/token service) and
+ * its scope/action grammar without importing platform infrastructure — the
+ * platform supplies repo resolution, RBAC, and bearer-token minting here.
+ */
+export interface RegistryAppRouteContext {
+  req: Request;
+  url: URL;
+  principal: RegistryPrincipal;
+  /** Absolute public base URL of the registry (no trailing slash). */
+  baseUrl: string;
+  /** Service name a delegated registry bearer token is audienced to. */
+  registryServiceName: string;
+  /** Default TTL (seconds) for issued bearer tokens. */
+  bearerTokenTtlSeconds: number;
+  /** Resolve a repository by absolute request path (null if none). */
+  resolveRepository(pathname: string): Promise<{ repo: ResolvedRepo } | null>;
+  /** Authorize an action for a principal against a repository resource. */
+  authorize(
+    principal: RegistryPrincipal,
+    action: Action,
+    resource: RegistryAppRouteResource,
+  ): Promise<Decision>;
+  /** Mint a delegated registry bearer token. */
+  issueBearerToken(input: {
+    subject: string;
+    audience: string;
+    access: RegistryAccess[];
+    ttlSeconds?: number;
+  }): Promise<string>;
+  log: Logger;
+}
+
+/** An app-level route mounted at an absolute path, outside the repo mount tree. */
+export interface RegistryAppRoute {
+  method: HttpMethod;
+  /** Absolute request path (e.g. "/v2", "/token"). */
+  pattern: string;
+  handler(ctx: RegistryAppRouteContext): Response | Promise<Response>;
+}
+
 export interface RegistryModuleDescriptor {
   readonly id: RegistryModuleId;
   readonly displayName: string;
@@ -277,6 +329,8 @@ export interface RegistryModuleDescriptor {
   readonly compressibleContentTypes: ReadonlySet<string>;
   readonly scan?: RegistryScanProvider;
   usageSnippets?(input: RegistryUsageSnippetInput): RegistryUsageSnippet[];
+  /** Absolute-path routes this module serves outside the repo mount tree. */
+  appRoutes?(): RegistryAppRoute[];
 }
 
 /**

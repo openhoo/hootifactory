@@ -17,6 +17,7 @@ import {
   serveWebFallback,
 } from "@hootifactory/registry-application/runtime";
 import type { Context } from "hono";
+import { tryHandleAppRoute } from "./registry-app-routes";
 import { authorizeRoute, registryAuthorizationDeniedResponse } from "./registry-auth";
 import { registryErrorResponseForModule } from "./registry-error-format";
 import { stripBodyForFallbackHead } from "./registry-utils";
@@ -29,6 +30,11 @@ import type { AppEnv } from "./types";
  * handle. Runs after all explicit app routes.
  */
 export async function handleRegistryRequest(c: Context<AppEnv>): Promise<Response> {
+  // Module-owned app-level routes (e.g. an auth/token service) are dispatched
+  // before repo-mounted traffic so modules can serve protocol-prelude endpoints.
+  const appRouteResponse = await tryHandleAppRoute(c);
+  if (appRouteResponse) return appRouteResponse;
+
   const url = new URL(c.req.url);
   const method = c.req.method as HttpMethod;
   const resolution = await withSpan(

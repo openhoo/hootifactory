@@ -19,9 +19,7 @@ import { handleRegistryRequest } from "./registry";
 import { apiV1Router } from "./routes/api-v1";
 import { authRouter } from "./routes/auth";
 import { healthRouter } from "./routes/health";
-import { tokenRouter } from "./routes/token";
 import { uiRouter } from "./routes/ui";
-import { v2VersionCheck } from "./routes/v2";
 import type { AppEnv } from "./types";
 
 initializeObservability({ serviceRole: "api" });
@@ -91,13 +89,8 @@ app.route("/", healthRouter);
 app.route("/api/auth", authRouter);
 app.route("/api/v1", apiV1Router);
 app.route("/api", uiRouter);
-app.route("/token", tokenRouter);
 
-// OCI version check — exact paths only; deeper /v2/<name>/... falls through.
-app.get("/v2", v2VersionCheck);
-app.get("/v2/", v2VersionCheck);
-app.on("HEAD", "/v2", v2VersionCheck);
-app.on("HEAD", "/v2/", v2VersionCheck);
-
-// Everything else is registry traffic.
+// Everything else is registry traffic. Module-owned app-level routes (e.g. the
+// OCI /v2 + /token service) are dispatched inside handleRegistryRequest, which
+// runs after the built-in plugins have been registered.
 app.all("*", (c) => handleRegistryRequest(c));

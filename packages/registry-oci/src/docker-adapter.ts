@@ -13,6 +13,7 @@ import {
   registryCapabilities,
   registryPlugin,
 } from "@hootifactory/registry";
+import { ociAppRoutes } from "./oci-app-routes";
 import { ociManifestReferences } from "./oci-manifest-graph";
 import { buildOciBlobResponse } from "./oci-blobs";
 import {
@@ -68,6 +69,7 @@ export class DockerAdapter implements RegistryPlugin {
           references: (raw) => ociManifestReferences(raw),
         },
       },
+      appRoutes: ociAppRoutes(),
     })
     .capabilities(this.capabilities)
     .authChallenge(this.authChallenge)
@@ -156,6 +158,10 @@ export class DockerAdapter implements RegistryPlugin {
   }
 
   routes = this.delegate.routes;
+
+  appRoutes() {
+    return this.plugin.appRoutes?.() ?? [];
+  }
 
   /** Full docker name "org/repo/image" for scope matching against the JWT. */
   private fullName(ctx: RegistryRequestContext, image: string): string {

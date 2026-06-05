@@ -3,6 +3,7 @@ import { RegistryError, z } from "@hootifactory/core";
 import { addSpanEvent } from "@hootifactory/observability";
 import type { Context } from "hono";
 import { logger } from "../lib/logger";
+import { isRegistryAppPath } from "../registry-app-routes";
 import type { AppEnv } from "../types";
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
@@ -21,6 +22,10 @@ function parseContentLength(value: string | undefined): number | "invalid" | nul
   return parsed.success ? parsed.data : "invalid";
 }
 
+// NOTE: the "/v2/" coupling here selects the OCI error-envelope shape for an
+// oversized/invalid registry upload body (vs the generic JSON envelope). Fully
+// generalizing it depends on the per-module renderError envelope hook, which is
+// deferred; until then this stays the one residual OCI reference in this file.
 function registryPathname(pathname: string): string | null {
   return pathname.startsWith("/v2/") && pathname !== "/v2/" ? pathname : null;
 }
@@ -29,12 +34,9 @@ function isExplicitAppPath(pathname: string): boolean {
   return (
     pathname === "/api" ||
     pathname.startsWith("/api/") ||
-    pathname === "/token" ||
-    pathname.startsWith("/token/") ||
     pathname === "/healthz" ||
     pathname === "/readyz" ||
-    pathname === "/v2" ||
-    pathname === "/v2/"
+    isRegistryAppPath(pathname)
   );
 }
 

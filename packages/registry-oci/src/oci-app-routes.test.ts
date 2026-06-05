@@ -1,14 +1,20 @@
 import { describe, expect, test } from "bun:test";
-import type { Action, Principal } from "@hootifactory/auth";
-import type { ResolvedRepo } from "@hootifactory/registry";
+import type {
+  Action,
+  RegistryAppRouteContext,
+  RegistryPrincipal,
+  ResolvedRepo,
+} from "@hootifactory/registry";
 import {
   dockerToRbac,
   grantDockerScope,
+  ociAppRoutes,
   parseDockerScopes,
+  parseTokenRequestQuery,
   requestedDockerActions,
-} from "./token-scopes";
+} from "./oci-app-routes";
 
-const principal: Principal = { kind: "anonymous" };
+const principal: RegistryPrincipal = { kind: "anonymous" };
 
 const repo = {
   id: "repo_1",
@@ -20,8 +26,64 @@ const repo = {
 function parseOne(raw: string) {
   const parsed = parseDockerScopes([raw]);
   if (!parsed.success) throw new Error("test scope failed to parse");
+  // biome-ignore lint/style/noNonNullAssertion: test fixture
   return parsed.data[0]!;
 }
+
+describe("OCI v2 version route", () => {
+  test("returns the registry API version header", async () => {
+    const route = ociAppRoutes().find((r) => r.method === "GET" && r.pattern === "/v2");
+    const response = await route?.handler({} as RegistryAppRouteContext);
+    expect(response?.status).toBe(200);
+    expect(response?.headers.get("docker-distribution-api-version")).toBe("registry/2.0");
+    expect(response?.headers.get("content-type")).toContain("application/json");
+    await expect(response?.json()).resolves.toEqual({});
+  });
+});
+
+describe("OCI token request query parsing", () => {
+  test("parses optional service and Docker scopes", () => {
+    const parsed = parseTokenRequestQuery(
+      new URL(
+        "https://registry.test/token?service=hootifactory&scope=repository:acme/app:pull,push",
+      ),
+    );
+
+    expect(parsed).toEqual({
+      ok: true,
+      data: {
+        service: "hootifactory",
+        scopes: [{ type: "repository", name: "acme/app", requested: ["pull", "push"] }],
+      },
+    });
+  });
+
+  test("rejects duplicate services", () => {
+    const parsed = parseTokenRequestQuery(
+      new URL("https://registry.test/token?service=one&service=two"),
+    );
+
+    expect(parsed.ok).toBe(false);
+    if (!parsed.ok) {
+      expect(parsed.status).toBe(400);
+      expect(parsed.body.errors[0]?.message).toBe("service may only be supplied once");
+    }
+  });
+
+  test("separates query-shape and Docker scope errors", () => {
+    const invalidQuery = parseTokenRequestQuery(
+      new URL(`https://registry.test/token?scope=${"x".repeat(4097)}`),
+    );
+    const invalidScope = parseTokenRequestQuery(
+      new URL("https://registry.test/token?scope=repository:acme/app:execute"),
+    );
+
+    expect(invalidQuery.ok).toBe(false);
+    if (!invalidQuery.ok) expect(invalidQuery.body.errors[0]?.message).toBe("invalid token query");
+    expect(invalidScope.ok).toBe(false);
+    if (!invalidScope.ok) expect(invalidScope.body.errors[0]?.message).toBe("invalid token scope");
+  });
+});
 
 describe("OCI token scope helpers", () => {
   test("parses space-separated Docker repository scopes", () => {
@@ -60,11 +122,11 @@ describe("OCI token scope helpers", () => {
   test("grants only authorized actions as generic RBAC verbs and deduplicates access", async () => {
     const calls: Action[] = [];
     const grant = await grantDockerScope(principal, parseOne("repository:acme/app:pull,*,pull"), {
-      authorizeAction: async (_principal, action) => {
+      authorize: async (_principal, action) => {
         calls.push(action);
         return { allowed: action !== "write" };
       },
-      resolveRepositoryPath: async () => ({ repo, rest: "" }),
+      resolveRepository: async () => ({ repo }),
     });
 
     expect(calls).toEqual(["read", "read", "write", "delete", "read"]);
@@ -76,10 +138,10 @@ describe("OCI token scope helpers", () => {
 
   test("returns empty access when the repository scope does not resolve", async () => {
     const grant = await grantDockerScope(principal, parseOne("repository:missing/app:pull"), {
-      authorizeAction: async () => {
+      authorize: async () => {
         throw new Error("authorize should not run for unresolved repositories");
       },
-      resolveRepositoryPath: async () => null,
+      resolveRepository: async () => null,
     });
 
     expect(grant).toEqual({
