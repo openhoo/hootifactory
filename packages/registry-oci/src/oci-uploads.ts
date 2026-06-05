@@ -4,6 +4,7 @@ import type {
 } from "@hootifactory/registry";
 import {
   Errors,
+  InvalidDigestError,
   parseRegistryInput,
   type RegistryRequestContext,
   type RegistryUploadedBlob,
@@ -65,7 +66,7 @@ export async function startUpload(
         mediaType: "application/octet-stream",
       },
     }).catch((err) => {
-      if (err instanceof Error && err.name === "InvalidDigestError") {
+      if (err instanceof InvalidDigestError) {
         throw Errors.digestInvalid({ expected: digest, error: err.message });
       }
       throw err;
@@ -206,7 +207,7 @@ export async function putUpload(
         expectedDigest: digest,
       })
       .catch((err) => {
-        if (err instanceof Error && err.name === "InvalidDigestError") {
+        if (err instanceof InvalidDigestError) {
           throw Errors.digestInvalid({ expected: digest, error: err.message });
         }
         throw err;
