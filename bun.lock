@@ -14,6 +14,7 @@
         "@hootifactory/queue": "workspace:*",
         "@hootifactory/registry": "workspace:*",
         "@hootifactory/registry-application": "workspace:*",
+        "@hootifactory/registry-oci": "workspace:*",
         "@hootifactory/scan-core": "workspace:*",
         "@hootifactory/storage": "workspace:*",
         "@hootifactory/types": "workspace:*",

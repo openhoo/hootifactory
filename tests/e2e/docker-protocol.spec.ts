@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { OCI_MEDIA_TYPES } from "@hootifactory/types";
+import { OCI_MEDIA_TYPES } from "@hootifactory/registry-oci";
 import { type APIRequestContext, expect, test } from "@playwright/test";
 import { anonContext, createRepo, createToken, setupOwner } from "./helpers";
 

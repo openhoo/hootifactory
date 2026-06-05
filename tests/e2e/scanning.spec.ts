@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { OCI_MEDIA_TYPES } from "@hootifactory/types";
+import { OCI_MEDIA_TYPES } from "@hootifactory/registry-oci";
 import { type APIRequestContext, expect, test } from "@playwright/test";
 import { dockerNpm, dockerReachableUrl, ensureDockerAvailable } from "./docker-clients";
 import { anonContext, createRepo, createToken, setupOwner } from "./helpers";
