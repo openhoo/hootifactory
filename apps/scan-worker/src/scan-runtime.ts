@@ -1,43 +1,47 @@
-import {
-  type AvailableScanners,
-  detectScanners,
-  type ScannerRuntimeOptions,
-  scannerOptionsFromEnv,
-} from "@hootifactory/scanning";
+import type { ResolvedScanner, ScannerRuntime } from "@hootifactory/scanner";
+import { createScannerRuntime } from "@hootifactory/scanner-runtime";
 
-export function externalContentScannerRequired(options: ScannerRuntimeOptions): boolean {
-  return (
-    Boolean(options.clamavRestUrl) ||
-    Boolean(options.trivyServerUrl) ||
-    (options.cliRuntime ?? "docker") !== "disabled"
+export type { ScannerRuntime } from "@hootifactory/scanner";
+
+/** Resolve every registered scanner's config + availability against the environment. */
+export function scannerRuntimeFromEnv(): ScannerRuntime {
+  return createScannerRuntime();
+}
+
+function contentScanners(runtime: ScannerRuntime): ResolvedScanner[] {
+  return runtime.scanners.filter((s) => s.plugin.capabilities.inputKind === "content");
+}
+
+/** Whether any content (byte/file) scanner can actually run. */
+export function externalContentScannerAvailable(runtime: ScannerRuntime): boolean {
+  return contentScanners(runtime).some((s) => s.available);
+}
+
+/**
+ * Whether the operator intends external content scanning — either the CLI runtime
+ * is enabled, or a content scanner was explicitly pointed at an endpoint. Lets the
+ * worker stay fail-closed when external scanning was requested but is unavailable.
+ */
+export function externalContentScannerRequested(runtime: ScannerRuntime): boolean {
+  if ((runtime.options.cliRuntime ?? "docker") !== "disabled") return true;
+  return contentScanners(runtime).some(
+    (s) => s.plugin.requiresExternalRuntime?.(s.config) ?? false,
   );
 }
 
-export function externalContentScannerAvailable(scanners: AvailableScanners): boolean {
-  return scanners.grype || scanners.trivy || scanners.clamav;
+export function shouldFailForMissingExternalScanner(runtime: ScannerRuntime): boolean {
+  return externalContentScannerRequested(runtime) && !externalContentScannerAvailable(runtime);
 }
 
-export function shouldFailForMissingExternalScanner(
-  options: ScannerRuntimeOptions,
-  scanners: AvailableScanners,
-): boolean {
-  return externalContentScannerRequired(options) && !externalContentScannerAvailable(scanners);
-}
-
-export interface ScannerRuntime {
-  scannerOptions: ScannerRuntimeOptions;
-  scanners: AvailableScanners;
-}
-
-export function scannerRuntimeFromEnv(): ScannerRuntime {
-  const scannerOptions = scannerOptionsFromEnv();
-  return { scannerOptions, scanners: detectScanners(scannerOptions) };
-}
-
-export function unavailableExternalScannerMessage(options: ScannerRuntimeOptions): string {
+export function unavailableExternalScannerMessage(runtime: ScannerRuntime): string {
+  const names = contentScanners(runtime)
+    .map((s) => s.plugin.displayName)
+    .join(", ");
   return [
-    "external scanner runtime is configured but no content scanner is available",
-    `(SCANNER_CLI_RUNTIME=${options.cliRuntime ?? "docker"})`,
-    "set SCANNER_CLI_RUNTIME=disabled for heuristic-only scanning or configure Grype, Trivy, or ClamAV",
+    "external content scanning is configured but no content scanner is available",
+    `(SCANNER_CLI_RUNTIME=${runtime.options.cliRuntime ?? "docker"})`,
+    `set SCANNER_CLI_RUNTIME=disabled for heuristic-only scanning or make a content scanner available${
+      names ? ` (${names})` : ""
+    }`,
   ].join("; ");
 }

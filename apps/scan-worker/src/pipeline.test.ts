@@ -1,35 +1,58 @@
 import { describe, expect, test } from "bun:test";
+import type { ResolvedScanner, ScannerRuntime, ScannerRuntimeOptions } from "@hootifactory/scanner";
 import {
-  externalContentScannerRequired,
+  externalContentScannerRequested,
   mapWithBoundedConcurrency,
   shouldFailForMissingExternalScanner,
 } from "./pipeline";
 
+function contentScanner(
+  id: string,
+  available: boolean,
+  requiresExternalRuntime = false,
+): ResolvedScanner {
+  return {
+    plugin: {
+      id,
+      displayName: id,
+      capabilities: { inputKind: "content", findingTypes: new Set(["vuln"]), network: false },
+      configFromEnv: () => null,
+      available: () => available,
+      requiresExternalRuntime: () => requiresExternalRuntime,
+      scanContent: () => Promise.resolve([]),
+    },
+    config: null,
+    available,
+  };
+}
+
+function runtime(options: ScannerRuntimeOptions, scanners: ResolvedScanner[]): ScannerRuntime {
+  return { options, scanners };
+}
+
 describe("scan pipeline pure helpers", () => {
   test("fails closed when a configured external scanner runtime has no content scanner", () => {
-    expect(externalContentScannerRequired({ cliRuntime: "disabled" })).toBe(false);
+    expect(externalContentScannerRequested(runtime({ cliRuntime: "disabled" }, []))).toBe(false);
     expect(
       shouldFailForMissingExternalScanner(
-        { cliRuntime: "docker" },
-        { syft: false, grype: false, trivy: false, clamav: false },
+        runtime({ cliRuntime: "docker" }, [contentScanner("grype", false)]),
       ),
     ).toBe(true);
     expect(
       shouldFailForMissingExternalScanner(
-        { cliRuntime: "host" },
-        { syft: true, grype: false, trivy: false, clamav: false },
+        runtime({ cliRuntime: "host" }, [contentScanner("grype", false)]),
       ),
     ).toBe(true);
     expect(
       shouldFailForMissingExternalScanner(
-        { cliRuntime: "docker" },
-        { syft: false, grype: true, trivy: false, clamav: false },
+        runtime({ cliRuntime: "docker" }, [contentScanner("grype", true)]),
       ),
     ).toBe(false);
+    // External runtime requested via an explicit endpoint (e.g. clamav REST) but the
+    // CLI runtime is disabled: still fail-closed only when nothing is available.
     expect(
       shouldFailForMissingExternalScanner(
-        { cliRuntime: "disabled", clamavRestUrl: "http://clamav:3310/scan" },
-        { syft: false, grype: false, trivy: false, clamav: true },
+        runtime({ cliRuntime: "disabled" }, [contentScanner("clamav", true, true)]),
       ),
     ).toBe(false);
   });

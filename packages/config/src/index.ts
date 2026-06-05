@@ -80,19 +80,30 @@ const originList = z
 
 const roleName = z.enum(ROLE_NAMES);
 
-const DEFAULT_SCANNER_IMAGES = {
-  SYFT_IMAGE:
-    "anchore/syft:latest@sha256:c6d5719f48f5a5986acf2847eb1ed7c53176e712d5721fcd156184cfb262f6eb",
-  GRYPE_IMAGE:
-    "anchore/grype:latest@sha256:e5b03c0ec0bc20a9eaaf84c2dcc97d9890f4dfb4381fce26bffc7dd8527c3d9d",
-  TRIVY_IMAGE:
-    "aquasec/trivy:latest@sha256:016eae51fdcf989332a5404af7e8f625cd5d95d7c0907a221d080a996f556500",
-  CLAMAV_IMAGE:
-    "clamav/clamav:latest@sha256:d4000290254603e7ee45d4904425c7d98c015af727f402756198fe41a31e7777",
-} as const;
-const SCANNER_IMAGE_KEYS = Object.keys(
-  DEFAULT_SCANNER_IMAGES,
-) as (keyof typeof DEFAULT_SCANNER_IMAGES)[];
+/**
+ * A comma-separated plugin allowlist (registries or scanners). An unset/empty
+ * value yields `undefined` — meaning "register every built-in plugin" — so the
+ * app core never enumerates a concrete registry or scanner; operators narrow the
+ * set without a code change.
+ */
+const pluginAllowlist = z.preprocess(
+  (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
+  z
+    .string()
+    .optional()
+    .transform((value) =>
+      value === undefined
+        ? undefined
+        : [
+            ...new Set(
+              value
+                .split(",")
+                .map((entry) => entry.trim())
+                .filter(Boolean),
+            ),
+          ],
+    ),
+);
 
 const orgSlug = z
   .string()
@@ -249,9 +260,15 @@ const EnvSchema = z
     EMAIL_SMTP_USER: optionalNonEmptyString,
     EMAIL_SMTP_PASSWORD: optionalNonEmptyString,
 
-    // Scanning (Phase 3)
+    // Plugin selection (optional operator allowlists; unset = all built-ins).
+    // The app core stays agnostic: it never names a registry or scanner. Each
+    // scanner reads its own per-scanner env (e.g. GRYPE_IMAGE, CLAMAV_REST_URL,
+    // OSV_API_URL, SCANNER_OSV) in its plugin, not here.
+    REGISTRY_PLUGINS: pluginAllowlist,
+    SCANNERS: pluginAllowlist,
+
+    // Scanning — generic, cross-scanner runtime knobs only.
     SCANNER_ENABLED: boolish.default(false),
-    SCANNER_OSV: boolish.default(false),
     SCANNER_TIMEOUT_MS: positiveInt(120_000),
     SCANNER_CLI_RUNTIME: z.enum(SCANNER_CLI_RUNTIMES).default("docker"),
     SCANNER_DOCKER_COMMAND: z.string().default("docker"),
@@ -259,13 +276,6 @@ const EnvSchema = z
     SCANNER_DOCKER_CPUS: dockerCpus.default("2"),
     SCANNER_DOCKER_PIDS_LIMIT: positiveInt(512),
     SCANNER_DOCKER_STORAGE_SIZE: optionalDockerSize,
-    SYFT_IMAGE: z.string().default(DEFAULT_SCANNER_IMAGES.SYFT_IMAGE),
-    GRYPE_IMAGE: z.string().default(DEFAULT_SCANNER_IMAGES.GRYPE_IMAGE),
-    TRIVY_IMAGE: z.string().default(DEFAULT_SCANNER_IMAGES.TRIVY_IMAGE),
-    CLAMAV_IMAGE: z.string().default(DEFAULT_SCANNER_IMAGES.CLAMAV_IMAGE),
-    CLAMAV_REST_URL: optionalHttpUrl,
-    TRIVY_SERVER_URL: optionalHttpUrl,
-    OSV_API_URL: absoluteUrl.default("https://api.osv.dev"),
     SCAN_SCRATCH_DIR: z.string().default("./scratch"),
     SCAN_MAX_BYTES: positiveInt(100 * 1024 * 1024),
 
@@ -320,21 +330,6 @@ const EnvSchema = z
         path: ["REGISTRY_ALLOW_PRIVATE_UPSTREAMS"],
         message: "REGISTRY_ALLOW_PRIVATE_UPSTREAMS cannot be enabled in production",
       });
-    }
-    if (
-      v.NODE_ENV === "production" &&
-      v.SCANNER_ENABLED &&
-      (v.SCANNER_CLI_RUNTIME === "docker" || v.SCANNER_CLI_RUNTIME === "auto")
-    ) {
-      for (const key of SCANNER_IMAGE_KEYS) {
-        if (!isDigestPinnedImage(v[key])) {
-          ctx.addIssue({
-            code: z.ZodIssueCode.custom,
-            path: [key],
-            message: `${key} must be pinned with @sha256: when Docker scanner runtime is enabled in production`,
-          });
-        }
-      }
     }
     if (v.AUTH_OIDC_ENABLED) {
       for (const key of [
@@ -426,10 +421,6 @@ function databaseUrlUsesDevDefaultCredentials(value: string): boolean {
 function isDevDefaultSecret(key: keyof typeof DEV_DEFAULT_SECRETS, value: string): boolean {
   if (key === "SESSION_SECRET") return value.startsWith(DEV_DEFAULT_SESSION_SECRET_PREFIX);
   return value === DEV_DEFAULT_SECRETS[key];
-}
-
-function isDigestPinnedImage(value: string): boolean {
-  return /@sha256:[a-f0-9]{64}$/i.test(value);
 }
 
 /** The validated, frozen runtime environment. */

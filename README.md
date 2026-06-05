@@ -71,13 +71,22 @@ apps/
   web/          management UI (React + Vite + Tailwind + shadcn)
 packages/
   config/  types/  core/  db/  storage/  auth/  contracts/
-  registry/              protocol-neutral registry plugin contracts and helpers
+  registry/              protocol-neutral registry plugin SDK (contracts + helpers)
   registry-application/  platform use cases split by slice: routing, runtime,
                          repositories, content, inventory, assets, governance, oci
-  registry-builtins/     built-in module registration
+  registry-runtime/      built-in registry manifest + config-driven loader
   registry-npm/  registry-oci/  registry-pypi/  registry-go/  registry-cargo/  registry-nuget/
-  queue/  observability/  scan-core/  scanning/  email/
+  scanner/               scanner plugin SDK (ScannerPlugin contract + registry + runners)
+  scanner-runtime/       built-in scanner manifest + config-driven loader
+  scanner-grype/  scanner-trivy/  scanner-clamav/  scanner-osv/  scanner-heuristic/
+  queue/  observability/  scan-core/  email/
 ```
+
+Registry formats and scanners are independent plugin packages behind their own
+SDKs (`@hootifactory/registry`, `@hootifactory/scanner`). The app core never names
+a concrete format or scanner: each is registered through its `*-runtime` loader
+from a static manifest, optionally narrowed by the `REGISTRY_PLUGINS` / `SCANNERS`
+operator allowlists. Adding one is a new package plus a manifest line.
 
 `bun run check:boundaries` validates the workspace manifests, route-layer import
 boundaries, API v1 contract docs, and registry-application slice exports.

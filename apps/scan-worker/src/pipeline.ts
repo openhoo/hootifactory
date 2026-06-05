@@ -1,4 +1,3 @@
-import { env } from "@hootifactory/config";
 import { createAsyncLimiter, mapWithBoundedConcurrency } from "@hootifactory/core";
 import { and, artifacts, db, eq, packages, packageVersions, repositories } from "@hootifactory/db";
 import {
@@ -11,17 +10,17 @@ import {
 import { type RegistryPlugin, registryPlugins } from "@hootifactory/registry";
 import { loadContentAddressableManifestRaw } from "@hootifactory/registry-application/content";
 import type { NormalizedFinding } from "@hootifactory/scan-core";
-import { osvScanDependencies, scanDependencies } from "@hootifactory/scanning";
+import { runDependencyScanners, type ScannerRuntime } from "@hootifactory/scanner";
 import { scanStoredBytes } from "./scan-bytes";
 import { collectPackageDependencies } from "./scan-dependencies";
 import { dedupeFindings } from "./scan-policy";
 import { applyPolicyDecision, markSkippedClean, persistScanResult } from "./scan-results";
-import { type ScannerRuntime, scannerRuntimeFromEnv } from "./scan-runtime";
+import { scannerRuntimeFromEnv } from "./scan-runtime";
 
 export { dedupeFindings } from "./scan-policy";
 export { recordScanFailure } from "./scan-results";
 export {
-  externalContentScannerRequired,
+  externalContentScannerRequested,
   scannerRuntimeFromEnv,
   shouldFailForMissingExternalScanner,
 } from "./scan-runtime";
@@ -111,11 +110,6 @@ async function processScanInner(artifactId: string, scannerRuntime: ScannerRunti
   const scanReferencedBytes = createAsyncLimiter(MANIFEST_REFERENCE_SCAN_CONCURRENCY);
   const scanReferencedManifests = createAsyncLimiter(MANIFEST_REFERENCE_SCAN_CONCURRENCY);
   const manifestGraph = module.scan?.contentAddressableManifestGraph;
-  await withSpan("scan.heuristic_dependencies", {}, async (span) => {
-    const dependencyFindings = scanDependencies(deps, { purlType });
-    found.push(...dependencyFindings);
-    span.setAttribute("scan.findings.count", dependencyFindings.length);
-  });
 
   let scannedBytePayload = false;
   async function scanArtifactBytes(
@@ -250,33 +244,44 @@ async function processScanInner(artifactId: string, scannerRuntime: ScannerRunti
     }
     throw new Error(`no scannable bytes available for artifact ${art.digest}`);
   }
-  if (env.SCANNER_OSV && osvEcosystem) {
-    await withSpan(
-      "scan.osv_dependencies",
-      { "scan.osv.api_url": env.OSV_API_URL },
-      async (span) => {
-        const osv = await osvScanDependencies(osvEcosystem, deps, env.OSV_API_URL, {
-          timeoutMs: env.SCANNER_TIMEOUT_MS,
+  // Fan the dependency-input scanners (built-in advisory DB + optional OSV) out
+  // over the resolved dependency set. Dependency scanners are fail-open: an
+  // outage is surfaced but never gates the scan.
+  await withSpan(
+    "scan.dependencies",
+    {
+      "scan.dependencies.count": Object.keys(deps).length,
+      "scan.osv.ecosystem": osvEcosystem,
+    },
+    async (span) => {
+      const dependencyResult = await runDependencyScanners(
+        scannerRuntime.scanners,
+        { ecosystem: osvEcosystem, deps, purlType },
+        { runtime: scannerRuntime.options },
+      );
+      found.push(...dependencyResult.findings);
+      span.setAttribute("scan.findings.count", dependencyResult.findings.length);
+      for (const { scanner, error } of dependencyResult.errors) {
+        span.setAttribute("scan.dependencies.failed", true);
+        addSpanEvent("scan.dependency_scanner_failed", { "scan.scanner": scanner });
+        logger.warn("dependency scanner failed; treating as no dependency findings", {
+          scanner,
+          osvEcosystem,
+          error,
         });
-        found.push(...osv.findings);
-        span.setAttribute("scan.findings.count", osv.findings.length);
-        if (osv.error !== undefined) {
-          // Fail-open: an unreachable OSV is treated as "no dependency vulns", but
-          // surface it so a total outage is observable rather than a silent clean.
-          span.setAttribute("scan.osv.failed", true);
-          addSpanEvent("scan.osv_unavailable", { "scan.osv.api_url": env.OSV_API_URL });
-          logger.warn("OSV dependency scan failed; treating as no dependency vulns", {
-            osvEcosystem,
-            error: osv.error,
-          });
-        }
-      },
-    );
-  }
+      }
+    },
+  );
 
   const results = dedupeFindings(found);
   setActiveSpanAttributes({ "scan.findings.count": results.length });
 
-  await persistScanResult(art, results, scannerRuntime.scanners);
+  await persistScanResult(
+    art,
+    results,
+    scannerRuntime.scanners
+      .filter((scanner) => scanner.available)
+      .map((scanner) => scanner.plugin.id),
+  );
   await applyPolicyDecision(art, repo, results);
 }

@@ -19,9 +19,10 @@
     "@hootifactory/queue": "workspace:*",
     "@hootifactory/registry": "workspace:*",
     "@hootifactory/registry-application": "workspace:*",
-    "@hootifactory/registry-builtins": "workspace:*",
+    "@hootifactory/registry-runtime": "workspace:*",
     "@hootifactory/scan-core": "workspace:*",
-    "@hootifactory/scanning": "workspace:*",
+    "@hootifactory/scanner": "workspace:*",
+    "@hootifactory/scanner-runtime": "workspace:*",
     "@hootifactory/storage": "workspace:*"
   }
 }

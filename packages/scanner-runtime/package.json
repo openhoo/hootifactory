@@ -1,0 +1,24 @@
+{
+  "name": "@hootifactory/scanner-runtime",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "bun run test:unit",
+    "test:unit": "bun run ../../scripts/package-tests.ts unit",
+    "test:integration": "bun run ../../scripts/package-tests.ts integration",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@hootifactory/config": "workspace:*",
+    "@hootifactory/scanner": "workspace:*",
+    "@hootifactory/scanner-clamav": "workspace:*",
+    "@hootifactory/scanner-grype": "workspace:*",
+    "@hootifactory/scanner-heuristic": "workspace:*",
+    "@hootifactory/scanner-osv": "workspace:*",
+    "@hootifactory/scanner-trivy": "workspace:*"
+  }
+}

@@ -48,8 +48,8 @@ describe("environment auth creation defaults", () => {
     expect(devEnv.SCANNER_DOCKER_MEMORY).toBe("1g");
     expect(devEnv.SCANNER_DOCKER_CPUS).toBe("2");
     expect(devEnv.SCANNER_DOCKER_PIDS_LIMIT).toBe(512);
-    expect(devEnv.GRYPE_IMAGE).toMatch(/^anchore\/grype:latest@sha256:[a-f0-9]{64}$/);
-    expect(devEnv.TRIVY_IMAGE).toMatch(/^aquasec\/trivy:latest@sha256:[a-f0-9]{64}$/);
+    expect(devEnv.REGISTRY_PLUGINS).toBeUndefined();
+    expect(devEnv.SCANNERS).toBeUndefined();
     expect(loadEnv({ NODE_ENV: "test" }).AUTH_ALLOW_REGISTRATION).toBe(true);
     expect(loadEnv({ NODE_ENV: "test" }).AUTH_ALLOW_ORG_CREATION).toBe(true);
   });
@@ -116,25 +116,30 @@ describe("environment auth creation defaults", () => {
     expect(example).not.toMatch(/^AUTH_ALLOW_ORG_CREATION\s*=\s*true\s*$/m);
   });
 
-  test("scanner endpoint URLs are validated and normalized", () => {
+  test("generic scanner runtime knobs are validated and normalized", () => {
     const env = loadEnv({
-      CLAMAV_REST_URL: "http://clamav:3310/scan/",
-      TRIVY_SERVER_URL: "http://trivy:4954/",
       S3_PUBLIC_ENDPOINT: "https://cdn.example.test/s3/",
       SCANNER_CLI_RUNTIME: "host",
     });
-    expect(env.CLAMAV_REST_URL).toBe("http://clamav:3310/scan");
-    expect(env.TRIVY_SERVER_URL).toBe("http://trivy:4954");
     expect(env.S3_PUBLIC_ENDPOINT).toBe("https://cdn.example.test/s3");
     expect(env.SCANNER_CLI_RUNTIME).toBe("host");
-    expect(() => loadEnv({ CLAMAV_REST_URL: "clamav:3310" })).toThrow();
-    expect(() => loadEnv({ TRIVY_SERVER_URL: "trivy:4954" })).toThrow();
     expect(() => loadEnv({ S3_PUBLIC_ENDPOINT: "notaurl" })).toThrow();
     expect(() => loadEnv({ SCANNER_CLI_RUNTIME: "local" })).toThrow();
     expect(() => loadEnv({ SCANNER_DOCKER_MEMORY: "large" })).toThrow();
     expect(() => loadEnv({ SCANNER_DOCKER_CPUS: "0" })).toThrow();
     expect(() => loadEnv({ SCANNER_DOCKER_PIDS_LIMIT: "0" })).toThrow();
     expect(() => loadEnv({ SCANNER_DOCKER_STORAGE_SIZE: "large" })).toThrow();
+  });
+
+  test("plugin allowlists parse to a deduped list or undefined when unset", () => {
+    expect(loadEnv({}).SCANNERS).toBeUndefined();
+    expect(loadEnv({ SCANNERS: "  " }).SCANNERS).toBeUndefined();
+    expect(loadEnv({ SCANNERS: "grype, trivy ,grype,osv" }).SCANNERS).toEqual([
+      "grype",
+      "trivy",
+      "osv",
+    ]);
+    expect(loadEnv({ REGISTRY_PLUGINS: "npm,oci" }).REGISTRY_PLUGINS).toEqual(["npm", "oci"]);
   });
 
   test("registry upload limit is a positive integer", () => {
@@ -155,25 +160,8 @@ describe("environment auth creation defaults", () => {
     expect(() => loadEnv({ REGISTRY_VIRTUAL_MEMBER_CONCURRENCY: "0" })).toThrow();
   });
 
-  test("production Docker scanner images must be digest pinned", () => {
-    expect(() =>
-      loadEnv({
-        ...prodSource,
-        SCANNER_ENABLED: "true",
-        SCANNER_CLI_RUNTIME: "docker",
-        SYFT_IMAGE: "anchore/syft:latest",
-      }),
-    ).toThrow(/SYFT_IMAGE must be pinned with @sha256:/);
-
-    expect(
-      loadEnv({
-        ...prodSource,
-        SCANNER_ENABLED: "true",
-        SCANNER_CLI_RUNTIME: "host",
-        SYFT_IMAGE: "anchore/syft:latest",
-      }).SYFT_IMAGE,
-    ).toBe("anchore/syft:latest");
-  });
+  // Per-scanner image digest-pin enforcement moved into each scanner plugin
+  // (assertDigestPinnedImage at config-resolution time); see scanner-grype et al.
 
   test("database and queue pool configuration is positive integer based", () => {
     const env = loadEnv({

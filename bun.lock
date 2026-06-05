@@ -38,7 +38,7 @@
         "@hootifactory/queue": "workspace:*",
         "@hootifactory/registry": "workspace:*",
         "@hootifactory/registry-application": "workspace:*",
-        "@hootifactory/registry-builtins": "workspace:*",
+        "@hootifactory/registry-runtime": "workspace:*",
         "@hootifactory/scan-core": "workspace:*",
         "@hootifactory/types": "workspace:*",
         "hono": "^4.12.23",
@@ -66,9 +66,10 @@
         "@hootifactory/queue": "workspace:*",
         "@hootifactory/registry": "workspace:*",
         "@hootifactory/registry-application": "workspace:*",
-        "@hootifactory/registry-builtins": "workspace:*",
+        "@hootifactory/registry-runtime": "workspace:*",
         "@hootifactory/scan-core": "workspace:*",
-        "@hootifactory/scanning": "workspace:*",
+        "@hootifactory/scanner": "workspace:*",
+        "@hootifactory/scanner-runtime": "workspace:*",
         "@hootifactory/storage": "workspace:*",
       },
     },
@@ -227,19 +228,6 @@
         "@hootifactory/types": "workspace:*",
       },
     },
-    "packages/registry-builtins": {
-      "name": "@hootifactory/registry-builtins",
-      "version": "0.0.0",
-      "dependencies": {
-        "@hootifactory/registry": "workspace:*",
-        "@hootifactory/registry-cargo": "workspace:*",
-        "@hootifactory/registry-go": "workspace:*",
-        "@hootifactory/registry-npm": "workspace:*",
-        "@hootifactory/registry-nuget": "workspace:*",
-        "@hootifactory/registry-oci": "workspace:*",
-        "@hootifactory/registry-pypi": "workspace:*",
-      },
-    },
     "packages/registry-cargo": {
       "name": "@hootifactory/registry-cargo",
       "version": "0.0.0",
@@ -282,6 +270,20 @@
         "@hootifactory/registry": "workspace:*",
       },
     },
+    "packages/registry-runtime": {
+      "name": "@hootifactory/registry-runtime",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/config": "workspace:*",
+        "@hootifactory/registry": "workspace:*",
+        "@hootifactory/registry-cargo": "workspace:*",
+        "@hootifactory/registry-go": "workspace:*",
+        "@hootifactory/registry-npm": "workspace:*",
+        "@hootifactory/registry-nuget": "workspace:*",
+        "@hootifactory/registry-oci": "workspace:*",
+        "@hootifactory/registry-pypi": "workspace:*",
+      },
+    },
     "packages/scan-core": {
       "name": "@hootifactory/scan-core",
       "version": "0.0.0",
@@ -289,14 +291,61 @@
         "zod": "^4.4.3",
       },
     },
-    "packages/scanning": {
-      "name": "@hootifactory/scanning",
+    "packages/scanner": {
+      "name": "@hootifactory/scanner",
       "version": "0.0.0",
       "dependencies": {
-        "@hootifactory/config": "workspace:*",
         "@hootifactory/core": "workspace:*",
         "@hootifactory/scan-core": "workspace:*",
         "@hootifactory/types": "workspace:*",
+      },
+    },
+    "packages/scanner-clamav": {
+      "name": "@hootifactory/scanner-clamav",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/scanner": "workspace:*",
+      },
+    },
+    "packages/scanner-grype": {
+      "name": "@hootifactory/scanner-grype",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/scanner": "workspace:*",
+      },
+    },
+    "packages/scanner-heuristic": {
+      "name": "@hootifactory/scanner-heuristic",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/scanner": "workspace:*",
+      },
+    },
+    "packages/scanner-osv": {
+      "name": "@hootifactory/scanner-osv",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/scanner": "workspace:*",
+      },
+    },
+    "packages/scanner-runtime": {
+      "name": "@hootifactory/scanner-runtime",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/config": "workspace:*",
+        "@hootifactory/scanner": "workspace:*",
+        "@hootifactory/scanner-clamav": "workspace:*",
+        "@hootifactory/scanner-grype": "workspace:*",
+        "@hootifactory/scanner-heuristic": "workspace:*",
+        "@hootifactory/scanner-osv": "workspace:*",
+        "@hootifactory/scanner-trivy": "workspace:*",
+      },
+    },
+    "packages/scanner-trivy": {
+      "name": "@hootifactory/scanner-trivy",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/scanner": "workspace:*",
       },
     },
     "packages/storage": {
@@ -508,8 +557,6 @@
 
     "@hootifactory/registry-application": ["@hootifactory/registry-application@workspace:packages/registry-application"],
 
-    "@hootifactory/registry-builtins": ["@hootifactory/registry-builtins@workspace:packages/registry-builtins"],
-
     "@hootifactory/registry-cargo": ["@hootifactory/registry-cargo@workspace:packages/registry-cargo"],
 
     "@hootifactory/registry-go": ["@hootifactory/registry-go@workspace:packages/registry-go"],
@@ -522,11 +569,25 @@
 
     "@hootifactory/registry-pypi": ["@hootifactory/registry-pypi@workspace:packages/registry-pypi"],
 
+    "@hootifactory/registry-runtime": ["@hootifactory/registry-runtime@workspace:packages/registry-runtime"],
+
     "@hootifactory/scan-core": ["@hootifactory/scan-core@workspace:packages/scan-core"],
 
     "@hootifactory/scan-worker": ["@hootifactory/scan-worker@workspace:apps/scan-worker"],
 
-    "@hootifactory/scanning": ["@hootifactory/scanning@workspace:packages/scanning"],
+    "@hootifactory/scanner": ["@hootifactory/scanner@workspace:packages/scanner"],
+
+    "@hootifactory/scanner-clamav": ["@hootifactory/scanner-clamav@workspace:packages/scanner-clamav"],
+
+    "@hootifactory/scanner-grype": ["@hootifactory/scanner-grype@workspace:packages/scanner-grype"],
+
+    "@hootifactory/scanner-heuristic": ["@hootifactory/scanner-heuristic@workspace:packages/scanner-heuristic"],
+
+    "@hootifactory/scanner-osv": ["@hootifactory/scanner-osv@workspace:packages/scanner-osv"],
+
+    "@hootifactory/scanner-runtime": ["@hootifactory/scanner-runtime@workspace:packages/scanner-runtime"],
+
+    "@hootifactory/scanner-trivy": ["@hootifactory/scanner-trivy@workspace:packages/scanner-trivy"],
 
     "@hootifactory/storage": ["@hootifactory/storage@workspace:packages/storage"],
 

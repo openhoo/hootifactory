@@ -1,0 +1,25 @@
+{
+  "name": "@hootifactory/registry-runtime",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "bun run test:unit",
+    "test:unit": "bun run ../../scripts/package-tests.ts unit",
+    "test:integration": "bun run ../../scripts/package-tests.ts integration",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@hootifactory/config": "workspace:*",
+    "@hootifactory/registry": "workspace:*",
+    "@hootifactory/registry-cargo": "workspace:*",
+    "@hootifactory/registry-go": "workspace:*",
+    "@hootifactory/registry-npm": "workspace:*",
+    "@hootifactory/registry-nuget": "workspace:*",
+    "@hootifactory/registry-oci": "workspace:*",
+    "@hootifactory/registry-pypi": "workspace:*"
+  }
+}

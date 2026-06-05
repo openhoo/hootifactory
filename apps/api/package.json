@@ -22,7 +22,7 @@
     "@hootifactory/queue": "workspace:*",
     "@hootifactory/registry": "workspace:*",
     "@hootifactory/registry-application": "workspace:*",
-    "@hootifactory/registry-builtins": "workspace:*",
+    "@hootifactory/registry-runtime": "workspace:*",
     "@hootifactory/scan-core": "workspace:*",
     "@hootifactory/types": "workspace:*",
     "hono": "^4.12.23",

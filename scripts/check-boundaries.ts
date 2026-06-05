@@ -19,245 +19,36 @@ interface WorkspacePackage {
   manifest: PackageJson;
 }
 
+interface PluginPackage {
+  name: string;
+  relDir: string;
+}
+
 const repoRoot = process.cwd().replace(/\/+$/, "");
-const registryPluginPackagePattern = /@hootifactory\/registry-(?:cargo|go|npm|nuget|oci|pypi)\b/;
 const workspaceImportPattern =
   /\b(?:from|import)\s*(?:\(\s*)?["'](@hootifactory\/[^"'/]+)(?:\/[^"']*)?["']/g;
 
-const rules: BoundaryRule[] = [
-  {
-    name: "core stays pure and infrastructure-free",
-    roots: ["packages/core/src", "packages/core/package.json"],
-    forbidden: [
-      /\bBun\.env\b/,
-      /\bprocess\.env\b/,
-      /@hootifactory\/auth\b/,
-      /@hootifactory\/config\b/,
-      /@hootifactory\/db\b/,
-      /@hootifactory\/queue\b/,
-      /@hootifactory\/registry\b/,
-      /@hootifactory\/registry-/,
-      /@hootifactory\/scan-core\b/,
-      /@hootifactory\/storage\b/,
-    ],
-  },
-  {
-    name: "registry SDK stays infrastructure-free",
-    roots: ["packages/registry/src", "packages/registry/package.json"],
-    forbidden: [
-      /@hootifactory\/auth\b/,
-      /@hootifactory\/config\b/,
-      /@hootifactory\/db\b/,
-      /@hootifactory\/queue\b/,
-      /@hootifactory\/registry-application\b/,
-      /@hootifactory\/scan-core\b/,
-      /@hootifactory\/storage\b/,
-    ],
-  },
-  {
-    name: "registry application stays delivery-framework-free",
-    roots: ["packages/registry-application/src", "packages/registry-application/package.json"],
-    forbidden: [/from\s+["']hono/, /from\s+["']react/],
-  },
-  {
-    name: "api composes registry plugins through registry-builtins",
-    roots: ["apps/api/src", "apps/api/package.json"],
-    forbidden: [registryPluginPackagePattern],
-  },
-  {
-    name: "web depends on contracts, not backend internals",
-    roots: ["apps/web/src", "apps/web/package.json"],
-    forbidden: [
-      /@hootifactory\/auth\b/,
-      /@hootifactory\/core\b/,
-      /@hootifactory\/db\b/,
-      /@hootifactory\/queue\b/,
-      /@hootifactory\/registry\b/,
-      registryPluginPackagePattern,
-      /@hootifactory\/storage\b/,
-    ],
-  },
-  {
-    name: "contracts stay delivery-framework and backend-free",
-    roots: ["packages/contracts/src", "packages/contracts/package.json"],
-    forbidden: [
-      /from\s+["']hono/,
-      /from\s+["']react/,
-      /@hootifactory\/auth\b/,
-      /@hootifactory\/core\b/,
-      /@hootifactory\/db\b/,
-      /@hootifactory\/queue\b/,
-      /@hootifactory\/registry\b/,
-      registryPluginPackagePattern,
-      /@hootifactory\/storage\b/,
-    ],
-  },
-  {
-    name: "non-module runtime uses module descriptors instead of concrete registry ids",
-    roots: [
-      "apps/api/src",
-      "apps/scan-worker/src",
-      "apps/web/src",
-      "packages/contracts/src",
-      "packages/observability/src",
-      "packages/registry-application/src",
-      "packages/scanning/src",
-    ],
-    ignoreTests: true,
-    forbidden: [
-      /\bPackageFormat\b/,
-      /\bpackageFormatEnum\b/,
-      /\brepoFormatSpanAttributes\b/,
-      /\bformatRegistry\b/,
-      /\bregistryErrorResponseForFormat\b/,
-      /\bregistryErrorToFormatResponse\b/,
-      /\b(?:format|moduleId)\s*[:=]\s*["'](?:npm|pypi|cargo|nuget|oci|helm|maven|generic)["']/,
-      /\b[Oo]ci[A-Z]/,
-      /["']\/?v2\//,
-    ],
-  },
-  {
-    name: "registry package/version adapters stay DB-free",
-    roots: [
-      "packages/registry-cargo/src",
-      "packages/registry-cargo/package.json",
-      "packages/registry-go/src",
-      "packages/registry-go/package.json",
-      "packages/registry-npm/src",
-      "packages/registry-npm/package.json",
-      "packages/registry-nuget/src",
-      "packages/registry-nuget/package.json",
-      "packages/registry-oci/src",
-      "packages/registry-oci/package.json",
-      "packages/registry-pypi/src",
-      "packages/registry-pypi/package.json",
-    ],
-    forbidden: [/@hootifactory\/db\b/, /\bctx\.db\b/],
-  },
-  {
-    name: "repository configuration route slice stays DB-free",
-    roots: [
-      "apps/api/src/routes/ui-repository-access.ts",
-      "apps/api/src/routes/ui-repository-config.ts",
-      "apps/api/src/routes/api-v1-repository-config-routes.ts",
-    ],
-    forbidden: [/@hootifactory\/db\b/, /\bdb\./],
-  },
-  {
-    name: "content inventory route slice stays DB-free",
-    roots: [
-      "apps/api/src/routes/ui-content.ts",
-      "apps/api/src/routes/ui-artifact-routes.ts",
-      "apps/api/src/routes/api-v1-content-routes.ts",
-    ],
-    forbidden: [/@hootifactory\/db\b/, /\bdb\./],
-  },
-  {
-    name: "governance route slice stays DB-free",
-    roots: [
-      "apps/api/src/routes/ui-scan-policy-routes.ts",
-      "apps/api/src/routes/ui-quota-routes.ts",
-      "apps/api/src/routes/api-v1-policy-routes.ts",
-    ],
-    forbidden: [/@hootifactory\/db\b/, /\bdb\./],
-  },
-  {
-    name: "organization route slice stays DB-free",
-    roots: ["apps/api/src/routes/ui.ts", "apps/api/src/routes/api-v1-organization-routes.ts"],
-    forbidden: [/@hootifactory\/db\b/, /\bdb\./],
-  },
-  {
-    name: "token route slice stays DB-free",
-    roots: [
-      "apps/api/src/routes/ui-tokens.ts",
-      "apps/api/src/routes/api-v1-token-routes.ts",
-      "apps/api/src/routes/api-v1-helpers.ts",
-      "apps/api/src/routes/ui-dto.ts",
-      "apps/api/src/routes/ui-schemas.ts",
-    ],
-    forbidden: [/@hootifactory\/db\b/, /\bdb\./],
-  },
-  {
-    name: "auth delivery slice stays DB-free",
-    roots: [
-      "apps/api/src/routes/auth-local-routes.ts",
-      "apps/api/src/routes/auth-password-reset-routes.ts",
-      "apps/api/src/routes/auth-oidc-routes.ts",
-      "apps/api/src/middleware/authenticate.ts",
-    ],
-    forbidden: [/@hootifactory\/db\b/, /\bdb\./],
-  },
-  {
-    name: "api app stays DB-free",
-    roots: ["apps/api/src", "apps/api/package.json"],
-    forbidden: [/@hootifactory\/db\b/, /\bdb\./],
-  },
-  {
-    name: "registry protocol plugins avoid delivery and platform infrastructure",
-    roots: [
-      "packages/registry-cargo/src",
-      "packages/registry-go/src",
-      "packages/registry-npm/src",
-      "packages/registry-nuget/src",
-      "packages/registry-oci/src",
-      "packages/registry-pypi/src",
-    ],
-    forbidden: [
-      /from\s+["']hono/,
-      /from\s+["']react/,
-      /@hootifactory\/auth\b/,
-      /@hootifactory\/config\b/,
-      /@hootifactory\/core\b/,
-      /@hootifactory\/queue\b/,
-      /@hootifactory\/registry-builtins\b/,
-      /@hootifactory\/scan-core\b/,
-      /@hootifactory\/storage\b/,
-    ],
-  },
-  {
-    // Lock in the registry-type-plugin refactor: the foundational, SDK, auth,
-    // persistence, contract, and application packages must never re-acquire
-    // OCI/format-specific identity (types, media types, the data namespace, or
-    // the format-named tables). Only registry-<type> plugins + registry-builtins
-    // may name a format.
-    name: "agnostic packages stay free of OCI/format-specific identity",
-    roots: [
-      "packages/types/src",
-      "packages/core/src",
-      "packages/registry/src",
-      "packages/auth/src",
-      "packages/db/src",
-      "packages/contracts/src",
-      "packages/registry-application/src",
-    ],
-    ignoreTests: true,
-    forbidden: [
-      // Case-insensitive so a lowercase identifier (e.g. ociManifestFoo) cannot
-      // slip past, while still allowing words that merely contain "oci"
-      // (associate, velocity) via the leading word boundary.
-      /\b[Oo]ci[A-Z]/,
-      /\bOCI_MEDIA_TYPES\b/,
-      /\bdata\.oci\b/,
-      /\boci_manifests\b/,
-      /\boci_tags\b/,
-      /\boci_manifest_blob_refs\b/,
-      /\bociManifestId\b/,
-      // The OCI distribution mount prefix is module grammar; it must not appear
-      // in any agnostic package (route matching, scope matching, etc.).
-      /["']\/?v2\//,
-    ],
-  },
-  {
-    // Agnostic auth must never re-acquire a module's action grammar (e.g. the
-    // Docker pull/push verbs). Auth reasons over generic read/write/delete.
-    name: "agnostic auth stays free of module-specific action grammar",
-    roots: ["packages/auth/src"],
-    ignoreTests: true,
-    forbidden: [/["'](?:pull|push)["']/],
-  },
-];
+// Plugin package names (and the boundary roots that name them) are derived from
+// the workspace at runtime, so adding a registry format or a scanner is purely a
+// new package + a manifest line — never a boundary-checker edit.
+const NON_PLUGIN_REGISTRY = new Set([
+  "registry",
+  "registry-application",
+  "registry-builtins",
+  "registry-runtime",
+]);
+const NON_PLUGIN_SCANNER = new Set(["scanner", "scanner-runtime"]);
 
 const failures: string[] = [];
+
+const pluginPackages = await discoverPluginPackages();
+const registryPluginPackagePattern = packageNamesPattern(pluginPackages.registry);
+const scannerPluginPackagePattern = packageNamesPattern(pluginPackages.scanner);
+const scannerPluginRoots = pluginPackages.scanner.flatMap((pkg) => [
+  `${pkg.relDir}/src`,
+  `${pkg.relDir}/package.json`,
+]);
+const rules = buildRules();
 
 await checkBoundaryRules();
 await checkRootPackageImports();
@@ -272,6 +63,310 @@ if (failures.length > 0) {
 }
 
 console.log("Architecture boundaries OK");
+
+function buildRules(): BoundaryRule[] {
+  return [
+    {
+      name: "core stays pure and infrastructure-free",
+      roots: ["packages/core/src", "packages/core/package.json"],
+      forbidden: [
+        /\bBun\.env\b/,
+        /\bprocess\.env\b/,
+        /@hootifactory\/auth\b/,
+        /@hootifactory\/config\b/,
+        /@hootifactory\/db\b/,
+        /@hootifactory\/queue\b/,
+        /@hootifactory\/registry\b/,
+        /@hootifactory\/registry-/,
+        /@hootifactory\/scan-core\b/,
+        /@hootifactory\/storage\b/,
+      ],
+    },
+    {
+      name: "registry SDK stays infrastructure-free",
+      roots: ["packages/registry/src", "packages/registry/package.json"],
+      forbidden: [
+        /@hootifactory\/auth\b/,
+        /@hootifactory\/config\b/,
+        /@hootifactory\/db\b/,
+        /@hootifactory\/queue\b/,
+        /@hootifactory\/registry-application\b/,
+        /@hootifactory\/scan-core\b/,
+        /@hootifactory\/storage\b/,
+      ],
+    },
+    {
+      name: "scanner SDK stays infrastructure-free",
+      roots: ["packages/scanner/src", "packages/scanner/package.json"],
+      forbidden: [
+        /@hootifactory\/auth\b/,
+        /@hootifactory\/config\b/,
+        /@hootifactory\/db\b/,
+        /@hootifactory\/observability\b/,
+        /@hootifactory\/queue\b/,
+        /@hootifactory\/registry\b/,
+        /@hootifactory\/storage\b/,
+      ],
+    },
+    {
+      name: "registry application stays delivery-framework-free",
+      roots: ["packages/registry-application/src", "packages/registry-application/package.json"],
+      forbidden: [/from\s+["']hono/, /from\s+["']react/],
+    },
+    {
+      name: "apps compose registry plugins through registry-runtime",
+      roots: [
+        "apps/api/src",
+        "apps/api/package.json",
+        "apps/scan-worker/src",
+        "apps/scan-worker/package.json",
+      ],
+      forbidden: [registryPluginPackagePattern],
+    },
+    {
+      name: "apps compose scanners through scanner-runtime",
+      roots: [
+        "apps/api/src",
+        "apps/api/package.json",
+        "apps/scan-worker/src",
+        "apps/scan-worker/package.json",
+      ],
+      forbidden: [scannerPluginPackagePattern],
+    },
+    {
+      name: "web depends on contracts, not backend internals",
+      roots: ["apps/web/src", "apps/web/package.json"],
+      forbidden: [
+        /@hootifactory\/auth\b/,
+        /@hootifactory\/core\b/,
+        /@hootifactory\/db\b/,
+        /@hootifactory\/queue\b/,
+        /@hootifactory\/registry\b/,
+        registryPluginPackagePattern,
+        /@hootifactory\/storage\b/,
+      ],
+    },
+    {
+      name: "contracts stay delivery-framework and backend-free",
+      roots: ["packages/contracts/src", "packages/contracts/package.json"],
+      forbidden: [
+        /from\s+["']hono/,
+        /from\s+["']react/,
+        /@hootifactory\/auth\b/,
+        /@hootifactory\/core\b/,
+        /@hootifactory\/db\b/,
+        /@hootifactory\/queue\b/,
+        /@hootifactory\/registry\b/,
+        registryPluginPackagePattern,
+        /@hootifactory\/storage\b/,
+      ],
+    },
+    {
+      name: "non-module runtime uses module descriptors instead of concrete registry/scanner ids",
+      roots: [
+        "apps/api/src",
+        "apps/scan-worker/src",
+        "apps/web/src",
+        "packages/contracts/src",
+        "packages/observability/src",
+        "packages/registry-application/src",
+      ],
+      ignoreTests: true,
+      forbidden: [
+        /\bPackageFormat\b/,
+        /\bpackageFormatEnum\b/,
+        /\brepoFormatSpanAttributes\b/,
+        /\bformatRegistry\b/,
+        /\bregistryErrorResponseForFormat\b/,
+        /\bregistryErrorToFormatResponse\b/,
+        /\b(?:format|moduleId)\s*[:=]\s*["'](?:npm|pypi|cargo|nuget|oci|helm|maven|generic)["']/,
+        /\b(?:scanner|scannerId)\s*[:=]\s*["'](?:grype|trivy|clamav|osv|syft|heuristic)["']/,
+        /\b[Oo]ci[A-Z]/,
+        /["']\/?v2\//,
+      ],
+    },
+    {
+      name: "registry package/version adapters stay DB-free",
+      roots: [
+        "packages/registry-cargo/src",
+        "packages/registry-cargo/package.json",
+        "packages/registry-go/src",
+        "packages/registry-go/package.json",
+        "packages/registry-npm/src",
+        "packages/registry-npm/package.json",
+        "packages/registry-nuget/src",
+        "packages/registry-nuget/package.json",
+        "packages/registry-oci/src",
+        "packages/registry-oci/package.json",
+        "packages/registry-pypi/src",
+        "packages/registry-pypi/package.json",
+      ],
+      forbidden: [/@hootifactory\/db\b/, /\bctx\.db\b/],
+    },
+    {
+      name: "repository configuration route slice stays DB-free",
+      roots: [
+        "apps/api/src/routes/ui-repository-access.ts",
+        "apps/api/src/routes/ui-repository-config.ts",
+        "apps/api/src/routes/api-v1-repository-config-routes.ts",
+      ],
+      forbidden: [/@hootifactory\/db\b/, /\bdb\./],
+    },
+    {
+      name: "content inventory route slice stays DB-free",
+      roots: [
+        "apps/api/src/routes/ui-content.ts",
+        "apps/api/src/routes/ui-artifact-routes.ts",
+        "apps/api/src/routes/api-v1-content-routes.ts",
+      ],
+      forbidden: [/@hootifactory\/db\b/, /\bdb\./],
+    },
+    {
+      name: "governance route slice stays DB-free",
+      roots: [
+        "apps/api/src/routes/ui-scan-policy-routes.ts",
+        "apps/api/src/routes/ui-quota-routes.ts",
+        "apps/api/src/routes/api-v1-policy-routes.ts",
+      ],
+      forbidden: [/@hootifactory\/db\b/, /\bdb\./],
+    },
+    {
+      name: "organization route slice stays DB-free",
+      roots: ["apps/api/src/routes/ui.ts", "apps/api/src/routes/api-v1-organization-routes.ts"],
+      forbidden: [/@hootifactory\/db\b/, /\bdb\./],
+    },
+    {
+      name: "token route slice stays DB-free",
+      roots: [
+        "apps/api/src/routes/ui-tokens.ts",
+        "apps/api/src/routes/api-v1-token-routes.ts",
+        "apps/api/src/routes/api-v1-helpers.ts",
+        "apps/api/src/routes/ui-dto.ts",
+        "apps/api/src/routes/ui-schemas.ts",
+      ],
+      forbidden: [/@hootifactory\/db\b/, /\bdb\./],
+    },
+    {
+      name: "auth delivery slice stays DB-free",
+      roots: [
+        "apps/api/src/routes/auth-local-routes.ts",
+        "apps/api/src/routes/auth-password-reset-routes.ts",
+        "apps/api/src/routes/auth-oidc-routes.ts",
+        "apps/api/src/middleware/authenticate.ts",
+      ],
+      forbidden: [/@hootifactory\/db\b/, /\bdb\./],
+    },
+    {
+      name: "api app stays DB-free",
+      roots: ["apps/api/src", "apps/api/package.json"],
+      forbidden: [/@hootifactory\/db\b/, /\bdb\./],
+    },
+    {
+      name: "registry protocol plugins avoid delivery and platform infrastructure",
+      roots: [
+        "packages/registry-cargo/src",
+        "packages/registry-go/src",
+        "packages/registry-npm/src",
+        "packages/registry-nuget/src",
+        "packages/registry-oci/src",
+        "packages/registry-pypi/src",
+      ],
+      forbidden: [
+        /from\s+["']hono/,
+        /from\s+["']react/,
+        /@hootifactory\/auth\b/,
+        /@hootifactory\/config\b/,
+        /@hootifactory\/core\b/,
+        /@hootifactory\/queue\b/,
+        /@hootifactory\/registry-runtime\b/,
+        /@hootifactory\/scan-core\b/,
+        /@hootifactory\/storage\b/,
+      ],
+    },
+    {
+      name: "scanner plugins avoid delivery and platform infrastructure",
+      roots: scannerPluginRoots,
+      forbidden: [
+        /from\s+["']hono/,
+        /from\s+["']react/,
+        /@hootifactory\/auth\b/,
+        /@hootifactory\/config\b/,
+        /@hootifactory\/core\b/,
+        /@hootifactory\/db\b/,
+        /@hootifactory\/observability\b/,
+        /@hootifactory\/queue\b/,
+        /@hootifactory\/registry\b/,
+        /@hootifactory\/scanner-runtime\b/,
+        /@hootifactory\/storage\b/,
+      ],
+    },
+    {
+      // Lock in the registry-type-plugin refactor: the foundational, SDK, auth,
+      // persistence, contract, and application packages must never re-acquire
+      // OCI/format-specific identity (types, media types, the data namespace, or
+      // the format-named tables). Only registry-<type> plugins + the runtime
+      // manifest may name a format.
+      name: "agnostic packages stay free of OCI/format-specific identity",
+      roots: [
+        "packages/types/src",
+        "packages/core/src",
+        "packages/registry/src",
+        "packages/auth/src",
+        "packages/db/src",
+        "packages/contracts/src",
+        "packages/registry-application/src",
+      ],
+      ignoreTests: true,
+      forbidden: [
+        // Case-insensitive so a lowercase identifier (e.g. ociManifestFoo) cannot
+        // slip past, while still allowing words that merely contain "oci"
+        // (associate, velocity) via the leading word boundary.
+        /\b[Oo]ci[A-Z]/,
+        /\bOCI_MEDIA_TYPES\b/,
+        /\bdata\.oci\b/,
+        /\boci_manifests\b/,
+        /\boci_tags\b/,
+        /\boci_manifest_blob_refs\b/,
+        /\bociManifestId\b/,
+        // The OCI distribution mount prefix is module grammar; it must not appear
+        // in any agnostic package (route matching, scope matching, etc.).
+        /["']\/?v2\//,
+      ],
+    },
+    {
+      // Agnostic auth must never re-acquire a module's action grammar (e.g. the
+      // Docker pull/push verbs). Auth reasons over generic read/write/delete.
+      name: "agnostic auth stays free of module-specific action grammar",
+      roots: ["packages/auth/src"],
+      ignoreTests: true,
+      forbidden: [/["'](?:pull|push)["']/],
+    },
+  ];
+}
+
+async function discoverPluginPackages(): Promise<{
+  registry: PluginPackage[];
+  scanner: PluginPackage[];
+}> {
+  const registry: PluginPackage[] = [];
+  const scanner: PluginPackage[] = [];
+  for (const pkg of await workspacePackages()) {
+    const short = pkg.name.replace(/^@hootifactory\//, "");
+    const entry: PluginPackage = { name: pkg.name, relDir: relativePath(repoRoot, pkg.dir) };
+    if (short.startsWith("registry-") && !NON_PLUGIN_REGISTRY.has(short)) registry.push(entry);
+    if (short.startsWith("scanner-") && !NON_PLUGIN_SCANNER.has(short)) scanner.push(entry);
+  }
+  return { registry, scanner };
+}
+
+/** A regex matching any of the given workspace package names as an import specifier. */
+function packageNamesPattern(packages: PluginPackage[]): RegExp {
+  if (packages.length === 0) return /(?!x)x/;
+  const alternation = packages
+    .map((pkg) => escapeRegExp(pkg.name.replace(/^@hootifactory\//, "")))
+    .join("|");
+  return new RegExp(`@hootifactory\\/(?:${alternation})\\b`);
+}
 
 async function checkBoundaryRules(): Promise<void> {
   for (const rule of rules) {

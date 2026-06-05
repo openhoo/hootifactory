@@ -11,15 +11,20 @@ import {
   reapExpiredContentUploadSessions,
   sweepUnreferencedCasBlobs,
 } from "@hootifactory/registry-application/content";
-import { registerBuiltInRegistryPlugins } from "@hootifactory/registry-builtins";
+import { loadConfiguredRegistryPlugins } from "@hootifactory/registry-runtime";
 import { SCAN_OUTBOX_STATUS } from "@hootifactory/scan-core";
+import { loadConfiguredScanners } from "@hootifactory/scanner-runtime";
 import { processScan, recordScanFailure, scannerRuntimeFromEnv } from "./pipeline";
 import { type ClaimedScanIntent, claimedScanIntentsFromExecute } from "./scan-outbox-rows";
 
 const workerRole = "scan-worker";
 
 initializeObservability({ serviceRole: workerRole });
-registerBuiltInRegistryPlugins();
+loadConfiguredRegistryPlugins();
+const loadedScanners = loadConfiguredScanners();
+if (loadedScanners.unknown.length > 0) {
+  logger.warn("ignoring unknown scanners in SCANNERS", { unknown: loadedScanners.unknown });
+}
 
 const workerBatchSize = intEnv("SCAN_WORKER_BATCH_SIZE", 16, 1);
 const workerConcurrency = Math.min(workerBatchSize, intEnv("SCAN_WORKER_CONCURRENCY", 4, 1));
@@ -117,7 +122,9 @@ logger.info("scan worker starting", {
   scanReclaimIntervalSeconds,
   scanReclaimTimeoutSeconds,
   workerPort: process.env.WORKER_PORT,
-  externalScanners: scannerRuntime.scanners,
+  scanners: scannerRuntime.scanners
+    .filter((scanner) => scanner.available)
+    .map((scanner) => scanner.plugin.id),
 });
 health.setReady(true);
 
