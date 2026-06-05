@@ -29,11 +29,15 @@ export function DashboardPage() {
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <StatCard label="Repositories" icon={<Boxes className="size-4" />}>
-          <div className="font-heading text-3xl font-semibold tabular-nums">{list.length}</div>
+          <div className="font-heading text-3xl font-semibold tabular-nums">
+            {repos.isError ? "—" : list.length}
+          </div>
         </StatCard>
         <StatCard label="Modules in use" icon={<Layers className="size-4" />}>
           <div className="flex flex-wrap items-center gap-1.5">
-            {modules.length ? (
+            {repos.isError ? (
+              <span className="text-sm text-muted-foreground">—</span>
+            ) : modules.length ? (
               modules.map(([id, n]) => (
                 <span key={id} className="inline-flex items-center gap-1">
                   <ModuleBadge moduleId={id} />
@@ -73,6 +77,17 @@ export function DashboardPage() {
           <CardContent>
             {repos.isLoading ? (
               <Loading />
+            ) : repos.isError ? (
+              <EmptyState
+                icon={<Boxes className="size-5" />}
+                title="Couldn't load repositories"
+                description="Check your connection or permissions and try again."
+                action={
+                  <Button variant="outline" size="sm" onClick={() => repos.refetch()}>
+                    Retry
+                  </Button>
+                }
+              />
             ) : list.length ? (
               <ul className="-my-1 divide-y divide-border">
                 {list.slice(0, 6).map((r) => (

@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "@tanstack/react-router";
 import { Boxes, ChevronDown, Package, Plus, Search, Terminal } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -136,6 +136,17 @@ export function ReposPage() {
 
       {repos.isLoading ? (
         <Loading />
+      ) : repos.isError ? (
+        <EmptyState
+          icon={<Boxes className="size-5" />}
+          title="Couldn't load repositories"
+          description="Check your connection or permissions and try again."
+          action={
+            <Button variant="outline" size="sm" onClick={() => repos.refetch()}>
+              Retry
+            </Button>
+          }
+        />
       ) : (
         <Card className="py-0">
           <Table>
@@ -197,6 +208,9 @@ export function RepoDetailPage({ repoId }: { repoId: string }) {
   const pkgsQ = useQuery({
     queryKey: ["packages", repoId, packageLimit],
     queryFn: () => api.packages(repoId, { limit: packageLimit, offset: 0 }),
+    // Keep the current page visible while "Show more" loads the next, larger page
+    // (each limit is a new query key), instead of flashing a full-panel spinner.
+    placeholderData: keepPreviousData,
   });
 
   if (repoQ.isLoading) return <Loading />;
@@ -248,6 +262,22 @@ export function RepoDetailPage({ repoId }: { repoId: string }) {
           <CardContent>
             {pkgsQ.isLoading ? (
               <Loading />
+            ) : pkgsQ.isError ? (
+              <EmptyState
+                icon={<Package className="size-5" />}
+                title="Couldn't load packages"
+                description="Something went wrong fetching this repository's packages."
+                action={
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => pkgsQ.refetch()}
+                    disabled={pkgsQ.isFetching}
+                  >
+                    Retry
+                  </Button>
+                }
+              />
             ) : packages.length ? (
               <div className="space-y-3">
                 <ul className="-my-1 divide-y divide-border">
