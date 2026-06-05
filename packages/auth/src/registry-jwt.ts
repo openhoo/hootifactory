@@ -8,10 +8,18 @@ import {
   jwtVerify,
   SignJWT,
 } from "jose";
+import { z } from "zod";
 
 import type { RegistryAccess } from "./principal";
 
 export type { RegistryAccess };
+
+// Validate the wire shape of the access claim instead of trusting a cast: a
+// malformed claim degrades to deny-all rather than throwing a TypeError deep
+// inside the authorization decision (can.ts iterates `a.actions.includes(...)`).
+const RegistryAccessSchema = z.array(
+  z.object({ type: z.string(), name: z.string(), actions: z.array(z.string()) }),
+);
 
 interface Keys {
   privateKey: CryptoKey;
@@ -83,7 +91,7 @@ export async function verifyRegistryToken(
   });
   return {
     subject: payload.sub,
-    access: (payload.access as RegistryAccess[] | undefined) ?? [],
+    access: RegistryAccessSchema.safeParse(payload.access).data ?? [],
   };
 }
 
