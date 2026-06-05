@@ -155,6 +155,13 @@
       "when": 1780591873700,
       "tag": "0021_rename_oci_constraints_to_content",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1780591873800,
+      "tag": "0022_drop_oidc_group_role_map",
+      "breakpoints": true
     }
   ]
 }

@@ -1,32 +1,9 @@
 import type { OidcGroupGrant, OidcGroupMappings } from "./oidc-types";
-import { isRoleName, type RoleName, roleOutranks } from "./permissions";
+import { roleOutranks } from "./permissions";
 
-// ── legacy single-org mapping ────────────────────────────────────────────────
-// `mapGroupsToRole` / `groupRoleMap` (OidcProviderConfig) is the legacy single-org
-// group->role mapping, retained for compatibility. New code should prefer the
-// multi-org path below; the active OIDC callback flow uses mapGroupsToOrgRoles.
-
-/**
- * Map IdP group claims to an org role using a provider's group->role map.
- * The highest-privilege matching role wins. Returns null if no group maps.
- */
-export function mapGroupsToRole(
-  groups: string[],
-  groupRoleMap: Record<string, string>,
-): RoleName | null {
-  let best: RoleName | null = null;
-  for (const g of groups) {
-    const mapped = groupRoleMap[g];
-    if (isRoleName(mapped) && (!best || roleOutranks(mapped, best))) {
-      best = mapped;
-    }
-  }
-  return best;
-}
-
-// ── multi-org mapping (active) ───────────────────────────────────────────────
-// `mapGroupsToOrgRoles` / `groupMappings` is the active multi-org mapping used by
-// resolveOidcCallbackClaims (oidc-client.ts).
+// `mapGroupsToOrgRoles` / `groupMappings` is the multi-org group->role mapping
+// used by resolveOidcCallbackClaims (oidc-client.ts). The highest-privilege
+// matching role wins per org.
 
 export function mapGroupsToOrgRoles(
   groups: string[],

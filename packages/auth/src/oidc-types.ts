@@ -8,7 +8,6 @@ export interface OidcProviderConfig {
   clientSecret?: string;
   scopes?: string[];
   groupClaim: string;
-  groupRoleMap?: Record<string, string>;
   groupMappings?: OidcGroupMappings;
   emailClaim?: string;
   usernameClaim?: string;

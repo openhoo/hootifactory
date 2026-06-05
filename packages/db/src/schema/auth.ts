@@ -183,7 +183,6 @@ export const oidcProviders = pgTable(
     clientId: text().notNull(),
     clientSecret: text().notNull(),
     groupClaim: text().notNull().default("groups"),
-    groupRoleMap: jsonb().$type<Record<string, string>>().notNull().default({}),
     enabled: boolean().notNull().default(true),
     ...timestamps(),
   },
