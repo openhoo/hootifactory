@@ -64,7 +64,6 @@ export async function putOciManifest(
     role: "oci_manifest",
     package: pkg,
     packageVersion: { id: versionId, packageId: pkg.id, version: manifestPut.ref.value },
-    ociManifest: manifest,
     scope: image,
     path: `${image}@${manifestPut.digest}`,
     mediaType: manifestPut.mediaType,

@@ -17,7 +17,6 @@ export async function upsertRegistryAsset(
       repositoryId: ctx.repo.id,
       packageId: input.package?.id ?? null,
       packageVersionId: input.packageVersion?.id ?? null,
-      ociManifestId: input.ociManifest?.id ?? null,
       blobRefId: input.blobRefId ?? null,
       digest: input.digest,
       role: input.role,
@@ -38,8 +37,7 @@ export async function upsertRegistryAsset(
       set: {
         packageId: input.package?.id ?? null,
         packageVersionId: input.packageVersion?.id ?? null,
-        ociManifestId: input.ociManifest?.id ?? null,
-        blobRefId: input.blobRefId ?? null,
+          blobRefId: input.blobRefId ?? null,
         path: input.path ?? null,
         mediaType: input.mediaType ?? null,
         sizeBytes: input.sizeBytes ?? 0,

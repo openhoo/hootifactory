@@ -54,7 +54,6 @@ export interface AssetDto {
   repositoryId: string;
   packageId: string | null;
   packageVersionId: string | null;
-  ociManifestId: string | null;
   blobRefId: string | null;
   digest: string;
   role: string;

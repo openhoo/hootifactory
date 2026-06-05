@@ -109,7 +109,6 @@ export const registryAssets = pgTable(
       .references(() => repositories.id, { onDelete: "cascade" }),
     packageId: uuid().references(() => packages.id, { onDelete: "cascade" }),
     packageVersionId: uuid().references(() => packageVersions.id, { onDelete: "cascade" }),
-    ociManifestId: uuid().references(() => ociManifests.id, { onDelete: "cascade" }),
     blobRefId: uuid().references(() => blobRefs.id, { onDelete: "set null" }),
     digest: varchar({ length: 80 }).notNull(),
     /** Stable role from the registry data contract, defined by the owning registry module. */
@@ -135,7 +134,6 @@ export const registryAssets = pgTable(
     index("registry_assets_package_idx").on(t.packageId),
     index("registry_assets_version_idx").on(t.packageVersionId),
     index("registry_assets_digest_idx").on(t.digest),
-    index("registry_assets_manifest_idx").on(t.ociManifestId),
   ],
 );
 

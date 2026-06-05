@@ -114,7 +114,6 @@ export interface RegistryAssetRow {
   repositoryId: string;
   packageId: string | null;
   packageVersionId: string | null;
-  ociManifestId: string | null;
   blobRefId: string | null;
   digest: string;
   role: string;
@@ -260,7 +259,6 @@ export interface RegistryAssetWriteInput {
   role: RegistryAssetRole | string;
   package?: RegistryPackageHandle | null;
   packageVersion?: RegistryPackageVersionHandle | null;
-  ociManifest?: RegistryManifestHandle | null;
   blobRefId?: string | null;
   digest?: string;
   scope?: string;

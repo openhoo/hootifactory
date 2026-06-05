@@ -102,7 +102,6 @@ describe("PyPI upload lifecycle helpers", () => {
         repositoryId: ctx.repo.id,
         packageId: input.package?.id ?? null,
         packageVersionId: input.packageVersion?.id ?? null,
-        ociManifestId: input.ociManifest?.id ?? null,
         blobRefId: input.blobRefId ?? null,
         digest: input.digest,
         role: input.role,

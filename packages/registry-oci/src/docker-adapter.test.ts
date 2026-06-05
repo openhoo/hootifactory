@@ -332,7 +332,6 @@ describe("Docker adapter contract", () => {
         repositoryId: "repo_1",
         packageId: null,
         packageVersionId: null,
-        ociManifestId: null,
         blobRefId: input.blobRefId ?? null,
         digest: input.digest,
         role: input.role,

@@ -48,7 +48,6 @@ export function assetForWrite<T extends RegistryAssetWriteInput>(
   if (input.packageVersion && input.package) {
     assertVersionForPackage(input.package, input.packageVersion);
   }
-  if (input.ociManifest) assertManifestInRepo(ctx, input.ociManifest);
   return input;
 }
 

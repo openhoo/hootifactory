@@ -350,7 +350,6 @@ export const V1RegistryAssetSchema = z
     packageVersionId: V1UuidSchema.nullable().describe(
       "Associated package version identifier, if any.",
     ),
-    ociManifestId: V1UuidSchema.nullable().describe("Associated OCI manifest identifier, if any."),
     blobRefId: V1UuidSchema.nullable().describe("Associated blob reference identifier, if any."),
     digest: V1DigestSchema,
     role: z.string().describe("Stable asset role defined by the owning registry module."),
