@@ -1,4 +1,5 @@
 import type { RegistryPlugin } from "@hootifactory/registry";
+import { aptRegistryPlugin } from "@hootifactory/registry-apt";
 import { cargoRegistryPlugin } from "@hootifactory/registry-cargo";
 import { composerRegistryPlugin } from "@hootifactory/registry-composer";
 import { goRegistryPlugin } from "@hootifactory/registry-go";
@@ -33,4 +34,5 @@ export const REGISTRY_PLUGIN_MANIFEST: RegistryPluginEntry[] = [
   { plugin: rubygemsRegistryPlugin },
   { plugin: composerRegistryPlugin },
   { plugin: mavenRegistryPlugin },
+  { plugin: aptRegistryPlugin },
 ];

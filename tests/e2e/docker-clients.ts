@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const CLI_IMAGES = {
+  apt: process.env.E2E_APT_IMAGE ?? "debian:12",
   cargo: process.env.E2E_CARGO_IMAGE ?? "rust:1.85-bookworm",
   composer: process.env.E2E_COMPOSER_IMAGE ?? "composer:2",
   docker: process.env.E2E_DOCKER_IMAGE ?? "docker:28-cli",

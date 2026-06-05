@@ -18,6 +18,7 @@ describe("loadConfiguredRegistryPlugins", () => {
       "rubygems",
       "composer",
       "maven",
+      "apt",
     ]) {
       expect(registry.has(id)).toBe(true);
     }
@@ -39,6 +40,7 @@ describe("loadConfiguredRegistryPlugins", () => {
       "rubygems",
       "composer",
       "maven",
+      "apt",
       "oci",
       "helm",
     ]);

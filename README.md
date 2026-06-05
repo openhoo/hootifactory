@@ -2,10 +2,11 @@
 
 A self-hostable, **multi-format artifact & package manager** — an open-source alternative to JFrog Artifactory + Harbor + a standalone scanner, in one tool.
 
-- **Formats:** npm, Docker, OCI, PyPI, Helm, Go, Cargo, NuGet, RubyGems, Composer, Maven (11 total)
+- **Formats:** npm, Docker, OCI, PyPI, Helm, Go, Cargo, NuGet, RubyGems, Composer, Maven, APT (12 total)
   — all verified end-to-end against Dockerized real clients (RubyGems is consumed
   via Bundler's compact index, Composer publishes via a custom upload endpoint,
-  and Maven is a coordinate-addressed file store with POM-driven package projection).
+  Maven is a coordinate-addressed file store with POM-driven package projection,
+  and APT serves unsigned `Release` files consumed with `[trusted=yes]`).
 - **Repository kinds:** hosted, proxy (pull-through cache), virtual (group/aggregate).
 - **Supply-chain security:** dependency/malware scanning (heuristic + optional
   Syft/Grype/Trivy/OSV/ClamAV), policy gates (audit / enforce) that quarantine or
@@ -27,7 +28,7 @@ bun run test:e2e:clients # real-client specs only; Docker supplies the external 
 ```
 
 Docker is the integration boundary for external CLIs. The e2e real-client specs
-run npm, Docker, ORAS, pip/twine, Helm, Go, Cargo, dotnet, gem/bundler, composer and mvn through pinned
+run npm, Docker, ORAS, pip/twine, Helm, Go, Cargo, dotnet, gem/bundler, composer, mvn and apt through pinned
 container images, and the optional scanner CLIs default to Docker images for
 Syft, Grype, Trivy and ClamAV (`SCANNER_CLI_RUNTIME=docker`).
 
@@ -77,7 +78,7 @@ packages/
                          repositories, content, inventory, assets, governance, oci
   registry-runtime/      built-in registry manifest + config-driven loader
   registry-npm/  registry-oci/  registry-pypi/  registry-go/  registry-cargo/  registry-nuget/
-  registry-rubygems/  registry-composer/  registry-maven/
+  registry-rubygems/  registry-composer/  registry-maven/  registry-apt/
   scanner/               scanner plugin SDK (ScannerPlugin contract + registry + runners)
   scanner-runtime/       built-in scanner manifest + config-driven loader
   scanner-grype/  scanner-trivy/  scanner-clamav/  scanner-osv/  scanner-heuristic/
