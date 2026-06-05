@@ -1,3 +1,4 @@
+import type { ReadableStreamDefaultReader } from "node:stream/web";
 import {
   Errors,
   parseJsonWithSchema,
@@ -31,38 +32,82 @@ export function uploadMultipartState(raw: string | null): UploadMultipartState {
   };
 }
 
+/**
+ * Assemble staged chunks (+ an optional trailing buffer) into one stream. Uses an
+ * incremental `pull()` that enqueues at most one source chunk per pull so the
+ * runtime's backpressure bounds in-memory buffering to ~highWaterMark instead of
+ * accumulating the whole assembled blob, and a `cancel()` that releases the
+ * currently-open staging reader if the consumer aborts (digest mismatch, S3 error).
+ */
 export function uploadChunkStream(
   ctx: RegistryRequestContext,
   chunks: UploadChunk[],
   extra?: Uint8Array,
 ): ReadableStream<Uint8Array> {
+  let index = 0;
+  let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+  let extraEmitted = false;
+
+  /** Open the next staged chunk's reader, validating its size first. */
+  async function openNextReader(): Promise<boolean> {
+    while (index < chunks.length) {
+      const chunk = chunks[index];
+      index += 1;
+      if (!chunk) continue;
+      const stat = await ctx.data.content.staging.statKey(chunk.key);
+      if (!stat || stat.size !== chunk.size) {
+        throw Errors.blobUploadInvalid({
+          reason: "staging chunk size mismatch",
+          expected: chunk.size,
+          actual: stat?.size ?? 0,
+        });
+      }
+      reader = ctx.data.content.staging.readKey(chunk.key).getReader();
+      return true;
+    }
+    return false;
+  }
+
   return new ReadableStream<Uint8Array>({
-    async start(controller) {
+    async pull(controller) {
       try {
-        for (const chunk of chunks) {
-          const stat = await ctx.data.content.staging.statKey(chunk.key);
-          if (!stat || stat.size !== chunk.size) {
-            throw Errors.blobUploadInvalid({
-              reason: "staging chunk size mismatch",
-              expected: chunk.size,
-              actual: stat?.size ?? 0,
-            });
-          }
-          const reader = ctx.data.content.staging.readKey(chunk.key).getReader();
-          try {
-            while (true) {
-              const { done, value } = await reader.read();
-              if (done) break;
-              if (value.byteLength > 0) controller.enqueue(value);
+        while (true) {
+          if (!reader && !(await openNextReader())) {
+            // No more chunks: emit the trailing buffer once, then close.
+            if (!extraEmitted) {
+              extraEmitted = true;
+              if (extra?.byteLength) {
+                controller.enqueue(extra);
+                return;
+              }
             }
-          } finally {
-            reader.releaseLock();
+            controller.close();
+            return;
+          }
+          const active = reader as ReadableStreamDefaultReader<Uint8Array>;
+          const { done, value } = await active.read();
+          if (done) {
+            active.releaseLock();
+            reader = null;
+            continue;
+          }
+          if (value.byteLength > 0) {
+            controller.enqueue(value);
+            return;
           }
         }
-        if (extra?.byteLength) controller.enqueue(extra);
-        controller.close();
       } catch (err) {
+        if (reader) {
+          reader.releaseLock();
+          reader = null;
+        }
         controller.error(err);
+      }
+    },
+    async cancel() {
+      if (reader) {
+        await reader.cancel().catch(() => {});
+        reader = null;
       }
     },
   });

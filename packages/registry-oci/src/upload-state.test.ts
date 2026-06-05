@@ -92,6 +92,28 @@ describe("OCI upload state helpers", () => {
     expect(bytesCalls).toBe(0);
   });
 
+  test("opens staged chunks lazily instead of materializing them all up front", async () => {
+    const ctx = createTestRegistryContext();
+    const statted: string[] = [];
+    ctx.data.content.staging.statKey = async (key) => {
+      statted.push(key);
+      return { size: 5 };
+    };
+    ctx.data.content.staging.readKey = () => streamFrom(["a", "b", "c", "d", "e"]);
+
+    const stream = uploadChunkStream(ctx, [
+      { key: "c0", size: 5 },
+      { key: "c1", size: 5 },
+      { key: "c2", size: 5 },
+    ]);
+    const reader = stream.getReader();
+    const first = await reader.read();
+    expect(decoder.decode(first.value as Uint8Array)).toBe("a");
+    // Only the first chunk has been opened; the rest stay untouched until pulled.
+    expect(statted).toEqual(["c0"]);
+    await reader.cancel();
+  });
+
   test("checks staged chunk size before opening the staged stream", async () => {
     const ctx = createTestRegistryContext();
     let readCalls = 0;
