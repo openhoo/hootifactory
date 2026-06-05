@@ -132,14 +132,32 @@ export async function scanStoredBytes(input: StoredByteScanInput): Promise<Store
         const bytesForRestClamAv = scannerRuntime.scannerOptions.clamavRestUrl
           ? () => Bun.file(path).bytes()
           : undefined;
-        const externalFindings = await runExternalScanners(
+        const external = await runExternalScanners(
           path,
           bytesForRestClamAv,
           scannerRuntime.scannerOptions,
           scannerRuntime.scanners,
         );
-        findings.push(...externalFindings);
-        span.setAttribute("scan.external.findings", externalFindings.length);
+        for (const { scanner, error } of external.errors) {
+          addSpanEvent("scan.external_scanner_failed", { "scan.scanner": scanner });
+          logger.warn("external scanner failed; continuing with remaining scanners", {
+            scanner,
+            digest,
+            error,
+          });
+        }
+        // Stay fail-closed: if every attempted scanner failed we must not return a
+        // clean-looking partial result (that would flip the gate to fail-open).
+        if (external.attempted > 0 && external.errors.length === external.attempted) {
+          throw new Error(
+            `all ${external.attempted} external scanner(s) failed: ${external.errors
+              .map((e) => e.scanner)
+              .join(", ")}`,
+            { cause: external.errors[0]?.error },
+          );
+        }
+        findings.push(...external.findings);
+        span.setAttribute("scan.external.findings", external.findings.length);
       }
       return { available: true, scannedPayload: true, findings };
     } catch (err) {
