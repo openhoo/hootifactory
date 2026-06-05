@@ -352,6 +352,7 @@ describe("Dart adapter", () => {
       ctx,
     );
     const body = await res.json();
+    expect(res.headers.get("content-type")).toBe("application/vnd.pub.v2+json");
     expect(body).toEqual({
       url: "https://registry.example.test/dart/private/api/packages/versions/newUpload",
       fields: {},
@@ -374,6 +375,7 @@ describe("Dart adapter", () => {
       ctx,
     );
     expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("application/vnd.pub.v2+json");
     const body = (await res.json()) as { success: { message: string } };
     expect(typeof body.success.message).toBe("string");
   });

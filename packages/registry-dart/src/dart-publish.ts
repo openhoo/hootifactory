@@ -60,7 +60,11 @@ export async function parseDartUploadRequest(req: Request): Promise<DartUploadPa
 
   const pubspecText = extractPubspecYaml(archiveBytes);
   if (pubspecText === null) {
-    return error("InvalidInput", "archive does not contain a pubspec.yaml", 400);
+    return error(
+      "InvalidInput",
+      "archive is not a valid .tar.gz package or does not contain a pubspec.yaml",
+      400,
+    );
   }
 
   const pubspecResult = DartPubspecSchema.safeParse(parsePubspecYaml(pubspecText));

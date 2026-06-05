@@ -84,6 +84,7 @@ export function parsePubspecYaml(text: string): Record<string, unknown> {
   const result: Record<string, unknown> = {};
   let currentMapKey: string | null = null;
   let currentMap: Record<string, string> | null = null;
+  let nestedMapIndent: number | null = null;
 
   for (const rawLine of text.split(/\r?\n/)) {
     const line = stripComment(rawLine);
@@ -105,14 +106,18 @@ export function parsePubspecYaml(text: string): Record<string, unknown> {
         // A top-level mapping key whose entries follow on indented lines.
         currentMapKey = key;
         currentMap = {};
+        nestedMapIndent = null;
         result[key] = currentMap;
       } else {
         result[key] = unquote(value);
         currentMapKey = null;
         currentMap = null;
+        nestedMapIndent = null;
       }
-    } else if (currentMap && currentMapKey && value !== "") {
+    } else if (currentMap && currentMapKey) {
       // One level of nesting: `  dep: ^1.0.0`. Skip block scalars (value === "").
+      nestedMapIndent ??= indent;
+      if (indent !== nestedMapIndent || value === "") continue;
       currentMap[key] = unquote(value);
     }
   }

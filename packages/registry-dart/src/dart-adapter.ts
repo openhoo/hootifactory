@@ -29,6 +29,12 @@ import {
 
 const PUB_JSON_CONTENT_TYPE = "application/vnd.pub.v2+json";
 
+function pubJson(body: unknown, init: ResponseInit = {}): Response {
+  const headers = new Headers(init.headers);
+  headers.set("content-type", PUB_JSON_CONTENT_TYPE);
+  return new Response(JSON.stringify(body), { ...init, headers });
+}
+
 /** Validate a path param against a Zod schema, returning a pub-shaped 400 on failure. */
 function parsePubParam<T>(
   schema: { safeParse: (value: unknown) => { success: true; data: T } | { success: false } },
@@ -244,7 +250,7 @@ export class DartAdapter implements RegistryPlugin {
 
   private publishNew(ctx: RegistryRequestContext): Response {
     const url = `${ctx.baseUrl}/${ctx.repo.mountPath}/api/packages/versions/newUpload`;
-    return Response.json({ url, fields: {} });
+    return pubJson({ url, fields: {} });
   }
 
   private publishUpload(req: Request, ctx: RegistryRequestContext): Promise<Response> {
@@ -252,7 +258,7 @@ export class DartAdapter implements RegistryPlugin {
   }
 
   private publishFinish(): Response {
-    return Response.json({ success: { message: "package published" } });
+    return pubJson({ success: { message: "package published" } });
   }
 }
 

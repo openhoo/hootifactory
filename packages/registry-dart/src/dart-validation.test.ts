@@ -52,6 +52,20 @@ describe("Dart validation", () => {
     expect(pubspec.dev_dependencies).toEqual({ lints: "^3.0.0" });
   });
 
+  test("ignores complex nested dependency entries", () => {
+    const pubspec = parsePubspecYaml(
+      [
+        "name: demo",
+        "version: 1.2.3",
+        "dependencies:",
+        "  provider: ^6.0.0",
+        "  local_pkg:",
+        "    path: ../local_pkg",
+      ].join("\n"),
+    );
+    expect(pubspec.dependencies).toEqual({ provider: "^6.0.0" });
+  });
+
   test("round-trips a stored version metadata object through the schema", () => {
     const meta = {
       archiveDigest: `sha256:${"a".repeat(64)}`,
