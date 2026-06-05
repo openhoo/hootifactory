@@ -1,5 +1,6 @@
 import { authorize, issueRegistryToken } from "@hootifactory/auth";
 import { env } from "@hootifactory/config";
+import { withSpan } from "@hootifactory/observability";
 import {
   type RegistryAppRoute,
   type RegistryAppRouteContext,
@@ -72,5 +73,9 @@ export async function tryHandleAppRoute(c: Context<AppEnv>): Promise<Response | 
     issueBearerToken: (input) => issueRegistryToken(input),
     log: logger,
   };
-  return handler(ctx);
+  return await withSpan(
+    "registry.app_route",
+    { "http.route": c.req.path, "http.request.method": c.req.method },
+    async () => handler(ctx),
+  );
 }

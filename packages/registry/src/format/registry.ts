@@ -66,6 +66,12 @@ export const registryPlugins = new RegistryPluginRegistry();
  * derived from the registered content-addressable modules' route tables (routes
  * flagged `immutableContentAddressed`). Lets agnostic middleware long-cache such
  * responses without knowing any module's URL grammar.
+ *
+ * Invariant: the path is matched against each route's regex after stripping only
+ * the leading `/<mountSegment>`, so the repo's org/name segments remain in the
+ * tested string. An `immutableContentAddressed` route must therefore begin with
+ * a greedy param (e.g. `/:name+/...`) that absorbs them — which OCI's
+ * `/:name+/blobs/:digest` does.
  */
 export function isImmutableContentPath(
   pathname: string,

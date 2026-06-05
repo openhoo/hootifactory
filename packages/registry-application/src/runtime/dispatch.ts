@@ -3,7 +3,6 @@ import { logger, withSpan } from "@hootifactory/observability";
 import {
   Errors,
   RegistryError,
-  type RegistryErrorCode,
   type RegistryPlugin,
   type RegistryRequestContext,
   type RouteMatch,
@@ -13,12 +12,6 @@ import { loadUpstream } from "../repositories/upstreams";
 import { isReadMethod, repoModuleSpanAttributes } from "./telemetry";
 
 const PROXY_REFRESH_FRESHNESS_CACHE_LIMIT = 2048;
-const REGISTRY_MISS_CODES = new Set<RegistryErrorCode>([
-  "BLOB_UNKNOWN",
-  "MANIFEST_UNKNOWN",
-  "NAME_UNKNOWN",
-  "NOT_FOUND",
-]);
 
 const proxyRefreshFreshUntil = new BoundedLruCache<string, number>(
   PROXY_REFRESH_FRESHNESS_CACHE_LIMIT,
@@ -37,7 +30,9 @@ export interface RegistryKindDispatchOptions {
 }
 
 function isRegistryMiss(err: unknown): err is RegistryError {
-  return err instanceof RegistryError && err.status === 404 && REGISTRY_MISS_CODES.has(err.code);
+  // A 404 from a module is a "miss" (telemetry classification only); keyed off
+  // status rather than enumerating any module's error-code vocabulary.
+  return err instanceof RegistryError && err.status === 404;
 }
 
 export async function adapterResponse(

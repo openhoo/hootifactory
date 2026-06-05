@@ -88,10 +88,8 @@ export interface RouteEntry {
   /** Supports `:param` (one segment) and `:param+` (greedy, may include slashes). */
   pattern: string;
   handlerId: string;
-  /**
-   * Declarative route semantics consumed by the agnostic runtime, so it never
-   * has to branch on module-specific handlerId strings.
-   */
+  // Declarative route semantics consumed by the agnostic runtime, so it never
+  // has to branch on module-specific handlerId strings.
   /** Reading this route from a proxy repo should trigger an upstream refresh of `params.pkg`. */
   proxyRefreshTrigger?: boolean;
   /** This route returns module metadata that can be merged across virtual members. */

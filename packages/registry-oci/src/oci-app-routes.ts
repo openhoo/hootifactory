@@ -244,6 +244,8 @@ export function ociAppRoutes(): RegistryAppRoute[] {
     { method: "HEAD", pattern: "/v2", handler: () => v2VersionCheck() },
     { method: "HEAD", pattern: "/v2/", handler: () => v2VersionCheck() },
     { method: "GET", pattern: "/token", handler: handleToken },
+    { method: "GET", pattern: "/token/", handler: handleToken },
     { method: "POST", pattern: "/token", handler: handleToken },
+    { method: "POST", pattern: "/token/", handler: handleToken },
   ];
 }
