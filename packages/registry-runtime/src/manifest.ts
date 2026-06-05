@@ -1,5 +1,6 @@
 import type { RegistryPlugin } from "@hootifactory/registry";
 import { cargoRegistryPlugin } from "@hootifactory/registry-cargo";
+import { composerRegistryPlugin } from "@hootifactory/registry-composer";
 import { goRegistryPlugin } from "@hootifactory/registry-go";
 import { npmRegistryPlugin } from "@hootifactory/registry-npm";
 import { nugetRegistryPlugin } from "@hootifactory/registry-nuget";
@@ -29,4 +30,5 @@ export const REGISTRY_PLUGIN_MANIFEST: RegistryPluginEntry[] = [
   { plugin: cargoRegistryPlugin },
   { plugin: nugetRegistryPlugin },
   { plugin: rubygemsRegistryPlugin },
+  { plugin: composerRegistryPlugin },
 ];

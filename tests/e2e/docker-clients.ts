@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 export const CLI_IMAGES = {
   cargo: process.env.E2E_CARGO_IMAGE ?? "rust:1.85-bookworm",
+  composer: process.env.E2E_COMPOSER_IMAGE ?? "composer:2",
   docker: process.env.E2E_DOCKER_IMAGE ?? "docker:28-cli",
   dotnet: process.env.E2E_DOTNET_IMAGE ?? "mcr.microsoft.com/dotnet/sdk:9.0",
   go: process.env.E2E_GO_IMAGE ?? "golang:1.24-bookworm",
