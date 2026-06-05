@@ -80,6 +80,10 @@ export class NpmAdapter implements RegistryPlugin {
           osvEcosystem: "npm",
           purlType: "npm",
         }),
+        referencedDigests: (metadata) => {
+          const dist = metadata.dist as { blobDigest?: unknown } | undefined;
+          return typeof dist?.blobDigest === "string" ? [dist.blobDigest] : [];
+        },
       },
     })
     .capabilities(this.capabilities)

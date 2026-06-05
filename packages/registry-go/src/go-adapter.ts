@@ -44,6 +44,8 @@ export class GoAdapter implements RegistryPlugin {
           osvEcosystem: "Go",
           purlType: "golang",
         }),
+        referencedDigests: (metadata) =>
+          typeof metadata.zipDigest === "string" ? [metadata.zipDigest] : [],
       },
     })
     .capabilities(this.capabilities)

@@ -50,7 +50,16 @@ export class PypiAdapter implements RegistryPlugin {
       errorResponseKind: "singleError",
       compressibleHandlers: ["simpleRoot", "simpleProject"],
       compressibleContentTypes: ["application/vnd.pypi.simple.v1+json"],
-      scan: { defaultOsvEcosystem: "PyPI" },
+      scan: {
+        defaultOsvEcosystem: "PyPI",
+        referencedDigests: (metadata) =>
+          Array.isArray(metadata.files)
+            ? metadata.files.flatMap((file) => {
+                const blobDigest = (file as { blobDigest?: unknown } | null)?.blobDigest;
+                return typeof blobDigest === "string" ? [blobDigest] : [];
+              })
+            : [],
+      },
     })
     .capabilities(this.capabilities)
     .authChallenge(this.authChallenge)

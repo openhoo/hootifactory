@@ -264,6 +264,14 @@ export interface RegistryScanProvider {
   defaultOsvEcosystem?: string;
   dependencyGraph?(input: RegistryDependencyScanInput): RegistryDependencyScanResult;
   contentAddressableManifestGraph?: RegistryContentAddressableManifestGraph;
+  /**
+   * Candidate CAS blob digests referenced by a stored version's metadata, used
+   * by retention/GC to decide which blobs a live version still needs. Lets each
+   * module own its own metadata shape; the agnostic caller validates the
+   * returned strings, so a module never has to know the digest format and
+   * retention never has to know any module's metadata fields.
+   */
+  referencedDigests?(metadata: Record<string, unknown>): string[];
 }
 
 /** A repository resource an app-level route authorizes against. */

@@ -8,7 +8,7 @@ import {
   repositories,
   sql,
 } from "@hootifactory/db";
-import { z } from "@hootifactory/registry";
+import { registryPlugins, z } from "@hootifactory/registry";
 import { blobStore } from "@hootifactory/storage";
 import { deleteUnreferencedCasBlob } from "../content";
 import { adjustArtifactsUsedTx, adjustStorageUsedTx } from "../governance/quota";
@@ -21,46 +21,38 @@ import {
 } from "../runtime/raw-rows";
 
 const DigestRefSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
-const DigestObjectSchema = z.looseObject({ blobDigest: DigestRefSchema });
-const VersionDigestFieldsSchema = z.looseObject({
-  dist: z.unknown().optional(),
-  crateDigest: z.unknown().optional(),
-  zipDigest: z.unknown().optional(),
-  nupkgDigest: z.unknown().optional(),
-  files: z.unknown().optional(),
-});
 
-/** Extract the CAS blob digests a stored version references across module metadata shapes. */
-export function versionBlobDigests(metadata: unknown): string[] {
+/** Extracts a module's metadata-referenced CAS blob digest candidates. */
+export type VersionDigestExtractor = (metadata: Record<string, unknown>) => string[];
+
+/**
+ * Validate and dedup the CAS blob digests a module reports for a version's
+ * metadata. The format-specific metadata shape is owned by the module (via its
+ * scan provider's referencedDigests); this agnostic layer only validates that
+ * the reported strings are well-formed digests.
+ */
+export function versionBlobDigests(metadata: unknown, extract: VersionDigestExtractor): string[] {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return [];
   const out = new Set<string>();
-  const parsed = VersionDigestFieldsSchema.safeParse(metadata ?? {});
-  if (!parsed.success) return [];
-  const m = parsed.data;
-  const add = (v: unknown) => {
-    const digest = DigestRefSchema.safeParse(v);
-    if (digest.success) out.add(digest.data);
-  };
-
-  const dist = DigestObjectSchema.safeParse(m.dist);
-  if (dist.success) add(dist.data.blobDigest);
-  add(m.crateDigest);
-  add(m.zipDigest);
-  add(m.nupkgDigest);
-  const files = z.array(z.unknown()).safeParse(m.files);
-  if (files.success) {
-    for (const file of files.data) {
-      const parsedFile = DigestObjectSchema.safeParse(file);
-      if (parsedFile.success) add(parsedFile.data.blobDigest);
-    }
+  for (const candidate of extract(metadata as Record<string, unknown>)) {
+    if (DigestRefSchema.safeParse(candidate).success) out.add(candidate);
   }
   return [...out];
 }
 
 /** Fan-in the blob digests referenced across a set of version rows. */
-function collectVersionDigests(rows: { metadata: unknown }[]): Set<string> {
+function collectVersionDigests(
+  rows: { metadata: unknown }[],
+  extract: VersionDigestExtractor,
+): Set<string> {
   const out = new Set<string>();
-  for (const r of rows) for (const d of versionBlobDigests(r.metadata)) out.add(d);
+  for (const r of rows) for (const d of versionBlobDigests(r.metadata, extract)) out.add(d);
   return out;
+}
+
+/** The module's metadata digest extractor (no-op when the module declares none). */
+function digestExtractorFor(moduleId: string): VersionDigestExtractor {
+  return registryPlugins.lookup(moduleId)?.scan?.referencedDigests ?? (() => []);
 }
 
 function metadataField(row: unknown): unknown {
@@ -88,11 +80,12 @@ function textValueRows(values: string[]) {
  */
 export async function applyRetention(repositoryId: string, keepLastN: number): Promise<number> {
   const [repo] = await db
-    .select({ orgId: repositories.orgId })
+    .select({ orgId: repositories.orgId, moduleId: repositories.moduleId })
     .from(repositories)
     .where(eq(repositories.id, repositoryId))
     .limit(1);
   if (!repo) return 0;
+  const extractDigests = digestExtractorFor(repo.moduleId);
 
   const casToDelete: string[] = [];
   const pruned = await db.transaction(async (tx) => {
@@ -142,6 +135,7 @@ export async function applyRetention(repositoryId: string, keepLastN: number): P
     const prunedDigests = new Set<string>();
     for (const d of collectVersionDigests(
       prunedRows.map((row) => ({ metadata: metadataField(row) })),
+      extractDigests,
     )) {
       prunedDigests.add(d);
     }
@@ -255,7 +249,9 @@ export async function applyRetention(repositoryId: string, keepLastN: number): P
         .from(packageVersions)
         .innerJoin(packages, eq(packageVersions.packageId, packages.id))
         .where(and(eq(packages.repositoryId, repositoryId), isNull(packageVersions.deletedAt)));
-      for (const digest of collectVersionDigests(liveVersions)) liveDigests.add(digest);
+      for (const digest of collectVersionDigests(liveVersions, extractDigests)) {
+        liveDigests.add(digest);
+      }
 
       const releaseDigests = prunedDigestList.filter((digest) => !liveDigests.has(digest)).sort();
       if (releaseDigests.length > 0) {

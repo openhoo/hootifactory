@@ -116,6 +116,8 @@ export class NugetAdapter implements RegistryPlugin {
           osvEcosystem: "NuGet",
           purlType: "nuget",
         }),
+        referencedDigests: (metadata) =>
+          typeof metadata.nupkgDigest === "string" ? [metadata.nupkgDigest] : [],
       },
     })
     .capabilities(this.capabilities)

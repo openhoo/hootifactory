@@ -63,6 +63,8 @@ export class CargoAdapter implements RegistryPlugin {
           osvEcosystem: "crates.io",
           purlType: "cargo",
         }),
+        referencedDigests: (metadata) =>
+          typeof metadata.crateDigest === "string" ? [metadata.crateDigest] : [],
       },
     })
     .capabilities(this.capabilities)
