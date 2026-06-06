@@ -19,7 +19,7 @@ describe("waitForDrain listener hygiene", () => {
     try {
       // Simulate many backpressure cycles: each clears via a single `drain`.
       for (let cycle = 0; cycle < 50; cycle++) {
-        const pending = waitForDrain(out as never);
+        const pending = waitForDrain(out);
         out.emit("drain");
         await pending;
         // Neither the resolved drain nor its paired error listener should linger.
@@ -36,7 +36,7 @@ describe("waitForDrain listener hygiene", () => {
   test("rejects on error and removes the paired drain listener", async () => {
     const out = new EventEmitter();
     const boom = new Error("write failed");
-    const pending = waitForDrain(out as never);
+    const pending = waitForDrain(out);
     out.emit("error", boom);
 
     await expect(pending).rejects.toBe(boom);
