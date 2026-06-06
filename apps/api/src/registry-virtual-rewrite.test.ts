@@ -35,6 +35,59 @@ describe("virtual registry response rewriting", () => {
     await expect(rewritten.text()).resolves.toBe('{"dist":{"tarball":"/virtual/pkg/-/pkg.tgz"}}');
   });
 
+  test("passes digest-pinned manifest responses through byte-exact", async () => {
+    // Annotation value embeds the member mount-path substring that would otherwise be rewritten.
+    const manifest =
+      '{"mediaType":"application/vnd.oci.image.manifest.v1+json",' +
+      '"annotations":{"org.opencontainers.image.source":"https://host/member/repo"}}';
+    const digest = "sha256:abc123";
+    const res = new Response(manifest, {
+      status: 200,
+      headers: {
+        "content-type": "application/vnd.oci.image.manifest.v1+json",
+        "docker-content-digest": digest,
+        etag: `"${digest}"`,
+      },
+    });
+
+    const passed = await rewriteVirtualBody(res, "member", "virtual");
+
+    expect(passed).toBe(res);
+    expect(passed.headers.get("docker-content-digest")).toBe(digest);
+    await expect(passed.text()).resolves.toBe(manifest);
+  });
+
+  test("passes responses pinned only by a digest ETag through byte-exact", async () => {
+    // No docker-content-digest header; the digest-looking ETag alone must pin the response.
+    const manifest =
+      '{"mediaType":"application/vnd.oci.image.manifest.v1+json",' +
+      '"annotations":{"org.opencontainers.image.source":"https://host/member/repo"}}';
+    const res = new Response(manifest, {
+      status: 200,
+      headers: {
+        "content-type": "application/vnd.oci.image.manifest.v1+json",
+        etag: '"sha256:abc123"',
+      },
+    });
+
+    const passed = await rewriteVirtualBody(res, "member", "virtual");
+
+    expect(passed).toBe(res);
+    await expect(passed.text()).resolves.toBe(manifest);
+  });
+
+  test("still rewrites JSON responses without a digest header", async () => {
+    const res = new Response('{"tarball":"/member/pkg/-/pkg.tgz"}', {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+
+    const rewritten = await rewriteVirtualBody(res, "member", "virtual");
+
+    expect(rewritten).not.toBe(res);
+    await expect(rewritten.text()).resolves.toBe('{"tarball":"/virtual/pkg/-/pkg.tgz"}');
+  });
+
   test("rewrites metadata bodies and strips content-length regardless of casing", () => {
     const body = new TextEncoder().encode('{"url":"/hosted/@scope/pkg"}');
 
