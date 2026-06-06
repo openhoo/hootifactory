@@ -17,10 +17,24 @@ const CONTENT_SECURITY_POLICY = [
 
 function registryApiKeyHeaders(): string[] {
   // Memoized on the plugin set so the credentialed-response hot path doesn't
-  // re-flatMap every plugin's headers on each request.
-  return registryPlugins.derive("apiKeyHeaders", () =>
-    registryPlugins.all().flatMap((plugin) => [...plugin.apiKeyHeaders]),
-  );
+  // re-flatMap every plugin's headers on each request. Deduped case-insensitively
+  // (keeping first-seen order/casing) because distinct plugins can share a header
+  // — e.g. nuget and chocolatey (NuGet v2) both use `x-nuget-apikey` — and we
+  // don't want it repeated in the Vary list.
+  return registryPlugins.derive("apiKeyHeaders", () => {
+    const seen = new Set<string>();
+    const headers: string[] = [];
+    for (const plugin of registryPlugins.all()) {
+      for (const header of plugin.apiKeyHeaders) {
+        const key = header.toLowerCase();
+        if (!seen.has(key)) {
+          seen.add(key);
+          headers.push(header);
+        }
+      }
+    }
+    return headers;
+  });
 }
 
 function sensitiveVaryHeader(): string {
