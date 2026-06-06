@@ -114,6 +114,12 @@ jobs:
           key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
           restore-keys: ${{ runner.os }}-bun-
       - run: bun install --frozen-lockfile
+      # Validates the Drizzle migration snapshots are a well-formed, collision-free
+      # chain (the diff baseline `db:generate` uses). The `@hootifactory/db`
+      # snapshot/journal consistency unit tests assert one snapshot per journal
+      # entry; this catches chain corruption Drizzle Kit itself rejects. See #216.
+      - name: Check drizzle migration snapshots
+        run: bunx drizzle-kit check --config ./drizzle.config.ts
       # Runs every package's unit tests with coverage; fails if any test fails.
       - name: Run unit tests
         run: bun run test:unit
