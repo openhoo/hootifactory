@@ -30,9 +30,9 @@ import {
 const PUB_JSON_CONTENT_TYPE = "application/vnd.pub.v2+json";
 
 function pubJson(body: unknown, init: ResponseInit = {}): Response {
-  const headers = new Headers(init.headers);
-  headers.set("content-type", PUB_JSON_CONTENT_TYPE);
-  return new Response(JSON.stringify(body), { ...init, headers });
+  const response = Response.json(body, init);
+  response.headers.set("content-type", PUB_JSON_CONTENT_TYPE);
+  return response;
 }
 
 /** Validate a path param against a Zod schema, returning a pub-shaped 400 on failure. */
