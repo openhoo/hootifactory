@@ -81,7 +81,7 @@ jobs:
       - run: bun run check:boundaries
 
   coverage:
-    name: Unit tests & coverage (>= 80%)
+    name: Unit tests & coverage
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

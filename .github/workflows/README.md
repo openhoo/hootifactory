@@ -8,7 +8,7 @@ must pass before a PR can merge. It enforces three things:
 | `commit-lint`  | Conventional Commits on every commit + PR title | `bun run check:commits`   |
 | `lint`         | `biome check .` is clean (lint + format)  | `bun run lint`            |
 | `architecture` | Plugin/package import boundaries hold      | `bun run check:boundaries` |
-| `coverage`     | Unit tests pass **and** repo line coverage ≥ 80% | `bun run test:coverage`   |
+| `coverage`     | Unit tests pass **and** line coverage ≥ the ratchet (60%, → 80%) | `bun run test:coverage`   |
 
 A final job, **`gate`**, simply waits on the four above and fails if any did not
 pass. Point branch protection at `gate` (see below) so you have a single, stable
