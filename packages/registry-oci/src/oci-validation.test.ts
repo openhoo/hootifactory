@@ -173,6 +173,56 @@ describe("OCI validation helpers", () => {
     );
   });
 
+  test("rejects present non-array descriptor fields that do not match the declared media type", () => {
+    const expectArrayRejection = (
+      manifest: Record<string, unknown>,
+      mediaType: string,
+      field: string,
+    ) => {
+      let thrown: unknown;
+      try {
+        validateManifest(manifest, mediaType);
+      } catch (err) {
+        thrown = err;
+      }
+      expect(thrown).toBeInstanceOf(RegistryError);
+      expect((thrown as RegistryError).detail).toEqual({ reason: `${field} must be an array` });
+    };
+
+    // Image manifest with valid config+layers but a non-array `manifests` field. Without
+    // rejection this slips past validation yet zeroes out reference extraction, bypassing
+    // the downstream blob/manifest existence checks.
+    expectArrayRejection(
+      {
+        schemaVersion: 2,
+        mediaType: OCI_MEDIA_TYPES.manifestV1,
+        config: {
+          mediaType: OCI_MEDIA_TYPES.configV1,
+          digest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          size: 2,
+        },
+        layers: [],
+        manifests: "not-an-array",
+      },
+      OCI_MEDIA_TYPES.manifestV1,
+      "manifests",
+    );
+
+    // Image index with valid manifests but a non-array `blobs` field.
+    expectArrayRejection(
+      {
+        schemaVersion: 2,
+        mediaType: OCI_MEDIA_TYPES.imageIndexV1,
+        manifests: [],
+        blobs: {
+          digest: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        },
+      },
+      OCI_MEDIA_TYPES.imageIndexV1,
+      "blobs",
+    );
+  });
+
   test("parses stored manifest JSON as an object or falls back for referrer metadata", () => {
     expect(parseManifestRaw(JSON.stringify({ schemaVersion: 2, artifactType: "test" }))).toEqual({
       schemaVersion: 2,
