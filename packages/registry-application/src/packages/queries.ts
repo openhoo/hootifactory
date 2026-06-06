@@ -386,7 +386,9 @@ export async function replaceDistTags(
   // can observe tags that are pruned but not yet re-inserted, and two concurrent
   // writers can leave latestVersion sourced from one writer while the `latest` tag
   // row comes from the other. The FOR UPDATE lock on the packages row serializes
-  // concurrent tag mutations per package so last-writer-wins stays coherent.
+  // concurrent replaceDistTags callers per package so last-writer-wins stays
+  // coherent; it does not order against writers that skip this lock (e.g.
+  // setDistTag / deleteDistTag), which only touch a single tag row.
   const tags = [...desiredTags.keys()];
   await db.transaction(async (tx) => {
     await tx
