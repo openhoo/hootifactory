@@ -1,0 +1,124 @@
+name: CI
+
+# Pull-request gate. Three required checks, plus a single aggregating `gate` job
+# you can point branch protection at:
+#   1. commit-lint — every commit (and the PR title) follows Conventional Commits
+#   2. lint        — `biome check .` is clean (lint + formatting)
+#   3. coverage    — unit tests pass and repo-wide line coverage is >= 80%
+on:
+  pull_request:
+    # `edited` re-runs commit-lint when the PR title changes (it becomes the
+    # squash-merge subject).
+    types: [opened, synchronize, reopened, edited]
+  merge_group:
+  push:
+    branches: [main]
+
+# Cancel superseded runs for the same PR / branch.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  BUN_VERSION: "1.3.14"
+  # Repo-wide line-coverage floor enforced by scripts/coverage-gate.ts.
+  COVERAGE_THRESHOLD: "80"
+
+jobs:
+  commit-lint:
+    name: Conventional commits
+    # Commits/title only exist for pull requests; skip on push / merge_group.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history so BASE_SHA..HEAD_SHA is resolvable.
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Validate commit messages and PR title
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          # Passed via env (NOT inlined into the shell) to avoid script injection.
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: bun run scripts/check-commits.ts
+
+  lint:
+    name: Lint (biome)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Cache bun install
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+          restore-keys: ${{ runner.os }}-bun-
+      - run: bun install --frozen-lockfile
+      - run: bun run lint
+
+  architecture:
+    name: Architecture boundaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      # check-boundaries.ts reads the workspace manifests directly and uses only
+      # Bun built-ins, so no `bun install` is needed.
+      - run: bun run check:boundaries
+
+  coverage:
+    name: Unit tests & coverage (>= 80%)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Cache bun install
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+          restore-keys: ${{ runner.os }}-bun-
+      - run: bun install --frozen-lockfile
+      # Runs every package's unit tests with coverage; fails if any test fails.
+      - name: Run unit tests
+        run: bun run test:unit
+      # Aggregates the per-package lcov reports and enforces the threshold.
+      - name: Enforce coverage threshold
+        run: bun run scripts/coverage-gate.ts
+
+  gate:
+    name: PR gate
+    # The single required status check: point branch protection here.
+    needs: [commit-lint, lint, architecture, coverage]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify required checks passed
+        run: |
+          echo "commit-lint=${{ needs.commit-lint.result }}"
+          echo "lint=${{ needs.lint.result }}"
+          echo "architecture=${{ needs.architecture.result }}"
+          echo "coverage=${{ needs.coverage.result }}"
+          # commit-lint is legitimately skipped on push / merge_group events.
+          case "${{ needs.commit-lint.result }}" in
+            success|skipped) ;;
+            *) echo "::error::commit-lint did not pass"; exit 1 ;;
+          esac
+          [ "${{ needs.lint.result }}" = "success" ] || { echo "::error::lint did not pass"; exit 1; }
+          [ "${{ needs.architecture.result }}" = "success" ] || { echo "::error::architecture did not pass"; exit 1; }
+          [ "${{ needs.coverage.result }}" = "success" ] || { echo "::error::coverage did not pass"; exit 1; }
+          echo "All required gates passed."
