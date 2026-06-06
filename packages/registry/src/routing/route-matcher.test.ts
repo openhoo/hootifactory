@@ -62,3 +62,39 @@ describe("route matcher — greedy :name+", () => {
     expect(m?.params.name).toBe("@scope/pkg");
   });
 });
+
+describe("route matcher — encoded path separators in single-segment :param", () => {
+  test("rejects %2F-encoded slash in a single-segment :reference", () => {
+    // `[^/]+` matches `v1%2F..%2Fevil` as one segment against the encoded path;
+    // decoding must not produce an embedded-slash param. The match fails instead.
+    expect(matchRoute(compiled, "GET", "/lib/manifests/v1%2F..%2Fevil")).toBeNull();
+    expect(matchRoute(compiled, "GET", "/lib/manifests/v1%2f..%2fevil")).toBeNull();
+  });
+
+  test("rejects traversal-only %2F payload in a single-segment :reference", () => {
+    expect(matchRoute(compiled, "GET", "/lib/manifests/..%2F..%2Fother")).toBeNull();
+  });
+
+  test("rejects %2F in a single-segment :digest", () => {
+    expect(matchRoute(compiled, "GET", "/lib/blobs/sha256%2F..%2Fevil")).toBeNull();
+  });
+
+  test("legitimate single-segment value still matches", () => {
+    const m = matchRoute(compiled, "GET", "/lib/manifests/v1.0.0");
+    expect(m?.entry.handlerId).toBe("getManifest");
+    expect(m?.params.reference).toBe("v1.0.0");
+  });
+
+  test("single-segment value with a non-separator encoded char still decodes", () => {
+    // `%2B` -> "+" stays within one segment, so the match is honoured.
+    const m = matchRoute(compiled, "GET", "/lib/manifests/v1%2B1");
+    expect(m?.params.reference).toBe("v1+1");
+  });
+
+  test("greedy :name+ still spans encoded slashes", () => {
+    const m = matchRoute(compiled, "GET", "/%40scope%2Fpkg/manifests/latest");
+    expect(m?.entry.handlerId).toBe("getManifest");
+    expect(m?.params.name).toBe("@scope/pkg");
+    expect(m?.params.reference).toBe("latest");
+  });
+});
