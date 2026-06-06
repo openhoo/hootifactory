@@ -4,10 +4,10 @@ import {
   publishImmutableVersionBlob,
   type RegistryRequestContext,
 } from "@hootifactory/registry";
-import { dartErrorResponse } from "./dart-errors";
-import { dartArchiveFile } from "./dart-metadata";
-import { type DartUploadPlan, parseDartUploadRequest } from "./dart-publish";
-import type { DartVersionMeta } from "./dart-validation";
+import { pubErrorResponse } from "./pub-errors";
+import { pubArchiveFile } from "./pub-metadata";
+import { type PubUploadPlan, parsePubUploadRequest } from "./pub-publish";
+import type { PubVersionMeta } from "./pub-validation";
 
 const ARCHIVE_MEDIA_TYPE = "application/gzip";
 
@@ -18,7 +18,7 @@ const ARCHIVE_MEDIA_TYPE = "application/gzip";
  * are served by `archiveDigest`. Storage hashes with sha256 (`sha256:<hex>`), so
  * `digestHex(stored.digest)` is exactly the archive's sha256.
  */
-export function buildDartVersionMetadata(plan: DartUploadPlan, digest: string): DartVersionMeta {
+export function buildPubVersionMetadata(plan: PubUploadPlan, digest: string): PubVersionMeta {
   return {
     archiveDigest: digest,
     archiveSha256: digestHex(digest),
@@ -32,20 +32,20 @@ export function buildDartVersionMetadata(plan: DartUploadPlan, digest: string): 
  * pubspec, reject a duplicate version, store the blob immutably, and respond with
  * a 303 redirect to the finish endpoint (the pub client follows `Location`).
  */
-export async function handleDartUpload(
+export async function handlePubUpload(
   req: Request,
   ctx: RegistryRequestContext,
 ): Promise<Response> {
-  const parsed = await parseDartUploadRequest(req);
+  const parsed = await parsePubUploadRequest(req);
   if (!parsed.ok) {
-    return dartErrorResponse(parsed.error.code, parsed.error.message, parsed.error.status);
+    return pubErrorResponse(parsed.error.code, parsed.error.message, parsed.error.status);
   }
   const { plan } = parsed;
   const { packageName, version, scope } = plan;
 
   const existingPkg = await findRegistryPackage(ctx, packageName);
   if (existingPkg && (await ctx.data.versions.exists(existingPkg, version))) {
-    return dartErrorResponse(
+    return pubErrorResponse(
       "PackageExists",
       `version ${version} of package ${packageName} already exists`,
       409,
@@ -55,28 +55,28 @@ export async function handleDartUpload(
   const result = await publishImmutableVersionBlob(ctx, {
     package: { name: packageName },
     version,
-    kind: "dart_archive",
+    kind: "pub_archive",
     scope,
     blob: {
       data: plan.archiveBytes,
-      kind: "dart_archive",
+      kind: "pub_archive",
       scope,
       mediaType: ARCHIVE_MEDIA_TYPE,
     },
-    metadata: (stored) => buildDartVersionMetadata(plan, stored.digest),
+    metadata: (stored) => buildPubVersionMetadata(plan, stored.digest),
     sizeBytes: plan.archiveBytes.length,
     scan: { name: packageName, version, mediaType: ARCHIVE_MEDIA_TYPE },
     asset: () => ({
-      role: "dart_archive",
+      role: "pub_archive",
       scope,
-      path: dartArchiveFile(packageName, version),
+      path: pubArchiveFile(packageName, version),
       mediaType: ARCHIVE_MEDIA_TYPE,
       metadata: { package: packageName },
     }),
     versionConflict: (pkg) => ctx.data.versions.exists(pkg, version),
   });
   if (!result.ok) {
-    return dartErrorResponse(
+    return pubErrorResponse(
       "PackageExists",
       `version ${version} of package ${packageName} already exists`,
       409,

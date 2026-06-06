@@ -2,12 +2,12 @@
 
 A self-hostable, **multi-format artifact & package manager** — an open-source alternative to JFrog Artifactory + Harbor + a standalone scanner, in one tool.
 
-- **Formats:** npm, Docker, OCI, PyPI, Helm, Go, Cargo, NuGet, RubyGems, Composer, Maven, APT, Dart, Swift, Chocolatey, winget, Homebrew, Scoop, RPM (19 total)
+- **Formats:** npm, Docker, OCI, PyPI, Helm, Go, Cargo, NuGet, RubyGems, Composer, Maven, APT, Pub (Dart), Swift, Chocolatey, winget, Homebrew, Scoop, RPM (19 total)
   — all verified end-to-end against Dockerized real clients (RubyGems is consumed
   via Bundler's compact index, Composer publishes via a custom upload endpoint,
   Maven is a coordinate-addressed file store with POM-driven package projection,
-  APT serves unsigned `Release` files consumed with `[trusted=yes]`, Dart follows
-  the pub.dev publish handshake, Swift serves the package-registry protocol, and
+  APT serves unsigned `Release` files consumed with `[trusted=yes]`, Pub (Dart)
+  follows the pub.dev publish handshake, Swift serves the package-registry protocol, and
   Chocolatey serves NuGet v2/OData package feeds, and winget serves Windows
   Package Manager REST sources, Homebrew serves formula bottle metadata, and
   Scoop serves bucket manifests, and RPM serves YUM/DNF repository metadata.
@@ -82,7 +82,7 @@ packages/
                          repositories, content, inventory, assets, governance, oci
   registry-runtime/      built-in registry manifest + config-driven loader
   registry-npm/  registry-oci/  registry-pypi/  registry-go/  registry-cargo/  registry-nuget/
-  registry-rubygems/  registry-composer/  registry-maven/  registry-apt/  registry-dart/  registry-swift/  registry-chocolatey/  registry-winget/  registry-homebrew/  registry-scoop/  registry-rpm/
+  registry-rubygems/  registry-composer/  registry-maven/  registry-apt/  registry-pub/  registry-swift/  registry-chocolatey/  registry-winget/  registry-homebrew/  registry-scoop/  registry-rpm/
   scanner/               scanner plugin SDK (ScannerPlugin contract + registry + runners)
   scanner-runtime/       built-in scanner manifest + config-driven loader
   scanner-grype/  scanner-trivy/  scanner-clamav/  scanner-osv/  scanner-heuristic/
