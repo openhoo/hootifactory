@@ -1,5 +1,49 @@
 import { describe, expect, test } from "bun:test";
-import { S3BlobStore } from "./s3-blob-store";
+import { EventEmitter } from "node:events";
+import { S3BlobStore, waitForDrain } from "./s3-blob-store";
+
+describe("waitForDrain listener hygiene", () => {
+  test("does not accumulate error listeners across backpressure/drain cycles", async () => {
+    // EventEmitter mirrors a WriteStream's once/off/emit contract well enough to
+    // observe listener accumulation. Cap maxListeners low so an unbounded leak
+    // would surface as a MaxListenersExceededWarning.
+    const out = new EventEmitter();
+    out.setMaxListeners(5);
+
+    const warnings: string[] = [];
+    const onWarning = (w: Error & { name?: string }) => {
+      if (w.name === "MaxListenersExceededWarning") warnings.push(w.message);
+    };
+    process.on("warning", onWarning);
+
+    try {
+      // Simulate many backpressure cycles: each clears via a single `drain`.
+      for (let cycle = 0; cycle < 50; cycle++) {
+        const pending = waitForDrain(out);
+        out.emit("drain");
+        await pending;
+        // Neither the resolved drain nor its paired error listener should linger.
+        expect(out.listenerCount("error")).toBe(0);
+        expect(out.listenerCount("drain")).toBe(0);
+      }
+    } finally {
+      process.off("warning", onWarning);
+    }
+
+    expect(warnings).toEqual([]);
+  });
+
+  test("rejects on error and removes the paired drain listener", async () => {
+    const out = new EventEmitter();
+    const boom = new Error("write failed");
+    const pending = waitForDrain(out);
+    out.emit("error", boom);
+
+    await expect(pending).rejects.toBe(boom);
+    expect(out.listenerCount("drain")).toBe(0);
+    expect(out.listenerCount("error")).toBe(0);
+  });
+});
 
 describe("S3BlobStore public presigned URLs", () => {
   test("returns null when no public endpoint is configured", () => {

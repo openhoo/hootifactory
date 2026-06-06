@@ -23,6 +23,42 @@ function isObjectMissing(err: unknown): boolean {
   return S3MissingObjectErrorSchema.safeParse(err).success;
 }
 
+/**
+ * Minimal contract for the backpressure-aware writable we await on. A WriteStream
+ * satisfies this; the explicit interface keeps the helper unit-testable without an
+ * fs/S3 stream.
+ */
+interface DrainableWritable {
+  once(event: "drain", listener: () => void): unknown;
+  once(event: "error", listener: (err: Error) => void): unknown;
+  off(event: "drain", listener: () => void): unknown;
+  off(event: "error", listener: (err: Error) => void): unknown;
+}
+
+/**
+ * Await a `drain` after `write()` signalled backpressure, rejecting on `error`.
+ *
+ * Both listeners are registered with `once` and the *paired* listener is removed
+ * the moment either settles. Without this, every backpressure cycle would leave
+ * an orphaned `error` listener on the stream (the `drain` listener auto-removes,
+ * the `error` one does not), so large uploads accumulate listeners and trip
+ * Node's MaxListenersExceededWarning.
+ */
+export function waitForDrain(out: DrainableWritable): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const onDrain = () => {
+      out.off("error", onError);
+      resolve();
+    };
+    const onError = (err: Error) => {
+      out.off("drain", onDrain);
+      reject(err);
+    };
+    out.once("drain", onDrain);
+    out.once("error", onError);
+  });
+}
+
 async function streamToTempFile(
   data: ReadableStream<Uint8Array>,
 ): Promise<{ path: string; digest: string; size: number }> {
@@ -39,10 +75,7 @@ async function streamToTempFile(
       hasher.update(value);
       size += value.byteLength;
       if (!out.write(value)) {
-        await new Promise<void>((resolve, reject) => {
-          out.once("drain", resolve);
-          out.once("error", reject);
-        });
+        await waitForDrain(out);
       }
     }
     await new Promise<void>((resolve, reject) => {
