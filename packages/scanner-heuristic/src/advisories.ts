@@ -16,7 +16,8 @@ export const ADVISORIES: Record<string, Advisory> = {
     id: "HOOT-2024-0001",
     severity: "critical",
     summary: "Known-malicious dependency",
-    fixedVersion: "0.0.0",
+    // No patched release exists: a known-malicious dependency is vulnerable at
+    // every version, so leaving `fixedVersion` unset keeps it always-flagged.
   },
   "left-pad-vuln": {
     id: "HOOT-2024-0002",
@@ -32,6 +33,49 @@ export const ADVISORIES: Record<string, Advisory> = {
   },
 };
 
+/**
+ * Whether the resolved `installed` version is still vulnerable to an advisory
+ * fixed in `fixedVersion`. A finding is warranted when the installed version is
+ * strictly below the fixed version. Fail-safe: when no fixed version is known,
+ * or either version cannot be parsed as a dotted release, the dependency is
+ * treated as vulnerable so a patched release is never assumed by mistake.
+ */
+export function isVersionVulnerable(installed: string, fixedVersion?: string): boolean {
+  if (!fixedVersion) return true;
+  const cmp = compareReleaseVersions(installed, fixedVersion);
+  return cmp === null || cmp < 0;
+}
+
+/**
+ * Compares two dotted release versions (ecosystem-agnostic, semver-style). Range
+ * operators and any pre-release/build suffix are stripped, then the leading
+ * numeric release segments are compared field by field. Returns a negative
+ * number when `a < b`, zero when equal, a positive number when `a > b`, or
+ * `null` when either side has no parseable numeric release.
+ */
+function compareReleaseVersions(a: string, b: string): number | null {
+  const left = parseReleaseFields(a);
+  const right = parseReleaseFields(b);
+  if (!left || !right) return null;
+  const length = Math.max(left.length, right.length);
+  for (let i = 0; i < length; i++) {
+    const diff = (left[i] ?? 0) - (right[i] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+
+/** Numeric release fields of a version, or `null` when none can be parsed. */
+function parseReleaseFields(version: string): number[] | null {
+  // Drop leading range operators / `v` prefix and any pre-release/build suffix,
+  // keeping only the leading dotted numeric release (e.g. `^1.2.3-rc1` -> 1.2.3).
+  const release = version.trim().replace(/^[\s^~>=<v]+/, "");
+  const match = release.match(/^\d+(?:\.\d+)*/);
+  if (!match) return null;
+  const fields = match[0].split(".").map(Number);
+  return fields.every(Number.isFinite) ? fields : null;
+}
+
 /** Heuristic dependency scan against the built-in advisory DB. */
 export function scanDependenciesAgainstAdvisories(
   deps: Record<string, string> | undefined,
@@ -40,7 +84,7 @@ export function scanDependenciesAgainstAdvisories(
   const out: NormalizedFinding[] = [];
   for (const [name, version] of Object.entries(deps ?? {})) {
     const adv = ADVISORIES[name];
-    if (adv) {
+    if (adv && isVersionVulnerable(version, adv.fixedVersion)) {
       out.push({
         type: "vuln",
         vulnId: adv.id,
