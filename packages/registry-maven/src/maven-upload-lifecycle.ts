@@ -1,6 +1,12 @@
-import type { RegistryRequestContext } from "@hootifactory/registry";
+import { asJsonRecord, type RegistryRequestContext } from "@hootifactory/registry";
 import { parsePomDependencies } from "./maven-pom";
-import { contentTypeForPath, isPrimaryPom, parseMavenCoordinates } from "./maven-validation";
+import {
+  contentTypeForPath,
+  isPrimaryPom,
+  isScannableMavenArtifact,
+  type MavenCoordinates,
+  parseMavenCoordinates,
+} from "./maven-validation";
 
 /** Blob/asset kind for stored Maven files; the scope is the repository path. */
 export const MAVEN_FILE_KIND = "maven_file";
@@ -36,6 +42,19 @@ export async function handleMavenUpload(
       mediaType,
       sizeBytes: stored.size,
     });
+    // Scan the bytes that actually carry executable code (jar/war/ear/aar/.module);
+    // checksum/signature sidecars (.sha1/.md5/.sha256/.sha512/.asc) and metadata
+    // files carry none.
+    if (coords && isScannableMavenArtifact(path)) {
+      const name = `${coords.groupId}:${coords.artifactId}`;
+      await ctx.enqueueScan({
+        digest: stored.digest,
+        name,
+        version: coords.version,
+        mediaType,
+      });
+      await referenceBinaryDigest(ctx, coords, stored.digest);
+    }
     return new Response(null, { status: 201 });
   }
 
@@ -80,4 +99,50 @@ export async function handleMavenUpload(
   }
 
   return new Response(null, { status: 201 });
+}
+
+/**
+ * Record a content-bearing binary's digest on its version metadata so retention
+ * treats it as part of the version (the scan itself is always enqueued before
+ * this, regardless of order). Maven uploads each file in its own PUT, so the
+ * `.pom` version may not exist yet when the binary lands; in that case there is
+ * no version row to annotate and the digest is simply not tracked for retention.
+ *
+ * The append runs under a row-locked `patch` so concurrent binary uploads to the
+ * same version (e.g. a jar and a war) can't clobber each other's digests, and a
+ * soft-deleted version is left untouched.
+ */
+async function referenceBinaryDigest(
+  ctx: RegistryRequestContext,
+  coords: MavenCoordinates,
+  digest: string,
+): Promise<void> {
+  const name = `${coords.groupId}:${coords.artifactId}`;
+  const pkg = await ctx.data.packages.findByName(name);
+  if (!pkg) return;
+  await ctx.data.versions.patch({
+    package: pkg,
+    version: coords.version,
+    patch: (row) => {
+      if (!row || row.deletedAt) return { result: undefined };
+      const metadata = asJsonRecord(row.metadata) ?? {};
+      return {
+        update: {
+          metadata: {
+            ...metadata,
+            binaryDigests: mergeBinaryDigest(metadata.binaryDigests, digest),
+          },
+        },
+        result: undefined,
+      };
+    },
+  });
+}
+
+/** Append `digest` to an existing (possibly malformed) binaryDigests list, deduped. */
+function mergeBinaryDigest(existing: unknown, digest: string): string[] {
+  const prior = Array.isArray(existing)
+    ? existing.filter((d): d is string => typeof d === "string")
+    : [];
+  return [...new Set([...prior, digest])];
 }

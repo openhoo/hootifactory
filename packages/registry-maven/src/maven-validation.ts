@@ -52,6 +52,19 @@ export function contentTypeForPath(path: string): string {
   return CONTENT_TYPES[ext] ?? "application/octet-stream";
 }
 
+/** File extensions carrying scannable bytes (the executable/code artifacts). */
+const SCANNABLE_EXTENSIONS = new Set(["jar", "war", "ear", "aar", "module"]);
+
+/**
+ * True when the path is a content-bearing Maven artifact whose bytes should be
+ * scanned (jar/war/ear/aar/.module). Pure checksum/signature sidecars
+ * (`.sha1`/`.md5`/`.sha256`/`.sha512`/`.asc`) and metadata files are excluded.
+ */
+export function isScannableMavenArtifact(path: string): boolean {
+  const ext = path.slice(path.lastIndexOf(".") + 1).toLowerCase();
+  return SCANNABLE_EXTENSIONS.has(ext);
+}
+
 export interface MavenCoordinates {
   groupId: string;
   artifactId: string;

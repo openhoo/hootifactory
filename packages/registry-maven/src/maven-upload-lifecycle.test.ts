@@ -61,8 +61,8 @@ function setup() {
     assetScopes: string[];
     storeModes: string[];
     version?: UpsertPackageVersionInput;
-    scanName?: string;
-  } = { assetScopes: [], storeModes: [] };
+    scans: { name?: string; version?: string; mediaType?: string; digest: string }[];
+  } = { assetScopes: [], storeModes: [], scans: [] };
   ctx.data.content.storeBlobWithRef = async () => {
     captured.storeModes.push("buffer");
     return stored;
@@ -82,7 +82,7 @@ function setup() {
     return "ver_1";
   };
   ctx.enqueueScan = async (input) => {
-    captured.scanName = input.name;
+    captured.scans.push(input);
   };
   return { ctx, captured };
 }
@@ -104,10 +104,17 @@ describe("handleMavenUpload", () => {
     expect(captured.version?.package.name).toBe("com.example:app");
     expect(captured.version?.version).toBe("1.0.0");
     expect(captured.version?.metadata.deps).toEqual({ "com.google.guava:guava": "33.0.0-jre" });
-    expect(captured.scanName).toBe("com.example:app");
+    expect(captured.scans).toEqual([
+      {
+        digest: stored.digest,
+        name: "com.example:app",
+        version: "1.0.0",
+        mediaType: "application/xml",
+      },
+    ]);
   });
 
-  test("stores non-pom files without projecting a version", async () => {
+  test("scans the jar bytes (not just the pom) without projecting a version", async () => {
     const { ctx, captured } = setup();
     const res = await handleMavenUpload(
       "com/example/app/1.0.0/app-1.0.0.jar",
@@ -121,7 +128,84 @@ describe("handleMavenUpload", () => {
     expect(captured.storeModes).toEqual(["stream"]);
     expect(captured.assetScopes).toEqual(["com/example/app/1.0.0/app-1.0.0.jar"]);
     expect(captured.version).toBeUndefined();
-    expect(captured.scanName).toBeUndefined();
+    // The jar carries the executable code: its own bytes must be scanned.
+    expect(captured.scans).toEqual([
+      {
+        digest: stored.digest,
+        name: "com.example:app",
+        version: "1.0.0",
+        mediaType: "application/java-archive",
+      },
+    ]);
+  });
+
+  test.each([
+    "com/example/app/1.0.0/app-1.0.0.jar.sha1",
+    "com/example/app/1.0.0/app-1.0.0.jar.md5",
+    "com/example/app/1.0.0/app-1.0.0.jar.asc",
+    "com/example/app/maven-metadata.xml",
+  ])("does not scan checksum/signature/metadata sidecar %s", async (path) => {
+    const { ctx, captured } = setup();
+    const res = await handleMavenUpload(
+      path,
+      new Request(`https://r.test/maven/o/r/${path}`, {
+        method: "PUT",
+        body: new Uint8Array([1, 2, 3]),
+      }),
+      ctx,
+    );
+    expect(res.status).toBe(201);
+    expect(captured.scans).toEqual([]);
+    expect(captured.version).toBeUndefined();
+  });
+
+  test("records the binary digest on an existing version for retention", async () => {
+    const { ctx } = setup();
+    let updated: Record<string, unknown> | undefined;
+    ctx.data.packages.findByName = async () => packageRow("com.example:app");
+    ctx.data.versions.patch = async ({ patch }) => {
+      const result = patch({
+        id: "ver_1",
+        metadata: { pomDigest: `sha256:${"p".repeat(64)}` },
+        deletedAt: null,
+      });
+      updated = result.update?.metadata;
+      return result.result;
+    };
+    await handleMavenUpload(
+      "com/example/app/1.0.0/app-1.0.0.jar",
+      new Request("https://r.test/maven/o/r/com/example/app/1.0.0/app-1.0.0.jar", {
+        method: "PUT",
+        body: new Uint8Array([1, 2, 3]),
+      }),
+      ctx,
+    );
+    expect(updated?.binaryDigests).toEqual([stored.digest]);
+    expect(updated?.pomDigest).toBe(`sha256:${"p".repeat(64)}`);
+  });
+
+  test("leaves a soft-deleted version untouched when its binary lands", async () => {
+    const { ctx } = setup();
+    let patched = false;
+    ctx.data.packages.findByName = async () => packageRow("com.example:app");
+    ctx.data.versions.patch = async ({ patch }) => {
+      const result = patch({
+        id: "ver_1",
+        metadata: { pomDigest: `sha256:${"p".repeat(64)}` },
+        deletedAt: new Date("2026-01-02T00:00:00.000Z"),
+      });
+      patched = result.update !== undefined;
+      return result.result;
+    };
+    await handleMavenUpload(
+      "com/example/app/1.0.0/app-1.0.0.jar",
+      new Request("https://r.test/maven/o/r/com/example/app/1.0.0/app-1.0.0.jar", {
+        method: "PUT",
+        body: new Uint8Array([1, 2, 3]),
+      }),
+      ctx,
+    );
+    expect(patched).toBe(false);
   });
 
   test("stores maven-metadata.xml as a plain file", async () => {
