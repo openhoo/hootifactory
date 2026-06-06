@@ -5,8 +5,11 @@ import { env } from "@hootifactory/config";
 import { addSpanEvent, logger, withSpan } from "@hootifactory/observability";
 import {
   type ContentScanTarget,
+  type FindingType,
   type NormalizedFinding,
+  type ResolvedScanner,
   runContentScanners,
+  type ScannerFailure,
   type ScannerRuntime,
   type ScannerStreamConsumer,
   streamConsumersFor,
@@ -30,6 +33,46 @@ export interface StoredByteScanInput {
   scannerRuntime: ScannerRuntime;
   scannedBlobDigests: Set<string>;
   allowMissing?: boolean;
+}
+
+/**
+ * Finding types whose coverage gates whether an artifact may be served. If a
+ * scanner that is the sole source of one of these types fails, we must NOT return
+ * a clean-looking partial result — the gate (e.g. enforce-mode malware blocking in
+ * {@link evaluateScanPolicy}) would silently flip to fail-open.
+ */
+export const GATING_FINDING_TYPES: ReadonlySet<FindingType> = new Set<FindingType>(["malware"]);
+
+/**
+ * A gating finding type is "uncovered" when a FAILED content scanner declares it
+ * but no scanner that SUCCEEDED declares it — i.e. the failure dropped the only
+ * coverage for a type the block policy gates on. Returns the uncovered types so
+ * the caller can fail closed. ClamAV (sole `malware` source) erroring while
+ * Grype/Trivy (`vuln`) succeed is the motivating case.
+ */
+export function uncoveredGatingFindingTypes(
+  contentScanners: ResolvedScanner[],
+  errors: ScannerFailure[],
+  gatingTypes: ReadonlySet<FindingType> = GATING_FINDING_TYPES,
+): FindingType[] {
+  if (errors.length === 0) return [];
+  const declaredBy = new Map<string, ReadonlySet<FindingType>>();
+  for (const scanner of contentScanners) {
+    declaredBy.set(scanner.plugin.id, scanner.plugin.capabilities.findingTypes);
+  }
+  const failedIds = new Set(errors.map((e) => e.scanner));
+  const coveredBySucceeded = new Set<FindingType>();
+  for (const scanner of contentScanners) {
+    if (failedIds.has(scanner.plugin.id)) continue;
+    for (const type of scanner.plugin.capabilities.findingTypes) coveredBySucceeded.add(type);
+  }
+  const uncovered = new Set<FindingType>();
+  for (const id of failedIds) {
+    for (const type of declaredBy.get(id) ?? []) {
+      if (gatingTypes.has(type) && !coveredBySucceeded.has(type)) uncovered.add(type);
+    }
+  }
+  return [...uncovered];
 }
 
 /**
@@ -163,8 +206,24 @@ export async function scanStoredBytes(input: StoredByteScanInput): Promise<Store
             error,
           });
         }
-        // Stay fail-closed: if every attempted scanner failed we must not return a
-        // clean-looking partial result (that would flip the gate to fail-open).
+        // Stay fail-closed. A single sibling success must NOT mask a failure that
+        // dropped gating coverage: if a FAILED scanner was the only source of a
+        // gating finding type (e.g. ClamAV is the sole `malware` source while
+        // Grype/Trivy emit `vuln`), the artifact would be marked clean and bypass
+        // the enforce-mode malware gate. Throwing keeps it pending/blocked so the
+        // job retries with the dropped scanner restored.
+        const uncovered = uncoveredGatingFindingTypes(contentScanners, external.errors);
+        if (uncovered.length > 0) {
+          span.setAttribute("scan.content.uncovered_finding_types", uncovered.join(","));
+          throw new Error(
+            `content scanner(s) failed, dropping gating coverage for ${uncovered.join(", ")}: ${external.errors
+              .map((e) => e.scanner)
+              .join(", ")}`,
+            { cause: external.errors[0]?.error },
+          );
+        }
+        // Even when no gating type was dropped, every attempted scanner failing means
+        // we have no real result at all — never return a clean-looking empty result.
         if (external.attempted.length > 0 && external.errors.length === external.attempted.length) {
           throw new Error(
             `all ${external.attempted.length} content scanner(s) failed: ${external.errors
