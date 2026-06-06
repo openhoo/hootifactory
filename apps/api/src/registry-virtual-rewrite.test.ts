@@ -57,6 +57,25 @@ describe("virtual registry response rewriting", () => {
     await expect(passed.text()).resolves.toBe(manifest);
   });
 
+  test("passes responses pinned only by a digest ETag through byte-exact", async () => {
+    // No docker-content-digest header; the digest-looking ETag alone must pin the response.
+    const manifest =
+      '{"mediaType":"application/vnd.oci.image.manifest.v1+json",' +
+      '"annotations":{"org.opencontainers.image.source":"https://host/member/repo"}}';
+    const res = new Response(manifest, {
+      status: 200,
+      headers: {
+        "content-type": "application/vnd.oci.image.manifest.v1+json",
+        etag: '"sha256:abc123"',
+      },
+    });
+
+    const passed = await rewriteVirtualBody(res, "member", "virtual");
+
+    expect(passed).toBe(res);
+    await expect(passed.text()).resolves.toBe(manifest);
+  });
+
   test("still rewrites JSON responses without a digest header", async () => {
     const res = new Response('{"tarball":"/member/pkg/-/pkg.tgz"}', {
       status: 200,
