@@ -219,11 +219,8 @@ export async function authenticateUserPasswordWithThrottle(
 ): Promise<ThrottledPasswordAuthResult> {
   const throttle = await consumeLoginAttempt(username, ip);
   if (throttle.throttled) {
-    const principal = await verify(username, password);
-    if (principal?.kind === "user") {
-      await clearLoginFailureAttempt(username, ip);
-      return { kind: "authenticated", principal };
-    }
+    // Reject before touching the password so no argon2id verification runs on
+    // throttled attempts; otherwise the budget caps responses, not guesses.
     return { kind: "throttled", retryAfter: throttle.retryAfter };
   }
 
