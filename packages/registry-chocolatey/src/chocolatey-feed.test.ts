@@ -6,7 +6,7 @@ import {
   buildServiceDocument,
   encodeDependencies,
 } from "./chocolatey-feed";
-import type { ChocolateyVersionMeta } from "./chocolatey-validation";
+import { type ChocolateyVersionMeta, parseChocolateyVersionMeta } from "./chocolatey-validation";
 
 const base = "https://registry.test/chocolatey/private";
 
@@ -89,6 +89,29 @@ describe("Chocolatey feed rendering", () => {
   test("encodes dependencies in NuGet id:range:tfm form", () => {
     expect(encodeDependencies(meta())).toBe("chocolatey:[0.10.3,):");
     expect(encodeDependencies(meta({ dependencies: [] }))).toBe("");
+  });
+
+  test("rejects dependency ranges carrying reserved OData delimiters (no injection)", () => {
+    // A crafted range with `|`/`:` would otherwise forge extra `id:range:tfm`
+    // entries in the `|`-joined Dependencies string. Validation must reject it so
+    // it never reaches the feed, while leaving normal ranges untouched.
+    const inject = "[1.0,):|evil:[9.9,)";
+    const forged = parseChocolateyVersionMeta(
+      meta({ dependencies: [{ id: "chocolatey", range: inject }] }),
+    );
+    expect(forged).toBeNull();
+
+    const safe = parseChocolateyVersionMeta(
+      meta({ dependencies: [{ id: "chocolatey", range: "[0.10.3,)" }] }),
+    );
+    expect(safe).not.toBeNull();
+    if (safe === null) throw new Error("expected a parsed meta");
+    // The only `|` in a feed entry is the genuine entry separator: a single,
+    // unforgeable dependency here yields no `|` at all.
+    const encoded = encodeDependencies(safe);
+    expect(encoded).toBe("chocolatey:[0.10.3,):");
+    expect(encoded.includes("|")).toBe(false);
+    expect(encoded.includes("evil")).toBe(false);
   });
 
   test("feed wraps entries with the Atom namespaces", () => {

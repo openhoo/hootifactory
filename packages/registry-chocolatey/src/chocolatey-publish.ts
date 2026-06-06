@@ -2,6 +2,7 @@ import { parseRegistryInput } from "@hootifactory/registry";
 import { extractMultipartFile, MultipartContentTypeSchema } from "./chocolatey-multipart";
 import { extractNuspecMeta } from "./chocolatey-nuspec";
 import {
+  ChocolateyDependencySchema,
   ChocolateyIdSchema,
   type ChocolateyVersionMeta,
   normalizeChocolateyVersion,
@@ -60,6 +61,15 @@ export async function parseChocolateyPublishRequest(
   const version = normalizeChocolateyVersion(nuspec.version);
   if (!version) {
     return { ok: false, error: { error: "invalid package version", status: 400 } };
+  }
+
+  // Reject crafted dependency ranges (e.g. ones carrying the reserved OData
+  // delimiters `:`/`|`) before persisting, so the feed can never serialize a
+  // forged/malformed `<d:Dependencies>` entry. Valid NuGet ranges always pass.
+  for (const dep of nuspec.dependencies) {
+    if (!ChocolateyDependencySchema.safeParse(dep).success) {
+      return { ok: false, error: { error: "invalid nuspec dependency", status: 400 } };
+    }
   }
 
   const lowerId = id.toLowerCase();
