@@ -150,14 +150,18 @@ export function validateDescriptor(value: unknown, field: string): OciDescriptor
   throw Errors.manifestInvalid({ reason: `${field} must be a valid descriptor` });
 }
 
-function validateDescriptorArray(value: unknown, field: string): OciDescriptor[] {
-  if (value === undefined) return [];
-  if (!Array.isArray(value)) throw Errors.manifestInvalid({ reason: `${field} must be an array` });
-  if (value.length > MAX_OCI_DESCRIPTOR_ARRAY_ITEMS) {
+function assertDescriptorArrayCap(value: unknown, field: string): void {
+  if (Array.isArray(value) && value.length > MAX_OCI_DESCRIPTOR_ARRAY_ITEMS) {
     throw Errors.manifestInvalid({
       reason: `${field} must contain at most ${MAX_OCI_DESCRIPTOR_ARRAY_ITEMS} descriptors`,
     });
   }
+}
+
+function validateDescriptorArray(value: unknown, field: string): OciDescriptor[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) throw Errors.manifestInvalid({ reason: `${field} must be an array` });
+  assertDescriptorArrayCap(value, field);
   return value.map((descriptor, i) => validateDescriptor(descriptor, `${field}[${i}]`));
 }
 
@@ -184,6 +188,13 @@ export function validateManifest(parsed: OciManifestDocument, mediaType: string)
   if (parsed.schemaVersion !== 2) {
     throw Errors.manifestInvalid({ reason: "schemaVersion must be 2" });
   }
+  // Reference extraction (ociManifestReferencesFromValue) iterates layers/blobs/manifests
+  // for every manifest, not just the array matching the declared media type. Cap all of
+  // them here so a media-type-mismatched array cannot bypass MAX_OCI_DESCRIPTOR_ARRAY_ITEMS
+  // and force unbounded fan-out on PUT.
+  assertDescriptorArrayCap(parsed.layers, "layers");
+  assertDescriptorArrayCap(parsed.blobs, "blobs");
+  assertDescriptorArrayCap(parsed.manifests, "manifests");
   if (IMAGE_MANIFEST_MEDIA_TYPES.has(mediaType)) {
     validateDescriptor(parsed.config, "config");
     if (!Array.isArray(parsed.layers)) {
