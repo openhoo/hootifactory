@@ -1,11 +1,17 @@
 import type { ScannerPlugin } from "@hootifactory/scanner";
-import { ADVISORIES, type Advisory, scanDependenciesAgainstAdvisories } from "./advisories";
+import {
+  ADVISORIES,
+  type Advisory,
+  isVersionVulnerable,
+  scanDependenciesAgainstAdvisories,
+} from "./advisories";
 import { createMalwareStreamConsumer, scanForMalware } from "./malware";
 
 export {
   ADVISORIES,
   type Advisory,
   createMalwareStreamConsumer,
+  isVersionVulnerable,
   scanDependenciesAgainstAdvisories,
   scanForMalware,
 };

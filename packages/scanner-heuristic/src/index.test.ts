@@ -28,8 +28,9 @@ describe("heuristic dependency advisories", () => {
       severity: "critical",
       packageName: "evil-dep",
       packageVersion: "^1.2.3",
-      fixedVersion: "0.0.0",
     });
+    // A known-malicious dependency has no patched release, so no fixedVersion is reported.
+    expect(findings[0]?.fixedVersion).toBeUndefined();
   });
 
   test("emits a purl when a purlType is provided", () => {
