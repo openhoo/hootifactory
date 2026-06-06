@@ -33,19 +33,28 @@ export function parseAuthorizationHeader(
   const parsedAuthz = AuthorizationHeaderSchema.safeParse(rawAuthz);
   if (!parsedAuthz.success) return { kind: "invalid" };
   const authz = parsedAuthz.data;
-  if (authz.startsWith("Bearer ")) {
-    return { kind: "bearer", token: authz.slice(7).trim() };
-  }
-  if (authz.startsWith("Basic ")) {
-    const decoded = decodeBasicCredentials(authz.slice(6));
-    if (!decoded) return { kind: "invalid" };
-    const idx = decoded.indexOf(":");
-    if (idx < 0) return { kind: "invalid" };
-    return {
-      kind: "basic",
-      username: decoded.slice(0, idx),
-      password: decoded.slice(idx + 1),
-    };
+  // RFC 7235/6750/7617: the auth-scheme token is case-insensitive. Split the
+  // scheme from its credentials on the first whitespace run and compare it
+  // lowercased, while preserving the original credential bytes (Basic base64
+  // and Bearer token values must not be lowercased).
+  const schemeMatch = /^(\S+)\s+([\s\S]*)$/.exec(authz);
+  if (schemeMatch) {
+    const [, schemeToken = "", credentials = ""] = schemeMatch;
+    const scheme = schemeToken.toLowerCase();
+    if (scheme === "bearer") {
+      return { kind: "bearer", token: credentials.trim() };
+    }
+    if (scheme === "basic") {
+      const decoded = decodeBasicCredentials(credentials);
+      if (!decoded) return { kind: "invalid" };
+      const idx = decoded.indexOf(":");
+      if (idx < 0) return { kind: "invalid" };
+      return {
+        kind: "basic",
+        username: decoded.slice(0, idx),
+        password: decoded.slice(idx + 1),
+      };
+    }
   }
   if (authz.startsWith(TOKEN_PREFIX)) {
     return { kind: "bareToken", token: authz.trim() };

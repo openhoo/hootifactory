@@ -26,6 +26,38 @@ describe("authentication credential parsing", () => {
     });
   });
 
+  test("matches the auth scheme case-insensitively while preserving credential bytes", () => {
+    // RFC 7235/6750/7617: the auth-scheme token is case-insensitive, but the
+    // credential bytes (Bearer token, Basic base64) must be preserved exactly.
+    const bearerToken = "Registry.JWT.Token";
+    expect(parseAuthorizationHeader(`bearer ${bearerToken}`)).toEqual({
+      kind: "bearer",
+      token: bearerToken,
+    });
+    expect(parseAuthorizationHeader(`bearer ${bearerToken}`)).toEqual(
+      parseAuthorizationHeader(`Bearer ${bearerToken}`),
+    );
+
+    const basicCreds = basic("__token__:HootSecret");
+    expect(parseAuthorizationHeader(`basic ${basicCreds}`)).toEqual({
+      kind: "basic",
+      username: "__token__",
+      password: "HootSecret",
+    });
+    expect(parseAuthorizationHeader(`basic ${basicCreds}`)).toEqual(
+      parseAuthorizationHeader(`Basic ${basicCreds}`),
+    );
+
+    // Mixed-case schemes resolve identically too.
+    expect(parseAuthorizationHeader(`BeArEr ${bearerToken}`)).toEqual({
+      kind: "bearer",
+      token: bearerToken,
+    });
+
+    // An unknown scheme still yields invalid regardless of casing.
+    expect(parseAuthorizationHeader("digest abc")).toEqual({ kind: "invalid" });
+  });
+
   test("rejects malformed authorization headers without leaking partial credentials", () => {
     expect(parseAuthorizationHeader(undefined)).toBeNull();
     expect(parseAuthorizationHeader("")).toEqual({ kind: "invalid" });
