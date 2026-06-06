@@ -6,6 +6,18 @@ export function shouldRewriteVirtualBody(contentType: string): boolean {
   return normalized.includes("json") || normalized.includes("text/html");
 }
 
+// Content-addressable / digest-pinned responses carry a digest the client verifies
+// against the raw bytes (e.g. OCI/Docker manifests, every one of which is `...+json`).
+// Rewriting the body would corrupt that contract while the preserved digest still
+// describes the original bytes, so such responses must pass through byte-exact.
+function isDigestPinned(headers: Headers): boolean {
+  if (headers.get("docker-content-digest")) {
+    return true;
+  }
+  const etag = headers.get("etag");
+  return etag !== null && /sha\d+:/i.test(etag);
+}
+
 function metadataBodyText(part: RegistryMetadata): string {
   return typeof part.body === "string" ? part.body : new TextDecoder().decode(part.body);
 }
@@ -31,6 +43,9 @@ export async function rewriteVirtualBody(
   memberMountPath: string,
   virtualMountPath: string,
 ): Promise<Response> {
+  if (isDigestPinned(res.headers)) {
+    return res;
+  }
   const body = rewriteMountPathInText(await res.text(), memberMountPath, virtualMountPath);
   return new Response(body, {
     status: res.status,
