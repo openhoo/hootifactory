@@ -1,33 +1,33 @@
 import { z } from "@hootifactory/registry";
-import { extractPubspecYaml } from "./dart-tarball";
-import { type DartPubspec, DartPubspecSchema, parsePubspecYaml } from "./dart-validation";
+import { extractPubspecYaml } from "./pub-tarball";
+import { type Pubspec, PubspecSchema, parsePubspecYaml } from "./pub-validation";
 
 const MAX_ARCHIVE_BYTES = 256 * 1024 * 1024;
 
-const DartUploadFieldsSchema = z.strictObject({
+const PubUploadFieldsSchema = z.strictObject({
   file: z.custom<File>((value) => value instanceof File, { message: "missing file field" }),
 });
 
-export interface DartUploadPlan {
+export interface PubUploadPlan {
   packageName: string;
   version: string;
-  pubspec: DartPubspec;
+  pubspec: Pubspec;
   archiveBytes: Uint8Array;
   scope: string;
 }
 
-export interface DartUploadError {
+export interface PubUploadError {
   code: string;
   message: string;
   status: number;
 }
 
-export type DartUploadParseResult =
-  | { ok: true; plan: DartUploadPlan }
-  | { ok: false; error: DartUploadError };
+export type PubUploadParseResult =
+  | { ok: true; plan: PubUploadPlan }
+  | { ok: false; error: PubUploadError };
 
 /** The blob-ref scope for a package archive: stable and download-route addressable. */
-export function dartBlobScope(packageName: string, version: string): string {
+export function pubBlobScope(packageName: string, version: string): string {
   return `${packageName}@${version}`;
 }
 
@@ -37,7 +37,7 @@ export function dartBlobScope(packageName: string, version: string): string {
  * failures are returned (not thrown) so the lifecycle can render the pub error
  * envelope with the right status.
  */
-export async function parseDartUploadRequest(req: Request): Promise<DartUploadParseResult> {
+export async function parsePubUploadRequest(req: Request): Promise<PubUploadParseResult> {
   let file: unknown;
   try {
     file = (await req.formData()).get("file");
@@ -45,7 +45,7 @@ export async function parseDartUploadRequest(req: Request): Promise<DartUploadPa
     return error("InvalidInput", "expected multipart/form-data upload", 400);
   }
 
-  const fields = DartUploadFieldsSchema.safeParse({ file });
+  const fields = PubUploadFieldsSchema.safeParse({ file });
   if (!fields.success) {
     return error("InvalidInput", "missing package archive in field 'file'", 400);
   }
@@ -67,7 +67,7 @@ export async function parseDartUploadRequest(req: Request): Promise<DartUploadPa
     );
   }
 
-  const pubspecResult = DartPubspecSchema.safeParse(parsePubspecYaml(pubspecText));
+  const pubspecResult = PubspecSchema.safeParse(parsePubspecYaml(pubspecText));
   if (!pubspecResult.success) {
     return error("InvalidInput", "pubspec.yaml is missing a valid name and version", 400);
   }
@@ -80,11 +80,11 @@ export async function parseDartUploadRequest(req: Request): Promise<DartUploadPa
       version: pubspec.version,
       pubspec,
       archiveBytes,
-      scope: dartBlobScope(pubspec.name, pubspec.version),
+      scope: pubBlobScope(pubspec.name, pubspec.version),
     },
   };
 }
 
-function error(code: string, message: string, status: number): DartUploadParseResult {
+function error(code: string, message: string, status: number): PubUploadParseResult {
   return { ok: false, error: { code, message, status } };
 }

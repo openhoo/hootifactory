@@ -3,13 +3,13 @@ import { aptRegistryPlugin } from "@hootifactory/registry-apt";
 import { cargoRegistryPlugin } from "@hootifactory/registry-cargo";
 import { chocolateyRegistryPlugin } from "@hootifactory/registry-chocolatey";
 import { composerRegistryPlugin } from "@hootifactory/registry-composer";
-import { dartRegistryPlugin } from "@hootifactory/registry-dart";
 import { goRegistryPlugin } from "@hootifactory/registry-go";
 import { homebrewRegistryPlugin } from "@hootifactory/registry-homebrew";
 import { mavenRegistryPlugin } from "@hootifactory/registry-maven";
 import { npmRegistryPlugin } from "@hootifactory/registry-npm";
 import { nugetRegistryPlugin } from "@hootifactory/registry-nuget";
 import { dockerRegistryPlugin } from "@hootifactory/registry-oci";
+import { pubRegistryPlugin } from "@hootifactory/registry-pub";
 import { pypiRegistryPlugin } from "@hootifactory/registry-pypi";
 import { rpmRegistryPlugin } from "@hootifactory/registry-rpm";
 import { rubygemsRegistryPlugin } from "@hootifactory/registry-rubygems";
@@ -42,7 +42,7 @@ export const REGISTRY_PLUGIN_MANIFEST: RegistryPluginEntry[] = [
   { plugin: composerRegistryPlugin },
   { plugin: mavenRegistryPlugin },
   { plugin: aptRegistryPlugin },
-  { plugin: dartRegistryPlugin },
+  { plugin: pubRegistryPlugin },
   { plugin: swiftRegistryPlugin },
   { plugin: chocolateyRegistryPlugin },
   { plugin: wingetRegistryPlugin },

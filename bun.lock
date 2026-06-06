@@ -256,13 +256,6 @@
         "@hootifactory/registry": "workspace:*",
       },
     },
-    "packages/registry-dart": {
-      "name": "@hootifactory/registry-dart",
-      "version": "0.0.0",
-      "dependencies": {
-        "@hootifactory/registry": "workspace:*",
-      },
-    },
     "packages/registry-go": {
       "name": "@hootifactory/registry-go",
       "version": "0.0.0",
@@ -305,6 +298,13 @@
         "@hootifactory/registry": "workspace:*",
       },
     },
+    "packages/registry-pub": {
+      "name": "@hootifactory/registry-pub",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/registry": "workspace:*",
+      },
+    },
     "packages/registry-pypi": {
       "name": "@hootifactory/registry-pypi",
       "version": "0.0.0",
@@ -336,13 +336,13 @@
         "@hootifactory/registry-cargo": "workspace:*",
         "@hootifactory/registry-chocolatey": "workspace:*",
         "@hootifactory/registry-composer": "workspace:*",
-        "@hootifactory/registry-dart": "workspace:*",
         "@hootifactory/registry-go": "workspace:*",
         "@hootifactory/registry-homebrew": "workspace:*",
         "@hootifactory/registry-maven": "workspace:*",
         "@hootifactory/registry-npm": "workspace:*",
         "@hootifactory/registry-nuget": "workspace:*",
         "@hootifactory/registry-oci": "workspace:*",
+        "@hootifactory/registry-pub": "workspace:*",
         "@hootifactory/registry-pypi": "workspace:*",
         "@hootifactory/registry-rpm": "workspace:*",
         "@hootifactory/registry-rubygems": "workspace:*",
@@ -653,8 +653,6 @@
 
     "@hootifactory/registry-composer": ["@hootifactory/registry-composer@workspace:packages/registry-composer"],
 
-    "@hootifactory/registry-dart": ["@hootifactory/registry-dart@workspace:packages/registry-dart"],
-
     "@hootifactory/registry-go": ["@hootifactory/registry-go@workspace:packages/registry-go"],
 
     "@hootifactory/registry-homebrew": ["@hootifactory/registry-homebrew@workspace:packages/registry-homebrew"],
@@ -666,6 +664,8 @@
     "@hootifactory/registry-nuget": ["@hootifactory/registry-nuget@workspace:packages/registry-nuget"],
 
     "@hootifactory/registry-oci": ["@hootifactory/registry-oci@workspace:packages/registry-oci"],
+
+    "@hootifactory/registry-pub": ["@hootifactory/registry-pub@workspace:packages/registry-pub"],
 
     "@hootifactory/registry-pypi": ["@hootifactory/registry-pypi@workspace:packages/registry-pypi"],
 
