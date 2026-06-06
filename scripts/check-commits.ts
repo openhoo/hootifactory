@@ -266,8 +266,9 @@ function writeStepSummary(passed: boolean): void {
   if (!passed) {
     lines.push("", "| Source | Header | Problem |", "| --- | --- | --- |");
     for (const failure of failures) {
-      const header = failure.header.replace(/\|/g, "\\|");
-      lines.push(`| \`${failure.source}\` | ${header} | ${failure.reasons.join("; ")} |`);
+      lines.push(
+        `| \`${failure.source}\` | ${mdCell(failure.header)} | ${mdCell(failure.reasons.join("; "))} |`,
+      );
     }
     lines.push(
       "",
@@ -285,6 +286,12 @@ function isIgnored(header: string): boolean {
 
 function firstLine(message: string): string {
   return message.split("\n", 1)[0] ?? "";
+}
+
+// Escape a value for a GitHub-Flavored-Markdown table cell. Backslash first (so the
+// escapes we add aren't themselves re-escaped), then the pipe column separator.
+function mdCell(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/\|/g, "\\|");
 }
 
 function getArgValue(name: string): string | undefined {
