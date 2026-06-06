@@ -24,10 +24,19 @@ function dockerScopeActions(action: Permission["action"]): string {
  * directive (RFC 7235 / RFC 7230 `quoted-string`). The repository name is
  * interpolated from unvalidated, URL-decoded request input, so a crafted name
  * could otherwise inject extra `"`/`,`-delimited challenge directives. Per the
- * grammar, only `"` and `\` need backslash-escaping inside a quoted-string.
+ * grammar, `"` and `\` are backslash-escaped. Control characters (including
+ * CR/LF, e.g. from a `%0d%0a` route param) are not valid `quoted-string` content
+ * and are not escapable, so they are stripped rather than emitted into the
+ * header value.
  */
 function escapeQuotedString(value: string): string {
-  return value.replace(/[\\"]/g, "\\$&");
+  let out = "";
+  for (const ch of value) {
+    const code = ch.codePointAt(0) ?? 0;
+    if (code < 0x20 || code === 0x7f) continue;
+    out += ch === '"' || ch === "\\" ? `\\${ch}` : ch;
+  }
+  return out;
 }
 
 export function registryBearerAuthChallenge({

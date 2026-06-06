@@ -46,6 +46,27 @@ describe("registry auth helpers", () => {
     expect(delimiterQuotes).toBe(6);
   });
 
+  test("strips control characters (CR/LF) from the repository name", () => {
+    const ctx = createTestRegistryContext({ baseUrl: "https://registry.example.test" });
+
+    // A `%0d%0a`-style payload decodes to CR/LF. Control characters cannot appear
+    // in an RFC 7230 quoted-string and are not backslash-escapable, so they must
+    // be removed rather than passed through into the `WWW-Authenticate` value
+    // (where a real header sink would otherwise reject or split on them).
+    const { header } = registryBearerAuthChallenge({
+      ctx,
+      permission: { action: "read", repositoryName: "evil\r\nX-Injected: 1" },
+    });
+
+    expect(header).toBe(
+      'Bearer realm="https://registry.example.test/token",service="hootifactory",' +
+        'scope="repository:evilX-Injected: 1:pull"',
+    );
+    // No raw control characters survive in the emitted header value.
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting CTLs are absent
+    expect(/[\u0000-\u001f\u007f]/.test(header)).toBe(false);
+  });
+
   test("leaves normal repository names unchanged", () => {
     const ctx = createTestRegistryContext({ baseUrl: "https://registry.example.test" });
 
