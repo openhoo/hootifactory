@@ -380,25 +380,45 @@ export async function replaceDistTags(
   packageId: string,
   desiredTags: Map<string, { version: string; versionId: string }>,
 ): Promise<void> {
+  // The dist-tag set (versionTags) and the denormalized packages.latestVersion are
+  // two reads for the same logical pointer, so the prune + upsert + latestVersion
+  // write must land atomically. Without a transaction a concurrent packument GET
+  // can observe tags that are pruned but not yet re-inserted, and two concurrent
+  // writers can leave latestVersion sourced from one writer while the `latest` tag
+  // row comes from the other. The FOR UPDATE lock on the packages row serializes
+  // concurrent replaceDistTags callers per package so last-writer-wins stays
+  // coherent; it does not order against writers that skip this lock (e.g.
+  // setDistTag / deleteDistTag), which only touch a single tag row.
   const tags = [...desiredTags.keys()];
-  await db
-    .delete(versionTags)
-    .where(
-      and(
-        eq(versionTags.packageId, packageId),
-        tags.length > 0 ? notInArray(versionTags.tag, tags) : sql`true`,
-      ),
-    );
-  if (desiredTags.size > 0) {
-    await db
-      .insert(versionTags)
-      .values([...desiredTags].map(([tag, { versionId }]) => ({ packageId, tag, versionId })))
-      .onConflictDoUpdate({
-        target: [versionTags.packageId, versionTags.tag],
-        set: { versionId: sql`excluded.version_id` },
-      });
-  }
-  await updatePackageLatestVersion(packageId, desiredTags.get("latest")?.version ?? null);
+  await db.transaction(async (tx) => {
+    await tx
+      .select({ id: packages.id })
+      .from(packages)
+      .where(eq(packages.id, packageId))
+      .for("update")
+      .limit(1);
+    await tx
+      .delete(versionTags)
+      .where(
+        and(
+          eq(versionTags.packageId, packageId),
+          tags.length > 0 ? notInArray(versionTags.tag, tags) : sql`true`,
+        ),
+      );
+    if (desiredTags.size > 0) {
+      await tx
+        .insert(versionTags)
+        .values([...desiredTags].map(([tag, { versionId }]) => ({ packageId, tag, versionId })))
+        .onConflictDoUpdate({
+          target: [versionTags.packageId, versionTags.tag],
+          set: { versionId: sql`excluded.version_id` },
+        });
+    }
+    await tx
+      .update(packages)
+      .set({ latestVersion: desiredTags.get("latest")?.version ?? null })
+      .where(eq(packages.id, packageId));
+  });
 }
 
 export async function packageVersionExists(packageId: string, version: string): Promise<boolean> {
