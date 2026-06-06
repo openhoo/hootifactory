@@ -105,11 +105,13 @@ describe("Chocolatey feed rendering", () => {
       meta({ dependencies: [{ id: "chocolatey", range: "[0.10.3,)" }] }),
     );
     expect(safe).not.toBeNull();
+    if (safe === null) throw new Error("expected a parsed meta");
     // The only `|` in a feed entry is the genuine entry separator: a single,
     // unforgeable dependency here yields no `|` at all.
-    expect(encodeDependencies(safe as ChocolateyVersionMeta)).toBe("chocolatey:[0.10.3,):");
-    expect(encodeDependencies(safe as ChocolateyVersionMeta).includes("|")).toBe(false);
-    expect(encodeDependencies(safe as ChocolateyVersionMeta).includes("evil")).toBe(false);
+    const encoded = encodeDependencies(safe);
+    expect(encoded).toBe("chocolatey:[0.10.3,):");
+    expect(encoded.includes("|")).toBe(false);
+    expect(encoded.includes("evil")).toBe(false);
   });
 
   test("feed wraps entries with the Atom namespaces", () => {
