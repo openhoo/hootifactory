@@ -1,16 +1,17 @@
 # CI — pull-request gate
 
 `ci.yml` runs on every pull request (and on `merge_group` / pushes to `main`) and
-must pass before a PR can merge. It enforces three things:
+must pass before a PR can merge. It enforces these checks:
 
 | Job            | Enforces                                  | Local equivalent          |
 | -------------- | ----------------------------------------- | ------------------------- |
 | `commit-lint`  | Conventional Commits on every commit + PR title | `bun run check:commits`   |
 | `lint`         | `biome check .` is clean (lint + format)  | `bun run lint`            |
+| `typecheck`    | `tsc --noEmit` across every package        | `bun run typecheck`       |
 | `architecture` | Plugin/package import boundaries hold      | `bun run check:boundaries` |
 | `coverage`     | Unit tests pass **and** line coverage ≥ the ratchet (60%, → 80%) | `bun run test:coverage`   |
 
-A final job, **`gate`**, simply waits on the four above and fails if any did not
+A final job, **`gate`**, simply waits on the five above and fails if any did not
 pass. Point branch protection at `gate` (see below) so you have a single, stable
 required check.
 
@@ -115,5 +116,5 @@ date** and a merge queue (the workflow already listens for `merge_group`).
 
 - **Bun version** and **coverage threshold** are the two `env:` values at the top
   of `ci.yml`.
-- To add another gate (e.g. type-checking), add a job running `bun run typecheck`
-  and list it in the `gate` job's `needs`.
+- To add another gate, add a job and list it in the `gate` job's `needs` (and its
+  result check), the way `typecheck` and `architecture` are wired in.
