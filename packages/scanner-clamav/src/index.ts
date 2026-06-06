@@ -5,6 +5,7 @@ import {
   runCliScanner,
   type ScannerPlugin,
   scannerCliAvailable,
+  stripTrailingSlashes,
   z,
 } from "@hootifactory/scanner";
 
@@ -103,7 +104,7 @@ export const clamavScanner: ScannerPlugin<ClamavConfig> = {
   configFromEnv: (ctx) => {
     const image = ctx.env.CLAMAV_IMAGE ?? DEFAULT_CLAMAV_IMAGE;
     assertDigestPinnedImage(image, "CLAMAV_IMAGE", ctx);
-    const restUrl = ctx.env.CLAMAV_REST_URL?.replace(/\/+$/, "") || undefined;
+    const restUrl = stripTrailingSlashes(ctx.env.CLAMAV_REST_URL) || undefined;
     return { image, restUrl };
   },
   available: (config, ctx) =>

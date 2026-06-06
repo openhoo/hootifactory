@@ -1,3 +1,4 @@
+import { trimChar } from "@hootifactory/core";
 import {
   and,
   db,
@@ -27,11 +28,8 @@ export class OidcEmailLinkRequiredError extends Error {
 }
 
 function normalizeUsername(value: string | null, fallback: string): string {
-  const base = (value || fallback)
-    .toLowerCase()
-    .replace(/[^a-z0-9._-]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 96);
+  const collapsed = (value || fallback).toLowerCase().replace(/[^a-z0-9._-]+/g, "-");
+  const base = trimChar(collapsed, "-").slice(0, 96);
   return base || `oidc-${crypto.randomUUID().slice(0, 8)}`;
 }
 

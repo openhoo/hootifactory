@@ -1,4 +1,4 @@
-import type { ScannerPlugin } from "@hootifactory/scanner";
+import { type ScannerPlugin, stripTrailingSlashes } from "@hootifactory/scanner";
 import { osvScanDependencies } from "./osv";
 
 export { type OsvScanResult, osvScanDependencies } from "./osv";
@@ -28,7 +28,7 @@ export const osvScanner: ScannerPlugin<OsvConfig> = {
     network: true,
   },
   configFromEnv: (ctx) => ({
-    apiUrl: ctx.env.OSV_API_URL?.replace(/\/+$/, "") || DEFAULT_OSV_API_URL,
+    apiUrl: stripTrailingSlashes(ctx.env.OSV_API_URL) || DEFAULT_OSV_API_URL,
     enabled: TRUTHY.has((ctx.env.SCANNER_OSV ?? "").trim().toLowerCase()),
   }),
   available: (config) => config.enabled,

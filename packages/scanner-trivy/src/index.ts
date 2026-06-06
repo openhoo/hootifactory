@@ -7,6 +7,7 @@ import {
   type ScannerPlugin,
   safeJsonParse,
   scannerCliAvailable,
+  stripTrailingSlashes,
   z,
 } from "@hootifactory/scanner";
 
@@ -97,7 +98,7 @@ export const trivyScanner: ScannerPlugin<TrivyConfig> = {
   configFromEnv: (ctx) => {
     const image = ctx.env.TRIVY_IMAGE ?? DEFAULT_TRIVY_IMAGE;
     assertDigestPinnedImage(image, "TRIVY_IMAGE", ctx);
-    const serverUrl = ctx.env.TRIVY_SERVER_URL?.replace(/\/+$/, "") || undefined;
+    const serverUrl = stripTrailingSlashes(ctx.env.TRIVY_SERVER_URL) || undefined;
     return { image, serverUrl };
   },
   available: (_config, ctx) => scannerCliAvailable(["trivy"], ctx.runtime),

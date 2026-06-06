@@ -1,3 +1,4 @@
+import { trimChar } from "@hootifactory/core";
 import { db, inArray, repositories } from "@hootifactory/db";
 import type { ResolvedRepo } from "@hootifactory/registry";
 
@@ -17,7 +18,7 @@ export interface RepoResolution {
  * resolution rather than repository mounts; unimplemented ones currently 404).
  */
 export async function resolveRepository(pathname: string): Promise<RepoResolution | null> {
-  const norm = pathname.replace(/^\/+/, "").replace(/\/+$/, "");
+  const norm = trimChar(pathname, "/");
   if (norm === "") return null;
 
   const segments = norm.split("/");

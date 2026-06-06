@@ -4,7 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@hootifactory/config";
-import { z } from "@hootifactory/core";
+import { trimChar, z } from "@hootifactory/core";
 import { S3Client } from "bun";
 import { blobKey, computeDigest, InvalidDigestError } from "./digest";
 import type { BlobData, BlobStat, BlobStore, PutResult } from "./types";
@@ -269,7 +269,7 @@ function encodeS3Path(value: string): string {
 
 function joinUrlPath(...parts: string[]): string {
   return `/${parts
-    .map((part) => part.replace(/^\/+|\/+$/g, ""))
+    .map((part) => trimChar(part, "/"))
     .filter(Boolean)
     .join("/")}`;
 }
