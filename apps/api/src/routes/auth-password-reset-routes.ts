@@ -1,4 +1,8 @@
-import { findPasswordResetUser, resetPasswordWithToken } from "@hootifactory/auth";
+import {
+  dummyPasswordResetWork,
+  findPasswordResetUser,
+  resetPasswordWithToken,
+} from "@hootifactory/auth";
 import { env } from "@hootifactory/config";
 import { addSpanEvent, logger } from "@hootifactory/observability";
 import type { Hono } from "hono";
@@ -70,6 +74,11 @@ export function registerPasswordResetRoutes(router: Hono<AppEnv>): void {
           detail: { error: message },
         });
       }
+    } else {
+      // Normalize response latency so unknown/inactive emails cost the same as
+      // real ones, preventing account-existence enumeration via timing. We never
+      // send mail or persist a token here — only equivalent throwaway work.
+      await dummyPasswordResetWork();
     }
 
     return c.json({ ok: true });

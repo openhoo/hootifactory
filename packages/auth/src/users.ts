@@ -1,6 +1,7 @@
-import { db, eq, users } from "@hootifactory/db";
+import { authEmailTokens, db, eq, sql, users } from "@hootifactory/db";
 import { hashPassword, verifyPassword } from "./password";
 import type { Principal } from "./principal";
+import { randomSecret, sha256hex } from "./secret";
 
 export type AuthUserRow = typeof users.$inferSelect;
 
@@ -67,4 +68,25 @@ export async function findPasswordResetUser(email: string): Promise<PasswordRese
     .limit(1);
   if (!user?.isActive || !user.passwordHash) return null;
   return { id: user.id, email: user.email };
+}
+
+// Equalizes password-reset request timing for unknown/inactive emails by doing
+// work equivalent to the real request path without persisting anything or
+// sending mail. Mirrors the login timing-equalizer above so attackers cannot
+// distinguish registered accounts from unknown ones via response latency.
+//
+// The real path awaits two DB round-trips before responding: the
+// createAuthEmailToken transaction (invalidate + insert) and the enqueueEmail
+// queue insert. We mirror both with read-only no-op round-trips, plus the
+// sha256 token-hash, so the no-user branch costs the same.
+export async function dummyPasswordResetWork(): Promise<void> {
+  // sha256 over a freshly generated secret mirrors createAuthEmailToken's hash.
+  sha256hex(randomSecret("hoot_email_"));
+  // A read-only transaction mirrors the token-creation transaction's round-trip
+  // and BEGIN/COMMIT overhead without writing or invalidating any token.
+  await db.transaction(async (tx) => {
+    await tx.select({ one: sql`1` }).from(authEmailTokens).limit(0);
+  });
+  // A second read-only round-trip mirrors the enqueueEmail queue insert.
+  await db.select({ one: sql`1` }).from(authEmailTokens).limit(0);
 }
