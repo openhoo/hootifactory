@@ -9,6 +9,13 @@ export class VirtualMemberLimitExceededError extends Error {
   }
 }
 
+export class VirtualMemberOrgMismatchError extends Error {
+  constructor() {
+    super("virtual repository members must belong to the same organization");
+    this.name = "VirtualMemberOrgMismatchError";
+  }
+}
+
 /** Member repos of a virtual repo, in resolution order. */
 export async function loadVirtualMembers(virtualRepoId: string): Promise<ResolvedRepo[]> {
   const rows = await db
@@ -22,12 +29,23 @@ export async function loadVirtualMembers(virtualRepoId: string): Promise<Resolve
 
 export async function addVirtualMember(virtualRepoId: string, memberRepoId: string, position = 0) {
   await db.transaction(async (tx) => {
-    await tx
-      .select({ id: repositories.id })
+    const [parent] = await tx
+      .select({ orgId: repositories.orgId })
       .from(repositories)
       .where(eq(repositories.id, virtualRepoId))
       .for("update")
       .limit(1);
+
+    // Defense-in-depth tenant guard: a virtual repo may only include hosted members from
+    // its own org, so a stale/forged binding cannot durably cross the tenant boundary.
+    const [member] = await tx
+      .select({ orgId: repositories.orgId })
+      .from(repositories)
+      .where(eq(repositories.id, memberRepoId))
+      .limit(1);
+    if (parent && member && member.orgId !== parent.orgId) {
+      throw new VirtualMemberOrgMismatchError();
+    }
 
     const [existing] = await tx
       .select({ id: virtualRepoMembers.id })
