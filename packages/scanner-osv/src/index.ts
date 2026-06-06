@@ -28,7 +28,7 @@ export const osvScanner: ScannerPlugin<OsvConfig> = {
     network: true,
   },
   configFromEnv: (ctx) => ({
-    apiUrl: ctx.env.OSV_API_URL?.replace(/\/+$/, "") || DEFAULT_OSV_API_URL,
+    apiUrl: stripTrailingSlashes(ctx.env.OSV_API_URL) || DEFAULT_OSV_API_URL,
     enabled: TRUTHY.has((ctx.env.SCANNER_OSV ?? "").trim().toLowerCase()),
   }),
   available: (config) => config.enabled,
@@ -43,3 +43,12 @@ export const osvScanner: ScannerPlugin<OsvConfig> = {
     return result.findings;
   },
 };
+
+// Trim trailing slashes without a backtracking-prone anchored regex (`/\/+$/`),
+// which CodeQL flags as polynomial ReDoS.
+function stripTrailingSlashes(value: string | undefined): string | undefined {
+  if (!value) return value;
+  let end = value.length;
+  while (end > 0 && value[end - 1] === "/") end--;
+  return value.slice(0, end);
+}

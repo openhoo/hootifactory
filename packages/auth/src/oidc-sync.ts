@@ -27,12 +27,19 @@ export class OidcEmailLinkRequiredError extends Error {
 }
 
 function normalizeUsername(value: string | null, fallback: string): string {
-  const base = (value || fallback)
-    .toLowerCase()
-    .replace(/[^a-z0-9._-]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 96);
+  const collapsed = (value || fallback).toLowerCase().replace(/[^a-z0-9._-]+/g, "-");
+  const base = trimChar(collapsed, "-").slice(0, 96);
   return base || `oidc-${crypto.randomUUID().slice(0, 8)}`;
+}
+
+// Trim a leading/trailing character without a backtracking-prone anchored regex
+// (`/^-+|-+$/`), which CodeQL flags as polynomial ReDoS.
+function trimChar(value: string, ch: string): string {
+  let start = 0;
+  let end = value.length;
+  while (start < end && value[start] === ch) start++;
+  while (end > start && value[end - 1] === ch) end--;
+  return value.slice(start, end);
 }
 
 async function uniqueUsername(value: string | null, fallback: string): Promise<string> {

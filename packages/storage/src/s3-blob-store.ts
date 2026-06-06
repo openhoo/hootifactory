@@ -269,9 +269,19 @@ function encodeS3Path(value: string): string {
 
 function joinUrlPath(...parts: string[]): string {
   return `/${parts
-    .map((part) => part.replace(/^\/+|\/+$/g, ""))
+    .map((part) => trimSlashes(part))
     .filter(Boolean)
     .join("/")}`;
+}
+
+// Trim leading/trailing slashes without a backtracking-prone anchored regex
+// (`/^\/+|\/+$/`), which CodeQL flags as polynomial ReDoS.
+function trimSlashes(value: string): string {
+  let start = 0;
+  let end = value.length;
+  while (start < end && value[start] === "/") start++;
+  while (end > start && value[end - 1] === "/") end--;
+  return value.slice(start, end);
 }
 
 function sha256Hex(value: string): string {

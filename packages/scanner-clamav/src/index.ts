@@ -103,7 +103,7 @@ export const clamavScanner: ScannerPlugin<ClamavConfig> = {
   configFromEnv: (ctx) => {
     const image = ctx.env.CLAMAV_IMAGE ?? DEFAULT_CLAMAV_IMAGE;
     assertDigestPinnedImage(image, "CLAMAV_IMAGE", ctx);
-    const restUrl = ctx.env.CLAMAV_REST_URL?.replace(/\/+$/, "") || undefined;
+    const restUrl = stripTrailingSlashes(ctx.env.CLAMAV_REST_URL) || undefined;
     return { image, restUrl };
   },
   available: (config, ctx) =>
@@ -134,3 +134,12 @@ export const clamavScanner: ScannerPlugin<ClamavConfig> = {
     });
   },
 };
+
+// Trim trailing slashes without a backtracking-prone anchored regex (`/\/+$/`),
+// which CodeQL flags as polynomial ReDoS.
+function stripTrailingSlashes(value: string | undefined): string | undefined {
+  if (!value) return value;
+  let end = value.length;
+  while (end > 0 && value[end - 1] === "/") end--;
+  return value.slice(0, end);
+}
