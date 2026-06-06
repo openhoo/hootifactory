@@ -1,4 +1,8 @@
-import { findPasswordResetUser, resetPasswordWithToken } from "@hootifactory/auth";
+import {
+  dummyPasswordResetWork,
+  findPasswordResetUser,
+  resetPasswordWithToken,
+} from "@hootifactory/auth";
 import { env } from "@hootifactory/config";
 import { addSpanEvent, logger } from "@hootifactory/observability";
 import type { Hono } from "hono";
@@ -69,6 +73,19 @@ export function registerPasswordResetRoutes(router: Hono<AppEnv>): void {
           ip,
           detail: { error: message },
         });
+      }
+    } else {
+      // Normalize response latency so unknown/inactive emails cost the same as
+      // real ones, preventing account-existence enumeration via timing. We never
+      // send mail or persist a token here — only equivalent throwaway work.
+      // Swallow failures like the user branch does, so a transient DB error
+      // can't make the no-user path return a 500 and re-open the side channel.
+      try {
+        await dummyPasswordResetWork();
+      } catch (err) {
+        const message = errorMessage(err);
+        addSpanEvent("auth.password_reset_dummy_failed", { "error.message": message });
+        logger.error("password reset dummy work failed", { error: err });
       }
     }
 
