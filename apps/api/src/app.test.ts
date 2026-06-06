@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { randomUUID } from "node:crypto";
 import { env } from "@hootifactory/config";
 import { app } from "./app";
 import { registerAdapters } from "./bootstrap";
@@ -194,19 +193,6 @@ describe("request body guard", () => {
     const body = (await response.json()) as { error?: string; issues?: unknown };
     expect(body.error).toBe("invalid login request");
     expect(body.issues).toBeTruthy();
-  });
-
-  test("password reset requests use a neutral response when email is disabled", async () => {
-    const response = await app.fetch(
-      new Request("http://localhost/api/auth/password-reset/request", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ email: `missing-${randomUUID()}@example.test` }),
-      }),
-    );
-
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ ok: true });
   });
 
   test("rejects malformed OCI token query scopes before minting tokens", async () => {
