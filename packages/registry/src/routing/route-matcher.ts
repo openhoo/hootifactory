@@ -69,16 +69,20 @@ export function matchRoute(
     if (!m) continue;
     const params: Record<string, string> = {};
     let rejected = false;
-    c.params.forEach((p, i) => {
+    for (let i = 0; i < c.params.length; i++) {
+      const p = c.params[i]!;
       const value = safeDecode(m[i + 1] ?? "");
       // A single-segment `:param` matched `[^/]+` against the still-encoded path,
       // so a percent-encoded separator (`%2F`) slips through as one segment and
       // decodes into an embedded slash. Such a value is not one slash-free
       // segment, so fail the match instead of silently honouring it. Greedy
       // `:param+` legitimately spans slashes and is left untouched.
-      if (!p.greedy && value.includes("/")) rejected = true;
+      if (!p.greedy && value.includes("/")) {
+        rejected = true;
+        break;
+      }
       params[p.name] = value;
-    });
+    }
     if (rejected) continue;
     return { entry: c.entry, params, path };
   }
