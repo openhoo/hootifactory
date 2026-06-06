@@ -4,10 +4,16 @@ function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+export interface CompiledRouteParam {
+  name: string;
+  /** `:param+` may span slashes; a plain `:param` must be one slash-free segment. */
+  greedy: boolean;
+}
+
 export interface CompiledRoute {
   entry: RouteEntry;
   regex: RegExp;
-  paramNames: string[];
+  params: CompiledRouteParam[];
 }
 
 /**
@@ -17,7 +23,7 @@ export interface CompiledRoute {
  * A trailing slash in the pattern is treated as optional.
  */
 export function compileRoute(entry: RouteEntry): CompiledRoute {
-  const paramNames: string[] = [];
+  const params: CompiledRouteParam[] = [];
   const segments = entry.pattern.split("/");
   const out: string[] = [];
   for (const seg of segments) {
@@ -28,7 +34,7 @@ export function compileRoute(entry: RouteEntry): CompiledRoute {
     if (seg.startsWith(":")) {
       const greedy = seg.endsWith("+");
       const name = greedy ? seg.slice(1, -1) : seg.slice(1);
-      paramNames.push(name);
+      params.push({ name, greedy });
       out.push(greedy ? "(.+?)" : "([^/]+)");
     } else {
       out.push(escapeRegex(seg));
@@ -36,7 +42,7 @@ export function compileRoute(entry: RouteEntry): CompiledRoute {
   }
   let body = out.join("/");
   body = body.replace(/\/$/, "/?"); // optional trailing slash
-  return { entry, regex: new RegExp(`^${body}$`), paramNames };
+  return { entry, regex: new RegExp(`^${body}$`), params };
 }
 
 export function compileRoutes(entries: RouteEntry[]): CompiledRoute[] {
@@ -62,9 +68,22 @@ export function matchRoute(
     const m = c.regex.exec(path);
     if (!m) continue;
     const params: Record<string, string> = {};
-    c.paramNames.forEach((name, i) => {
-      params[name] = safeDecode(m[i + 1] ?? "");
-    });
+    let rejected = false;
+    for (let i = 0; i < c.params.length; i++) {
+      const p = c.params[i]!;
+      const value = safeDecode(m[i + 1] ?? "");
+      // A single-segment `:param` matched `[^/]+` against the still-encoded path,
+      // so a percent-encoded separator (`%2F`) slips through as one segment and
+      // decodes into an embedded slash. Such a value is not one slash-free
+      // segment, so fail the match instead of silently honouring it. Greedy
+      // `:param+` legitimately spans slashes and is left untouched.
+      if (!p.greedy && value.includes("/")) {
+        rejected = true;
+        break;
+      }
+      params[p.name] = value;
+    }
+    if (rejected) continue;
     return { entry: c.entry, params, path };
   }
   return null;
