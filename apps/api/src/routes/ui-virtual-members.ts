@@ -1,6 +1,6 @@
 import type { RepositoryRow } from "./ui-repository-access";
 
-type VirtualMemberRepo = Pick<RepositoryRow, "id" | "moduleId" | "kind">;
+type VirtualMemberRepo = Pick<RepositoryRow, "id" | "orgId" | "moduleId" | "kind">;
 
 type ValidationResult = { ok: true } | { ok: false; status: 400 | 404; error: string };
 
@@ -29,6 +29,13 @@ export function validateVirtualMemberCandidate<T extends VirtualMemberRepo>(
       ok: false,
       status: 400,
       error: "virtual repositories cannot include themselves",
+    };
+  }
+  if (member.orgId !== parent.orgId) {
+    return {
+      ok: false,
+      status: 400,
+      error: "virtual repository members must belong to the same organization",
     };
   }
   if (member.moduleId !== parent.moduleId) {

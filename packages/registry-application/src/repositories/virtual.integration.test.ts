@@ -1,22 +1,32 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { env } from "@hootifactory/config";
 import { db, eq, organizations, repositories } from "@hootifactory/db";
-import { addVirtualMember, loadVirtualMembers, VirtualMemberLimitExceededError } from "./virtual";
+import {
+  addVirtualMember,
+  loadVirtualMembers,
+  VirtualMemberLimitExceededError,
+  VirtualMemberOrgMismatchError,
+} from "./virtual";
 
 let orgId = "";
+let otherOrgId = "";
 let virtualRepoId = "";
 const prefix = `virt-${crypto.randomUUID().slice(0, 8)}`;
 
-async function seedRepo(name: string, kind: "hosted" | "virtual" = "hosted"): Promise<string> {
+async function seedRepo(
+  name: string,
+  kind: "hosted" | "virtual" = "hosted",
+  repoOrgId: string = orgId,
+): Promise<string> {
   const [repo] = await db
     .insert(repositories)
     .values({
-      orgId,
+      orgId: repoOrgId,
       name,
       moduleId: "npm",
       kind,
-      mountPath: `npm/${prefix}/${name}`,
-      storagePrefix: `${prefix}/${name}`,
+      mountPath: `npm/${prefix}/${repoOrgId}/${name}`,
+      storagePrefix: `${prefix}/${repoOrgId}/${name}`,
     })
     .returning({ id: repositories.id });
   return repo!.id;
@@ -29,11 +39,26 @@ describe("virtual repository members", () => {
       .values({ slug: prefix, displayName: "Virtual Member Limit" })
       .returning({ id: organizations.id });
     orgId = org!.id;
+    const [otherOrg] = await db
+      .insert(organizations)
+      .values({ slug: `${prefix}-other`, displayName: "Virtual Member Other Org" })
+      .returning({ id: organizations.id });
+    otherOrgId = otherOrg!.id;
     virtualRepoId = await seedRepo("virtual", "virtual");
   });
 
   afterAll(async () => {
     if (orgId) await db.delete(organizations).where(eq(organizations.id, orgId));
+    if (otherOrgId) await db.delete(organizations).where(eq(organizations.id, otherOrgId));
+  });
+
+  test("rejects members belonging to a different organization", async () => {
+    const crossOrgMemberId = await seedRepo("cross-org", "hosted", otherOrgId);
+    await expect(addVirtualMember(virtualRepoId, crossOrgMemberId, 0)).rejects.toThrow(
+      VirtualMemberOrgMismatchError,
+    );
+    const members = await loadVirtualMembers(virtualRepoId);
+    expect(members.some((m) => m.id === crossOrgMemberId)).toBe(false);
   });
 
   test("caps distinct members while allowing duplicate add attempts", async () => {

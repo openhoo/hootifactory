@@ -4,6 +4,7 @@ import {
   addVirtualMember,
   getRepositoryById,
   VirtualMemberLimitExceededError,
+  VirtualMemberOrgMismatchError,
 } from "@hootifactory/registry-application/repositories";
 import type { Hono } from "hono";
 import type { AppEnv } from "../types";
@@ -27,26 +28,32 @@ export function registerRepositoryConfigRoutes(router: Hono<AppEnv>): void {
     const body = parsedBody.data;
 
     const memberCandidate = await getRepositoryById(body.memberRepoId);
+    // Authorize read on the candidate before any attribute-revealing validation so the
+    // endpoint cannot be used as an existence/module/kind oracle for repos the caller
+    // cannot read: a missing repo and an unreadable repo are indistinguishable (404).
+    const memberNotFound = c.json({ error: "member repository not found" }, 404);
+    if (!memberCandidate) return memberNotFound;
+    const memberDecision = await authorize(c.get("principal"), "read", {
+      type: "repository",
+      orgId: memberCandidate.orgId,
+      repositoryId: memberCandidate.id,
+      repositoryName: memberCandidate.name,
+      visibility: memberCandidate.visibility,
+    });
+    if (!memberDecision.allowed) return memberNotFound;
     const memberValidation = validateVirtualMemberCandidate(guard.repo, memberCandidate);
     if (!memberValidation.ok) {
       return c.json({ error: memberValidation.error }, memberValidation.status);
     }
     const { member } = memberValidation;
-    const memberDecision = await authorize(c.get("principal"), "read", {
-      type: "repository",
-      orgId: member.orgId,
-      repositoryId: member.id,
-      repositoryName: member.name,
-      visibility: member.visibility,
-    });
-    if (!memberDecision.allowed) {
-      return c.json({ error: "member repository is not readable" }, 403);
-    }
 
     try {
       await addVirtualMember(guard.repo.id, body.memberRepoId, body.position ?? 0);
     } catch (err) {
-      if (err instanceof VirtualMemberLimitExceededError) {
+      if (
+        err instanceof VirtualMemberLimitExceededError ||
+        err instanceof VirtualMemberOrgMismatchError
+      ) {
         return c.json({ error: err.message }, 400);
       }
       throw err;

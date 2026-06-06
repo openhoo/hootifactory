@@ -1,3 +1,4 @@
+import { authorize } from "@hootifactory/auth";
 import {
   V1AddUpstreamRequestSchema,
   V1AddVirtualMemberRequestSchema,
@@ -8,11 +9,11 @@ import {
   addVirtualMember,
   getRepositoryById,
   VirtualMemberLimitExceededError,
+  VirtualMemberOrgMismatchError,
 } from "@hootifactory/registry-application/repositories";
 import type { Hono } from "hono";
 import type { AppEnv } from "../types";
 import {
-  authorizeRepository,
   dataResponse,
   doc,
   errorResponse,
@@ -103,12 +104,24 @@ export function registerApiV1RepositoryConfigRoutes(apiV1Router: Hono<AppEnv>) {
       );
       if (!parsedBody.ok) return parsedBody.response;
       const memberCandidate = await getRepositoryById(parsedBody.data.memberRepoId);
+      // Authorize read on the candidate before any attribute-revealing validation so the
+      // endpoint cannot be used as an existence/module/kind oracle for repos the caller
+      // cannot read: a missing repo and an unreadable repo are indistinguishable (404).
+      const memberNotFound = () =>
+        errorResponse(c, 404, "NOT_FOUND", "member repository not found");
+      if (!memberCandidate) return memberNotFound();
+      const memberDecision = await authorize(c.get("principal"), "read", {
+        type: "repository",
+        orgId: memberCandidate.orgId,
+        repositoryId: memberCandidate.id,
+        repositoryName: memberCandidate.name,
+        visibility: memberCandidate.visibility,
+      });
+      if (!memberDecision.allowed) return memberNotFound();
       const memberValidation = validateVirtualMemberCandidate(access.repo, memberCandidate);
       if (!memberValidation.ok) {
         return errorResponse(c, memberValidation.status, "BAD_REQUEST", memberValidation.error);
       }
-      const memberResponse = await authorizeRepository(c, memberValidation.member, "read");
-      if (memberResponse) return memberResponse;
       try {
         await addVirtualMember(
           access.repo.id,
@@ -116,7 +129,10 @@ export function registerApiV1RepositoryConfigRoutes(apiV1Router: Hono<AppEnv>) {
           parsedBody.data.position ?? 0,
         );
       } catch (err) {
-        if (err instanceof VirtualMemberLimitExceededError) {
+        if (
+          err instanceof VirtualMemberLimitExceededError ||
+          err instanceof VirtualMemberOrgMismatchError
+        ) {
           return errorResponse(c, 400, "BAD_REQUEST", err.message);
         }
         throw err;
