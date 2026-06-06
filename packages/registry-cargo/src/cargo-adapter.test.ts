@@ -92,6 +92,55 @@ describe("Cargo adapter", () => {
     expect(adapter.authChallenge().header).toBe('Bearer realm="hootifactory"');
   });
 
+  test("download lowercases the crate name so uppercase crates resolve (no 404)", async () => {
+    // Published as `MyCrate`; index advertises original case, so cargo requests
+    // /api/v1/crates/MyCrate/1.2.3/download. Publish stored the package record and
+    // blob scope lowercased, so download must canonicalize to match (#219).
+    const downloadMatch = {
+      entry: {
+        method: "GET",
+        pattern: "/api/v1/crates/:crate/:version/download",
+        handlerId: "download",
+      },
+      params: { crate: "MyCrate", version: "1.2.3" },
+      path: "/api/v1/crates/MyCrate/1.2.3/download",
+    } satisfies RouteMatch;
+
+    const ctx = createTestRegistryContext();
+    let lookedUpName: string | undefined;
+    let blobScope: string | undefined;
+    ctx.data.packages.findByName = async (name) => {
+      lookedUpName = name;
+      return { ...pkg, name: "mycrate" };
+    };
+    ctx.data.versions.findLive = async () =>
+      versionRow({
+        index: {
+          name: "MyCrate",
+          vers: "1.2.3",
+          deps: [],
+          cksum: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          features: {},
+          yanked: false,
+        },
+        crateDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      });
+    ctx.data.content.blobRefExists = async (opts) => {
+      blobScope = opts.scope;
+      return true;
+    };
+
+    const res = await new CargoAdapter().handle(
+      downloadMatch,
+      new Request("https://registry.test/api/v1/crates/MyCrate/1.2.3/download"),
+      ctx,
+    );
+
+    expect(res.status).toBe(200);
+    expect(lookedUpName).toBe("mycrate");
+    expect(blobScope).toBe("mycrate@1.2.3.crate");
+  });
+
   test("sparse index serializes stored index entries without strict metadata revalidation", async () => {
     const ctx = createTestRegistryContext();
     ctx.repo = { ...ctx.repo, moduleId: "cargo", mountPath: "cargo/private" };

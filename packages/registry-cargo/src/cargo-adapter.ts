@@ -182,9 +182,12 @@ export class CargoAdapter implements RegistryPlugin {
     req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
-    crate = parseCrateName(crate);
+    // The sparse index advertises the original-case crate name, so cargo requests
+    // the download with that casing. Publish stores both the package record and the
+    // blob scope lowercased, so we must canonicalize here to match (see #219).
+    const lower = parseCrateName(crate).toLowerCase();
     version = parseCrateVersion(version);
-    const pkg = await this.findCrate(ctx, crate);
+    const pkg = await this.findCrate(ctx, lower);
     if (!pkg) throw Errors.notFound();
     const v = await ctx.data.versions.findLive(pkg, version);
     const digest = parseCargoVersionMeta(v?.metadata)?.crateDigest;
@@ -192,7 +195,7 @@ export class CargoAdapter implements RegistryPlugin {
     return serveRegistryBlob(ctx, {
       digest,
       kind: "generic_file",
-      scope: cargoBlobScope(crate, version),
+      scope: cargoBlobScope(lower, version),
       contentType: "application/octet-stream",
       redirect: req.method === "GET",
       blocked: () => new Response("blocked by scan policy", { status: 403 }),
