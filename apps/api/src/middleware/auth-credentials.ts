@@ -34,10 +34,11 @@ export function parseAuthorizationHeader(
   if (!parsedAuthz.success) return { kind: "invalid" };
   const authz = parsedAuthz.data;
   // RFC 7235/6750/7617: the auth-scheme token is case-insensitive. Split the
-  // scheme from its credentials on the first whitespace run and compare it
+  // scheme from its credentials on the SP run (1*SP per the ABNF; we avoid
+  // matching tabs/newlines/Unicode whitespace as separators) and compare it
   // lowercased, while preserving the original credential bytes (Basic base64
   // and Bearer token values must not be lowercased).
-  const schemeMatch = /^(\S+)\s+([\s\S]*)$/.exec(authz);
+  const schemeMatch = /^(\S+) +([\s\S]*)$/.exec(authz);
   if (schemeMatch) {
     const [, schemeToken = "", credentials = ""] = schemeMatch;
     const scheme = schemeToken.toLowerCase();

@@ -66,6 +66,9 @@ describe("authentication credential parsing", () => {
       kind: "invalid",
     });
     expect(parseAuthorizationHeader("Basic not-base64")).toEqual({ kind: "invalid" });
+    // RFC 7235 separates scheme from credentials with SP; a tab is not a valid
+    // separator, so it must not be parsed as a bearer credential.
+    expect(parseAuthorizationHeader("Bearer\tregistry.jwt.token")).toEqual({ kind: "invalid" });
   });
 
   test("decodes UTF-8 basic credentials and rejects invalid byte sequences", () => {
