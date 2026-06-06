@@ -70,10 +70,21 @@ describe("isVersionVulnerable", () => {
     expect(isVersionVulnerable("2.10.0", "2.9.0")).toBe(false);
   });
 
-  test("tolerates differing field counts and pre-release suffixes", () => {
+  test("tolerates differing field counts", () => {
     expect(isVersionVulnerable("2.17", "2.17.0")).toBe(false);
-    expect(isVersionVulnerable("2.17.0-rc1", "2.17.0")).toBe(false);
+  });
+
+  test("treats pre-release versions as vulnerable (fail-safe, they sort below stable)", () => {
+    // `2.17.0-rc1` is a pre-release of the fixed `2.17.0`; semver sorts it below
+    // stable, so it must not clear the gate the documented patched release does.
+    expect(isVersionVulnerable("2.17.0-rc1", "2.17.0")).toBe(true);
     expect(isVersionVulnerable("2.16.9-rc1", "2.17.0")).toBe(true);
+  });
+
+  test("treats upper-bound ranges as vulnerable (fail-safe, not a concrete release)", () => {
+    // `<2.17.0` describes versions below the fix, not a patched release.
+    expect(isVersionVulnerable("<2.17.0", "2.17.0")).toBe(true);
+    expect(isVersionVulnerable("<=2.18.0", "2.17.0")).toBe(true);
   });
 
   test("falls back to vulnerable when a version cannot be parsed", () => {
