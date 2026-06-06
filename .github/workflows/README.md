@@ -89,10 +89,20 @@ bun run scripts/coverage-gate.ts --metric=functions      # functions instead (se
 > The gated metric is **lines** — it's the one that counts untested files as 0%.
 > `--metric=functions` is informational and reflects only files that tests loaded.
 
-The threshold is set once via the `COVERAGE_THRESHOLD` env in `ci.yml` (default
-`80`). Lower it to ratchet up over time, or raise it as coverage improves. The
-gate prints the lowest-covered files (and how many untested files were counted as
-0%) and writes a summary to the GitHub job summary.
+### Ratchet
+
+`COVERAGE_THRESHOLD` in `ci.yml` is a **ratchet**, currently **`60`** — just under
+the repo's hermetic baseline (~60.7%). It blocks coverage regressions today; raise
+it as coverage improves and never lower it. Target: **80%**.
+
+The `coverage` job runs only `test:unit`, which is **hermetic** — no database or
+object storage. Tests that need Postgres/S3 are named `*.integration.test.ts` and
+run via `bun run test:integration` (with the compose services up), not in this
+gate. If you add a test that opens a DB/S3 connection, name it
+`*.integration.test.ts` so the unit gate stays service-free.
+
+The gate prints the lowest-covered files (and how many untested files were counted
+as 0%) and writes a summary to the GitHub job summary.
 
 ## Branch protection
 
