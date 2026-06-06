@@ -1,5 +1,28 @@
-import { describe, expect, test } from "bun:test";
-import {
+import { describe, expect, mock, test } from "bun:test";
+
+// Hermetically stub the DB-backed shared throttle bucket so we can drive the
+// throttled/unthrottled branches of authenticateUserPasswordWithThrottle
+// without Postgres. The bucket result is controlled per-call via the queue.
+const sharedBucketResults: Array<
+  | { throttled: false; bucket: { count: number; resetAt: number } }
+  | { throttled: true; retryAfter: number }
+> = [];
+let clearSharedCalls = 0;
+
+mock.module("@hootifactory/auth", () => ({
+  authenticateUserPassword: async () => null,
+  consumeSharedAuthThrottleBucket: async () => {
+    const next = sharedBucketResults.shift();
+    if (!next) throw new Error("no shared throttle bucket result queued");
+    return next;
+  },
+  clearSharedAuthThrottleBucket: async () => {
+    clearSharedCalls += 1;
+  },
+}));
+
+const {
+  authenticateUserPasswordWithThrottle,
   currentThrottleBucket,
   loginIdentityThrottleKey,
   loginThrottleKey,
@@ -9,7 +32,7 @@ import {
   registrationEmailThrottleKey,
   registrationUsernameThrottleKey,
   retryAfterSeconds,
-} from "./auth-throttle";
+} = await import("./auth-throttle");
 
 // DB-backed throttle behaviour lives in auth-throttle.integration.test.ts; these
 // cover the pure helpers and stay hermetic.
@@ -61,5 +84,59 @@ describe("auth throttle helpers", () => {
   test("calculates retry-after seconds with a minimum of one", () => {
     expect(retryAfterSeconds({ count: 5, resetAt: 10_100 }, 10_000)).toBe(1);
     expect(retryAfterSeconds({ count: 5, resetAt: 15_100 }, 10_000)).toBe(6);
+  });
+});
+
+describe("authenticateUserPasswordWithThrottle", () => {
+  test("rejects throttled attempts before running verify (#213)", async () => {
+    // Identity bucket reports throttled on the very first check.
+    sharedBucketResults.length = 0;
+    sharedBucketResults.push({ throttled: true, retryAfter: 42 });
+    clearSharedCalls = 0;
+
+    let verifyCalls = 0;
+    const verify = async () => {
+      verifyCalls += 1;
+      // Even a correct guess must not authenticate while throttled.
+      return { kind: "user" as const, userId: "user_1", username: "victim" };
+    };
+
+    const result = await authenticateUserPasswordWithThrottle(
+      "victim",
+      "right-password",
+      "203.0.113.10",
+      verify,
+    );
+
+    // No argon2id evaluation happens on throttled attempts, so the brute-force
+    // budget bounds the number of password guesses.
+    expect(verifyCalls).toBe(0);
+    expect(clearSharedCalls).toBe(0);
+    expect(result).toEqual({ kind: "throttled", retryAfter: 42 });
+  });
+
+  test("runs verify when within the throttle budget", async () => {
+    // Identity + client buckets both report not throttled.
+    sharedBucketResults.length = 0;
+    sharedBucketResults.push(
+      { throttled: false, bucket: { count: 1, resetAt: 1_000 } },
+      { throttled: false, bucket: { count: 1, resetAt: 1_000 } },
+    );
+
+    let verifyCalls = 0;
+    const verify = async () => {
+      verifyCalls += 1;
+      return null;
+    };
+
+    const result = await authenticateUserPasswordWithThrottle(
+      "user",
+      "wrong",
+      "203.0.113.11",
+      verify,
+    );
+
+    expect(verifyCalls).toBe(1);
+    expect(result).toMatchObject({ kind: "invalid", failure: { count: 1 } });
   });
 });
