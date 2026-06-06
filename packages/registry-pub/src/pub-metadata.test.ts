@@ -3,6 +3,7 @@ import {
   buildPubPackageListing,
   buildPubVersionEntry,
   comparePubVersions,
+  isPrereleasePubVersion,
   pubArchiveFile,
   pubArchiveUrl,
 } from "./pub-metadata";
@@ -66,6 +67,29 @@ describe("Pub metadata", () => {
     });
     expect(listing?.latest.version).toBe("1.5.0");
     expect(listing?.versions.map((v) => v.version)).toEqual(["1.0.0", "1.5.0", "2.0.0-dev.1"]);
+  });
+
+  test("treats build metadata with a hyphen as stable, not a prerelease", () => {
+    expect(isPrereleasePubVersion("1.0.0+2026-06-06")).toBe(false);
+    expect(isPrereleasePubVersion("1.5.0+build-7")).toBe(false);
+    expect(isPrereleasePubVersion("1.0.0-beta")).toBe(true);
+    expect(isPrereleasePubVersion("1.0.0-beta+build-7")).toBe(true);
+  });
+
+  test("listing picks the higher stable build-metadata version as latest", () => {
+    const build = (version: string) =>
+      buildPubVersionEntry({
+        packageName: "demo",
+        version,
+        metadata: meta(version),
+        baseUrl: "https://reg.test",
+        mountPath: "pub/private",
+      });
+    const listing = buildPubPackageListing({
+      packageName: "demo",
+      versions: [build("1.0.0"), build("1.5.0+build-7")],
+    });
+    expect(listing?.latest.version).toBe("1.5.0+build-7");
   });
 
   test("listing returns null when there are no versions", () => {
