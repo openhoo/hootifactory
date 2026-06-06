@@ -45,9 +45,17 @@ export interface ChocolateyVersionMeta {
   listed?: boolean;
 }
 
-const ChocolateyDependencySchema = z.strictObject({
+// The OData v2 feed serializes a dependency set as `id:range:tfm` entries
+// joined by `|` (see `encodeDependencies`). `:` and `|` are therefore reserved
+// structural delimiters with no escape mechanism in that grammar, and a valid
+// NuGet version range never contains them. Reject ranges carrying either so a
+// crafted range cannot inject forged/malformed `<d:Dependencies>` entries.
+export const ChocolateyDependencySchema = z.strictObject({
   id: ChocolateyIdSchema,
-  range: z.string().max(512),
+  range: z
+    .string()
+    .max(512)
+    .refine((value) => !/[:|]/.test(value), "dependency range must not contain ':' or '|'"),
 });
 
 export const ChocolateyVersionMetaSchema = z.strictObject({

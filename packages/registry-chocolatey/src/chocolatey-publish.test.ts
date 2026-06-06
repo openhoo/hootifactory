@@ -90,6 +90,27 @@ describe("Chocolatey publish request parsing", () => {
     expect(result.plan.version).toBe("1.0.0");
   });
 
+  test("rejects a nuspec whose dependency range carries reserved OData delimiters", async () => {
+    // `:`/`|` in a range would forge extra `id:range:tfm` entries in the feed's
+    // `<d:Dependencies>` string; reject at publish so it is never persisted.
+    const bytes = makeStoredZip(
+      "evil.nuspec",
+      `<package><metadata><id>evil</id><version>1.0.0</version>` +
+        `<title>evil</title><authors>Author</authors>` +
+        `<dependencies><dependency id="chocolatey" version="[1.0,):|forged:[9.9,)" /></dependencies>` +
+        `</metadata></package>`,
+    );
+    const req = new Request("https://registry.test/chocolatey/private/api/v2/package", {
+      method: "PUT",
+      headers: { "content-type": "application/octet-stream" },
+      body: bytes,
+    });
+    const result = await parseChocolateyPublishRequest(req);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected error");
+    expect(result.error.status).toBe(400);
+  });
+
   test("rejects a body without a parseable nuspec", async () => {
     const req = new Request("https://registry.test/chocolatey/private/api/v2/package", {
       method: "PUT",
