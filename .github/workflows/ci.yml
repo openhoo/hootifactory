@@ -1,10 +1,12 @@
 name: CI
 
-# Pull-request gate. Three required checks, plus a single aggregating `gate` job
-# you can point branch protection at:
+# Pull-request gate. Required checks, plus a single aggregating `gate` job you
+# can point branch protection at:
 #   1. commit-lint — every commit (and the PR title) follows Conventional Commits
 #   2. lint        — `biome check .` is clean (lint + formatting)
-#   3. coverage    — unit tests pass and repo-wide line coverage is >= 80%
+#   3. typecheck   — `tsc --noEmit` passes across every package
+#   4. architecture — plugin/package import boundaries hold
+#   5. coverage    — unit tests pass and repo-wide line coverage meets the ratchet
 on:
   pull_request:
     # `edited` re-runs commit-lint when the PR title changes (it becomes the

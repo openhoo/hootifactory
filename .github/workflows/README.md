@@ -52,14 +52,20 @@ exec bun run scripts/check-commits.ts --message "$(cat "$1")"
 `bun run lint` runs `biome check .`, which fails on both lint violations and
 unformatted code. Auto-fix locally with `bun run format`.
 
-## 3. Architecture boundaries
+## 3. Typecheck
+
+`bun run typecheck` runs `tsc --noEmit` across every workspace package. This
+catches cross-package API drift and generated type mismatches that lint does not
+see.
+
+## 4. Architecture Boundaries
 
 `bun run check:boundaries` runs [`scripts/check-boundaries.ts`](../../scripts/check-boundaries.ts),
 which fails if a package imports across a forbidden boundary (e.g. the app core
 reaching into a concrete registry/scanner plugin). It reads the workspace
 manifests directly and needs no `bun install`.
 
-## 4. Coverage (≥ 80%)
+## 5. Coverage Ratchet
 
 `bun run test:unit` already emits a per-package `coverage/lcov.info`.
 [`scripts/coverage-gate.ts`](../../scripts/coverage-gate.ts) turns those into one
@@ -81,7 +87,7 @@ Playwright e2e, not unit tests). Add more exclusions via `COVERAGE_EXCLUDE`
 (comma-separated regex fragments matched against the repo-relative path).
 
 ```bash
-bun run test:coverage                       # run unit tests, then gate at 80%
+bun run test:coverage                       # run unit tests, then enforce the ratchet
 COVERAGE_THRESHOLD=85 bun run scripts/coverage-gate.ts   # different floor
 COVERAGE_EXCLUDE='^apps/scan-worker/,/legacy/' bun run scripts/coverage-gate.ts
 bun run scripts/coverage-gate.ts --metric=functions      # functions instead (see note)

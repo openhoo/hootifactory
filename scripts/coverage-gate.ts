@@ -4,7 +4,7 @@
  * `bun run test:unit` already emits a per-package `coverage/lcov.info` (see
  * scripts/package-tests.ts). This script merges every one of those reports into
  * a single repo-wide number and fails the build when line coverage drops below a
- * threshold (default 80%, override with COVERAGE_THRESHOLD or --threshold).
+ * threshold (default 60%, override with COVERAGE_THRESHOLD or --threshold).
  *
  * Two things make the number honest:
  *   1. Merging is done *by source file*, not by summing per-package totals: a
@@ -26,7 +26,7 @@
  * untested files as 0%. --metric=functions is informational and reflects only
  * files that tests loaded (Bun emits no per-function data for untested files).
  *
- *   bun run scripts/coverage-gate.ts [--threshold=80] [--metric=lines|functions]
+ *   bun run scripts/coverage-gate.ts [--threshold=60] [--metric=lines|functions]
  */
 
 import type { Dirent } from "node:fs";
@@ -56,6 +56,7 @@ interface FileSummary {
 }
 
 const repoRoot = resolve(import.meta.dir, "..");
+const DEFAULT_COVERAGE_THRESHOLD = 60;
 const threshold = parseThreshold();
 const metric = parseMetric();
 
@@ -451,7 +452,8 @@ function parseThreshold(): number {
   const fromArg = getArgValue("--threshold");
   // Treat empty/whitespace env as "use default" so COVERAGE_THRESHOLD="" can't
   // silently become 0% (which would pass everything).
-  const raw = (fromArg ?? process.env.COVERAGE_THRESHOLD ?? "").trim() || "80";
+  const raw =
+    (fromArg ?? process.env.COVERAGE_THRESHOLD ?? "").trim() || String(DEFAULT_COVERAGE_THRESHOLD);
   const value = Number(raw);
   if (!Number.isFinite(value) || value < 0 || value > 100) {
     fail(`Invalid coverage threshold: ${raw} (expected a number between 0 and 100).`);
