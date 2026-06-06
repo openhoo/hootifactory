@@ -36,8 +36,7 @@ export class MavenAdapter implements RegistryPlugin {
           osvEcosystem: "Maven",
           purlType: "maven",
         }),
-        referencedDigests: (metadata) =>
-          typeof metadata.pomDigest === "string" ? [metadata.pomDigest] : [],
+        referencedDigests: (metadata) => mavenReferencedDigests(metadata),
       },
     })
     .capabilities(this.capabilities)
@@ -122,6 +121,16 @@ export class MavenAdapter implements RegistryPlugin {
       blocked: () => new Response("artifact blocked by scan policy", { status: 403 }),
     });
   }
+}
+
+/** CAS blob digests a version owns: the POM plus every content-bearing binary. */
+function mavenReferencedDigests(metadata: Record<string, unknown>): string[] {
+  const out = new Set<string>();
+  if (typeof metadata.pomDigest === "string") out.add(metadata.pomDigest);
+  if (Array.isArray(metadata.binaryDigests)) {
+    for (const d of metadata.binaryDigests) if (typeof d === "string") out.add(d);
+  }
+  return [...out];
 }
 
 function mavenDependencyGraph(metadata: Record<string, unknown>): Record<string, string> {

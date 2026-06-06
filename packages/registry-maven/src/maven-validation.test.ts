@@ -3,6 +3,7 @@ import {
   contentTypeForPath,
   isPrimaryPom,
   isSafeMavenPath,
+  isScannableMavenArtifact,
   mavenPackageForPath,
   parseMavenCoordinates,
 } from "./maven-validation";
@@ -23,6 +24,22 @@ describe("maven path validation", () => {
     expect(contentTypeForPath("a/b-1.0.pom")).toBe("application/xml");
     expect(contentTypeForPath("a/b-1.0.jar.sha1")).toBe("text/plain");
     expect(contentTypeForPath("a/b-1.0.unknown")).toBe("application/octet-stream");
+  });
+
+  test("flags content-bearing artifacts as scannable, excludes sidecars", () => {
+    for (const ext of ["jar", "war", "ear", "aar", "module"]) {
+      expect(isScannableMavenArtifact(`com/example/app/1.0.0/app-1.0.0.${ext}`)).toBe(true);
+    }
+    for (const path of [
+      "com/example/app/1.0.0/app-1.0.0.pom",
+      "com/example/app/1.0.0/app-1.0.0.jar.sha1",
+      "com/example/app/1.0.0/app-1.0.0.jar.md5",
+      "com/example/app/1.0.0/app-1.0.0.jar.sha256",
+      "com/example/app/1.0.0/app-1.0.0.jar.asc",
+      "com/example/app/maven-metadata.xml",
+    ]) {
+      expect(isScannableMavenArtifact(path)).toBe(false);
+    }
   });
 });
 

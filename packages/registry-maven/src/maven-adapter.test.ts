@@ -79,6 +79,18 @@ describe("MavenAdapter", () => {
     expect(res.status).toBe(200);
   });
 
+  test("references the pom and every binary digest a version owns", () => {
+    const referenced = new MavenAdapter().scan?.referencedDigests;
+    expect(referenced?.({})).toEqual([]);
+    expect(referenced?.({ pomDigest: "sha256:pom" })).toEqual(["sha256:pom"]);
+    expect(
+      referenced?.({
+        pomDigest: "sha256:pom",
+        binaryDigests: ["sha256:jar", "sha256:war", "sha256:jar", 42],
+      }),
+    ).toEqual(["sha256:pom", "sha256:jar", "sha256:war"]);
+  });
+
   test("raises not-found for a missing file (dispatch maps it to 404)", async () => {
     const ctx = createTestRegistryContext();
     const handling = new MavenAdapter().handle(
