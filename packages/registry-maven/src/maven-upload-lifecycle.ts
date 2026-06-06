@@ -43,7 +43,8 @@ export async function handleMavenUpload(
       sizeBytes: stored.size,
     });
     // Scan the bytes that actually carry executable code (jar/war/ear/aar/.module);
-    // checksum/signature sidecars (.sha1/.md5/.asc) and metadata files carry none.
+    // checksum/signature sidecars (.sha1/.md5/.sha256/.sha512/.asc) and metadata
+    // files carry none.
     if (coords && isScannableMavenArtifact(path)) {
       const name = `${coords.groupId}:${coords.artifactId}`;
       await ctx.enqueueScan({
@@ -106,6 +107,10 @@ export async function handleMavenUpload(
  * this, regardless of order). Maven uploads each file in its own PUT, so the
  * `.pom` version may not exist yet when the binary lands; in that case there is
  * no version row to annotate and the digest is simply not tracked for retention.
+ *
+ * The append runs under a row-locked `patch` so concurrent binary uploads to the
+ * same version (e.g. a jar and a war) can't clobber each other's digests, and a
+ * soft-deleted version is left untouched.
  */
 async function referenceBinaryDigest(
   ctx: RegistryRequestContext,
@@ -115,12 +120,22 @@ async function referenceBinaryDigest(
   const name = `${coords.groupId}:${coords.artifactId}`;
   const pkg = await ctx.data.packages.findByName(name);
   if (!pkg) return;
-  const row = await ctx.data.versions.find(pkg, coords.version);
-  if (!row) return;
-  const metadata = asJsonRecord(row.metadata) ?? {};
-  await ctx.data.versions.updateMetadata(row, {
-    ...metadata,
-    binaryDigests: mergeBinaryDigest(metadata.binaryDigests, digest),
+  await ctx.data.versions.patch({
+    package: pkg,
+    version: coords.version,
+    patch: (row) => {
+      if (!row || row.deletedAt) return { result: undefined };
+      const metadata = asJsonRecord(row.metadata) ?? {};
+      return {
+        update: {
+          metadata: {
+            ...metadata,
+            binaryDigests: mergeBinaryDigest(metadata.binaryDigests, digest),
+          },
+        },
+        result: undefined,
+      };
+    },
   });
 }
 

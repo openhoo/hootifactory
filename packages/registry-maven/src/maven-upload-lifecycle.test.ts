@@ -163,21 +163,14 @@ describe("handleMavenUpload", () => {
     const { ctx } = setup();
     let updated: Record<string, unknown> | undefined;
     ctx.data.packages.findByName = async () => packageRow("com.example:app");
-    ctx.data.versions.find = async () => ({
-      id: "ver_1",
-      orgId: "org_1",
-      packageId: "pkg_1",
-      version: "1.0.0",
-      metadata: { pomDigest: `sha256:${"p".repeat(64)}` },
-      sizeBytes: 10,
-      publishedByUserId: null,
-      publishedByTokenId: null,
-      deletedAt: null,
-      createdAt: new Date("2026-01-01T00:00:00.000Z"),
-      updatedAt: new Date("2026-01-01T00:00:00.000Z"),
-    });
-    ctx.data.versions.updateMetadata = async (_row, metadata) => {
-      updated = metadata;
+    ctx.data.versions.patch = async ({ patch }) => {
+      const result = patch({
+        id: "ver_1",
+        metadata: { pomDigest: `sha256:${"p".repeat(64)}` },
+        deletedAt: null,
+      });
+      updated = result.update?.metadata;
+      return result.result;
     };
     await handleMavenUpload(
       "com/example/app/1.0.0/app-1.0.0.jar",
@@ -189,6 +182,30 @@ describe("handleMavenUpload", () => {
     );
     expect(updated?.binaryDigests).toEqual([stored.digest]);
     expect(updated?.pomDigest).toBe(`sha256:${"p".repeat(64)}`);
+  });
+
+  test("leaves a soft-deleted version untouched when its binary lands", async () => {
+    const { ctx } = setup();
+    let patched = false;
+    ctx.data.packages.findByName = async () => packageRow("com.example:app");
+    ctx.data.versions.patch = async ({ patch }) => {
+      const result = patch({
+        id: "ver_1",
+        metadata: { pomDigest: `sha256:${"p".repeat(64)}` },
+        deletedAt: new Date("2026-01-02T00:00:00.000Z"),
+      });
+      patched = result.update !== undefined;
+      return result.result;
+    };
+    await handleMavenUpload(
+      "com/example/app/1.0.0/app-1.0.0.jar",
+      new Request("https://r.test/maven/o/r/com/example/app/1.0.0/app-1.0.0.jar", {
+        method: "PUT",
+        body: new Uint8Array([1, 2, 3]),
+      }),
+      ctx,
+    );
+    expect(patched).toBe(false);
   });
 
   test("stores maven-metadata.xml as a plain file", async () => {
