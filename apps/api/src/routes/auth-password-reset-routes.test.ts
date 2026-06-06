@@ -95,6 +95,21 @@ describe("password reset request timing normalization (#223)", () => {
     expect(dummyPasswordResetWork).not.toHaveBeenCalled();
   });
 
+  test("unknown email still returns ok when the dummy work throws", async () => {
+    findPasswordResetUser.mockResolvedValueOnce(null);
+    dummyPasswordResetWork.mockRejectedValueOnce(new Error("transient db error"));
+    const router = appWithRoutes();
+
+    const response = await router.fetch(requestReset("missing@example.test"));
+
+    // A failure in the throwaway work must not surface as a 500 — that asymmetry
+    // (user branch swallows errors, no-user branch 500s) would re-open the
+    // enumeration side channel #223 closes.
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ ok: true });
+    expect(dummyPasswordResetWork).toHaveBeenCalledTimes(1);
+  });
+
   test("both branches always return the same neutral body", async () => {
     const router = appWithRoutes();
 
