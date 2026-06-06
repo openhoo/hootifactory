@@ -66,9 +66,9 @@ describe("Pub tarball reader", () => {
   });
 
   test("rejects a decompression bomb instead of allocating unbounded", () => {
-    // A small gzip of 64 MiB of zeros: compresses to a few hundred KB but would
-    // expand far past the 8 MiB output cap. Must return null, never materialize it.
-    const bomb = Bun.gzipSync(new Uint8Array(64 * 1024 * 1024));
+    // A small gzip of 16 MiB of zeros: compresses to a few KB but expands past the
+    // 8 MiB output cap. Must return null, never materialize the inflated bytes.
+    const bomb = Bun.gzipSync(new Uint8Array(16 * 1024 * 1024));
     expect(bomb.byteLength).toBeLessThan(1024 * 1024);
     expect(extractPubspecYaml(bomb)).toBeNull();
   });
