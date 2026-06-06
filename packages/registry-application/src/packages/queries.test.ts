@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, mock, test } from "bun:test";
 import {
   listLivePackageVersionNames,
   listLivePackageVersions,
@@ -59,5 +59,69 @@ describe("live version reads use a total, unique ORDER BY", () => {
   test("listLivePackageVersionNames default ends in the id tiebreak", () => {
     const clause = orderByClause(listLivePackageVersionNames(PKG));
     expect(clause.indexOf('"id"')).toBeGreaterThan(clause.indexOf("created_at"));
+  });
+});
+
+/**
+ * The dist-tag set and the denormalized packages.latestVersion are two reads of
+ * the same logical pointer, so replaceDistTags must prune + upsert + write
+ * latestVersion atomically inside a single locked transaction (issue #231).
+ * Asserting via a mocked db proves the three statements run on the transaction
+ * handle — not as independent top-level writes that a concurrent reader/writer
+ * could interleave — without needing a live database.
+ */
+describe("replaceDistTags writes atomically inside one transaction", () => {
+  afterEach(() => {
+    mock.restore();
+  });
+
+  /** A chainable, awaitable drizzle stub that records the builder methods it sees. */
+  function recordingBuilder(log: string[]) {
+    const handler: ProxyHandler<(...args: unknown[]) => unknown> = {
+      get(_target, prop) {
+        if (prop === "then") {
+          return (resolve: (value: unknown) => unknown) => resolve([]);
+        }
+        log.push(String(prop));
+        return builder;
+      },
+      apply() {
+        return builder;
+      },
+    };
+    const builder: unknown = new Proxy(() => {}, handler);
+    return builder as Record<string, (...args: unknown[]) => unknown>;
+  }
+
+  test("runs the lock, prune, upsert, and latestVersion update on the transaction handle", async () => {
+    const real = await import("@hootifactory/db");
+    const txLog: string[] = [];
+    let transactionCalls = 0;
+    const tx = recordingBuilder(txLog);
+
+    await mock.module("@hootifactory/db", () => ({
+      ...real,
+      db: {
+        transaction: (cb: (tx: unknown) => Promise<unknown>) => {
+          transactionCalls += 1;
+          return cb(tx);
+        },
+      },
+    }));
+
+    const { replaceDistTags } = await import("./queries");
+    await replaceDistTags(PKG, new Map([["latest", { version: "1.0.0", versionId: "v1" }]]));
+
+    // Exactly one transaction wraps the whole operation.
+    expect(transactionCalls).toBe(1);
+    // The packages row is locked FOR UPDATE before any tag write.
+    expect(txLog).toContain("select");
+    expect(txLog).toContain("for");
+    // All three mutations run on the transaction handle, not on a bare db.
+    expect(txLog).toContain("delete");
+    expect(txLog).toContain("insert");
+    expect(txLog).toContain("update");
+    // The lock is acquired before the mutations.
+    expect(txLog.indexOf("for")).toBeLessThan(txLog.indexOf("delete"));
   });
 });
