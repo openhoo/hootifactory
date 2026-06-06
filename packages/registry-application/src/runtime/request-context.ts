@@ -5,7 +5,7 @@ import {
   type ResourceRef,
 } from "@hootifactory/auth";
 import { env } from "@hootifactory/config";
-import { artifacts, db, scanOutbox } from "@hootifactory/db";
+import { artifacts, db, ne, scanOutbox } from "@hootifactory/db";
 import { addSpanEvent, logger, withSpan } from "@hootifactory/observability";
 import type {
   EnqueueScanInput,
@@ -16,12 +16,31 @@ import { ARTIFACT_STATE, SCAN_OUTBOX_STATUS } from "@hootifactory/scan-core";
 import { createRegistryDataService } from "./data-service";
 
 /**
+ * Guard for the scan_outbox conflict-update: only reset a row to pending when it is
+ * NOT currently being scanned. A 'processing' row is owned by a live worker, so a
+ * concurrent re-publish must not clobber it back to pending (which would spawn a
+ * duplicate scan and orphan the worker's claim). Exported for regression coverage.
+ */
+export function scanOutboxResetGuard() {
+  return ne(scanOutbox.status, SCAN_OUTBOX_STATUS.processing);
+}
+
+/**
  * Idempotently record the artifact + its single scan_outbox row for (org, repo,
  * digest), resetting the outbox to pending and clearing locked_at/last_error. This
  * is the scan-queue idempotency boundary: re-publishing the same digest re-triggers
  * a scan rather than creating duplicates. Returns the artifact id, or null if no
  * row came back (which should not happen for an upsert with a RETURNING clause).
  * Not gated by SCANNER_ENABLED — the gate lives in enqueueArtifactScan.
+ *
+ * The outbox reset is guarded by `status <> 'processing'`: a re-publish landing
+ * while a worker is mid-scan must NOT clobber the in-flight 'processing' row back
+ * to 'pending'/clear locked_at, which would let a second worker claim it (duplicate
+ * concurrent scans) and let the first worker's terminal write race the reset. The
+ * in-flight attempt instead runs to completion and finalizes itself (the worker's
+ * status-aware terminal write matches on its claimed attempt); the next publish or
+ * reclaim re-triggers the rescan. This trades a slightly stale verdict for the
+ * absence of duplicate scans and clobbered terminal writes.
  */
 export async function recordArtifactScanOutbox(
   repo: ResolvedRepo,
@@ -57,6 +76,10 @@ export async function recordArtifactScanOutbox(
       })
       .onConflictDoUpdate({
         target: [scanOutbox.artifactId],
+        // Only reset a row that is not currently being scanned (see
+        // scanOutboxResetGuard). The pending re-scan a re-publish of a 'processing'
+        // row requests is recovered via reclaimStuckScans / the next publish.
+        setWhere: scanOutboxResetGuard(),
         set: {
           status: SCAN_OUTBOX_STATUS.pending,
           nextAttemptAt: new Date(),

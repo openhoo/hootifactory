@@ -15,7 +15,11 @@ import { loadConfiguredRegistryPlugins } from "@hootifactory/registry-runtime";
 import { SCAN_OUTBOX_STATUS } from "@hootifactory/scan-core";
 import { loadConfiguredScanners } from "@hootifactory/scanner-runtime";
 import { processScan, recordScanFailure, scannerRuntimeFromEnv } from "./pipeline";
-import { type ClaimedScanIntent, claimedScanIntentsFromExecute } from "./scan-outbox-rows";
+import {
+  type ClaimedScanIntent,
+  claimedAttemptFilter,
+  claimedScanIntentsFromExecute,
+} from "./scan-outbox-rows";
 
 const workerRole = "scan-worker";
 
@@ -67,7 +71,12 @@ async function claimScanIntents(limit: number): Promise<ClaimedScanIntent[]> {
   return claimedScanIntentsFromExecute(result);
 }
 
-async function markSucceeded(intentId: string): Promise<void> {
+// Terminal writes are gated by claimedAttemptFilter (optimistic concurrency): a
+// worker finalizes only the exact attempt it claimed. If a re-publish reset the row
+// to 'pending' and another worker re-claimed it (advancing attempts), or a reclaim
+// moved it out of 'processing', the filter no longer matches, the UPDATE is a no-op,
+// and a stale worker cannot clobber the newer attempt or a re-requested rescan.
+async function markSucceeded(intent: ClaimedScanIntent): Promise<void> {
   await db
     .update(scanOutbox)
     .set({
@@ -76,7 +85,7 @@ async function markSucceeded(intentId: string): Promise<void> {
       lastError: null,
       updatedAt: new Date(),
     })
-    .where(eq(scanOutbox.id, intentId));
+    .where(claimedAttemptFilter(intent));
 }
 
 async function markFailed(intent: ClaimedScanIntent, err: unknown): Promise<void> {
@@ -91,7 +100,7 @@ async function markFailed(intent: ClaimedScanIntent, err: unknown): Promise<void
       nextAttemptAt: new Date(Date.now() + Math.min(60_000, 1_000 * 2 ** intent.attempts)),
       updatedAt: new Date(),
     })
-    .where(eq(scanOutbox.id, intent.id));
+    .where(claimedAttemptFilter(intent));
 }
 
 function sleep(ms: number): Promise<void> {
@@ -243,7 +252,7 @@ while (!lifecycle.isShuttingDown()) {
       async () => {
         try {
           await processScan(intent.artifactId, scannerRuntime);
-          await markSucceeded(intent.id);
+          await markSucceeded(intent);
         } catch (err) {
           logger.error("scan job failed", {
             artifactId: intent.artifactId,

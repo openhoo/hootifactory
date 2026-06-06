@@ -15,6 +15,7 @@ let repo: ResolvedRepo;
 
 const DIGEST_A = "sha256:1111111111111111111111111111111111111111111111111111111111111111";
 const DIGEST_B = "sha256:2222222222222222222222222222222222222222222222222222222222222222";
+const DIGEST_C = "sha256:3333333333333333333333333333333333333333333333333333333333333333";
 
 async function outboxFor(digest: string) {
   const rows = await db
@@ -62,7 +63,7 @@ afterAll(async () => {
 });
 
 describe("recordArtifactScanOutbox idempotency (DB)", () => {
-  test("re-enqueueing the same digest keeps one outbox row and resets it to pending", async () => {
+  test("re-enqueueing a non-processing digest keeps one outbox row and resets it to pending", async () => {
     const first = await recordArtifactScanOutbox(repo, {
       digest: DIGEST_A,
       mediaType: "application/octet-stream",
@@ -71,10 +72,11 @@ describe("recordArtifactScanOutbox idempotency (DB)", () => {
     });
     expect(first?.artifactId).toBeString();
 
-    // Simulate the worker having claimed the row before the re-publish.
+    // Simulate a finished scan that left the row terminal+dirty before the re-publish.
+    const lockedAt = new Date();
     await db
       .update(scanOutbox)
-      .set({ status: "processing", lockedAt: new Date(), lastError: "boom" })
+      .set({ status: "succeeded", lockedAt, lastError: "boom" })
       .where(eq(scanOutbox.artifactId, first!.artifactId));
 
     const second = await recordArtifactScanOutbox(repo, {
@@ -92,6 +94,39 @@ describe("recordArtifactScanOutbox idempotency (DB)", () => {
     expect(rows[0]?.status).toBe("pending");
     expect(rows[0]?.lockedAt).toBeNull();
     expect(rows[0]?.lastError).toBeNull();
+  });
+
+  test("re-enqueueing a processing digest does NOT clobber the in-flight scan (regression #221)", async () => {
+    const first = await recordArtifactScanOutbox(repo, {
+      digest: DIGEST_C,
+      mediaType: "application/octet-stream",
+      name: "pkg",
+      version: "1.0.0",
+    });
+    expect(first?.artifactId).toBeString();
+
+    // A worker has claimed the row and is mid-scan when the re-publish lands.
+    const lockedAt = new Date();
+    await db
+      .update(scanOutbox)
+      .set({ status: "processing", lockedAt, lastError: null })
+      .where(eq(scanOutbox.artifactId, first!.artifactId));
+
+    const second = await recordArtifactScanOutbox(repo, {
+      digest: DIGEST_C,
+      mediaType: "application/octet-stream",
+      name: "pkg",
+      version: "1.0.1",
+    });
+    expect(second?.artifactId).toBe(first!.artifactId);
+    expect(await artifactRows(DIGEST_C)).toBe(1);
+
+    // The setWhere guard must leave the in-flight 'processing' attempt untouched so a
+    // second worker cannot claim it and the first worker's locked_at still matches.
+    const rows = await outboxFor(DIGEST_C);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.status).toBe("processing");
+    expect(rows[0]?.lockedAt?.getTime()).toBe(lockedAt.getTime());
   });
 
   test("a different digest gets its own distinct outbox row", async () => {

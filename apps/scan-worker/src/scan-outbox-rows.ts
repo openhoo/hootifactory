@@ -1,4 +1,6 @@
 import { z } from "@hootifactory/core";
+import { and, eq, scanOutbox } from "@hootifactory/db";
+import { SCAN_OUTBOX_STATUS } from "@hootifactory/scan-core";
 
 const ExecuteRowsSchema = z.looseObject({
   rows: z.array(z.unknown()),
@@ -14,6 +16,16 @@ const ClaimedScanIntentRowSchema = z.looseObject({
 export interface ClaimedScanIntent {
   id: string;
   artifactId: string;
+  /**
+   * The attempt number stamped when this attempt was claimed (claimScanIntents
+   * increments it on every claim, so it is strictly monotonic per row). It doubles
+   * as the optimistic-concurrency claim token: a terminal write finalizes a row only
+   * while it is still 'processing' at this exact attempt. If a re-publish reset the
+   * row to 'pending' and a worker re-claimed it, attempts has advanced, so the prior
+   * worker's terminal UPDATE matches nothing and cannot clobber the new attempt.
+   * Unlike locked_at, attempts is an integer and so is immune to the microsecond vs
+   * millisecond precision loss that breaks timestamptz equality round-trips.
+   */
   attempts: number;
 }
 
@@ -43,4 +55,21 @@ export function claimedScanIntentsFromExecute(result: unknown): ClaimedScanInten
     const claimed = claimedRow(row);
     return claimed ? [claimed] : [];
   });
+}
+
+/**
+ * Build the optimistic-concurrency WHERE clause for a terminal scan-outbox write.
+ * A worker may finalize a row only if it is still the exact attempt it claimed:
+ * same id, still 'processing', and the same attempts value it was stamped with at
+ * claim time. If a re-publish reset the row to 'pending' and another worker
+ * re-claimed it (advancing attempts), or a reclaim moved it out of 'processing',
+ * this filter matches nothing and the UPDATE is a no-op, so a stale worker cannot
+ * clobber a newer attempt or a re-requested rescan.
+ */
+export function claimedAttemptFilter(intent: ClaimedScanIntent) {
+  return and(
+    eq(scanOutbox.id, intent.id),
+    eq(scanOutbox.status, SCAN_OUTBOX_STATUS.processing),
+    eq(scanOutbox.attempts, intent.attempts),
+  );
 }
