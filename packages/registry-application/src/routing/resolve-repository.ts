@@ -1,3 +1,4 @@
+import { trimChar } from "@hootifactory/core";
 import { db, inArray, repositories } from "@hootifactory/db";
 import type { ResolvedRepo } from "@hootifactory/registry";
 
@@ -40,14 +41,4 @@ export async function resolveRepository(pathname: string): Promise<RepoResolutio
 
   const rest = `/${norm.slice(best.mountPath.length).replace(/^\/+/, "")}`;
   return { repo: best, rest };
-}
-
-// Trim a leading/trailing character without a backtracking-prone anchored regex
-// (`/\/+$/`), which CodeQL flags as polynomial ReDoS.
-function trimChar(value: string, ch: string): string {
-  let start = 0;
-  let end = value.length;
-  while (start < end && value[start] === ch) start++;
-  while (end > start && value[end - 1] === ch) end--;
-  return value.slice(start, end);
 }

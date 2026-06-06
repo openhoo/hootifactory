@@ -7,6 +7,7 @@ import {
   type ScannerPlugin,
   safeJsonParse,
   scannerCliAvailable,
+  stripTrailingSlashes,
   z,
 } from "@hootifactory/scanner";
 
@@ -120,12 +121,3 @@ export const trivyScanner: ScannerPlugin<TrivyConfig> = {
     });
   },
 };
-
-// Trim trailing slashes without a backtracking-prone anchored regex (`/\/+$/`),
-// which CodeQL flags as polynomial ReDoS.
-function stripTrailingSlashes(value: string | undefined): string | undefined {
-  if (!value) return value;
-  let end = value.length;
-  while (end > 0 && value[end - 1] === "/") end--;
-  return value.slice(0, end);
-}

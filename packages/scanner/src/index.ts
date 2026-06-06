@@ -3,6 +3,7 @@
 export {
   BoundedLruCache,
   safeJsonParse,
+  stripTrailingSlashes,
   type ZodType,
   z,
 } from "@hootifactory/core";
