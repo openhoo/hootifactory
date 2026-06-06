@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { extractPubspecYaml, readTarEntry } from "./dart-tarball";
+import { extractPubspecYaml, readTarEntry } from "./pub-tarball";
 
 /** Build a single USTAR file entry (512 header + padded data) for `name`. */
 function tarEntry(name: string, body: string): Uint8Array<ArrayBuffer> {
@@ -42,7 +42,7 @@ function concat(...parts: Uint8Array[]): Uint8Array<ArrayBuffer> {
 
 const PUBSPEC = "name: demo\nversion: 1.2.3\n";
 
-describe("Dart tarball reader", () => {
+describe("Pub tarball reader", () => {
   test("finds a named member among other entries", () => {
     const tar = concat(
       tarEntry("README.md", "hello\n"),

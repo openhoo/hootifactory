@@ -5,9 +5,9 @@ import type {
   RouteMatch,
 } from "@hootifactory/registry";
 import { createTestRegistryContext } from "@hootifactory/registry/testing";
-import { DartAdapter } from "./dart-adapter";
-import { concat, tarEntry } from "./dart-tarball.test";
-import type { DartVersionMeta } from "./dart-validation";
+import { PubAdapter } from "./pub-adapter";
+import { concat, tarEntry } from "./pub-tarball.test";
+import type { PubVersionMeta } from "./pub-validation";
 
 const pkg = {
   id: "pkg_1",
@@ -21,7 +21,7 @@ const pkg = {
   updatedAt: new Date("2026-01-01T00:00:00.000Z"),
 } satisfies RegistryPackageRow;
 
-function meta(version: string): DartVersionMeta {
+function meta(version: string): PubVersionMeta {
   return {
     archiveDigest: `sha256:${"a".repeat(64)}`,
     archiveSha256: "c".repeat(64),
@@ -30,7 +30,7 @@ function meta(version: string): DartVersionMeta {
   };
 }
 
-function versionRow(version: string, metadata: DartVersionMeta): RegistryPackageVersionRow {
+function versionRow(version: string, metadata: PubVersionMeta): RegistryPackageVersionRow {
   return {
     id: `ver_${version}`,
     orgId: "org_1",
@@ -57,7 +57,7 @@ function pubArchive(name: string, version: string): Uint8Array {
 function uploadRequest(archive: Uint8Array): Request {
   const form = new FormData();
   form.append("file", new File([archive], "package.tar.gz"), "package.tar.gz");
-  return new Request("https://registry.test/dart/private/api/packages/versions/newUpload", {
+  return new Request("https://registry.test/pub/private/api/packages/versions/newUpload", {
     method: "POST",
     body: form,
   });
@@ -97,13 +97,13 @@ const uploadMatch = {
 
 function testContext() {
   const ctx = createTestRegistryContext();
-  ctx.repo = { ...ctx.repo, moduleId: "dart", mountPath: "dart/private" };
+  ctx.repo = { ...ctx.repo, moduleId: "pub", mountPath: "pub/private" };
   return ctx;
 }
 
-describe("Dart adapter", () => {
+describe("Pub adapter", () => {
   test("declares the pub repository routes in matcher order", () => {
-    expect(new DartAdapter().routes()).toEqual([
+    expect(new PubAdapter().routes()).toEqual([
       { method: "GET", pattern: "/api/packages/versions/new", handlerId: "publishNew" },
       { method: "POST", pattern: "/api/packages/versions/newUpload", handlerId: "publishUpload" },
       {
@@ -122,7 +122,7 @@ describe("Dart adapter", () => {
   });
 
   test("emits a Bearer challenge and read/write permissions", () => {
-    const adapter = new DartAdapter();
+    const adapter = new PubAdapter();
     expect(adapter.authChallenge().header).toBe('Bearer realm="hootifactory"');
     expect(adapter.requiredPermission("GET")).toEqual({ action: "read" });
     expect(adapter.requiredPermission("POST")).toEqual({ action: "write" });
@@ -156,9 +156,9 @@ describe("Dart adapter", () => {
       return [versionRow("1.0.0", meta("1.0.0")), versionRow("1.2.3", meta("1.2.3"))];
     };
 
-    const res = await new DartAdapter().handle(
+    const res = await new PubAdapter().handle(
       listingMatch,
-      new Request("https://registry.test/dart/private/api/packages/demo"),
+      new Request("https://registry.test/pub/private/api/packages/demo"),
       ctx,
     );
     expect(res.status).toBe(200);
@@ -172,7 +172,7 @@ describe("Dart adapter", () => {
     expect(body.latest.version).toBe("1.2.3");
     expect(body.versions.map((v) => v.version)).toEqual(["1.0.0", "1.2.3"]);
     expect(body.latest.archive_url).toBe(
-      "https://registry.example.test/dart/private/api/archives/demo-1.2.3.tar.gz",
+      "https://registry.example.test/pub/private/api/archives/demo-1.2.3.tar.gz",
     );
     expect(body.latest.archive_sha256).toBe("c".repeat(64));
     expect(body.latest.pubspec).toEqual({ name: "demo", version: "1.2.3" });
@@ -180,9 +180,9 @@ describe("Dart adapter", () => {
     const etag = res.headers.get("etag");
     expect(etag).toBeTruthy();
     if (!etag) throw new Error("expected ETag");
-    const cached = await new DartAdapter().handle(
+    const cached = await new PubAdapter().handle(
       listingMatch,
-      new Request("https://registry.test/dart/private/api/packages/demo", {
+      new Request("https://registry.test/pub/private/api/packages/demo", {
         headers: { "if-none-match": etag },
       }),
       ctx,
@@ -193,9 +193,9 @@ describe("Dart adapter", () => {
   test("listing renders the pub error envelope for an unknown package", async () => {
     const ctx = testContext();
     // findByName defaults to null in the test context → no versions → not found.
-    const res = await new DartAdapter().handle(
+    const res = await new PubAdapter().handle(
       listingMatch,
-      new Request("https://registry.test/dart/private/api/packages/demo"),
+      new Request("https://registry.test/pub/private/api/packages/demo"),
       ctx,
     );
     expect(res.status).toBe(404);
@@ -217,9 +217,9 @@ describe("Dart adapter", () => {
       return versionRow("1.2.3", meta("1.2.3"));
     };
 
-    const res = await new DartAdapter().handle(
+    const res = await new PubAdapter().handle(
       versionMatch,
-      new Request("https://registry.test/dart/private/api/packages/demo/versions/1.2.3"),
+      new Request("https://registry.test/pub/private/api/packages/demo/versions/1.2.3"),
       ctx,
     );
     expect(res.status).toBe(200);
@@ -232,7 +232,7 @@ describe("Dart adapter", () => {
     };
     expect(body.version).toBe("1.2.3");
     expect(body.archive_url).toBe(
-      "https://registry.example.test/dart/private/api/archives/demo-1.2.3.tar.gz",
+      "https://registry.example.test/pub/private/api/archives/demo-1.2.3.tar.gz",
     );
     expect(body.archive_sha256).toBe("c".repeat(64));
     expect(body.pubspec).toEqual({ name: "demo", version: "1.2.3" });
@@ -243,9 +243,9 @@ describe("Dart adapter", () => {
     ctx.data.packages.findByName = async () => pkg;
     ctx.data.versions.findLive = async () => null;
 
-    const res = await new DartAdapter().handle(
+    const res = await new PubAdapter().handle(
       versionMatch,
-      new Request("https://registry.test/dart/private/api/packages/demo/versions/1.2.3"),
+      new Request("https://registry.test/pub/private/api/packages/demo/versions/1.2.3"),
       ctx,
     );
     expect(res.status).toBe(404);
@@ -269,15 +269,15 @@ describe("Dart adapter", () => {
       return true;
     };
 
-    const res = await new DartAdapter().handle(
+    const res = await new PubAdapter().handle(
       downloadMatch,
-      new Request("https://registry.test/dart/private/api/archives/demo-1.2.3.tar.gz"),
+      new Request("https://registry.test/pub/private/api/archives/demo-1.2.3.tar.gz"),
       ctx,
     );
     expect(res.status).toBe(200);
     expect(blobRefArgs).toMatchObject({
       digest: `sha256:${"a".repeat(64)}`,
-      kind: "dart_archive",
+      kind: "pub_archive",
       scope: "demo@1.2.3",
     });
     expect(await res.text()).toBe(`blob:sha256:${"a".repeat(64)}`);
@@ -285,7 +285,7 @@ describe("Dart adapter", () => {
 
   test("publish stores a new version and 303-redirects to the finish endpoint", async () => {
     const ctx = testContext();
-    const created: { name?: string; version?: string; metadata?: DartVersionMeta } = {};
+    const created: { name?: string; version?: string; metadata?: PubVersionMeta } = {};
     ctx.data.packages.findByName = async () => null;
     ctx.data.versions.exists = async () => false;
     ctx.data.packages.findOrCreate = async (input) => {
@@ -293,7 +293,7 @@ describe("Dart adapter", () => {
       return { ...pkg, name: input.name };
     };
     ctx.data.content.storeBlobWithRef = async (input) => {
-      expect(input.kind).toBe("dart_archive");
+      expect(input.kind).toBe("pub_archive");
       expect(input.scope).toBe("demo@1.2.3");
       return {
         digest: `sha256:${"d".repeat(64)}`,
@@ -305,18 +305,18 @@ describe("Dart adapter", () => {
     };
     ctx.data.versions.commitOrReleaseBlob = async (input) => {
       created.version = input.version;
-      created.metadata = input.metadata as DartVersionMeta;
+      created.metadata = input.metadata as PubVersionMeta;
       return { versionId: "ver_new" };
     };
 
-    const res = await new DartAdapter().handle(
+    const res = await new PubAdapter().handle(
       uploadMatch,
       uploadRequest(pubArchive("demo", "1.2.3")),
       ctx,
     );
     expect(res.status).toBe(303);
     expect(res.headers.get("location")).toBe(
-      "https://registry.example.test/dart/private/api/packages/versions/newUploadFinish",
+      "https://registry.example.test/pub/private/api/packages/versions/newUploadFinish",
     );
     expect(created.name).toBe("demo");
     expect(created.version).toBe("1.2.3");
@@ -329,7 +329,7 @@ describe("Dart adapter", () => {
     ctx.data.packages.findByName = async () => pkg;
     ctx.data.versions.exists = async (_pkg, version) => version === "1.2.3";
 
-    const res = await new DartAdapter().handle(
+    const res = await new PubAdapter().handle(
       uploadMatch,
       uploadRequest(pubArchive("demo", "1.2.3")),
       ctx,
@@ -342,26 +342,26 @@ describe("Dart adapter", () => {
 
   test("publishNew advertises the absolute upload url", async () => {
     const ctx = testContext();
-    const res = await new DartAdapter().handle(
+    const res = await new PubAdapter().handle(
       {
         entry: { method: "GET", pattern: "/api/packages/versions/new", handlerId: "publishNew" },
         params: {},
         path: "/api/packages/versions/new",
       },
-      new Request("https://registry.test/dart/private/api/packages/versions/new"),
+      new Request("https://registry.test/pub/private/api/packages/versions/new"),
       ctx,
     );
     const body = await res.json();
     expect(res.headers.get("content-type")).toBe("application/vnd.pub.v2+json");
     expect(body).toEqual({
-      url: "https://registry.example.test/dart/private/api/packages/versions/newUpload",
+      url: "https://registry.example.test/pub/private/api/packages/versions/newUpload",
       fields: {},
     });
   });
 
   test("publishFinish returns the pub success envelope", async () => {
     const ctx = testContext();
-    const res = await new DartAdapter().handle(
+    const res = await new PubAdapter().handle(
       {
         entry: {
           method: "GET",
@@ -371,7 +371,7 @@ describe("Dart adapter", () => {
         params: {},
         path: "/api/packages/versions/newUploadFinish",
       },
-      new Request("https://registry.test/dart/private/api/packages/versions/newUploadFinish"),
+      new Request("https://registry.test/pub/private/api/packages/versions/newUploadFinish"),
       ctx,
     );
     expect(res.status).toBe(200);
@@ -383,9 +383,9 @@ describe("Dart adapter", () => {
   test("download renders the pub error envelope for a missing archive", async () => {
     const ctx = testContext();
     // findByName defaults to null → no package → archive not found.
-    const res = await new DartAdapter().handle(
+    const res = await new PubAdapter().handle(
       downloadMatch,
-      new Request("https://registry.test/dart/private/api/archives/demo-1.2.3.tar.gz"),
+      new Request("https://registry.test/pub/private/api/archives/demo-1.2.3.tar.gz"),
       ctx,
     );
     expect(res.status).toBe(404);

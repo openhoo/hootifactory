@@ -1,31 +1,31 @@
 import { describe, expect, test } from "bun:test";
 import {
-  isValidDartPackageName,
-  isValidDartVersion,
-  parseDartVersionMeta,
+  isValidPubPackageName,
+  isValidPubVersion,
   parsePubspecYaml,
-} from "./dart-validation";
+  parsePubVersionMeta,
+} from "./pub-validation";
 
-describe("Dart validation", () => {
+describe("Pub validation", () => {
   test("accepts lowercase identifier package names and rejects others", () => {
-    expect(isValidDartPackageName("provider")).toBe(true);
-    expect(isValidDartPackageName("flutter_bloc")).toBe(true);
-    expect(isValidDartPackageName("path2")).toBe(true);
-    expect(isValidDartPackageName("Provider")).toBe(false);
-    expect(isValidDartPackageName("bad-name")).toBe(false);
-    expect(isValidDartPackageName("bad/name")).toBe(false);
-    expect(isValidDartPackageName("../etc")).toBe(false);
-    expect(isValidDartPackageName("")).toBe(false);
+    expect(isValidPubPackageName("provider")).toBe(true);
+    expect(isValidPubPackageName("flutter_bloc")).toBe(true);
+    expect(isValidPubPackageName("path2")).toBe(true);
+    expect(isValidPubPackageName("Provider")).toBe(false);
+    expect(isValidPubPackageName("bad-name")).toBe(false);
+    expect(isValidPubPackageName("bad/name")).toBe(false);
+    expect(isValidPubPackageName("../etc")).toBe(false);
+    expect(isValidPubPackageName("")).toBe(false);
   });
 
   test("validates SemVer versions including prerelease and build metadata", () => {
-    expect(isValidDartVersion("1.2.3")).toBe(true);
-    expect(isValidDartVersion("0.0.1")).toBe(true);
-    expect(isValidDartVersion("1.2.3-beta.1")).toBe(true);
-    expect(isValidDartVersion("1.2.3-beta.1+build.7")).toBe(true);
-    expect(isValidDartVersion("1.2")).toBe(false);
-    expect(isValidDartVersion("01.2.3")).toBe(false);
-    expect(isValidDartVersion("v1.2.3")).toBe(false);
+    expect(isValidPubVersion("1.2.3")).toBe(true);
+    expect(isValidPubVersion("0.0.1")).toBe(true);
+    expect(isValidPubVersion("1.2.3-beta.1")).toBe(true);
+    expect(isValidPubVersion("1.2.3-beta.1+build.7")).toBe(true);
+    expect(isValidPubVersion("1.2")).toBe(false);
+    expect(isValidPubVersion("01.2.3")).toBe(false);
+    expect(isValidPubVersion("v1.2.3")).toBe(false);
   });
 
   test("parses top-level pubspec scalars and one level of dependency maps", () => {
@@ -73,8 +73,8 @@ describe("Dart validation", () => {
       pubspec: { name: "demo", version: "1.2.3" },
       published: "2026-01-02T00:00:00.000Z",
     };
-    expect(parseDartVersionMeta(meta)).toEqual(meta);
-    expect(parseDartVersionMeta({ archiveDigest: "nope" })).toBeNull();
-    expect(parseDartVersionMeta(null)).toBeNull();
+    expect(parsePubVersionMeta(meta)).toEqual(meta);
+    expect(parsePubVersionMeta({ archiveDigest: "nope" })).toBeNull();
+    expect(parsePubVersionMeta(null)).toBeNull();
   });
 });

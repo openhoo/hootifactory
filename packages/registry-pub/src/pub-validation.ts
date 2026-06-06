@@ -10,28 +10,28 @@ const PACKAGE_NAME_RE = /^[a-z0-9_]+$/;
 const SEMVER_RE =
   /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
 
-export function isValidDartPackageName(name: string): boolean {
+export function isValidPubPackageName(name: string): boolean {
   return PACKAGE_NAME_RE.test(name);
 }
 
-export function isValidDartVersion(version: string): boolean {
+export function isValidPubVersion(version: string): boolean {
   return SEMVER_RE.test(version);
 }
 
-export const DartPackageNameSchema = z
+export const PubPackageNameSchema = z
   .string()
   .min(1)
   .max(64)
-  .refine(isValidDartPackageName, "invalid Dart package name");
+  .refine(isValidPubPackageName, "invalid Pub package name");
 
-export const DartVersionSchema = z
+export const PubVersionSchema = z
   .string()
   .min(1)
   .max(256)
-  .refine(isValidDartVersion, "invalid SemVer version");
+  .refine(isValidPubVersion, "invalid SemVer version");
 
 /** The archive filename `<package>-<version>.tar.gz` served by the download route. */
-export const DartArchiveFileSchema = z
+export const PubArchiveFileSchema = z
   .string()
   .min(1)
   .max(512)
@@ -45,9 +45,9 @@ const Sha256DigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
  * keep a handful of well-known optional keys; everything else a publisher put in
  * pubspec.yaml is preserved verbatim under `looseObject`.
  */
-export const DartPubspecSchema = z.looseObject({
-  name: DartPackageNameSchema,
-  version: DartVersionSchema,
+export const PubspecSchema = z.looseObject({
+  name: PubPackageNameSchema,
+  version: PubVersionSchema,
   description: z.string().max(8192).optional(),
   homepage: z.string().max(2048).optional(),
   repository: z.string().max(2048).optional(),
@@ -56,19 +56,19 @@ export const DartPubspecSchema = z.looseObject({
   dev_dependencies: z.record(z.string(), z.string()).optional(),
 });
 
-export type DartPubspec = z.output<typeof DartPubspecSchema>;
+export type Pubspec = z.output<typeof PubspecSchema>;
 
-export const DartVersionMetaSchema = z.strictObject({
+export const PubVersionMetaSchema = z.strictObject({
   archiveDigest: Sha256DigestSchema,
   archiveSha256: Sha256HexSchema,
-  pubspec: DartPubspecSchema,
+  pubspec: PubspecSchema,
   published: z.string().min(1).max(64),
 });
 
-export type DartVersionMeta = z.output<typeof DartVersionMetaSchema>;
+export type PubVersionMeta = z.output<typeof PubVersionMetaSchema>;
 
-export function parseDartVersionMeta(value: unknown): DartVersionMeta | null {
-  const parsed = DartVersionMetaSchema.safeParse(value);
+export function parsePubVersionMeta(value: unknown): PubVersionMeta | null {
+  const parsed = PubVersionMetaSchema.safeParse(value);
   return parsed.success ? parsed.data : null;
 }
 

@@ -1,47 +1,47 @@
-import type { DartPubspec, DartVersionMeta } from "./dart-validation";
+import type { Pubspec, PubVersionMeta } from "./pub-validation";
 
-export interface DartVersionEntry {
+export interface PubVersionEntry {
   version: string;
   retracted?: boolean;
   archive_url: string;
   archive_sha256: string;
-  pubspec: DartPubspec;
+  pubspec: Pubspec;
   published: string;
 }
 
-export interface DartPackageListing {
+export interface PubPackageListing {
   name: string;
-  latest: DartVersionEntry;
-  versions: DartVersionEntry[];
+  latest: PubVersionEntry;
+  versions: PubVersionEntry[];
 }
 
 /** The absolute archive download URL the `archive_url` field must point at. */
-export function dartArchiveUrl(
+export function pubArchiveUrl(
   baseUrl: string,
   mountPath: string,
   packageName: string,
   version: string,
 ): string {
-  return `${baseUrl}/${mountPath}/api/archives/${dartArchiveFile(packageName, version)}`;
+  return `${baseUrl}/${mountPath}/api/archives/${pubArchiveFile(packageName, version)}`;
 }
 
 /** Canonical archive filename `<package>-<version>.tar.gz`. */
-export function dartArchiveFile(packageName: string, version: string): string {
+export function pubArchiveFile(packageName: string, version: string): string {
   return `${packageName}-${version}.tar.gz`;
 }
 
 /** Build one `versions[]` / single-version entry from stored metadata. */
-export function buildDartVersionEntry(input: {
+export function buildPubVersionEntry(input: {
   packageName: string;
   version: string;
-  metadata: DartVersionMeta;
+  metadata: PubVersionMeta;
   baseUrl: string;
   mountPath: string;
-}): DartVersionEntry {
+}): PubVersionEntry {
   return {
     version: input.version,
     retracted: false,
-    archive_url: dartArchiveUrl(input.baseUrl, input.mountPath, input.packageName, input.version),
+    archive_url: pubArchiveUrl(input.baseUrl, input.mountPath, input.packageName, input.version),
     archive_sha256: input.metadata.archiveSha256,
     pubspec: input.metadata.pubspec,
     published: input.metadata.published,
@@ -53,13 +53,13 @@ export function buildDartVersionEntry(input: {
  * version when one exists (pub prefers a stable release as the default), else the
  * highest version overall.
  */
-export function buildDartPackageListing(input: {
+export function buildPubPackageListing(input: {
   packageName: string;
-  versions: DartVersionEntry[];
-}): DartPackageListing | null {
+  versions: PubVersionEntry[];
+}): PubPackageListing | null {
   if (input.versions.length === 0) return null;
-  const sorted = [...input.versions].sort((a, b) => compareDartVersions(a.version, b.version));
-  const stable = sorted.filter((entry) => !isPrereleaseDartVersion(entry.version));
+  const sorted = [...input.versions].sort((a, b) => comparePubVersions(a.version, b.version));
+  const stable = sorted.filter((entry) => !isPrereleasePubVersion(entry.version));
   const latest = (stable.length > 0 ? stable : sorted).at(-1);
   if (!latest) return null;
   return {
@@ -69,14 +69,14 @@ export function buildDartPackageListing(input: {
   };
 }
 
-export function isPrereleaseDartVersion(version: string): boolean {
+export function isPrereleasePubVersion(version: string): boolean {
   return version.includes("-");
 }
 
 /** Compare two SemVer strings; a release outranks its own prerelease. */
-export function compareDartVersions(a: string, b: string): number {
-  const pa = splitDartVersion(a);
-  const pb = splitDartVersion(b);
+export function comparePubVersions(a: string, b: string): number {
+  const pa = splitPubVersion(a);
+  const pb = splitPubVersion(b);
   for (let i = 0; i < 3; i++) {
     const diff = (pa.core[i] ?? 0) - (pb.core[i] ?? 0);
     if (diff !== 0) return diff;
@@ -87,7 +87,7 @@ export function compareDartVersions(a: string, b: string): number {
   return 0;
 }
 
-function splitDartVersion(version: string): { core: number[]; prerelease: string | null } {
+function splitPubVersion(version: string): { core: number[]; prerelease: string | null } {
   const plus = version.indexOf("+");
   const withoutBuild = plus >= 0 ? version.slice(0, plus) : version;
   const dash = withoutBuild.indexOf("-");
