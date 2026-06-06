@@ -70,7 +70,7 @@ export function buildPubPackageListing(input: {
 }
 
 export function isPrereleasePubVersion(version: string): boolean {
-  return version.includes("-");
+  return splitPubVersion(version).prerelease !== null;
 }
 
 /** Compare two SemVer strings; a release outranks its own prerelease. */
