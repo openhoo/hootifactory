@@ -82,10 +82,17 @@ describe("RPM repodata builder", () => {
   });
 
   test("escapes XML metacharacters in name, summary, and href", () => {
-    const m = meta({ name: "weird", arch: "x86_64", ver: "1", rel: "1", summary: "a&b<c>d\"e'f" });
+    const m = meta({
+      name: "a&b<c>d\"e'f",
+      arch: "x86_64",
+      ver: "1",
+      rel: "1",
+      summary: "a&b<c>d\"e'f",
+    });
     const xml = new TextDecoder().decode(
       buildPrimary([{ meta: m, href: "packages/a&b.rpm", buildTime: 10 }]).plain,
     );
+    expect(xml).toContain("<name>a&amp;b&lt;c&gt;d&quot;e&apos;f</name>");
     expect(xml).toContain("<summary>a&amp;b&lt;c&gt;d&quot;e&apos;f</summary>");
     expect(xml).toContain('<location href="packages/a&amp;b.rpm"/>');
   });

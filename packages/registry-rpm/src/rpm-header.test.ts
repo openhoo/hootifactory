@@ -65,12 +65,11 @@ describe("RPM header reader", () => {
     expect(readRpmHeaderInfo(rpm).name).toBe("withpayload");
   });
 
-  test("returns empty info when the main header magic is wrong", () => {
+  test("returns empty info when the buffer is truncated mid-main-header", () => {
     const rpm = buildMinimalRpm({ name: "corrupt", version: "1", release: "1", arch: "noarch" });
     // The signature header is at offset 96; the main header begins after it +
-    // padding. Corrupting the first lead byte alone keeps it valid, so instead
-    // truncate the buffer mid-main-header to force parseHeader to bail (end >
-    // bytes.length).
+    // padding. Truncating the buffer mid-main-header forces parseHeader to bail
+    // because the computed header end exceeds bytes.length.
     expect(readRpmHeaderInfo(rpm.subarray(0, 96 + 20))).toEqual({});
   });
 
