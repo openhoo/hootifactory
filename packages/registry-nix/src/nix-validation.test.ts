@@ -6,6 +6,7 @@ import {
   isValidStoreHash,
   NIX_CACHE_INFO,
   narFileHashFromUrl,
+  narFileHashToDigest,
   parseNarInfoMeta,
   parseNarInfoText,
 } from "./nix-validation";
@@ -43,6 +44,24 @@ describe("nix-validation", () => {
     expect(isValidNarFileHash("a".repeat(64))).toBe(true);
     expect(isValidNarFileHash("a".repeat(63))).toBe(false);
     expect(isValidNarFileHash("zzz")).toBe(false);
+  });
+
+  test("narFileHashToDigest passes hex through and decodes Nix base32 to sha256:<hex>", () => {
+    // 64-char hex is already the canonical CAS digest body.
+    expect(narFileHashToDigest("a".repeat(64))).toBe(`sha256:${"a".repeat(64)}`);
+    // Canonical Nix fixture: the sha256 of the empty string is encoded as this
+    // 52-char Nix base32 string, and must decode back to the known hex digest.
+    const emptyHex = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    const emptyBase32 = "0mdqa9w1p6cmli6976v4wi0sw9r4p5prkj7lzfd1877wk11c9c73";
+    expect(narFileHashToDigest(emptyBase32)).toBe(`sha256:${emptyHex}`);
+    // Decoding is the exact inverse of Nix's own base32 encoding.
+    expect(narFileHashToDigest("zzz")).toBeNull();
+  });
+
+  test("narFileHashToDigest is stable: both encodings of one hash agree", () => {
+    const emptyHex = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    const emptyBase32 = "0mdqa9w1p6cmli6976v4wi0sw9r4p5prkj7lzfd1877wk11c9c73";
+    expect(narFileHashToDigest(emptyBase32)).toBe(narFileHashToDigest(emptyHex));
   });
 
   test("narFileHashFromUrl strips the nar/ prefix and compression extension", () => {

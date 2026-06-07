@@ -8,6 +8,10 @@ import { z } from "@hootifactory/registry";
 const NIX_BASE32 = "0123456789abcdfghijklmnpqrsvwxyz";
 const STORE_HASH_RE = new RegExp(`^[${NIX_BASE32}]{32}$`);
 
+/** Reverse lookup for the Nix base32 alphabet. */
+const NIX_BASE32_REV: Record<string, number> = {};
+for (let i = 0; i < NIX_BASE32.length; i++) NIX_BASE32_REV[NIX_BASE32.charAt(i)] = i;
+
 /** Validate a 32-char Nix base32 store-path hash. */
 export function isValidStoreHash(hash: string): boolean {
   return STORE_HASH_RE.test(hash);
@@ -36,6 +40,52 @@ export const NarFileHashSchema = z
   .min(1)
   .max(128)
   .refine(isValidNarFileHash, "invalid NAR file hash");
+
+/** Byte length of a sha256 digest (the only hash Nix file hashes encode here). */
+const SHA256_BYTES = 32;
+
+/**
+ * Decode a 52-char Nix base32 string into the underlying 32-byte sha256.
+ * Nix base32 packs bits little-endian and the encoded characters run in reverse
+ * byte order, so we read the string from its end. Returns null on a wrong
+ * length, a character outside the alphabet, or nonzero overflow bits past the
+ * 32nd byte (an invalid encoding).
+ */
+function decodeNixBase32Sha256(s: string): Uint8Array | null {
+  if (s.length !== 52) return null;
+  const bytes = new Uint8Array(SHA256_BYTES);
+  for (let n = 0; n < s.length; n++) {
+    const digit = NIX_BASE32_REV[s.charAt(s.length - n - 1)];
+    if (digit === undefined) return null;
+    const bit = n * 5;
+    const i = bit >> 3;
+    const j = bit & 7;
+    bytes[i] = ((bytes[i] ?? 0) | ((digit << j) & 0xff)) & 0xff;
+    const carry = digit >> (8 - j);
+    if (i + 1 < SHA256_BYTES) {
+      bytes[i + 1] = ((bytes[i + 1] ?? 0) | carry) & 0xff;
+    } else if (carry !== 0) {
+      return null;
+    }
+  }
+  return bytes;
+}
+
+/**
+ * Convert a bare NAR file hash (the `URL`/`FileHash` value, either 64-char hex
+ * or 52-char Nix base32) into the canonical `sha256:<64-hex>` CAS digest so the
+ * upload can be verified against the content-addressed store. Returns null for
+ * any value that is not a recognised sha256 encoding.
+ */
+export function narFileHashToDigest(fileHash: string): string | null {
+  if (FILE_HASH_HEX_RE.test(fileHash)) return `sha256:${fileHash}`;
+  if (!FILE_HASH_BASE32_RE.test(fileHash)) return null;
+  const bytes = decodeNixBase32Sha256(fileHash);
+  if (!bytes) return null;
+  let hex = "";
+  for (const b of bytes) hex += b.toString(16).padStart(2, "0");
+  return `sha256:${hex}`;
+}
 
 /** `sha256:<base32|hex>` hash refs as they appear in `FileHash`/`NarHash` lines. */
 const HASH_REF_RE = new RegExp(`^sha256:(?:[${NIX_BASE32}]{52}|[0-9a-f]{64})$`);

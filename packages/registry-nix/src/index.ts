@@ -21,6 +21,7 @@ export {
   NarInfoMetaSchema,
   NIX_CACHE_INFO,
   narFileHashFromUrl,
+  narFileHashToDigest,
   parseNarInfoMeta,
   parseNarInfoText,
   StoreHashSchema,

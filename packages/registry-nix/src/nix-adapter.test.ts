@@ -1,20 +1,23 @@
 import { describe, expect, test } from "bun:test";
-import type {
-  RegistryPackageRow,
-  RegistryPackageVersionRow,
-  RegistryStoredBlob,
-  RouteMatch,
+import {
+  InvalidDigestError,
+  type RegistryPackageRow,
+  type RegistryPackageVersionRow,
+  type RegistryStoredBlob,
+  type RouteMatch,
 } from "@hootifactory/registry";
 import { createTestRegistryContext } from "@hootifactory/registry/testing";
 import { NixAdapter } from "./nix-adapter";
-import { buildNarInfoMeta, parseNarInfoText } from "./nix-validation";
+import { buildNarInfoMeta, narFileHashToDigest, parseNarInfoText } from "./nix-validation";
 
 // 32-char Nix base32 store hash and a 52-char base32 NAR file hash.
 // Nix base32 alphabet: 0123456789abcdfghijklmnpqrsvwxyz (no e o u t).
 const STORE_HASH = "1q8w9z0r1d2y3a4i5k6p7s8s9d0f1g2h"; // 32 base32 chars
 const FILE_HASH = "0123456789abcdfghijklmnpqrsvwxyz0123456789abcdfghijk"; // 52 base32 chars
 const NAR_HASH = "vwxyz0123456789abcdfghijklmnpqrsvwxyz0123456789abcdf"; // 52 base32 chars
-const NAR_DIGEST = `sha256:${"a".repeat(64)}`;
+// The NAR blob is content-addressed: its CAS digest is exactly FILE_HASH decoded
+// from Nix base32 to canonical sha256:<hex>. Integrity checks now depend on this.
+const NAR_DIGEST = `sha256:${narFileHashToDigest(FILE_HASH)?.slice("sha256:".length)}`;
 
 const NARINFO_BODY = [
   `StorePath: /nix/store/${STORE_HASH}-hello-2.12.1`,
@@ -257,12 +260,19 @@ describe("Nix adapter", () => {
 
   test("PUT /nar/<filehash>.nar streams the NAR blob into content-addressable storage", async () => {
     const ctx = nixContext();
-    const committed: { metadata?: Record<string, unknown>; scope?: string; sizeBytes?: number } =
-      {};
+    const committed: {
+      metadata?: Record<string, unknown>;
+      scope?: string;
+      sizeBytes?: number;
+      expectedDigest?: string;
+    } = {};
     ctx.data.packages.findOrCreate = async ({ name }) => pkgRow(name);
     ctx.data.content.storeBlobStreamWithRef = async (input): Promise<RegistryStoredBlob> => {
       // The handler must hand us the request body stream, not a buffered copy.
       expect(input.data).toBeInstanceOf(ReadableStream);
+      // Content integrity: the handler must verify the upload against the CAS
+      // digest derived from the file hash in the URL.
+      committed.expectedDigest = input.expectedDigest;
       committed.scope = input.scope;
       return { digest: NAR_DIGEST, size: 4, deduped: false, refCreated: true, blobRefId: "ref_1" };
     };
@@ -280,8 +290,9 @@ describe("Nix adapter", () => {
       }),
       ctx,
     );
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(204);
     expect(committed.scope).toBe(`nar/${FILE_HASH}`);
+    expect(committed.expectedDigest).toBe(NAR_DIGEST);
     // Size is derived from the stored blob, not a pre-buffered request body.
     expect(committed.sizeBytes).toBe(4);
     expect(committed.metadata).toMatchObject({ fileHash: FILE_HASH, blobDigest: NAR_DIGEST });
@@ -294,6 +305,12 @@ describe("Nix adapter", () => {
       expect(name).toBe(`narinfo/${STORE_HASH}`);
       return pkgRow(name);
     };
+    // The referenced NAR was uploaded first; the narinfo PUT reconciles against
+    // it (digest + size) before accepting.
+    ctx.data.packages.findByName = async (name) =>
+      name === `nar/${FILE_HASH}` ? pkgRow(name) : null;
+    ctx.data.versions.findLive = async () =>
+      versionRow({ fileHash: FILE_HASH, blobDigest: NAR_DIGEST, sizeBytes: 41232 });
     ctx.data.content.storeBlobWithRef = async (): Promise<RegistryStoredBlob> => ({
       digest: `sha256:${"c".repeat(64)}`,
       size: NARINFO_BODY.length,
@@ -384,7 +401,7 @@ describe("Nix adapter", () => {
       }),
       ctx,
     );
-    expect(put.status).toBe(200);
+    expect(put.status).toBe(204);
 
     const get = await new NixAdapter().handle(
       match("nar", { filename: `${FILE_HASH}.nar.xz` }, `/nar/${FILE_HASH}.nar.xz`),
@@ -399,5 +416,191 @@ describe("Nix adapter", () => {
     const scan = new NixAdapter().scan;
     expect(scan?.referencedDigests?.({ blobDigest: NAR_DIGEST })).toEqual([NAR_DIGEST]);
     expect(scan?.referencedDigests?.({ fileHash: FILE_HASH })).toEqual([]);
+  });
+
+  test("does not advertise proxyable (no pull-through ingestion is implemented)", () => {
+    const adapter = new NixAdapter();
+    expect(adapter.capabilities.proxyable).toBe(false);
+    expect(adapter.capabilities.contentAddressable).toBe(true);
+    expect(adapter.capabilities.virtualizable).toBe(true);
+    // The host gates proxy repos on proxyIngest; it must be absent to match.
+    expect((adapter as unknown as { proxyIngest?: unknown }).proxyIngest).toBeUndefined();
+  });
+
+  test("PUT /nar rejects bytes that do not hash to the URL file hash with 400", async () => {
+    const ctx = nixContext();
+    ctx.data.packages.findOrCreate = async ({ name }) => pkgRow(name);
+    ctx.data.content.storeBlobStreamWithRef = async (input) => {
+      // CAS verifies the stream against expectedDigest and rejects a mismatch.
+      await new Response(input.data).arrayBuffer();
+      throw new InvalidDigestError(input.expectedDigest ?? "");
+    };
+
+    const res = await new NixAdapter().handle(
+      match("putNar", { filename: `${FILE_HASH}.nar.xz` }, `/nar/${FILE_HASH}.nar.xz`),
+      new Request(`https://registry.test/nar/${FILE_HASH}.nar.xz`, {
+        method: "PUT",
+        body: new TextEncoder().encode("tampered bytes"),
+      }),
+      ctx,
+    );
+    expect(res.status).toBe(400);
+  });
+
+  test("PUT /<storehash>.narinfo rejects when the referenced NAR was never uploaded (409)", async () => {
+    const ctx = nixContext();
+    // No NAR exists for the referenced file hash.
+    ctx.data.packages.findByName = async () => null;
+
+    const res = await new NixAdapter().handle(
+      match("putNarinfo", { narinfo: `${STORE_HASH}.narinfo` }, `/${STORE_HASH}.narinfo`),
+      new Request(`https://registry.test/${STORE_HASH}.narinfo`, {
+        method: "PUT",
+        body: NARINFO_BODY,
+      }),
+      ctx,
+    );
+    expect(res.status).toBe(409);
+  });
+
+  test("PUT /<storehash>.narinfo rejects when FileSize disagrees with the stored NAR (409)", async () => {
+    const ctx = nixContext();
+    ctx.data.packages.findByName = async (name) =>
+      name === `nar/${FILE_HASH}` ? pkgRow(name) : null;
+    // Stored NAR digest matches, but its size differs from the narinfo's FileSize.
+    ctx.data.versions.findLive = async () =>
+      versionRow({ fileHash: FILE_HASH, blobDigest: NAR_DIGEST, sizeBytes: 999 });
+
+    const res = await new NixAdapter().handle(
+      match("putNarinfo", { narinfo: `${STORE_HASH}.narinfo` }, `/${STORE_HASH}.narinfo`),
+      new Request(`https://registry.test/${STORE_HASH}.narinfo`, {
+        method: "PUT",
+        body: NARINFO_BODY,
+      }),
+      ctx,
+    );
+    expect(res.status).toBe(409);
+  });
+
+  test("PUT /nar conflict releases the freshly-created ref and returns 409", async () => {
+    const ctx = nixContext();
+    const released: { digest?: string; scope?: string } = {};
+    ctx.data.packages.findOrCreate = async ({ name }) => pkgRow(name);
+    ctx.data.content.storeBlobStreamWithRef = async (input): Promise<RegistryStoredBlob> => {
+      await new Response(input.data).arrayBuffer();
+      return { digest: NAR_DIGEST, size: 4, deduped: false, refCreated: true, blobRefId: "ref_1" };
+    };
+    ctx.data.versions.commitOrReleaseBlob = async () => ({ conflict: true });
+    ctx.data.content.releaseBlobRef = async ({ digest, scope }) => {
+      released.digest = digest;
+      released.scope = scope;
+    };
+
+    const res = await new NixAdapter().handle(
+      match("putNar", { filename: `${FILE_HASH}.nar.xz` }, `/nar/${FILE_HASH}.nar.xz`),
+      new Request(`https://registry.test/nar/${FILE_HASH}.nar.xz`, {
+        method: "PUT",
+        body: new Uint8Array([1, 2, 3, 4]),
+      }),
+      ctx,
+    );
+    expect(res.status).toBe(409);
+    // The orphaned blob ref must be released so the deduped blob isn't leaked.
+    expect(released.digest).toBe(NAR_DIGEST);
+    expect(released.scope).toBe(`nar/${FILE_HASH}`);
+  });
+
+  test("substituter round-trip: PUT nar + narinfo, GET narinfo, follow URL, GET nar", async () => {
+    const ctx = nixContext();
+    // In-memory CAS + version store. CAS honours expectedDigest (as real CAS
+    // does after verifying the bytes), so the stored NAR is addressed by the
+    // file hash the narinfo references — the cross-checks then reconcile.
+    const blobs = new Map<string, Uint8Array>();
+    const versions = new Map<string, Record<string, unknown>>();
+    const narBytes = new TextEncoder().encode("nix-archive-1-payload");
+    // FileSize in the narinfo must equal the stored NAR's byte length, or the
+    // referential-integrity check rejects the publish.
+    const roundTripNarInfo = NARINFO_BODY.replace(
+      "FileSize: 41232",
+      `FileSize: ${narBytes.length}`,
+    );
+
+    ctx.data.packages.findOrCreate = async ({ name }) => pkgRow(name);
+    ctx.data.packages.findByName = async (name) => (versions.has(name) ? pkgRow(name) : null);
+    ctx.data.content.storeBlobStreamWithRef = async (input): Promise<RegistryStoredBlob> => {
+      const bytes = new Uint8Array(await new Response(input.data).arrayBuffer());
+      const digest =
+        input.expectedDigest ?? `sha256:${Bun.CryptoHasher.hash("sha256", bytes, "hex")}`;
+      blobs.set(digest, bytes);
+      return { digest, size: bytes.length, deduped: false, refCreated: true, blobRefId: "r" };
+    };
+    ctx.data.content.storeBlobWithRef = async (input): Promise<RegistryStoredBlob> => {
+      const bytes = input.data;
+      const digest = `sha256:${Bun.CryptoHasher.hash("sha256", bytes, "hex")}`;
+      blobs.set(digest, bytes);
+      return { digest, size: bytes.length, deduped: false, refCreated: true, blobRefId: "r" };
+    };
+    ctx.data.versions.commitOrReleaseBlob = async (input) => {
+      versions.set(input.package.name, input.metadata);
+      return { versionId: "ver_1" };
+    };
+    ctx.data.versions.findLive = async (pkg) => {
+      const metadata = versions.get(pkg.name);
+      return metadata ? versionRow(metadata) : null;
+    };
+    ctx.data.content.blobRefExists = async () => true;
+    ctx.data.content.serveBlobIfClean = async ({ digest, contentType }) =>
+      new Response(blobs.get(digest) ?? null, {
+        status: blobs.has(digest) ? 200 : 404,
+        headers: { "content-type": contentType },
+      });
+
+    // 1. Push the NAR (content-addressed under FILE_HASH's digest).
+    const putNar = await new NixAdapter().handle(
+      match("putNar", { filename: `${FILE_HASH}.nar.xz` }, `/nar/${FILE_HASH}.nar.xz`),
+      new Request(`https://registry.test/nar/${FILE_HASH}.nar.xz`, {
+        method: "PUT",
+        body: narBytes,
+      }),
+      ctx,
+    );
+    expect(putNar.status).toBe(204);
+
+    // 2. Push the narinfo (reconciled against the stored NAR).
+    const putInfo = await new NixAdapter().handle(
+      match("putNarinfo", { narinfo: `${STORE_HASH}.narinfo` }, `/${STORE_HASH}.narinfo`),
+      new Request(`https://registry.test/${STORE_HASH}.narinfo`, {
+        method: "PUT",
+        body: roundTripNarInfo,
+      }),
+      ctx,
+    );
+    expect(putInfo.status).toBe(204);
+
+    // 3. Substituter GETs the narinfo and parses the served URL line.
+    const getInfo = await new NixAdapter().handle(
+      match("narinfo", { narinfo: `${STORE_HASH}.narinfo` }, `/${STORE_HASH}.narinfo`),
+      new Request(`https://registry.test/${STORE_HASH}.narinfo`),
+      ctx,
+    );
+    expect(getInfo.status).toBe(200);
+    const infoText = await getInfo.text();
+    const urlLine = infoText.split("\n").find((l) => l.startsWith("URL: "));
+    expect(urlLine).toBe(`URL: nar/${FILE_HASH}.nar.xz`);
+    const narPath = urlLine?.slice("URL: ".length) ?? "";
+
+    // 4. Follow the URL to fetch the NAR and assert the bytes round-trip.
+    const filename = narPath.slice("nar/".length);
+    const getNar = await new NixAdapter().handle(
+      match("nar", { filename }, `/${narPath}`),
+      new Request(`https://registry.test/${narPath}`),
+      ctx,
+    );
+    expect(getNar.status).toBe(200);
+    expect(new Uint8Array(await getNar.arrayBuffer())).toEqual(narBytes);
+
+    // The served NAR's digest matches the narinfo FileHash (true content addressing).
+    const servedDigest = narFileHashToDigest(FILE_HASH);
+    expect(blobs.has(servedDigest ?? "")).toBe(true);
   });
 });

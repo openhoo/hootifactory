@@ -1,6 +1,7 @@
 import {
   commitPackageVersionBlob,
   findOrCreateRegistryPackage,
+  InvalidDigestError,
   publishImmutableVersionBlob,
   type RegistryRequestContext,
   releaseRegistryBlobRef,
@@ -9,7 +10,9 @@ import {
 import {
   buildNarInfoMeta,
   narFileHashFromUrl,
+  narFileHashToDigest,
   type ParsedNarInfo,
+  parseNarInfoMeta,
   parseNarInfoText,
 } from "./nix-validation";
 
@@ -38,16 +41,37 @@ export async function handleNarUpload(
   }
   const scope = narBlobScope(fileHash);
 
+  // The NAR's coordinate (`<fileHash>`) is its own sha256 — this is a
+  // content-addressed store. Hand CAS the expected digest so a client cannot
+  // PUT arbitrary bytes under a valid-looking file hash and poison the cache:
+  // a hash mismatch is rejected at the storage boundary (404/400 below). The
+  // fileHash arrives as either 64-char hex or 52-char Nix base32; both decode
+  // to the same canonical `sha256:<hex>` digest.
+  const expectedDigest = narFileHashToDigest(fileHash);
+  if (!expectedDigest) {
+    return new Response("invalid NAR file hash", { status: 400 });
+  }
+
   // Stream the NAR straight into content-addressable storage rather than
   // buffering the whole archive in memory — NARs can be gigabytes, so
   // `req.arrayBuffer()` would invite OOM and cap throughput. CAS computes the
-  // digest and size as it consumes the stream.
-  const stored = await storeRegistryBlobStreamWithRef(ctx, {
-    data: req.body,
-    kind: NAR_BLOB_KIND,
-    scope,
-    mediaType: "application/x-nix-nar",
-  });
+  // digest and size as it consumes the stream and verifies it against
+  // `expectedDigest`.
+  let stored: Awaited<ReturnType<typeof storeRegistryBlobStreamWithRef>>;
+  try {
+    stored = await storeRegistryBlobStreamWithRef(ctx, {
+      data: req.body,
+      expectedDigest,
+      kind: NAR_BLOB_KIND,
+      scope,
+      mediaType: "application/x-nix-nar",
+    });
+  } catch (err) {
+    if (err instanceof InvalidDigestError) {
+      return new Response("NAR contents do not match the file hash", { status: 400 });
+    }
+    throw err;
+  }
 
   const pkg = await findOrCreateRegistryPackage(ctx, { name: scope });
   const result = await commitPackageVersionBlob(ctx, {
@@ -79,7 +103,9 @@ export async function handleNarUpload(
     }
     return new Response("conflict", { status: 409 });
   }
-  return new Response(null, { status: 200 });
+  // 204 No Content for a body-less successful upload, matching the narinfo PUT
+  // so both halves of a single `nix copy --to` push report success alike.
+  return new Response(null, { status: 204 });
 }
 
 /**
@@ -104,6 +130,22 @@ export async function handleNarInfoUpload(
   const narFileHash = narFileHashFromUrl(parsed.url);
   if (!narFileHash) {
     return new Response("narinfo URL is not a nar reference", { status: 400 });
+  }
+
+  // Referential integrity: the narinfo must describe a NAR that actually lives
+  // in this cache, and its claimed FileHash/FileSize must match the stored
+  // blob. Otherwise a substituter would fetch the narinfo, download the NAR,
+  // and fail the NarHash check (or be served mismatched bytes). The NAR is
+  // uploaded first (PUT /nar/...), so we can reconcile against it here.
+  const integrity = await checkReferencedNar(ctx, parsed, narFileHash);
+  if (integrity) return integrity;
+
+  // Guarantee the narinfo we accept is one we can actually serve: the read path
+  // re-validates stored metadata against the strict schema, so reject anything
+  // here that would later parse to null and 404 a published path (a 204 publish
+  // must imply a 200-servable narinfo).
+  if (!parseNarInfoMeta(buildNarInfoMeta(parsed, { digest: PLACEHOLDER_DIGEST, narFileHash }))) {
+    return new Response("invalid narinfo", { status: 400 });
   }
 
   const scope = narInfoScope(storeHash);
@@ -133,7 +175,11 @@ export async function handleNarInfoUpload(
       mediaType: "text/x-nix-narinfo",
       metadata: { storeHash, narFileHash, blobDigest: stored.digest },
     }),
-    // Narinfos are content-addressed by store hash; re-publishing is idempotent.
+    // Narinfos are keyed by store hash and re-publishing is last-writer-wins:
+    // a second PUT overwrites the stored metadata. This is safe because a store
+    // path's identity (NarHash/References) is fixed, while the legitimately
+    // variable fields (FileHash/URL/Compression/Sig) are reconciled against the
+    // referenced NAR above before either version is accepted.
     versionConflict: () => Promise.resolve(false),
   });
   if (!result.ok) {
@@ -143,6 +189,48 @@ export async function handleNarInfoUpload(
 }
 
 export const NARINFO_KIND = "nix_narinfo";
+
+/**
+ * A syntactically valid `sha256:<hex>` digest used only to exercise the strict
+ * read-side schema during the narinfo PUT dry-run. The real narinfo blob digest
+ * is substituted by `publishImmutableVersionBlob` when the version is committed.
+ */
+const PLACEHOLDER_DIGEST = `sha256:${"0".repeat(64)}`;
+
+/**
+ * Reconcile a narinfo against the NAR it references. The NAR is uploaded before
+ * its narinfo, so by the time the narinfo arrives the blob must already exist
+ * and its content-addressed digest + stored size must match the narinfo's
+ * claimed `FileHash` and `FileSize`. Returns an error Response on a mismatch (or
+ * a missing NAR), or null when the narinfo is consistent with the stored blob.
+ */
+async function checkReferencedNar(
+  ctx: RegistryRequestContext,
+  parsed: ParsedNarInfo,
+  narFileHash: string,
+): Promise<Response | null> {
+  const expectedDigest = narFileHashToDigest(narFileHash);
+  const claimedDigest = narFileHashToDigest(parsed.fileHash.replace(/^sha256:/, ""));
+  // The bare URL hash and the FileHash line must name the same NAR.
+  if (!expectedDigest || expectedDigest !== claimedDigest) {
+    return new Response("narinfo FileHash does not match the referenced NAR", { status: 400 });
+  }
+
+  const narScope = narBlobScope(narFileHash);
+  const pkg = await ctx.data.packages.findByName(narScope);
+  const row = pkg ? await ctx.data.versions.findLive(pkg, NARINFO_VERSION) : null;
+  const meta = row?.metadata as { blobDigest?: unknown; sizeBytes?: unknown } | undefined;
+  if (!meta || typeof meta.blobDigest !== "string") {
+    return new Response("referenced NAR has not been uploaded", { status: 409 });
+  }
+  if (meta.blobDigest !== expectedDigest) {
+    return new Response("stored NAR digest does not match the narinfo FileHash", { status: 409 });
+  }
+  if (typeof meta.sizeBytes === "number" && meta.sizeBytes !== parsed.fileSize) {
+    return new Response("narinfo FileSize does not match the stored NAR", { status: 409 });
+  }
+  return null;
+}
 
 /** Package scope under which a store hash's narinfo metadata is persisted. */
 export function narInfoScope(storeHash: string): string {

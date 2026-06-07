@@ -72,7 +72,11 @@ function parseFileHash(hash: string): string {
  */
 export class NixAdapter implements RegistryPlugin {
   readonly id = "nix" as const;
-  readonly capabilities = registryCapabilities("contentAddressable", "proxyable", "virtualizable");
+  // No `proxyable`: this adapter implements no pull-through ingestion
+  // (`proxyIngest`), so advertising it would be a dishonest capability the host
+  // gates and dispatch would never satisfy. Content-addressed + virtualizable
+  // are genuinely implemented.
+  readonly capabilities = registryCapabilities("contentAddressable", "virtualizable");
   authChallenge = basicAuthChallenge;
 
   private readonly plugin = registryPlugin(this.id)
