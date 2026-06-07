@@ -1,7 +1,5 @@
 import {
   asJsonRecord,
-  basicAuthChallenge,
-  delegateRegistryPlugin,
   Errors,
   type HttpMethod,
   type Permission,
@@ -11,8 +9,7 @@ import {
   type RegistryVersionMetadataRow,
   type RouteMatch,
   readWritePermission,
-  registryCapabilities,
-  registryPlugin,
+  registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
 } from "@hootifactory/registry";
@@ -39,75 +36,8 @@ interface VersionsCacheEntry {
 }
 
 /** RubyGems: `.gem` push/yank + the compact-index protocol (`/versions`, `/info/<gem>`). */
-export class RubygemsAdapter implements RegistryPlugin {
-  readonly id = "rubygems" as const;
-  readonly capabilities = registryCapabilities("virtualizable");
-  authChallenge = basicAuthChallenge;
-  private readonly versionsCache = new Map<string, VersionsCacheEntry>();
-
-  private readonly plugin = registryPlugin(this.id)
-    .module({
-      displayName: "RubyGems",
-      mountSegment: "rubygems",
-      errorResponseKind: "singleError",
-      compressibleHandlers: ["compactVersions", "compactInfo", "compactNames"],
-      scan: {
-        defaultOsvEcosystem: "RubyGems",
-        dependencyGraph: ({ metadata }) => ({
-          deps: gemDependencyGraph(metadata),
-          osvEcosystem: "RubyGems",
-          purlType: "gem",
-        }),
-        referencedDigests: (metadata) =>
-          typeof metadata.gemDigest === "string" ? [metadata.gemDigest] : [],
-      },
-    })
-    .capabilities(this.capabilities)
-    .authChallenge(this.authChallenge)
-    .routes((route) => [
-      route.post("/api/v1/gems", "push", ({ req, ctx }) => this.push(req, ctx)),
-      route.delete("/api/v1/gems/yank", "yank", ({ req, ctx }) => this.yank(req, ctx)),
-      route.get("/versions", "compactVersions", ({ req, ctx }) => this.compactVersions(req, ctx)),
-      route.get("/names", "compactNames", ({ req, ctx }) => this.compactNames(req, ctx)),
-      route.get("/info/:gem", "compactInfo", ({ params, req, ctx }) =>
-        this.compactInfo(params.gem, req, ctx),
-      ),
-      route.get("/gems/:filename", "download", ({ params, req, ctx }) =>
-        this.download(params.filename, req, ctx),
-      ),
-    ])
-    .build();
-  private readonly delegate = delegateRegistryPlugin(this.plugin);
-
-  get displayName() {
-    return this.plugin.displayName;
-  }
-  get mountSegment() {
-    return this.plugin.mountSegment;
-  }
-  get repositoryNamePolicy() {
-    return this.plugin.repositoryNamePolicy;
-  }
-  get acceptsRegistryBearerToken() {
-    return this.plugin.acceptsRegistryBearerToken;
-  }
-  get apiKeyHeaders() {
-    return this.plugin.apiKeyHeaders;
-  }
-  get errorResponseKind() {
-    return this.plugin.errorResponseKind;
-  }
-  get compressibleHandlers() {
-    return this.plugin.compressibleHandlers;
-  }
-  get compressibleContentTypes() {
-    return this.plugin.compressibleContentTypes;
-  }
-  get scan() {
-    return this.plugin.scan;
-  }
-
-  routes = this.delegate.routes;
+class RubygemsAdapterState {
+  readonly versionsCache = new Map<string, VersionsCacheEntry>();
 
   requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
     const permission = readWritePermission(method);
@@ -122,13 +52,11 @@ export class RubygemsAdapter implements RegistryPlugin {
     return permission;
   }
 
-  handle = this.delegate.handle;
-
-  private cacheKey(ctx: RegistryRequestContext): string {
+  cacheKey(ctx: RegistryRequestContext): string {
     return ctx.repo.id;
   }
 
-  private cachedVersions(ctx: RegistryRequestContext): VersionsCacheEntry | null {
+  cachedVersions(ctx: RegistryRequestContext): VersionsCacheEntry | null {
     const entry = this.versionsCache.get(this.cacheKey(ctx));
     if (!entry) return null;
     if (entry.expiresAt > Date.now()) return entry;
@@ -136,7 +64,7 @@ export class RubygemsAdapter implements RegistryPlugin {
     return null;
   }
 
-  private storeVersions(ctx: RegistryRequestContext, body: string): VersionsCacheEntry {
+  storeVersions(ctx: RegistryRequestContext, body: string): VersionsCacheEntry {
     const entry = {
       body,
       etag: `"${md5Hex(body)}"`,
@@ -146,17 +74,17 @@ export class RubygemsAdapter implements RegistryPlugin {
     return entry;
   }
 
-  private clearVersionsCache(ctx: RegistryRequestContext): void {
+  clearVersionsCache(ctx: RegistryRequestContext): void {
     this.versionsCache.delete(this.cacheKey(ctx));
   }
 
-  private async push(req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  async push(req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const res = await handleGemPush(req, ctx);
     if (res.status >= 200 && res.status < 300) this.clearVersionsCache(ctx);
     return res;
   }
 
-  private async yank(req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  async yank(req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const { gemName, version } = await readYankParams(req);
     if (!gemName || !version) {
       return new Response("gem_name and version are required", { status: 400 });
@@ -183,7 +111,7 @@ export class RubygemsAdapter implements RegistryPlugin {
     return new Response(`Yanked gem: ${name} (${parsedVersion})`, { status: 200 });
   }
 
-  private async compactVersions(req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  async compactVersions(req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const cached = this.cachedVersions(ctx);
     if (cached) return textResponseWithEtag(req, cached.body, TEXT_PLAIN, cached.etag);
     const rows = await ctx.data.versions.listRepositoryMetadata({ liveOnly: true });
@@ -191,11 +119,7 @@ export class RubygemsAdapter implements RegistryPlugin {
     return textResponseWithEtag(req, entry.body, TEXT_PLAIN, entry.etag);
   }
 
-  private async compactInfo(
-    gem: string,
-    req: Request,
-    ctx: RegistryRequestContext,
-  ): Promise<Response> {
+  async compactInfo(gem: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const name = parseRegistryInput(GemNameSchema, gem, {
       code: "NAME_INVALID",
       message: "invalid gem name",
@@ -210,18 +134,14 @@ export class RubygemsAdapter implements RegistryPlugin {
     return textResponseWithEtag(req, buildInfoFile(entries), TEXT_PLAIN);
   }
 
-  private async compactNames(req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  async compactNames(req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const names = (await ctx.data.packages.listNames())
       .map((row) => row.name)
       .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
     return textResponseWithEtag(req, `---\n${names.map((n) => `${n}\n`).join("")}`, TEXT_PLAIN);
   }
 
-  private async download(
-    filename: string,
-    req: Request,
-    ctx: RegistryRequestContext,
-  ): Promise<Response> {
+  async download(filename: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     filename = parseRegistryInput(GemFilenameSchema, filename, {
       code: "NAME_INVALID",
       message: "invalid gem filename",
@@ -295,4 +215,41 @@ function gemDependencyGraph(metadata: Record<string, unknown>): Record<string, s
   return out;
 }
 
+const rubygemsDefinition = registryAdapter("rubygems")
+  .stateClass(RubygemsAdapterState)
+  .module((module) =>
+    module
+      .displayName("RubyGems")
+      .mount("rubygems")
+      .capabilities("virtualizable")
+      .errorResponseKind("singleError")
+      .compressibleHandlers("compactVersions", "compactInfo", "compactNames"),
+  )
+  .scan((scan) =>
+    scan
+      .osvEcosystem("RubyGems")
+      .purlType("gem")
+      .dependencies(gemDependencyGraph)
+      .referencedDigestPaths("gemDigest"),
+  )
+  .basicAuth()
+  .fromState((state) => state.defaultPermission("requiredPermission"))
+  .routes((route) => [
+    route.post("/api/v1/gems", "push").calls((state, { req, ctx }) => state.push(req, ctx)),
+    route.delete("/api/v1/gems/yank", "yank").calls((state, { req, ctx }) => state.yank(req, ctx)),
+    route
+      .get("/versions", "compactVersions")
+      .calls((state, { req, ctx }) => state.compactVersions(req, ctx)),
+    route
+      .get("/names", "compactNames")
+      .calls((state, { req, ctx }) => state.compactNames(req, ctx)),
+    route
+      .get("/info/:gem", "compactInfo")
+      .calls((state, { params, req, ctx }) => state.compactInfo(params.gem, req, ctx)),
+    route
+      .get("/gems/:filename", "download")
+      .calls((state, { params, req, ctx }) => state.download(params.filename, req, ctx)),
+  ]);
+
+export class RubygemsAdapter extends rubygemsDefinition.adapterClass() {}
 export const rubygemsRegistryPlugin: RegistryPlugin = new RubygemsAdapter();

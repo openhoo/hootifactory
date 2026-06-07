@@ -1,5 +1,4 @@
 import {
-  delegateRegistryPlugin,
   Errors,
   type HttpMethod,
   ifNoneMatch,
@@ -9,9 +8,7 @@ import {
   type RegistryPlugin,
   type RegistryRequestContext,
   type RouteMatch,
-  registryBearerAuthChallenge,
-  registryCapabilities,
-  registryPlugin,
+  registryAdapter,
 } from "@hootifactory/registry";
 import { ociAppRoutes } from "./oci-app-routes";
 import { buildOciBlobResponse } from "./oci-blobs";
@@ -43,128 +40,9 @@ const REGISTRY_TOKEN_SERVICE = "hootifactory";
 const OCI_REPOSITORY_NAME_RE =
   /^[a-z0-9]+(?:(?:\.|_|__|-+)[a-z0-9]+)*(?:\/[a-z0-9]+(?:(?:\.|_|__|-+)[a-z0-9]+)*)*$/;
 
-export class DockerAdapter implements RegistryPlugin {
-  readonly id = "docker" as const;
-  readonly capabilities = registryCapabilities(
-    "contentAddressable",
-    "resumableUploads",
-    "virtualizable",
-  );
-  authChallenge = (perm: Permission, ctx: RegistryRequestContext) =>
-    registryBearerAuthChallenge({ ctx, permission: perm, service: REGISTRY_TOKEN_SERVICE });
-
-  private readonly plugin = registryPlugin(this.id)
-    .module({
-      displayName: "OCI",
-      mountSegment: "v2",
-      acceptsRegistryBearerToken: true,
-      repositoryNamePolicy: {
-        validate: (name) => OCI_REPOSITORY_NAME_RE.test(name),
-        invalidMessage:
-          "repository name is invalid for this registry module; OCI repositories must be lowercase",
-      },
-      scan: {
-        contentAddressableManifestGraph: {
-          noPayloadReason: "oci_manifest_no_scannable_payload",
-          references: (raw) => ociManifestReferences(raw),
-        },
-      },
-      appRoutes: ociAppRoutes(),
-    })
-    .capabilities(this.capabilities)
-    .authChallenge(this.authChallenge)
-    .defaultPermission(({ method, match, ctx }) => this.routePermission(method, match, ctx))
-    .routes((route) => [
-      route.get("/:name+/tags/list", "tagsList", ({ params, req, ctx }) =>
-        this.tagsList(params.name, req, ctx),
-      ),
-      route.get("/:name+/referrers/:digest", "referrers", ({ params, req, ctx }) =>
-        this.referrers(params.name, params.digest, req, ctx),
-      ),
-      route.head("/:name+/manifests/:reference", "headManifest", ({ params, req, ctx }) =>
-        this.getManifest(params.name, params.reference, req, ctx, true),
-      ),
-      route.get("/:name+/manifests/:reference", "getManifest", ({ params, req, ctx }) =>
-        this.getManifest(params.name, params.reference, req, ctx, false),
-      ),
-      route.put("/:name+/manifests/:reference", "putManifest", ({ params, req, ctx }) =>
-        this.putManifest(params.name, params.reference, req, ctx),
-      ),
-      route.delete("/:name+/manifests/:reference", "deleteManifest", ({ params, ctx }) =>
-        this.deleteManifest(params.name, params.reference, ctx),
-      ),
-      route.post("/:name+/blobs/uploads", "startUpload", ({ params, req, ctx }) =>
-        startUpload(params.name, req, ctx),
-      ),
-      route.get("/:name+/blobs/uploads/:uuid", "uploadStatus", ({ params, ctx }) =>
-        uploadStatus(params.name, params.uuid, ctx),
-      ),
-      route.patch("/:name+/blobs/uploads/:uuid", "patchUpload", ({ params, req, ctx }) =>
-        patchUpload(params.name, params.uuid, req, ctx),
-      ),
-      route.put("/:name+/blobs/uploads/:uuid", "putUpload", ({ params, req, ctx }) =>
-        putUpload(params.name, params.uuid, req, ctx),
-      ),
-      route.delete("/:name+/blobs/uploads/:uuid", "cancelUpload", ({ params, ctx }) =>
-        cancelUpload(params.name, params.uuid, ctx),
-      ),
-      route.head("/:name+/blobs/:digest", "headBlob", ({ params, req, ctx }) =>
-        this.getBlob(params.name, params.digest, req, ctx, true),
-      ),
-      route.get(
-        "/:name+/blobs/:digest",
-        "getBlob",
-        ({ params, req, ctx }) => this.getBlob(params.name, params.digest, req, ctx, false),
-        { immutableContentAddressed: true },
-      ),
-      route.delete("/:name+/blobs/:digest", "deleteBlob", ({ params, ctx }) =>
-        this.deleteBlob(params.name, params.digest, ctx),
-      ),
-    ])
-    .build();
-  private readonly delegate = delegateRegistryPlugin(this.plugin, {
-    beforeHandle: ({ match, ctx }) => {
-      const image = match.params.name ?? "";
-      assertImageName(this.fullName(ctx, image));
-    },
-  });
-
-  get displayName() {
-    return this.plugin.displayName;
-  }
-  get mountSegment() {
-    return this.plugin.mountSegment;
-  }
-  get repositoryNamePolicy() {
-    return this.plugin.repositoryNamePolicy;
-  }
-  get acceptsRegistryBearerToken() {
-    return this.plugin.acceptsRegistryBearerToken;
-  }
-  get apiKeyHeaders() {
-    return this.plugin.apiKeyHeaders;
-  }
-  get errorResponseKind() {
-    return this.plugin.errorResponseKind;
-  }
-  get compressibleHandlers() {
-    return this.plugin.compressibleHandlers;
-  }
-  get compressibleContentTypes() {
-    return this.plugin.compressibleContentTypes;
-  }
-  get scan() {
-    return this.plugin.scan;
-  }
-
-  routes = this.delegate.routes;
-
-  appRoutes() {
-    return this.plugin.appRoutes?.() ?? [];
-  }
-
+class DockerAdapterState {
   /** Full docker name "org/repo/image" for scope matching against the JWT. */
-  private fullName(ctx: RegistryRequestContext, image: string): string {
+  fullName(ctx: RegistryRequestContext, image: string): string {
     return `${ctx.repo.mountPath.replace(/^v2\//, "")}/${image}`;
   }
 
@@ -176,11 +54,7 @@ export class DockerAdapter implements RegistryPlugin {
     return this.routePermission(method, match, ctx);
   }
 
-  private routePermission(
-    method: HttpMethod,
-    match: RouteMatch,
-    ctx: RegistryRequestContext,
-  ): Permission {
+  routePermission(method: HttpMethod, match: RouteMatch, ctx: RegistryRequestContext): Permission {
     const action = UPLOAD_CONTROL_HANDLERS.has(match.entry.handlerId)
       ? "write"
       : method === "GET" || method === "HEAD"
@@ -205,10 +79,8 @@ export class DockerAdapter implements RegistryPlugin {
     };
   }
 
-  handle = this.delegate.handle;
-
   // ── manifests ──────────────────────────────────────────────────────────
-  private async putManifest(
+  async putManifest(
     image: string,
     reference: string,
     req: Request,
@@ -218,7 +90,7 @@ export class DockerAdapter implements RegistryPlugin {
     return new Response(null, { status: 201, headers });
   }
 
-  private async getManifest(
+  async getManifest(
     image: string,
     reference: string,
     req: Request,
@@ -246,7 +118,7 @@ export class DockerAdapter implements RegistryPlugin {
     return new Response(m.raw, { status: 200, headers });
   }
 
-  private async deleteManifest(
+  async deleteManifest(
     image: string,
     reference: string,
     ctx: RegistryRequestContext,
@@ -256,11 +128,7 @@ export class DockerAdapter implements RegistryPlugin {
   }
 
   // ── tags ───────────────────────────────────────────────────────────────
-  private async tagsList(
-    image: string,
-    req: Request,
-    ctx: RegistryRequestContext,
-  ): Promise<Response> {
+  async tagsList(image: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const pkg = await ctx.data.packages.findByName(image);
     if (!pkg) throw Errors.nameUnknown({ image });
     const query = parseOciTagsListQuery(req.url);
@@ -277,7 +145,7 @@ export class DockerAdapter implements RegistryPlugin {
   }
 
   // ── referrers ──────────────────────────────────────────────────────────
-  private async referrers(
+  async referrers(
     image: string,
     digest: string,
     req: Request,
@@ -313,7 +181,7 @@ export class DockerAdapter implements RegistryPlugin {
   }
 
   // ── blobs ──────────────────────────────────────────────────────────────
-  private async getBlob(
+  async getBlob(
     image: string,
     digest: string,
     req: Request,
@@ -341,11 +209,7 @@ export class DockerAdapter implements RegistryPlugin {
     });
   }
 
-  private async deleteBlob(
-    image: string,
-    digest: string,
-    ctx: RegistryRequestContext,
-  ): Promise<Response> {
+  async deleteBlob(image: string, digest: string, ctx: RegistryRequestContext): Promise<Response> {
     digest = parseRegistryInput(OciDigestSchema, digest, {
       code: "DIGEST_INVALID",
       message: "invalid blob digest",
@@ -358,4 +222,89 @@ export class DockerAdapter implements RegistryPlugin {
   }
 }
 
+const dockerDefinition = registryAdapter("docker")
+  .stateClass(DockerAdapterState)
+  .module((module) =>
+    module
+      .displayName("OCI")
+      .mount("v2")
+      .capabilities("contentAddressable", "resumableUploads", "virtualizable")
+      .acceptsRegistryBearerToken()
+      .repositoryNamePolicy({
+        validate: (name) => OCI_REPOSITORY_NAME_RE.test(name),
+        invalidMessage:
+          "repository name is invalid for this registry module; OCI repositories must be lowercase",
+      })
+      .appRoutes(ociAppRoutes()),
+  )
+  .scan((scan) =>
+    scan.contentAddressableManifestGraph({
+      noPayloadReason: "oci_manifest_no_scannable_payload",
+      references: (raw) => ociManifestReferences(raw),
+    }),
+  )
+  .registryBearerAuth({ service: REGISTRY_TOKEN_SERVICE })
+  .fromState((state) => state.defaultPermission("routePermission"))
+  .beforeHandle(({ match, ctx, state }) => {
+    const image = match.params.name ?? "";
+    assertImageName(state.fullName(ctx, image));
+  })
+  .routes((route) => [
+    route
+      .get("/:name+/tags/list", "tagsList")
+      .calls((state, { params, req, ctx }) => state.tagsList(params.name, req, ctx)),
+    route
+      .get("/:name+/referrers/:digest", "referrers")
+      .calls((state, { params, req, ctx }) =>
+        state.referrers(params.name, params.digest, req, ctx),
+      ),
+    route
+      .head("/:name+/manifests/:reference", "headManifest")
+      .calls((state, { params, req, ctx }) =>
+        state.getManifest(params.name, params.reference, req, ctx, true),
+      ),
+    route
+      .get("/:name+/manifests/:reference", "getManifest")
+      .calls((state, { params, req, ctx }) =>
+        state.getManifest(params.name, params.reference, req, ctx, false),
+      ),
+    route
+      .put("/:name+/manifests/:reference", "putManifest")
+      .calls((state, { params, req, ctx }) =>
+        state.putManifest(params.name, params.reference, req, ctx),
+      ),
+    route
+      .delete("/:name+/manifests/:reference", "deleteManifest")
+      .calls((state, { params, ctx }) => state.deleteManifest(params.name, params.reference, ctx)),
+    route
+      .post("/:name+/blobs/uploads", "startUpload")
+      .handle(({ params, req, ctx }) => startUpload(params.name, req, ctx)),
+    route
+      .get("/:name+/blobs/uploads/:uuid", "uploadStatus")
+      .handle(({ params, ctx }) => uploadStatus(params.name, params.uuid, ctx)),
+    route
+      .patch("/:name+/blobs/uploads/:uuid", "patchUpload")
+      .handle(({ params, req, ctx }) => patchUpload(params.name, params.uuid, req, ctx)),
+    route
+      .put("/:name+/blobs/uploads/:uuid", "putUpload")
+      .handle(({ params, req, ctx }) => putUpload(params.name, params.uuid, req, ctx)),
+    route
+      .delete("/:name+/blobs/uploads/:uuid", "cancelUpload")
+      .handle(({ params, ctx }) => cancelUpload(params.name, params.uuid, ctx)),
+    route
+      .head("/:name+/blobs/:digest", "headBlob")
+      .calls((state, { params, req, ctx }) =>
+        state.getBlob(params.name, params.digest, req, ctx, true),
+      ),
+    route
+      .immutableGet("/:name+/blobs/:digest", "getBlob")
+      .calls((state, { params, req, ctx }) =>
+        state.getBlob(params.name, params.digest, req, ctx, false),
+      ),
+    route
+      .delete("/:name+/blobs/:digest", "deleteBlob")
+      .calls((state, { params, ctx }) => state.deleteBlob(params.name, params.digest, ctx)),
+  ]);
+
+export class DockerAdapter extends dockerDefinition.adapterClass() {}
 export const dockerRegistryPlugin: RegistryPlugin = new DockerAdapter();

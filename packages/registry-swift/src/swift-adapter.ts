@@ -1,6 +1,4 @@
 import {
-  bearerAuthChallenge,
-  delegateRegistryPlugin,
   Errors,
   type HttpMethod,
   type Permission,
@@ -10,8 +8,7 @@ import {
   type RegistryRequestContext,
   type RouteMatch,
   readWritePermission,
-  registryCapabilities,
-  registryPlugin,
+  registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
 } from "@hootifactory/registry";
@@ -70,78 +67,7 @@ function parseVersion(version: string): string {
 }
 
 /** Swift Package Registry (SE-0292): the protocol SwiftPM speaks. */
-export class SwiftAdapter implements RegistryPlugin {
-  readonly id = "swift" as const;
-  readonly capabilities = registryCapabilities("virtualizable");
-  authChallenge = () => bearerAuthChallenge();
-
-  private readonly plugin = registryPlugin(this.id)
-    .module({
-      displayName: "Swift",
-      mountSegment: "swift",
-      errorResponseKind: "singleError",
-      compressibleHandlers: ["releases", "release", "manifest", "identifiers"],
-      compressibleContentTypes: [JSON_CONTENT_TYPE, MANIFEST_CONTENT_TYPE],
-      scan: {
-        defaultOsvEcosystem: "SwiftURL",
-        dependencyGraph: () => ({ deps: {}, purlType: "swift" }),
-        referencedDigests: (metadata) => {
-          const meta = parseSwiftVersionMeta(metadata);
-          return meta ? [meta.archiveDigest] : [];
-        },
-      },
-    })
-    .capabilities(this.capabilities)
-    .authChallenge(this.authChallenge)
-    .routes((route) => [
-      route.get("/identifiers", "identifiers", ({ req, ctx }) => this.identifiers(req, ctx)),
-      route.get("/:scope/:name", "releases", ({ params, req, ctx }) =>
-        this.releases(params.scope, params.name, req, ctx),
-      ),
-      // Declared before `/:scope/:name/:ref` so the manifest path wins.
-      route.get("/:scope/:name/:version/Package.swift", "manifest", ({ params, req, ctx }) =>
-        this.manifest(params.scope, params.name, params.version, req, ctx),
-      ),
-      route.get("/:scope/:name/:ref", "release", ({ params, req, ctx }) =>
-        this.release(params.scope, params.name, params.ref, req, ctx),
-      ),
-      route.put("/:scope/:name/:version", "publish", ({ params, req, ctx }) =>
-        this.publish(params.scope, params.name, params.version, req, ctx),
-      ),
-    ])
-    .build();
-  private readonly delegate = delegateRegistryPlugin(this.plugin);
-
-  get displayName() {
-    return this.plugin.displayName;
-  }
-  get mountSegment() {
-    return this.plugin.mountSegment;
-  }
-  get repositoryNamePolicy() {
-    return this.plugin.repositoryNamePolicy;
-  }
-  get acceptsRegistryBearerToken() {
-    return this.plugin.acceptsRegistryBearerToken;
-  }
-  get apiKeyHeaders() {
-    return this.plugin.apiKeyHeaders;
-  }
-  get errorResponseKind() {
-    return this.plugin.errorResponseKind;
-  }
-  get compressibleHandlers() {
-    return this.plugin.compressibleHandlers;
-  }
-  get compressibleContentTypes() {
-    return this.plugin.compressibleContentTypes;
-  }
-  get scan() {
-    return this.plugin.scan;
-  }
-
-  routes = this.delegate.routes;
-
+class SwiftAdapterState {
   requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
     const permission = readWritePermission(method);
     const scope = match?.params.scope;
@@ -162,13 +88,9 @@ export class SwiftAdapter implements RegistryPlugin {
     return { ...permission, resource: { type: "package", packageName } };
   }
 
-  handle = async (
-    match: RouteMatch,
-    req: Request,
-    ctx: RegistryRequestContext,
-  ): Promise<Response> => {
+  async aroundHandle(next: () => Promise<Response>): Promise<Response> {
     try {
-      return withContentVersion(await this.delegate.handle(match, req, ctx));
+      return withContentVersion(await next());
     } catch (err) {
       // Render thrown protocol errors here (not via the platform's generic
       // `errorResponseKind` path) so every error is a SE-0292 `Content-Version`
@@ -178,14 +100,14 @@ export class SwiftAdapter implements RegistryPlugin {
       }
       return withContentVersion(problemResponse(500, "internal server error"));
     }
-  };
+  }
 
-  private async findPackage(ctx: RegistryRequestContext, scope: string, name: string) {
+  async findPackage(ctx: RegistryRequestContext, scope: string, name: string) {
     return ctx.data.packages.findByName(swiftPackageId(scope, name));
   }
 
   /** GET /:scope/:name — list the live releases of a package. */
-  private async releases(
+  async releases(
     scopeRaw: string,
     nameRaw: string,
     req: Request,
@@ -208,7 +130,7 @@ export class SwiftAdapter implements RegistryPlugin {
    * GET /:scope/:name/:ref — either serve the `.zip` source archive, or return
    * release metadata for a version reference.
    */
-  private async release(
+  async release(
     scopeRaw: string,
     nameRaw: string,
     ref: string,
@@ -223,7 +145,7 @@ export class SwiftAdapter implements RegistryPlugin {
     return this.releaseMetadata(scope, name, parseVersion(ref), req, ctx);
   }
 
-  private async releaseMetadata(
+  async releaseMetadata(
     scope: string,
     name: string,
     version: string,
@@ -258,7 +180,7 @@ export class SwiftAdapter implements RegistryPlugin {
     });
   }
 
-  private async downloadArchive(
+  async downloadArchive(
     scope: string,
     name: string,
     versionRaw: string,
@@ -288,7 +210,7 @@ export class SwiftAdapter implements RegistryPlugin {
   }
 
   /** GET /:scope/:name/:version/Package.swift — the package manifest text. */
-  private async manifest(
+  async manifest(
     scopeRaw: string,
     nameRaw: string,
     versionRaw: string,
@@ -311,7 +233,7 @@ export class SwiftAdapter implements RegistryPlugin {
   }
 
   /** PUT /:scope/:name/:version — publish a release. */
-  private async publish(
+  async publish(
     scopeRaw: string,
     nameRaw: string,
     versionRaw: string,
@@ -335,7 +257,7 @@ export class SwiftAdapter implements RegistryPlugin {
   }
 
   /** GET /identifiers?url=... — map a repository URL to package identifiers. */
-  private async identifiers(req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  async identifiers(req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const url = new URL(req.url).searchParams.get("url");
     if (!url) return this.problem(400, "missing url query parameter");
     const rows = await ctx.data.packages.list();
@@ -350,7 +272,7 @@ export class SwiftAdapter implements RegistryPlugin {
     });
   }
 
-  private async matchesRepositoryUrl(
+  async matchesRepositoryUrl(
     ctx: RegistryRequestContext,
     row: { id: string; orgId: string; repositoryId: string; name: string },
     url: string,
@@ -366,9 +288,57 @@ export class SwiftAdapter implements RegistryPlugin {
   }
 
   /** Build an RFC 7807 `application/problem+json` body. */
-  private problem(status: number, detail: string): Response {
+  problem(status: number, detail: string): Response {
     return problemResponse(status, detail);
   }
 }
 
+const swiftDefinition = registryAdapter("swift")
+  .stateClass(SwiftAdapterState)
+  .module((module) =>
+    module
+      .displayName("Swift")
+      .mount("swift")
+      .capabilities("virtualizable")
+      .errorResponseKind("singleError")
+      .compressibleHandlers("releases", "release", "manifest", "identifiers")
+      .compressibleContentTypes(JSON_CONTENT_TYPE, MANIFEST_CONTENT_TYPE),
+  )
+  .scan((scan) =>
+    scan
+      .osvEcosystem("SwiftURL")
+      .dependencyGraph(() => ({ deps: {}, purlType: "swift" }))
+      .referencedDigests((metadata) => {
+        const meta = parseSwiftVersionMeta(metadata);
+        return meta ? [meta.archiveDigest] : [];
+      }),
+  )
+  .bearerAuth()
+  .fromState((state) => state.aroundHandle("aroundHandle").defaultPermission("requiredPermission"))
+  .routes((route) => [
+    route
+      .get("/identifiers", "identifiers")
+      .calls((state, { req, ctx }) => state.identifiers(req, ctx)),
+    route
+      .get("/:scope/:name", "releases")
+      .calls((state, { params, req, ctx }) => state.releases(params.scope, params.name, req, ctx)),
+    // Declared before `/:scope/:name/:ref` so the manifest path wins.
+    route
+      .get("/:scope/:name/:version/Package.swift", "manifest")
+      .calls((state, { params, req, ctx }) =>
+        state.manifest(params.scope, params.name, params.version, req, ctx),
+      ),
+    route
+      .get("/:scope/:name/:ref", "release")
+      .calls((state, { params, req, ctx }) =>
+        state.release(params.scope, params.name, params.ref, req, ctx),
+      ),
+    route
+      .put("/:scope/:name/:version", "publish")
+      .calls((state, { params, req, ctx }) =>
+        state.publish(params.scope, params.name, params.version, req, ctx),
+      ),
+  ]);
+
+export class SwiftAdapter extends swiftDefinition.adapterClass() {}
 export const swiftRegistryPlugin: RegistryPlugin = new SwiftAdapter();
