@@ -1,6 +1,4 @@
 import {
-  basicAuthChallenge,
-  delegateRegistryPlugin,
   Errors,
   type HttpMethod,
   ifNoneMatch,
@@ -10,8 +8,7 @@ import {
   type RegistryRequestContext,
   type RouteMatch,
   readWritePermission,
-  registryCapabilities,
-  registryPlugin,
+  registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
 } from "@hootifactory/registry";
@@ -48,102 +45,7 @@ const P2_INDEX_BODY = [
  * Publish is a hootifactory extension: a `PUT` of a bundle/feature jar whose OSGi
  * manifest (Bundle-SymbolicName/Bundle-Version) we parse to derive the unit.
  */
-export class P2Adapter implements RegistryPlugin {
-  readonly id = "p2" as const;
-  // Not `proxyable`: there is no upstream-mirror `proxyIngest` implementation, so
-  // declaring it would advertise proxy P2 repos as creatable when they are not.
-  readonly capabilities = registryCapabilities("virtualizable");
-  authChallenge = basicAuthChallenge;
-
-  private readonly plugin = registryPlugin(this.id)
-    .module({
-      displayName: "Eclipse P2",
-      mountSegment: "p2",
-      errorResponseKind: "singleError",
-      compressibleHandlers: ["contentXml", "artifactsXml"],
-      scan: {
-        defaultOsvEcosystem: undefined,
-        referencedDigests: (metadata) =>
-          typeof metadata.blobDigest === "string" ? [metadata.blobDigest] : [],
-      },
-    })
-    .capabilities(this.capabilities)
-    .authChallenge(this.authChallenge)
-    .routes((route) => [
-      // Service-discovery probe: a director requests `/p2.index` first to learn
-      // the factory order (read `.xml` directly, skip the exhaustive probe).
-      route.get("/p2.index", "p2Index", ({ req }) => this.p2Index(req), { serviceIndex: true }),
-      // Literal index documents declared before the `/:filename` catch-alls. They
-      // are repo-wide aggregate indexes, so a virtual repo serves them directly
-      // (`serviceIndex`) rather than fanning out — jar downloads still fan out.
-      route.get("/content.xml", "contentXml", ({ req, ctx }) => this.contentXml(false, req, ctx), {
-        serviceIndex: true,
-      }),
-      route.get("/content.jar", "contentJar", ({ req, ctx }) => this.contentXml(true, req, ctx), {
-        serviceIndex: true,
-      }),
-      route.get(
-        "/artifacts.xml",
-        "artifactsXml",
-        ({ req, ctx }) => this.artifactsXml(false, req, ctx),
-        {
-          serviceIndex: true,
-        },
-      ),
-      route.get(
-        "/artifacts.jar",
-        "artifactsJar",
-        ({ req, ctx }) => this.artifactsXml(true, req, ctx),
-        {
-          serviceIndex: true,
-        },
-      ),
-      route.get("/plugins/:filename", "downloadBundle", ({ params, req, ctx }) =>
-        this.download("bundle", params.filename, req, ctx),
-      ),
-      route.get("/features/:filename", "downloadFeature", ({ params, req, ctx }) =>
-        this.download("feature", params.filename, req, ctx),
-      ),
-      route.put("/plugins/:filename", "publishBundle", ({ req, ctx }) =>
-        this.publish("bundle", req, ctx),
-      ),
-      route.put("/features/:filename", "publishFeature", ({ req, ctx }) =>
-        this.publish("feature", req, ctx),
-      ),
-    ])
-    .build();
-  private readonly delegate = delegateRegistryPlugin(this.plugin);
-
-  get displayName() {
-    return this.plugin.displayName;
-  }
-  get mountSegment() {
-    return this.plugin.mountSegment;
-  }
-  get repositoryNamePolicy() {
-    return this.plugin.repositoryNamePolicy;
-  }
-  get acceptsRegistryBearerToken() {
-    return this.plugin.acceptsRegistryBearerToken;
-  }
-  get apiKeyHeaders() {
-    return this.plugin.apiKeyHeaders;
-  }
-  get errorResponseKind() {
-    return this.plugin.errorResponseKind;
-  }
-  get compressibleHandlers() {
-    return this.plugin.compressibleHandlers;
-  }
-  get compressibleContentTypes() {
-    return this.plugin.compressibleContentTypes;
-  }
-  get scan() {
-    return this.plugin.scan;
-  }
-
-  routes = this.delegate.routes;
-
+class P2AdapterState {
   requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
     const permission = readWritePermission(method);
     const filename = match?.params.filename;
@@ -162,8 +64,6 @@ export class P2Adapter implements RegistryPlugin {
     return permission;
   }
 
-  handle = this.delegate.handle;
-
   /** Collect every live installable unit across all packages for index regeneration. */
   private async liveUnits(ctx: RegistryRequestContext): Promise<P2VersionMeta[]> {
     const names = await ctx.data.packages.listNames();
@@ -181,27 +81,19 @@ export class P2Adapter implements RegistryPlugin {
   }
 
   /** `GET /p2.index` — the static service-discovery probe document. */
-  private p2Index(req: Request): Response {
+  p2Index(req: Request): Response {
     return textResponseWithEtag(req, P2_INDEX_BODY, TEXT_HEADERS);
   }
 
   /** `GET /content.xml` (or `.jar`) — the regenerated metadata repository. */
-  private async contentXml(
-    asJar: boolean,
-    req: Request,
-    ctx: RegistryRequestContext,
-  ): Promise<Response> {
+  async contentXml(asJar: boolean, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const units = await this.liveUnits(ctx);
     const xml = buildContentXml(this.repositoryName(ctx), units);
     return this.serveXml(req, xml, asJar ? "content.xml" : null);
   }
 
   /** `GET /artifacts.xml` (or `.jar`) — the regenerated artifact repository. */
-  private async artifactsXml(
-    asJar: boolean,
-    req: Request,
-    ctx: RegistryRequestContext,
-  ): Promise<Response> {
+  async artifactsXml(asJar: boolean, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const units = await this.liveUnits(ctx);
     const xml = buildArtifactsXml(this.repositoryName(ctx), units);
     return this.serveXml(req, xml, asJar ? "artifacts.xml" : null);
@@ -217,7 +109,7 @@ export class P2Adapter implements RegistryPlugin {
   }
 
   /** `GET /plugins/<file>` or `/features/<file>` — serve a stored jar blob. */
-  private async download(
+  async download(
     kind: P2ArtifactKind,
     filenameRaw: string | undefined,
     req: Request,
@@ -241,7 +133,7 @@ export class P2Adapter implements RegistryPlugin {
   }
 
   /** `PUT /plugins/<file>` or `/features/<file>` — publish a bundle/feature jar. */
-  private async publish(
+  async publish(
     kind: P2ArtifactKind,
     req: Request,
     ctx: RegistryRequestContext,
@@ -255,4 +147,57 @@ export class P2Adapter implements RegistryPlugin {
   }
 }
 
+const p2Definition = registryAdapter("p2")
+  .stateClass(P2AdapterState)
+  .module((module) =>
+    module
+      .displayName("Eclipse P2")
+      .mount("p2")
+      // Not `proxyable`: there is no upstream-mirror `proxyIngest`
+      // implementation, so declaring it would advertise unsupported proxy repos.
+      .capabilities("virtualizable")
+      .errorResponseKind("singleError")
+      .compressibleHandlers("contentXml", "artifactsXml"),
+  )
+  .scan({
+    defaultOsvEcosystem: undefined,
+    referencedDigests: (metadata) =>
+      typeof metadata.blobDigest === "string" ? [metadata.blobDigest] : [],
+  })
+  .basicAuth()
+  .fromState((state) => state.defaultPermission("requiredPermission"))
+  .routes((route) => [
+    // Service-discovery probe: a director requests `/p2.index` first to learn
+    // the factory order (read `.xml` directly, skip the exhaustive probe).
+    route.serviceIndex("/p2.index", "p2Index").calls((state, { req }) => state.p2Index(req)),
+    // Literal index documents declared before the `/:filename` catch-alls. They
+    // are repo-wide aggregate indexes, so a virtual repo serves them directly
+    // (`serviceIndex`) rather than fanning out — jar downloads still fan out.
+    route
+      .serviceIndex("/content.xml", "contentXml")
+      .calls((state, { req, ctx }) => state.contentXml(false, req, ctx)),
+    route
+      .serviceIndex("/content.jar", "contentJar")
+      .calls((state, { req, ctx }) => state.contentXml(true, req, ctx)),
+    route
+      .serviceIndex("/artifacts.xml", "artifactsXml")
+      .calls((state, { req, ctx }) => state.artifactsXml(false, req, ctx)),
+    route
+      .serviceIndex("/artifacts.jar", "artifactsJar")
+      .calls((state, { req, ctx }) => state.artifactsXml(true, req, ctx)),
+    route
+      .get("/plugins/:filename", "downloadBundle")
+      .calls((state, { params, req, ctx }) => state.download("bundle", params.filename, req, ctx)),
+    route
+      .get("/features/:filename", "downloadFeature")
+      .calls((state, { params, req, ctx }) => state.download("feature", params.filename, req, ctx)),
+    route
+      .put("/plugins/:filename", "publishBundle")
+      .calls((state, { req, ctx }) => state.publish("bundle", req, ctx)),
+    route
+      .put("/features/:filename", "publishFeature")
+      .calls((state, { req, ctx }) => state.publish("feature", req, ctx)),
+  ]);
+
+export class P2Adapter extends p2Definition.adapterClass() {}
 export const p2RegistryPlugin: RegistryPlugin = new P2Adapter();
