@@ -1,6 +1,4 @@
 import {
-  basicAuthChallenge,
-  delegateRegistryPlugin,
   Errors,
   type HttpMethod,
   type Permission,
@@ -10,8 +8,7 @@ import {
   type RegistryRequestContext,
   type RouteMatch,
   readWritePermission,
-  registryCapabilities,
-  registryPlugin,
+  registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
 } from "@hootifactory/registry";
@@ -45,78 +42,7 @@ function stripJsonSuffix(value: string): string | null {
  * point at a repo mount). Serves the formula index/objects plus bottle blobs and
  * a hootifactory PUT extension for publishing bottles.
  */
-export class HomebrewAdapter implements RegistryPlugin {
-  readonly id = "homebrew" as const;
-  readonly capabilities = registryCapabilities("virtualizable");
-  authChallenge = basicAuthChallenge;
-
-  private readonly plugin = registryPlugin(this.id)
-    .module({
-      displayName: "Homebrew",
-      mountSegment: "homebrew",
-      errorResponseKind: "singleError",
-      compressibleHandlers: ["formulaIndex", "formula", "formulaNames"],
-      compressibleContentTypes: [JSON_CONTENT_TYPE],
-      scan: {
-        defaultOsvEcosystem: "Homebrew",
-        dependencyGraph: ({ metadata }) => ({
-          deps: homebrewDependencyGraph(metadata),
-          osvEcosystem: "Homebrew",
-          purlType: "brew",
-        }),
-        referencedDigests: (metadata) => homebrewReferencedDigests(metadata),
-      },
-    })
-    .capabilities(this.capabilities)
-    .authChallenge(this.authChallenge)
-    .routes((route) => [
-      route.get("/api/formula.json", "formulaIndex", ({ req, ctx }) => this.formulaIndex(req, ctx)),
-      route.get("/api/formula_names.txt", "formulaNames", ({ req, ctx }) =>
-        this.formulaNames(req, ctx),
-      ),
-      route.get("/api/formula/:name", "formula", ({ params, req, ctx }) =>
-        this.formula(params.name, req, ctx),
-      ),
-      route.put("/api/formula/:name/:version/:tag", "publish", ({ params, req, ctx }) =>
-        handleHomebrewPublish(params.name, params.version, params.tag, req, ctx),
-      ),
-      route.get("/bottles/:file", "download", ({ params, req, ctx }) =>
-        this.download(params.file, req, ctx),
-      ),
-    ])
-    .build();
-  private readonly delegate = delegateRegistryPlugin(this.plugin);
-
-  get displayName() {
-    return this.plugin.displayName;
-  }
-  get mountSegment() {
-    return this.plugin.mountSegment;
-  }
-  get repositoryNamePolicy() {
-    return this.plugin.repositoryNamePolicy;
-  }
-  get acceptsRegistryBearerToken() {
-    return this.plugin.acceptsRegistryBearerToken;
-  }
-  get apiKeyHeaders() {
-    return this.plugin.apiKeyHeaders;
-  }
-  get errorResponseKind() {
-    return this.plugin.errorResponseKind;
-  }
-  get compressibleHandlers() {
-    return this.plugin.compressibleHandlers;
-  }
-  get compressibleContentTypes() {
-    return this.plugin.compressibleContentTypes;
-  }
-  get scan() {
-    return this.plugin.scan;
-  }
-
-  routes = this.delegate.routes;
-
+class HomebrewAdapterState {
   requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
     const permission = readWritePermission(method);
     const file = match?.params.file;
@@ -139,14 +65,12 @@ export class HomebrewAdapter implements RegistryPlugin {
     return permission;
   }
 
-  handle = this.delegate.handle;
-
-  private base(ctx: RegistryRequestContext): string {
+  base(ctx: RegistryRequestContext): string {
     return `${ctx.baseUrl}/${ctx.repo.mountPath}`;
   }
 
   /** Resolve a package's stable formula object from its newest live bottled version. */
-  private async resolveFormula(
+  async resolveFormula(
     ctx: RegistryRequestContext,
     pkg: RegistryPackageHandle,
     name: string,
@@ -167,7 +91,7 @@ export class HomebrewAdapter implements RegistryPlugin {
     return null;
   }
 
-  private async formulaIndex(req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  async formulaIndex(req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const summaries = await ctx.data.packages.list();
     const formulas: HomebrewFormulaJson[] = [];
     for (const summary of summaries) {
@@ -181,18 +105,14 @@ export class HomebrewAdapter implements RegistryPlugin {
     });
   }
 
-  private async formulaNames(req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  async formulaNames(req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const rows = await ctx.data.packages.listNames();
     const names = rows.map((row) => row.name).sort();
     const body = names.length > 0 ? `${names.join("\n")}\n` : "";
     return textResponseWithEtag(req, body, { "content-type": TEXT_CONTENT_TYPE });
   }
 
-  private async formula(
-    nameParam: string,
-    req: Request,
-    ctx: RegistryRequestContext,
-  ): Promise<Response> {
+  async formula(nameParam: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const stripped = stripJsonSuffix(nameParam);
     if (stripped === null) throw Errors.notFound();
     const name = parseFormulaName(stripped);
@@ -205,11 +125,7 @@ export class HomebrewAdapter implements RegistryPlugin {
     });
   }
 
-  private async download(
-    file: string,
-    req: Request,
-    ctx: RegistryRequestContext,
-  ): Promise<Response> {
+  async download(file: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     // The bottle filename IS the stored asset/blob-ref scope, so resolve the blob
     // directly by it. We never split name/version out of the filename — that stem
     // is ambiguous (both admit `-`/`.`), and real brew downloads by URL, never by
@@ -240,4 +156,43 @@ function homebrewReferencedDigests(metadata: Record<string, unknown>): string[] 
   return Object.values(parsed.bottles).map((bottle) => bottle.blobDigest);
 }
 
+const homebrewDefinition = registryAdapter("homebrew")
+  .stateClass(HomebrewAdapterState)
+  .module((module) =>
+    module
+      .displayName("Homebrew")
+      .mount("homebrew")
+      .capabilities("virtualizable")
+      .errorResponseKind("singleError")
+      .compressibleHandlers("formulaIndex", "formula", "formulaNames")
+      .compressibleContentTypes(JSON_CONTENT_TYPE),
+  )
+  .scan((scan) =>
+    scan
+      .osvEcosystem("Homebrew")
+      .purlType("brew")
+      .dependencies(homebrewDependencyGraph)
+      .referencedDigests((metadata) => homebrewReferencedDigests(metadata)),
+  )
+  .basicAuth()
+  .fromState((state) => state.defaultPermission("requiredPermission"))
+  .routes((route) => [
+    route
+      .get("/api/formula.json", "formulaIndex")
+      .calls((state, { req, ctx }) => state.formulaIndex(req, ctx)),
+    route
+      .get("/api/formula_names.txt", "formulaNames")
+      .calls((state, { req, ctx }) => state.formulaNames(req, ctx)),
+    route
+      .get("/api/formula/:name", "formula")
+      .calls((state, { params, req, ctx }) => state.formula(params.name, req, ctx)),
+    route.put("/api/formula/:name/:version/:tag", "publish", ({ params, req, ctx }) =>
+      handleHomebrewPublish(params.name, params.version, params.tag, req, ctx),
+    ),
+    route
+      .get("/bottles/:file", "download")
+      .calls((state, { params, req, ctx }) => state.download(params.file, req, ctx)),
+  ]);
+
+export class HomebrewAdapter extends homebrewDefinition.adapterClass() {}
 export const homebrewRegistryPlugin: RegistryPlugin = new HomebrewAdapter();
