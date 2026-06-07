@@ -1,4 +1,5 @@
 import type { RegistryPlugin } from "@hootifactory/registry";
+import { alpineRegistryPlugin } from "@hootifactory/registry-alpine";
 import { ansibleRegistryPlugin } from "@hootifactory/registry-ansible";
 import { aptRegistryPlugin } from "@hootifactory/registry-apt";
 import { cargoRegistryPlugin } from "@hootifactory/registry-cargo";
@@ -73,4 +74,5 @@ export const REGISTRY_PLUGIN_MANIFEST: RegistryPluginEntry[] = [
   { plugin: conanRegistryPlugin },
   { plugin: condaRegistryPlugin },
   { plugin: genericRegistryPlugin, aliases: ["raw"] },
+  { plugin: alpineRegistryPlugin, aliases: ["apk"] },
 ];
