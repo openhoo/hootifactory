@@ -1,6 +1,4 @@
 import {
-  basicAuthChallenge,
-  delegateRegistryPlugin,
   type HttpMethod,
   type Permission,
   parseRegistryInput,
@@ -10,8 +8,7 @@ import {
   type RegistryRequestContext,
   type RouteMatch,
   readWritePermission,
-  registryCapabilities,
-  registryPlugin,
+  registryAdapter,
   textResponseWithEtag,
 } from "@hootifactory/registry";
 import {
@@ -115,112 +112,7 @@ export function serveTerraformDiscoveryDoc(req: Request, ctx: RegistryRequestCon
  * the Provider Registry Protocol (`/v1/providers/...`), plus a hootifactory
  * publish extension (`PUT`) and the host-level service-discovery document.
  */
-export class TerraformAdapter implements RegistryPlugin {
-  readonly id = "terraform" as const;
-  // `proxyable` is intentionally NOT declared: the adapter implements no
-  // `proxyIngest` / upstream-mirror, so proxy repos cannot be created or served.
-  // Advertising it would be dishonest (and the platform gates proxy creation on
-  // `!adapter.proxyIngest`, so it would never work anyway).
-  readonly capabilities = registryCapabilities("virtualizable");
-  authChallenge = basicAuthChallenge;
-
-  private readonly plugin = registryPlugin(this.id)
-    .module({
-      displayName: "Terraform",
-      mountSegment: MOUNT_SEGMENT,
-      errorResponseKind: "singleError",
-      compressibleHandlers: ["discovery", "moduleVersions", "providerVersions", "providerDownload"],
-      appRoutes: terraformAppRoutes(),
-      scan: {
-        defaultOsvEcosystem: undefined,
-        referencedDigests: (metadata) => terraformReferencedDigests(metadata),
-      },
-    })
-    .capabilities(this.capabilities)
-    .authChallenge(this.authChallenge)
-    .routes((route) => [
-      // ── service discovery (repo-scoped) ──────────────────────────────────
-      // The authoritative per-repo discovery doc, reachable under the repo mount;
-      // its modules.v1/providers.v1 carry the full `terraform/<org>/<repo>` path.
-      route.get("/.well-known/terraform.json", "discovery", (i) =>
-        Promise.resolve(serveTerraformDiscoveryDoc(i.req, i.ctx)),
-      ),
-      // ── module protocol ──────────────────────────────────────────────────
-      // `versions` and `archive` are literal trailing segments; they're declared
-      // before the `:version/download` catch-all so the matcher can't shadow them.
-      route.get("/v1/modules/:namespace/:name/:system/versions", "moduleVersions", (i) =>
-        this.moduleVersions(i.params, i.req, i.ctx),
-      ),
-      route.get("/v1/modules/:namespace/:name/:system/:version/archive", "moduleArchive", (i) =>
-        this.moduleArchive(i.params, i.req, i.ctx),
-      ),
-      route.get("/v1/modules/:namespace/:name/:system/:version/download", "moduleDownload", (i) =>
-        this.moduleDownload(i.params, i.ctx),
-      ),
-      route.put("/v1/modules/:namespace/:name/:system", "modulePublish", (i) =>
-        this.modulePublish(i.params, i.req, i.ctx),
-      ),
-      // ── provider protocol ────────────────────────────────────────────────
-      route.get("/v1/providers/:namespace/:type/versions", "providerVersions", (i) =>
-        this.providerVersions(i.params, i.req, i.ctx),
-      ),
-      route.get(
-        "/v1/providers/:namespace/:type/:version/download/:os/:arch/zip",
-        "providerZip",
-        (i) => this.providerZip(i.params, i.req, i.ctx),
-      ),
-      route.get(
-        "/v1/providers/:namespace/:type/:version/download/:os/:arch",
-        "providerDownload",
-        (i) => this.providerDownload(i.params, i.req, i.ctx),
-      ),
-      route.get("/v1/providers/:namespace/:type/:version/shasums", "providerShasums", (i) =>
-        this.providerShasums(i.params, i.req, i.ctx),
-      ),
-      route.get("/v1/providers/:namespace/:type/:version/shasums.sig", "providerShasumsSig", (i) =>
-        this.providerShasumsSig(i.params, i.req, i.ctx),
-      ),
-      route.put("/v1/providers/:namespace/:type", "providerPublish", (i) =>
-        this.providerPublish(i.params, i.req, i.ctx),
-      ),
-    ])
-    .build();
-  private readonly delegate = delegateRegistryPlugin(this.plugin);
-
-  get displayName() {
-    return this.plugin.displayName;
-  }
-  get mountSegment() {
-    return this.plugin.mountSegment;
-  }
-  get repositoryNamePolicy() {
-    return this.plugin.repositoryNamePolicy;
-  }
-  get acceptsRegistryBearerToken() {
-    return this.plugin.acceptsRegistryBearerToken;
-  }
-  get apiKeyHeaders() {
-    return this.plugin.apiKeyHeaders;
-  }
-  get errorResponseKind() {
-    return this.plugin.errorResponseKind;
-  }
-  get compressibleHandlers() {
-    return this.plugin.compressibleHandlers;
-  }
-  get compressibleContentTypes() {
-    return this.plugin.compressibleContentTypes;
-  }
-  get scan() {
-    return this.plugin.scan;
-  }
-
-  routes = this.delegate.routes;
-
-  appRoutes(): RegistryAppRoute[] {
-    return this.plugin.appRoutes?.() ?? [];
-  }
-
+class TerraformAdapterState {
   requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
     const permission = readWritePermission(method);
     const packageName = this.packageNameFromMatch(match);
@@ -229,8 +121,6 @@ export class TerraformAdapter implements RegistryPlugin {
     }
     return permission;
   }
-
-  handle = this.delegate.handle;
 
   /** Resolve the stored package name a matched route addresses, if valid. */
   private packageNameFromMatch(match?: RouteMatch): string | null {
@@ -255,7 +145,7 @@ export class TerraformAdapter implements RegistryPlugin {
 
   // ── module handlers ────────────────────────────────────────────────────────
 
-  private moduleVersions(
+  moduleVersions(
     params: { namespace: string; name: string; system: string },
     req: Request,
     ctx: RegistryRequestContext,
@@ -269,7 +159,7 @@ export class TerraformAdapter implements RegistryPlugin {
     );
   }
 
-  private moduleArchive(
+  moduleArchive(
     params: { namespace: string; name: string; system: string; version: string },
     req: Request,
     ctx: RegistryRequestContext,
@@ -284,7 +174,7 @@ export class TerraformAdapter implements RegistryPlugin {
     );
   }
 
-  private moduleDownload(
+  moduleDownload(
     params: { namespace: string; name: string; system: string; version: string },
     ctx: RegistryRequestContext,
   ): Promise<Response> {
@@ -297,7 +187,7 @@ export class TerraformAdapter implements RegistryPlugin {
     );
   }
 
-  private modulePublish(
+  modulePublish(
     params: { namespace: string; name: string; system: string },
     req: Request,
     ctx: RegistryRequestContext,
@@ -313,7 +203,7 @@ export class TerraformAdapter implements RegistryPlugin {
 
   // ── provider handlers ───────────────────────────────────────────────────────
 
-  private providerVersions(
+  providerVersions(
     params: { namespace: string; type: string },
     req: Request,
     ctx: RegistryRequestContext,
@@ -326,7 +216,7 @@ export class TerraformAdapter implements RegistryPlugin {
     );
   }
 
-  private providerDownload(
+  providerDownload(
     params: { namespace: string; type: string; version: string; os: string; arch: string },
     req: Request,
     ctx: RegistryRequestContext,
@@ -342,7 +232,7 @@ export class TerraformAdapter implements RegistryPlugin {
     );
   }
 
-  private providerZip(
+  providerZip(
     params: { namespace: string; type: string; version: string; os: string; arch: string },
     req: Request,
     ctx: RegistryRequestContext,
@@ -358,7 +248,7 @@ export class TerraformAdapter implements RegistryPlugin {
     );
   }
 
-  private providerShasums(
+  providerShasums(
     params: { namespace: string; type: string; version: string },
     req: Request,
     ctx: RegistryRequestContext,
@@ -372,7 +262,7 @@ export class TerraformAdapter implements RegistryPlugin {
     );
   }
 
-  private providerShasumsSig(
+  providerShasumsSig(
     params: { namespace: string; type: string; version: string },
     req: Request,
     ctx: RegistryRequestContext,
@@ -386,7 +276,7 @@ export class TerraformAdapter implements RegistryPlugin {
     );
   }
 
-  private providerPublish(
+  providerPublish(
     params: { namespace: string; type: string },
     req: Request,
     ctx: RegistryRequestContext,
@@ -413,4 +303,62 @@ function terraformReferencedDigests(metadata: Record<string, unknown>): string[]
   return [];
 }
 
+const terraformDefinition = registryAdapter("terraform")
+  .stateClass(TerraformAdapterState)
+  .module((module) =>
+    module
+      .displayName("Terraform")
+      .mount(MOUNT_SEGMENT)
+      // No proxyable capability: this adapter has no proxyIngest/upstream mirror.
+      .capabilities("virtualizable")
+      .errorResponseKind("singleError")
+      .compressibleHandlers("discovery", "moduleVersions", "providerVersions", "providerDownload")
+      .appRoutes(terraformAppRoutes()),
+  )
+  .scan({
+    defaultOsvEcosystem: undefined,
+    referencedDigests: (metadata) => terraformReferencedDigests(metadata),
+  })
+  .basicAuth()
+  .fromState((state) => state.defaultPermission("requiredPermission"))
+  .routes((route) => [
+    // ── service discovery (repo-scoped) ──────────────────────────────────
+    route
+      .get("/.well-known/terraform.json", "discovery")
+      .handle(({ req, ctx }) => Promise.resolve(serveTerraformDiscoveryDoc(req, ctx))),
+    // ── module protocol ──────────────────────────────────────────────────
+    route
+      .get("/v1/modules/:namespace/:name/:system/versions", "moduleVersions")
+      .calls((state, { params, req, ctx }) => state.moduleVersions(params, req, ctx)),
+    route
+      .get("/v1/modules/:namespace/:name/:system/:version/archive", "moduleArchive")
+      .calls((state, { params, req, ctx }) => state.moduleArchive(params, req, ctx)),
+    route
+      .get("/v1/modules/:namespace/:name/:system/:version/download", "moduleDownload")
+      .calls((state, { params, ctx }) => state.moduleDownload(params, ctx)),
+    route
+      .put("/v1/modules/:namespace/:name/:system", "modulePublish")
+      .calls((state, { params, req, ctx }) => state.modulePublish(params, req, ctx)),
+    // ── provider protocol ────────────────────────────────────────────────
+    route
+      .get("/v1/providers/:namespace/:type/versions", "providerVersions")
+      .calls((state, { params, req, ctx }) => state.providerVersions(params, req, ctx)),
+    route
+      .get("/v1/providers/:namespace/:type/:version/download/:os/:arch/zip", "providerZip")
+      .calls((state, { params, req, ctx }) => state.providerZip(params, req, ctx)),
+    route
+      .get("/v1/providers/:namespace/:type/:version/download/:os/:arch", "providerDownload")
+      .calls((state, { params, req, ctx }) => state.providerDownload(params, req, ctx)),
+    route
+      .get("/v1/providers/:namespace/:type/:version/shasums", "providerShasums")
+      .calls((state, { params, req, ctx }) => state.providerShasums(params, req, ctx)),
+    route
+      .get("/v1/providers/:namespace/:type/:version/shasums.sig", "providerShasumsSig")
+      .calls((state, { params, req, ctx }) => state.providerShasumsSig(params, req, ctx)),
+    route
+      .put("/v1/providers/:namespace/:type", "providerPublish")
+      .calls((state, { params, req, ctx }) => state.providerPublish(params, req, ctx)),
+  ]);
+
+export class TerraformAdapter extends terraformDefinition.adapterClass() {}
 export const terraformRegistryPlugin: RegistryPlugin = new TerraformAdapter();
