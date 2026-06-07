@@ -62,6 +62,25 @@ describe("clamav scanner", () => {
     expect(parseClamAvCliFindings("nothing here")).toEqual([]);
   });
 
+  test("parses signatures with internal spaces and extra whitespace around `FOUND`", () => {
+    const output = [
+      "/scan/blob:  My Sig Name   FOUND  ",
+      "/scan/tabbed:\tWin.Tabbed.Sig\tFOUND",
+    ].join("\r\n");
+    expect(parseClamAvCliFindings(output).map((f) => f.vulnId)).toEqual([
+      "CLAMAV:My Sig Name",
+      "CLAMAV:Win.Tabbed.Sig",
+    ]);
+  });
+
+  test("ignores lines without a colon-delimited `FOUND` signature", () => {
+    // A whitespace-heavy line that does not match the `<path>: <sig> FOUND` shape.
+    const adversarial = `: ${" ".repeat(64)}`;
+    expect(parseClamAvCliFindings(adversarial)).toEqual([]);
+    expect(parseClamAvCliFindings("no colon here FOUND")).toEqual([]);
+    expect(parseClamAvCliFindings("/scan: sig FOUND extra")).toEqual([]);
+  });
+
   test("is unavailable and needs no external runtime without a REST URL or CLI runtime", () => {
     // No REST URL and the CLI runtime disabled => deterministically unavailable.
     const disabled = resolveTestScanner(clamavScanner, { runtime: { cliRuntime: "disabled" } });
