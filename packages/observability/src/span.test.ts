@@ -1,8 +1,16 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { addSpanEvent, initializeObservability, setActiveSpanAttributes, withSpan } from ".";
+import {
+  addSpanEvent,
+  initializeObservability,
+  setActiveSpanAttributes,
+  shutdownObservability,
+  withSpan,
+} from ".";
 
-afterEach(() => {
-  // No global mutation to undo; initializeObservability is idempotent here.
+afterEach(async () => {
+  // initializeObservability mutates global OpenTelemetry state and module-level
+  // singletons, so tear it back down to avoid cross-test contamination.
+  await shutdownObservability();
 });
 
 describe("withSpan", () => {

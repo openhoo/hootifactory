@@ -3,13 +3,17 @@ import {
   currentCorrelationContext,
   initializeObservability,
   instrumentHttpRequest,
+  shutdownObservability,
   withCorrelationContext,
 } from ".";
 
 const originalConsoleLog = console.log;
 
-afterEach(() => {
+afterEach(async () => {
   console.log = originalConsoleLog;
+  // initializeObservability mutates global OpenTelemetry state; reset it so the
+  // telemetry providers do not leak across tests under --parallel.
+  await shutdownObservability();
 });
 
 function silenceLogs() {
