@@ -423,6 +423,44 @@ describe("Arch adapter", () => {
     });
   });
 
+  test("GET /rpc/?type=info skips malformed names without a data lookup", async () => {
+    const ctx = archContext();
+    let lookups = 0;
+    ctx.data.packages.findByName = async () => {
+      lookups += 1;
+      return null;
+    };
+    const res = await new ArchAdapter().handle(
+      rpcMatch(),
+      new Request("https://registry.test/rpc/?v=5&type=info&arg[]=in/valid&arg[]=also%20bad"),
+      ctx,
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ version: 5, type: "info", resultcount: 0, results: [] });
+    expect(lookups).toBe(0);
+  });
+
+  test("GET /rpc/?type=multiinfo drops a package whose latest version has no arch metadata", async () => {
+    const ctx = archContext();
+    ctx.data.packages.findByName = async (name) => (name === "foo" ? pkgRow("foo") : null);
+    // A version row whose stored metadata is not arch-shaped is ignored by latestMeta.
+    ctx.data.versions.listLive = async () => [
+      { ...versionRow(storedMeta), metadata: { unrelated: true } },
+    ];
+    const res = await new ArchAdapter().handle(
+      rpcMatch(),
+      new Request("https://registry.test/rpc/?v=5&type=multiinfo&arg[]=foo"),
+      ctx,
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      version: 5,
+      type: "multiinfo",
+      resultcount: 0,
+      results: [],
+    });
+  });
+
   test("GET /rpc/ with an unsupported type returns an empty result set", async () => {
     const ctx = archContext();
     const res = await new ArchAdapter().handle(

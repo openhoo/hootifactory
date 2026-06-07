@@ -7,10 +7,17 @@ import { createDatabaseClient } from "./client";
 const here = dirname(fileURLToPath(import.meta.url));
 const migrationsFolder = join(here, "..", "migrations");
 
-const db = drizzle({ client: createDatabaseClient() });
+/** Apply all pending drizzle migrations against a freshly-built client. */
+export async function runMigrations(): Promise<void> {
+  const db = drizzle({ client: createDatabaseClient() });
+  console.log(`[db] applying migrations from ${migrationsFolder}`);
+  await migrate(db, { migrationsFolder });
+  console.log("[db] migrations applied");
+}
 
-console.log(`[db] applying migrations from ${migrationsFolder}`);
-await migrate(db, { migrationsFolder });
-console.log("[db] migrations applied");
-
-process.exit(0);
+// Only run as a side effect when invoked as a script (`bun run .../migrate.ts`),
+// not when imported (e.g. by tests). Keeps the CLI entrypoint behavior intact.
+if (import.meta.main) {
+  await runMigrations();
+  process.exit(0);
+}

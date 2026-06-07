@@ -6,6 +6,7 @@ import {
   HttpError,
   isUniqueViolation,
   RegistryError,
+  type RegistryErrorCode,
 } from "./errors";
 
 describe("registry errors", () => {
@@ -64,9 +65,56 @@ describe("registry errors", () => {
   test("detects nested Postgres unique constraint errors", () => {
     expect(isUniqueViolation({ cause: { code: "23505" } })).toBe(true);
     expect(isUniqueViolation({ cause: { cause: { errno: 23505 } } })).toBe(true);
+    expect(isUniqueViolation({ errno: "23505" })).toBe(true);
     expect(isUniqueViolation(new Error("duplicate key value violates unique constraint"))).toBe(
       true,
     );
     expect(isUniqueViolation({ code: "23503" })).toBe(false);
+    expect(isUniqueViolation(null)).toBe(false);
+    expect(isUniqueViolation("nope")).toBe(false);
+  });
+
+  test("each Errors factory builds a RegistryError with the documented status and code", () => {
+    const cases: Array<[() => RegistryError, number, RegistryErrorCode]> = [
+      [Errors.blobUnknown, 404, "BLOB_UNKNOWN"],
+      [Errors.blobUploadInvalid, 416, "BLOB_UPLOAD_INVALID"],
+      [Errors.blobUploadUnknown, 404, "BLOB_UPLOAD_UNKNOWN"],
+      [Errors.manifestUnknown, 404, "MANIFEST_UNKNOWN"],
+      [Errors.manifestInvalid, 400, "MANIFEST_INVALID"],
+      [Errors.manifestBlobUnknown, 404, "MANIFEST_BLOB_UNKNOWN"],
+      [Errors.nameUnknown, 404, "NAME_UNKNOWN"],
+      [Errors.nameInvalid, 400, "NAME_INVALID"],
+      [Errors.tagInvalid, 400, "TAG_INVALID"],
+      [Errors.paginationNumberInvalid, 400, "PAGINATION_NUMBER_INVALID"],
+      [Errors.digestInvalid, 400, "DIGEST_INVALID"],
+      [Errors.sizeInvalid, 400, "SIZE_INVALID"],
+      [Errors.unauthorized, 401, "UNAUTHORIZED"],
+      [Errors.denied, 403, "DENIED"],
+      [Errors.unsupported, 400, "UNSUPPORTED"],
+      [Errors.notFound, 404, "NOT_FOUND"],
+      [Errors.quotaExceeded, 403, "DENIED"],
+    ];
+
+    for (const [factory, status, code] of cases) {
+      const error = factory();
+      expect(error).toBeInstanceOf(RegistryError);
+      expect(error.status).toBe(status);
+      expect(error.code).toBe(code);
+      expect(error.message.length).toBeGreaterThan(0);
+    }
+  });
+
+  test("Errors factories thread the detail payload through to the instance", () => {
+    const detail = { reason: "test" };
+    expect(Errors.blobUnknown(detail).detail).toBe(detail);
+    expect(Errors.quotaExceeded(detail).detail).toBe(detail);
+  });
+
+  test("toResponse defaults a missing detail to null", async () => {
+    const response = Errors.notFound().toResponse();
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toEqual({
+      errors: [{ code: "NOT_FOUND", message: "not found", detail: null }],
+    });
   });
 });

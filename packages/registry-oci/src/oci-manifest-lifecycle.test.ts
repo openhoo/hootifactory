@@ -1,11 +1,45 @@
 import { describe, expect, test } from "bun:test";
+import type { RegistryManifestRow, RegistryPackageRow } from "@hootifactory/registry";
 import { createTestRegistryContext } from "@hootifactory/registry/testing";
 import {
   buildOciManifestCreatedHeaders,
+  deleteOciBlobReference,
+  deleteOciManifestReference,
   isOciBlobBlocked,
   putOciManifest,
+  resolveOciManifestForImage,
 } from "./oci-manifest-lifecycle";
 import { OCI_MEDIA_TYPES } from "./oci-media-types";
+
+function testPackage(): RegistryPackageRow {
+  return {
+    id: "pkg_1",
+    orgId: "org_1",
+    repositoryId: "repo_1",
+    name: "team/api",
+    namespace: null,
+    metadata: {},
+    latestVersion: null,
+    createdAt: new Date("2026-01-01T00:00:00.000Z"),
+    updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+  };
+}
+
+function manifestRow(raw: string): RegistryManifestRow {
+  return {
+    id: "manifest_1",
+    repositoryId: "repo_1",
+    digest: DIGEST,
+    mediaType: OCI_MEDIA_TYPES.manifestV1,
+    artifactType: null,
+    subjectDigest: null,
+    raw,
+    sizeBytes: raw.length,
+    configDigest: CONFIG_DIGEST,
+    createdAt: new Date("2026-01-02T00:00:00.000Z"),
+    updatedAt: new Date("2026-01-02T00:00:00.000Z"),
+  };
+}
 
 const DIGEST = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const SUBJECT_DIGEST = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
@@ -251,5 +285,196 @@ describe("OCI manifest lifecycle helpers", () => {
     expect(packageLookups).toBe(1);
     expect(referenceLookups).toBe(1);
     expect(batchedBlockChecks).toBe(1);
+  });
+
+  test("isOciBlobBlocked returns false for an unknown package", async () => {
+    const ctx = createTestRegistryContext();
+    ctx.data.packages.findByName = async () => null;
+    ctx.data.contentStore.listManifestDigestsReferencingBlob = async () => {
+      throw new Error("should not look up references for an unknown package");
+    };
+
+    await expect(isOciBlobBlocked(ctx, { image: "team/api", digest: LAYER_DIGEST })).resolves.toBe(
+      false,
+    );
+  });
+});
+
+describe("resolveOciManifestForImage", () => {
+  test("returns null when the package does not exist", async () => {
+    const ctx = createTestRegistryContext();
+    ctx.data.packages.findByName = async () => null;
+    ctx.data.contentStore.resolveManifest = async () => {
+      throw new Error("resolveManifest should not run without a package");
+    };
+
+    await expect(resolveOciManifestForImage(ctx, "team/api", "latest")).resolves.toBeNull();
+  });
+
+  test("resolves through the package-scoped manifest lookup", async () => {
+    const ctx = createTestRegistryContext();
+    const pkg = testPackage();
+    const row = manifestRow(JSON.stringify({ schemaVersion: 2 }));
+    ctx.data.packages.findByName = async () => pkg;
+    ctx.data.contentStore.resolveManifest = async (input) => {
+      expect(input.package.id).toBe(pkg.id);
+      expect(input.reference).toBe("latest");
+      return row;
+    };
+
+    await expect(resolveOciManifestForImage(ctx, "team/api", "latest")).resolves.toBe(row);
+  });
+});
+
+describe("deleteOciManifestReference", () => {
+  test("deletes a digest reference and releases now-unused layer blobs", async () => {
+    const ctx = createTestRegistryContext();
+    const pkg = testPackage();
+    const raw = JSON.stringify({
+      schemaVersion: 2,
+      mediaType: OCI_MEDIA_TYPES.manifestV1,
+      config: { mediaType: OCI_MEDIA_TYPES.configV1, digest: CONFIG_DIGEST, size: 2 },
+      layers: [{ mediaType: OCI_MEDIA_TYPES.layerTarGzip, digest: LAYER_DIGEST, size: 9 }],
+    });
+    const order: string[] = [];
+    const released: string[] = [];
+    ctx.data.packages.findByName = async () => pkg;
+    ctx.data.contentStore.resolveManifest = async () => manifestRow(raw);
+    ctx.data.contentStore.deleteTagsForManifest = async () => {
+      order.push("deleteTags");
+    };
+    ctx.data.contentStore.markPackageVersionsDeletedByDigest = async () => {
+      order.push("markVersionsDeleted");
+      return 1;
+    };
+    ctx.data.contentStore.deleteManifestIfUnassociated = async () => {
+      order.push("deleteManifest");
+      return true;
+    };
+    // No other live manifest references the config/layer, so both blobs are released.
+    ctx.data.contentStore.listLiveManifestsForPackage = async () => [];
+    ctx.data.content.releaseBlobRef = async ({ digest }) => {
+      released.push(digest);
+    };
+
+    await deleteOciManifestReference(ctx, { image: "team/api", reference: DIGEST });
+
+    expect(order).toEqual(["deleteTags", "markVersionsDeleted", "deleteManifest"]);
+    expect(released.sort()).toEqual([CONFIG_DIGEST, LAYER_DIGEST].sort());
+  });
+
+  test("keeps blobs that are still referenced by another live manifest", async () => {
+    const ctx = createTestRegistryContext();
+    const pkg = testPackage();
+    const raw = JSON.stringify({
+      schemaVersion: 2,
+      mediaType: OCI_MEDIA_TYPES.manifestV1,
+      config: { mediaType: OCI_MEDIA_TYPES.configV1, digest: CONFIG_DIGEST, size: 2 },
+      layers: [{ mediaType: OCI_MEDIA_TYPES.layerTarGzip, digest: LAYER_DIGEST, size: 9 }],
+    });
+    const released: string[] = [];
+    ctx.data.packages.findByName = async () => pkg;
+    ctx.data.contentStore.resolveManifest = async () => manifestRow(raw);
+    ctx.data.contentStore.deleteTagsForManifest = async () => {};
+    ctx.data.contentStore.markPackageVersionsDeletedByDigest = async () => 0;
+    ctx.data.contentStore.deleteManifestIfUnassociated = async () => true;
+    // Another live manifest still uses the layer (but not the config).
+    ctx.data.contentStore.listLiveManifestsForPackage = async () => [
+      {
+        digest: SUBJECT_DIGEST,
+        raw: JSON.stringify({
+          schemaVersion: 2,
+          layers: [{ mediaType: OCI_MEDIA_TYPES.layerTarGzip, digest: LAYER_DIGEST, size: 9 }],
+        }),
+      },
+    ];
+    ctx.data.content.releaseBlobRef = async ({ digest }) => {
+      released.push(digest);
+    };
+
+    await deleteOciManifestReference(ctx, { image: "team/api", reference: DIGEST });
+
+    expect(released).toEqual([CONFIG_DIGEST]);
+  });
+
+  test("deletes a tag reference without touching blobs", async () => {
+    const ctx = createTestRegistryContext();
+    const pkg = testPackage();
+    let deletedTag = "";
+    ctx.data.packages.findByName = async () => pkg;
+    ctx.data.contentStore.resolveManifest = async () => {
+      throw new Error("tag deletes should not resolve a manifest");
+    };
+    ctx.data.contentStore.deleteTag = async ({ tag }) => {
+      deletedTag = tag;
+      return true;
+    };
+
+    await deleteOciManifestReference(ctx, { image: "team/api", reference: "latest" });
+
+    expect(deletedTag).toBe("latest");
+  });
+
+  test("throws when a tag delete finds nothing", async () => {
+    const ctx = createTestRegistryContext();
+    ctx.data.packages.findByName = async () => testPackage();
+    ctx.data.contentStore.deleteTag = async () => false;
+
+    await expect(
+      deleteOciManifestReference(ctx, { image: "team/api", reference: "latest" }),
+    ).rejects.toMatchObject({ code: "MANIFEST_UNKNOWN" });
+  });
+
+  test("throws when the image package is unknown", async () => {
+    const ctx = createTestRegistryContext();
+    ctx.data.packages.findByName = async () => null;
+
+    await expect(
+      deleteOciManifestReference(ctx, { image: "team/api", reference: "latest" }),
+    ).rejects.toMatchObject({ code: "MANIFEST_UNKNOWN" });
+  });
+
+  test("throws when a digest reference does not resolve to a manifest", async () => {
+    const ctx = createTestRegistryContext();
+    ctx.data.packages.findByName = async () => testPackage();
+    ctx.data.contentStore.resolveManifest = async () => null;
+
+    await expect(
+      deleteOciManifestReference(ctx, { image: "team/api", reference: DIGEST }),
+    ).rejects.toMatchObject({ code: "MANIFEST_UNKNOWN" });
+  });
+});
+
+describe("deleteOciBlobReference", () => {
+  test("releases an existing blob reference", async () => {
+    const ctx = createTestRegistryContext();
+    let releasedDigest = "";
+    let releasedScope = "";
+    ctx.data.contentStore.blobRefExists = async ({ scope, digest }) => {
+      expect(scope).toBe("team/api");
+      expect(digest).toBe(LAYER_DIGEST);
+      return true;
+    };
+    ctx.data.content.releaseBlobRef = async ({ digest, scope }) => {
+      releasedDigest = digest;
+      releasedScope = scope;
+    };
+
+    await deleteOciBlobReference(ctx, { image: "team/api", digest: LAYER_DIGEST });
+
+    expect(releasedDigest).toBe(LAYER_DIGEST);
+    expect(releasedScope).toBe("team/api");
+  });
+
+  test("throws when the blob reference is missing", async () => {
+    const ctx = createTestRegistryContext();
+    ctx.data.contentStore.blobRefExists = async () => false;
+    ctx.data.content.releaseBlobRef = async () => {
+      throw new Error("missing blobs should never be released");
+    };
+
+    await expect(
+      deleteOciBlobReference(ctx, { image: "team/api", digest: LAYER_DIGEST }),
+    ).rejects.toMatchObject({ code: "BLOB_UNKNOWN" });
   });
 });

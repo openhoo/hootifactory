@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import type { FindingType, ResolvedScanner, ScannerFailure } from "@hootifactory/scanner";
-import { GATING_FINDING_TYPES, uncoveredGatingFindingTypes } from "./scan-bytes";
+// Import the pure helpers from the storage-free leaf module rather than
+// `./scan-bytes`: importing them from `./scan-bytes` would eagerly evaluate that
+// module's real `blobStore` (S3) client, which then leaks into sibling tests that
+// rely on `mock.module` and hangs them against an unreachable S3 in CI.
+import { GATING_FINDING_TYPES, uncoveredGatingFindingTypes } from "./scan-gating";
 
 function contentScanner(id: string, findingTypes: FindingType[]): ResolvedScanner {
   return {

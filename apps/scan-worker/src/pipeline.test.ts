@@ -1,10 +1,15 @@
 import { describe, expect, test } from "bun:test";
+import { mapWithBoundedConcurrency } from "@hootifactory/core";
 import type { ResolvedScanner, ScannerRuntime, ScannerRuntimeOptions } from "@hootifactory/scanner";
+// These are re-exported by `./pipeline`, but importing them from there would
+// eagerly evaluate the whole pipeline graph (real `@hootifactory/db` +
+// `@hootifactory/storage` handles) before the mock-based sibling tests register
+// their `mock.module` stubs — which hangs those tests against an unreachable
+// DB/S3 in CI. Import the pure helpers from their storage/db-free leaf sources.
 import {
   externalContentScannerRequested,
-  mapWithBoundedConcurrency,
   shouldFailForMissingExternalScanner,
-} from "./pipeline";
+} from "./scan-runtime";
 
 function contentScanner(
   id: string,

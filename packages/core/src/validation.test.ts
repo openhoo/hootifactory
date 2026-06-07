@@ -1,10 +1,13 @@
 import { describe, expect, test } from "bun:test";
+import { RegistryError } from "./errors";
 import {
   asJsonRecord,
   jsonRecordOrEmpty,
   parseJsonWithSchema,
+  parseRegistryInput,
   safeJsonParse,
   z,
+  zodIssueTree,
 } from "./validation";
 
 describe("json record validation helpers", () => {
@@ -32,5 +35,56 @@ describe("json record validation helpers", () => {
     expect(parseJsonWithSchema(schema, '{"ok":true}')).toEqual({ ok: true });
     expect(parseJsonWithSchema(schema, '{"ok":"yes"}')).toBeNull();
     expect(parseJsonWithSchema(schema, "{")).toBeNull();
+  });
+});
+
+describe("parseRegistryInput", () => {
+  const schema = z.strictObject({ name: z.string().min(1) });
+
+  test("returns parsed data for valid input", () => {
+    expect(parseRegistryInput(schema, { name: "pkg" })).toEqual({ name: "pkg" });
+  });
+
+  test("throws a RegistryError with defaults for invalid input", () => {
+    let thrown: unknown;
+    try {
+      parseRegistryInput(schema, { name: "" });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(RegistryError);
+    const err = thrown as RegistryError;
+    expect(err.status).toBe(400);
+    expect(err.code).toBe("UNSUPPORTED");
+    expect(err.message).toBe("invalid request");
+    expect(err.detail).toBeDefined();
+  });
+
+  test("honors caller-provided status, code, and message overrides", () => {
+    expect(() =>
+      parseRegistryInput(schema, 42, {
+        status: 422,
+        code: "NAME_INVALID",
+        message: "bad name",
+      }),
+    ).toThrow("bad name");
+    try {
+      parseRegistryInput(schema, 42, { status: 422, code: "NAME_INVALID" });
+    } catch (error) {
+      expect((error as RegistryError).status).toBe(422);
+      expect((error as RegistryError).code).toBe("NAME_INVALID");
+    }
+  });
+});
+
+describe("zodIssueTree", () => {
+  test("treeifies a Zod error into a structured shape", () => {
+    const result = z.strictObject({ name: z.string() }).safeParse({ name: 1 });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const tree = zodIssueTree(result.error) as { properties?: Record<string, unknown> };
+      expect(tree.properties).toBeDefined();
+      expect(tree.properties?.name).toBeDefined();
+    }
   });
 });
