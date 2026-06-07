@@ -10,7 +10,6 @@ import { registerAdapters } from "../bootstrap";
 registerAdapters();
 
 const UUID = "00000000-0000-4000-8000-000000000000";
-const UUID2 = "00000000-0000-4000-8000-000000000001";
 
 async function fetchJson(path: string, init?: RequestInit) {
   const res = await app.fetch(new Request(`http://localhost${path}`, init));
@@ -181,12 +180,15 @@ describe("ui route guards", () => {
   test("ui token routes deny anonymous and reject malformed ids", async () => {
     expect((await fetchJson("/api/orgs/bad/tokens")).status).toBe(400);
     expect((await fetchJson(`/api/orgs/${UUID}/tokens`)).status).toBe(401);
-    expect(
-      (await fetchJson(`/api/orgs/${UUID}/tokens/${UUID2}`, { method: "DELETE" })).status,
-    ).toBe(404);
     expect((await fetchJson(`/api/orgs/${UUID}/tokens`, postJson({ name: "ci" }))).status).toBe(
       401,
     );
+    // DELETE of a valid (non-malformed) token id loads the token from the DB
+    // before the authorization gate runs, so it is not a DB-free guard path and
+    // is covered hermetically by ui-tokens.test.ts ("DELETE token returns 404
+    // when not found"). Asserting it here only passed by accident when a sibling
+    // token test's process-global `mock.module("@hootifactory/auth")` happened to
+    // be active, which races under `bun test --parallel`.
   });
 });
 
