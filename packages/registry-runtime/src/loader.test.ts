@@ -63,10 +63,12 @@ describe("loadConfiguredRegistryPlugins", () => {
       "scoop",
       "vagrant",
       "rpm",
+      "ansible",
       "oci",
       "helm",
       "yum",
       "dnf",
+      "galaxy",
     ]);
   });
 
