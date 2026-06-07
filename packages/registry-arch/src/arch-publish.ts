@@ -55,6 +55,22 @@ export async function parseArchPublishRequest(
   }
   const info = parsed.ok ? parsed.info : null;
 
+  // When the archive's `.PKGINFO` and the route filename both name an identity
+  // field, they must agree — otherwise we'd persist metadata that contradicts the
+  // stored filename, yielding a misleading or un-resolvable artifact.
+  if (info && fromName) {
+    const mismatch =
+      (info.pkgname !== undefined && info.pkgname !== fromName.pkgname) ||
+      (info.pkgver !== undefined && info.pkgver !== fromName.pkgver) ||
+      (info.arch !== undefined && info.arch !== fromName.arch);
+    if (mismatch) {
+      return {
+        ok: false,
+        error: { error: "package metadata does not match filename", status: 422 },
+      };
+    }
+  }
+
   const pkgname = info?.pkgname ?? fromName?.pkgname;
   const pkgver = info?.pkgver ?? fromName?.pkgver;
   const arch = info?.arch ?? fromName?.arch;

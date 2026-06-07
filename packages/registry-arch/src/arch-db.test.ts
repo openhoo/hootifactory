@@ -43,6 +43,37 @@ function tarFiles(tar: Uint8Array): Map<string, string> {
   return files;
 }
 
+/** Like tarFiles, but reconstructs full paths from the ustar `prefix` + `name`. */
+function ustarFiles(tar: Uint8Array): Map<string, string> {
+  const files = new Map<string, string>();
+  const decoder = new TextDecoder();
+  const field = (header: Uint8Array, at: number, len: number) => {
+    let end = 0;
+    while (end < len && header[at + end] !== 0) end += 1;
+    return decoder.decode(header.subarray(at, at + end));
+  };
+  let offset = 0;
+  while (offset + 512 <= tar.length) {
+    const header = tar.subarray(offset, offset + 512);
+    if (header.every((b) => b === 0)) break;
+    const name = field(header, 0, 100);
+    if (name === "") break;
+    const prefix = field(header, 345, 155);
+    const fullName = prefix ? `${prefix}/${name}` : name;
+    let sizeStr = "";
+    for (let i = 124; i < 136; i += 1) {
+      const code = header[i];
+      if (code === undefined || code === 0 || code === 0x20) continue;
+      sizeStr += String.fromCharCode(code);
+    }
+    const size = sizeStr ? Number.parseInt(sizeStr, 8) : 0;
+    const dataStart = offset + 512;
+    if (size > 0) files.set(fullName, decoder.decode(tar.subarray(dataStart, dataStart + size)));
+    offset = dataStart + Math.ceil(size / 512) * 512;
+  }
+  return files;
+}
+
 describe("arch db", () => {
   test("desc file renders the expected %KEY% sections", () => {
     const desc = buildDescFile(entry());
@@ -66,6 +97,22 @@ describe("arch db", () => {
     const files = tarFiles(tar);
     expect(files.has("foo-1.2.3-1/desc")).toBe(true);
     expect(files.get("foo-1.2.3-1/desc")).toContain("%FILENAME%");
+  });
+
+  test("db tar emits no explicit directory entries", () => {
+    const tar = buildDbTar([entry()]);
+    const names = new Set(tarFiles(tar).keys());
+    // Only the `<dir>/desc` file is present; the bare directory is not emitted.
+    expect(names.has("foo-1.2.3-1/")).toBe(false);
+  });
+
+  test("a long <pkgname>-<pkgver>/desc path round-trips via the ustar prefix field", () => {
+    // A path longer than the 100-byte ustar `name` field must be split into the
+    // `prefix` field rather than truncated, and a standard reader must recover it.
+    const longName = "x".repeat(120);
+    const tar = buildDbTar([entry({ pkgname: longName, pkgver: "1.2.3-1" })]);
+    const files = ustarFiles(tar);
+    expect(files.has(`${longName}-1.2.3-1/desc`)).toBe(true);
   });
 
   test("buildArchDb gzips to a tar and is deterministic", () => {

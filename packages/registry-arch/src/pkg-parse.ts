@@ -12,7 +12,11 @@ import { type ArchPkgInfo, parsePkgInfo } from "./arch-validation";
  * `unsupported_compression` and the caller falls back to filename parsing.
  */
 
-const MAX_TAR_BYTES = 16 * 1024 * 1024;
+// Cap the inflated tar to keep a single decompression bounded, but high enough
+// not to reject real packages — Arch packages routinely exceed tens of MiB
+// uncompressed (toolchains/games run into the hundreds of MiB), so a small cap
+// would mis-report valid uploads as "malformed".
+const MAX_TAR_BYTES = 2 * 1024 * 1024 * 1024;
 const MAX_TAR_ENTRIES = 512;
 
 export type PkgInfoResult =

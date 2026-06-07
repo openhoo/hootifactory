@@ -353,6 +353,23 @@ describe("Arch adapter", () => {
     expect(await res.json()).toEqual({ error: "package version already exists" });
   });
 
+  test("PUT rejects a package whose .PKGINFO disagrees with the route filename", async () => {
+    const ctx = archContext();
+    // The archive declares pkgname "evil", but the upload path names "foo".
+    const pkg = buildArchPackage({ pkgname: "evil", pkgver: "1.2.3-1", arch: "x86_64" });
+    const res = await new ArchAdapter().handle(
+      {
+        entry: { method: "PUT", pattern: "/:repo/os/:arch/:file", handlerId: "publish" },
+        params: { repo: "core", arch: "x86_64", file: FILENAME },
+        path: `/core/os/x86_64/${FILENAME}`,
+      },
+      new Request(`https://registry.test/core/os/x86_64/${FILENAME}`, { method: "PUT", body: pkg }),
+      ctx,
+    );
+    expect(res.status).toBe(422);
+    expect(await res.json()).toEqual({ error: "package metadata does not match filename" });
+  });
+
   test("PUT of an empty body is rejected with 400", async () => {
     const ctx = archContext();
     const res = await new ArchAdapter().handle(
