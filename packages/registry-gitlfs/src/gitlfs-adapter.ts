@@ -1,6 +1,4 @@
 import {
-  basicAuthChallenge,
-  delegateRegistryPlugin,
   type HttpMethod,
   InvalidDigestError,
   type Permission,
@@ -8,8 +6,7 @@ import {
   type RegistryRequestContext,
   type RouteMatch,
   readWritePermission,
-  registryCapabilities,
-  registryPlugin,
+  registryAdapter,
   serveRegistryBlob,
 } from "@hootifactory/registry";
 import { buildBatchResponse } from "./gitlfs-batch";
@@ -85,84 +82,7 @@ function lfsJson(body: unknown, status = 200): Response {
  * in the shared CAS keyed by `sha256:<oid>` — there is no version/tag aggregation.
  * The optional `/locks` file-locking endpoints are uniformly unsupported (404).
  */
-export class GitLfsAdapter implements RegistryPlugin {
-  readonly id = "gitlfs" as const;
-  // contentAddressable: objects are keyed by their sha256 oid.
-  // resumableUploads: false — LFS basic transfer PUTs each object whole.
-  // proxyable: false — Git LFS has no upstream-mirror semantics.
-  // virtualizable: false — LFS is a flat object store with no aggregation semantics.
-  readonly capabilities = registryCapabilities("contentAddressable");
-  authChallenge = basicAuthChallenge;
-
-  private readonly plugin = registryPlugin(this.id)
-    .module({
-      displayName: "Git LFS",
-      mountSegment: "lfs",
-      errorResponseKind: "singleError",
-      // No `scan.referencedDigests`: that hook feeds version-retention GC, which
-      // ranks/prunes `package_versions` rows. Git LFS is a flat content-addressed
-      // object store — it never publishes a version (objects are stored via
-      // `storeBlobStreamWithRef`), so retention never sees an LFS row and the hook
-      // would be inert. Orphaned objects are reclaimed through asset/blob-ref
-      // refcounting on the CAS, not keep-last-N version retention.
-    })
-    .capabilities(this.capabilities)
-    .authChallenge(this.authChallenge)
-    .routes((route) => [
-      // Literal/static routes declared before the `/objects/:oid` catch-all so the
-      // matcher (which tries routes in order) cannot shadow them. The `/locks/:id/unlock`
-      // and `/locks/verify` literals precede the bare `/locks` routes for the same reason.
-      route.post("/objects/batch", "batch", ({ req, ctx }) => this.batch(req, ctx)),
-      route.post("/locks/verify", "locksVerify", () => this.locksUnsupported()),
-      route.post("/locks/:id/unlock", "locksUnlock", () => this.locksUnsupported()),
-      route.post("/locks", "locksCreate", () => this.locksUnsupported()),
-      route.get("/locks", "locksList", () => this.locksUnsupported()),
-      route.head("/objects/:oid", "headObject", ({ params, req, ctx }) =>
-        this.getObject(params.oid, req, ctx, true),
-      ),
-      route.get(
-        "/objects/:oid",
-        "getObject",
-        ({ params, req, ctx }) => this.getObject(params.oid, req, ctx, false),
-        { immutableContentAddressed: true },
-      ),
-      route.put("/objects/:oid", "putObject", ({ params, req, ctx }) =>
-        this.putObject(params.oid, req, ctx),
-      ),
-    ])
-    .build();
-  private readonly delegate = delegateRegistryPlugin(this.plugin);
-
-  get displayName() {
-    return this.plugin.displayName;
-  }
-  get mountSegment() {
-    return this.plugin.mountSegment;
-  }
-  get repositoryNamePolicy() {
-    return this.plugin.repositoryNamePolicy;
-  }
-  get acceptsRegistryBearerToken() {
-    return this.plugin.acceptsRegistryBearerToken;
-  }
-  get apiKeyHeaders() {
-    return this.plugin.apiKeyHeaders;
-  }
-  get errorResponseKind() {
-    return this.plugin.errorResponseKind;
-  }
-  get compressibleHandlers() {
-    return this.plugin.compressibleHandlers;
-  }
-  get compressibleContentTypes() {
-    return this.plugin.compressibleContentTypes;
-  }
-  get scan() {
-    return this.plugin.scan;
-  }
-
-  routes = this.delegate.routes;
-
+class GitLfsAdapterState {
   requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
     // GET/HEAD read, PUT write. The batch operation (upload vs download) lives in the
     // request body, not the route, so a pure (method, route) mapping cannot tell them
@@ -180,11 +100,9 @@ export class GitLfsAdapter implements RegistryPlugin {
     return permission;
   }
 
-  handle = this.delegate.handle;
-
   // ── batch ────────────────────────────────────────────────────────────────
   /** `POST /objects/batch` — negotiate `upload`/`download` actions per object. */
-  private async batch(req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  async batch(req: Request, ctx: RegistryRequestContext): Promise<Response> {
     let raw: unknown;
     try {
       raw = await req.json();
@@ -238,7 +156,7 @@ export class GitLfsAdapter implements RegistryPlugin {
 
   // ── objects ──────────────────────────────────────────────────────────────
   /** `GET|HEAD /objects/:oid` — serve the stored object content by oid. */
-  private async getObject(
+  async getObject(
     oidRaw: string,
     req: Request,
     ctx: RegistryRequestContext,
@@ -258,11 +176,7 @@ export class GitLfsAdapter implements RegistryPlugin {
   }
 
   /** `PUT /objects/:oid` — upload object content; the body's sha256 must equal `oid`. */
-  private async putObject(
-    oidRaw: string,
-    req: Request,
-    ctx: RegistryRequestContext,
-  ): Promise<Response> {
+  async putObject(oidRaw: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const oid = parseOid(oidRaw);
     if (oid instanceof Response) return oid;
     const digest = oidToDigest(oid);
@@ -312,9 +226,41 @@ export class GitLfsAdapter implements RegistryPlugin {
    * This cleanly disables locking client-side (and `lfs.<url>.locksverify`) without
    * the contradictory mix of verify-200/create-501 that a partial implementation gives.
    */
-  private locksUnsupported(): Response {
+  locksUnsupported(): Response {
     return lfsJson({ message: "locking is not supported by this registry" }, 404);
   }
 }
 
+const gitlfsDefinition = registryAdapter("gitlfs")
+  .stateClass(GitLfsAdapterState)
+  .module((module) =>
+    module
+      .displayName("Git LFS")
+      .mount("lfs")
+      // LFS objects are keyed by sha256 oid. The basic-transfer PUT is not resumable,
+      // LFS has no upstream-mirror semantics, and it is a flat non-virtual store.
+      .capabilities("contentAddressable")
+      .errorResponseKind("singleError"),
+  )
+  .basicAuth()
+  .fromState((state) => state.defaultPermission("requiredPermission"))
+  .routes((route) => [
+    // Literal/static routes declared before the `/objects/:oid` catch-all.
+    route.post("/objects/batch", "batch").calls((state, { req, ctx }) => state.batch(req, ctx)),
+    route.post("/locks/verify", "locksVerify").calls((state) => state.locksUnsupported()),
+    route.post("/locks/:id/unlock", "locksUnlock").calls((state) => state.locksUnsupported()),
+    route.post("/locks", "locksCreate").calls((state) => state.locksUnsupported()),
+    route.get("/locks", "locksList").calls((state) => state.locksUnsupported()),
+    route
+      .head("/objects/:oid", "headObject")
+      .calls((state, { params, req, ctx }) => state.getObject(params.oid, req, ctx, true)),
+    route
+      .immutableGet("/objects/:oid", "getObject")
+      .calls((state, { params, req, ctx }) => state.getObject(params.oid, req, ctx, false)),
+    route
+      .put("/objects/:oid", "putObject")
+      .calls((state, { params, req, ctx }) => state.putObject(params.oid, req, ctx)),
+  ]);
+
+export class GitLfsAdapter extends gitlfsDefinition.adapterClass() {}
 export const gitlfsRegistryPlugin: RegistryPlugin = new GitLfsAdapter();
