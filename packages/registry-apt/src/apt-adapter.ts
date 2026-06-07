@@ -1,7 +1,5 @@
 import {
   asJsonRecord,
-  basicAuthChallenge,
-  delegateRegistryPlugin,
   Errors,
   type HttpMethod,
   ifNoneMatch,
@@ -12,8 +10,7 @@ import {
   type RegistryRequestContext,
   type RouteMatch,
   readWritePermission,
-  registryCapabilities,
-  registryPlugin,
+  registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
 } from "@hootifactory/registry";
@@ -37,85 +34,8 @@ interface SnapshotCacheEntry {
 }
 
 /** APT (Debian): pool upload/download + generated Release/Packages indexes. */
-export class AptAdapter implements RegistryPlugin {
-  readonly id = "apt" as const;
-  readonly capabilities = registryCapabilities("virtualizable");
-  authChallenge = basicAuthChallenge;
-  private readonly snapshotCache = new Map<string, SnapshotCacheEntry>();
-
-  private readonly plugin = registryPlugin(this.id)
-    .module({
-      displayName: "APT",
-      mountSegment: "apt",
-      errorResponseKind: "singleError",
-      compressibleHandlers: [],
-      scan: {
-        defaultOsvEcosystem: "Debian:12",
-        dependencyGraph: ({ metadata }) => ({
-          deps: aptDependencyGraph(metadata),
-          osvEcosystem: readOsvEcosystem(metadata),
-          purlType: "deb",
-        }),
-        referencedDigests: (metadata) =>
-          typeof metadata.debDigest === "string" ? [metadata.debDigest] : [],
-      },
-    })
-    .capabilities(this.capabilities)
-    .authChallenge(this.authChallenge)
-    .routes((route) => [
-      route.get("/dists/:suite/Release", "release", ({ params, req, ctx }) =>
-        this.release(params.suite, req, ctx),
-      ),
-      route.get("/dists/:suite/InRelease", "inRelease", () => notFound()),
-      route.get("/dists/:suite/Release.gpg", "releaseSig", () => notFound()),
-      route.get("/dists/:suite/:component/:archdir/Packages", "packages", ({ params, req, ctx }) =>
-        this.packages(params.suite, params.component, params.archdir, false, req, ctx),
-      ),
-      route.get(
-        "/dists/:suite/:component/:archdir/Packages.gz",
-        "packagesGz",
-        ({ params, req, ctx }) =>
-          this.packages(params.suite, params.component, params.archdir, true, req, ctx),
-      ),
-      route.get("/pool/:path+", "download", ({ params, req, ctx }) =>
-        this.download(params.path, req, ctx),
-      ),
-      route.put("/pool/:path+", "upload", ({ params, req, ctx }) =>
-        this.upload(params.path, req, ctx),
-      ),
-    ])
-    .build();
-  private readonly delegate = delegateRegistryPlugin(this.plugin);
-
-  get displayName() {
-    return this.plugin.displayName;
-  }
-  get mountSegment() {
-    return this.plugin.mountSegment;
-  }
-  get repositoryNamePolicy() {
-    return this.plugin.repositoryNamePolicy;
-  }
-  get acceptsRegistryBearerToken() {
-    return this.plugin.acceptsRegistryBearerToken;
-  }
-  get apiKeyHeaders() {
-    return this.plugin.apiKeyHeaders;
-  }
-  get errorResponseKind() {
-    return this.plugin.errorResponseKind;
-  }
-  get compressibleHandlers() {
-    return this.plugin.compressibleHandlers;
-  }
-  get compressibleContentTypes() {
-    return this.plugin.compressibleContentTypes;
-  }
-  get scan() {
-    return this.plugin.scan;
-  }
-
-  routes = this.delegate.routes;
+class AptAdapterState {
+  readonly snapshotCache = new Map<string, SnapshotCacheEntry>();
 
   requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
     const permission = readWritePermission(method);
@@ -126,9 +46,7 @@ export class AptAdapter implements RegistryPlugin {
     return permission;
   }
 
-  handle = this.delegate.handle;
-
-  private async listDebAssets(ctx: RegistryRequestContext): Promise<RegistryAssetRow[]> {
+  async listDebAssets(ctx: RegistryRequestContext): Promise<RegistryAssetRow[]> {
     const all: RegistryAssetRow[] = [];
     const pageSize = 1000;
     for (let offset = 0; ; offset += pageSize) {
@@ -139,7 +57,7 @@ export class AptAdapter implements RegistryPlugin {
     return all.filter((asset) => asset.role === APT_DEB_KIND);
   }
 
-  private async snapshot(ctx: RegistryRequestContext, suite: string): Promise<AptSnapshot> {
+  async snapshot(ctx: RegistryRequestContext, suite: string): Promise<AptSnapshot> {
     const key = `${ctx.repo.id}:${suite}`;
     const cached = this.snapshotCache.get(key);
     if (cached && cached.expiresAt > Date.now()) return cached.snapshot;
@@ -162,15 +80,11 @@ export class AptAdapter implements RegistryPlugin {
     return snapshot;
   }
 
-  private clearSnapshot(ctx: RegistryRequestContext, suite: string): void {
+  clearSnapshot(ctx: RegistryRequestContext, suite: string): void {
     this.snapshotCache.delete(`${ctx.repo.id}:${suite}`);
   }
 
-  private async release(
-    suite: string,
-    req: Request,
-    ctx: RegistryRequestContext,
-  ): Promise<Response> {
+  async release(suite: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const validSuite = parseRegistryInput(SuiteSchema, suite, {
       code: "NAME_INVALID",
       message: "invalid suite",
@@ -179,7 +93,7 @@ export class AptAdapter implements RegistryPlugin {
     return textResponseWithEtag(req, snapshot.release, TEXT_PLAIN);
   }
 
-  private async packages(
+  async packages(
     suite: string,
     component: string,
     archdir: string,
@@ -206,11 +120,7 @@ export class AptAdapter implements RegistryPlugin {
     return new Response(entry.gz, { headers: { "content-type": "application/gzip", etag } });
   }
 
-  private async download(
-    path: string,
-    req: Request,
-    ctx: RegistryRequestContext,
-  ): Promise<Response> {
+  async download(path: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const poolPath = parseRegistryInput(PoolPathSchema, `pool/${path}`, {
       code: "NAME_INVALID",
       message: "invalid pool path",
@@ -227,7 +137,7 @@ export class AptAdapter implements RegistryPlugin {
     });
   }
 
-  private async upload(path: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  async upload(path: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const poolPath = parseRegistryInput(PoolPathSchema, `pool/${path}`, {
       code: "NAME_INVALID",
       message: "invalid pool path",
@@ -302,4 +212,51 @@ function readOsvEcosystem(metadata: Record<string, unknown>): string {
   return typeof metadata.osvEcosystem === "string" ? metadata.osvEcosystem : "Debian:12";
 }
 
+const aptDefinition = registryAdapter("apt")
+  .stateClass(AptAdapterState)
+  .module((module) =>
+    module
+      .displayName("APT")
+      .mount("apt")
+      .capabilities("virtualizable")
+      .errorResponseKind("singleError")
+      .compressibleHandlers(),
+  )
+  .scan((scan) =>
+    scan
+      .osvEcosystem("Debian:12")
+      .dependencyGraph(({ metadata }) => ({
+        deps: aptDependencyGraph(metadata),
+        osvEcosystem: readOsvEcosystem(metadata),
+        purlType: "deb",
+      }))
+      .referencedDigestPaths("debDigest"),
+  )
+  .basicAuth()
+  .fromState((state) => state.defaultPermission("requiredPermission"))
+  .routes((route) => [
+    route
+      .get("/dists/:suite/Release", "release")
+      .calls((state, { params, req, ctx }) => state.release(params.suite, req, ctx)),
+    route.get("/dists/:suite/InRelease", "inRelease", () => notFound()),
+    route.get("/dists/:suite/Release.gpg", "releaseSig", () => notFound()),
+    route
+      .get("/dists/:suite/:component/:archdir/Packages", "packages")
+      .calls((state, { params, req, ctx }) =>
+        state.packages(params.suite, params.component, params.archdir, false, req, ctx),
+      ),
+    route
+      .get("/dists/:suite/:component/:archdir/Packages.gz", "packagesGz")
+      .calls((state, { params, req, ctx }) =>
+        state.packages(params.suite, params.component, params.archdir, true, req, ctx),
+      ),
+    route
+      .get("/pool/:path+", "download")
+      .calls((state, { params, req, ctx }) => state.download(params.path, req, ctx)),
+    route
+      .put("/pool/:path+", "upload")
+      .calls((state, { params, req, ctx }) => state.upload(params.path, req, ctx)),
+  ]);
+
+export class AptAdapter extends aptDefinition.adapterClass() {}
 export const aptRegistryPlugin: RegistryPlugin = new AptAdapter();
