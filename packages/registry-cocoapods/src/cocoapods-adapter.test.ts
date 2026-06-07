@@ -82,11 +82,11 @@ describe("CocoaPods adapter", () => {
     ]);
   });
 
-  test("declares the documented capabilities", () => {
+  test("declares only virtualizable (no proxyable: there is no proxyIngest)", () => {
     expect(new CocoapodsAdapter().capabilities).toEqual({
       contentAddressable: false,
       resumableUploads: false,
-      proxyable: true,
+      proxyable: false,
       virtualizable: true,
     });
   });
@@ -507,6 +507,155 @@ describe("CocoaPods adapter", () => {
       ctx,
     );
     expect(res.status).toBe(400);
+  });
+
+  test("PUT /<pod> rejects a body with only a source part (missing podspec) with 400", async () => {
+    const ctx = cocoapodsContext();
+    const body = buildMultipartBody("BOUND", [
+      { name: "source", filename: "demo.tar.gz", data: new Uint8Array([1, 2, 3, 4]) },
+    ]);
+    const res = await new CocoapodsAdapter().handle(
+      {
+        entry: { method: "PUT", pattern: "/:pod", handlerId: "publish" },
+        params: { pod: "demo" },
+        path: "/demo",
+      },
+      new Request("https://registry.test/demo", {
+        method: "PUT",
+        headers: { "content-type": "multipart/form-data; boundary=BOUND" },
+        body,
+      }),
+      ctx,
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "missing 'podspec' part" });
+  });
+
+  test("PUT /<pod> rejects a body with only a podspec part (missing source) with 400", async () => {
+    const ctx = cocoapodsContext();
+    const body = buildMultipartBody("BOUND", [
+      {
+        name: "podspec",
+        data: new TextEncoder().encode(JSON.stringify({ name: "demo", version: "1.2.3" })),
+      },
+    ]);
+    const res = await new CocoapodsAdapter().handle(
+      {
+        entry: { method: "PUT", pattern: "/:pod", handlerId: "publish" },
+        params: { pod: "demo" },
+        path: "/demo",
+      },
+      new Request("https://registry.test/demo", {
+        method: "PUT",
+        headers: { "content-type": "multipart/form-data; boundary=BOUND" },
+        body,
+      }),
+      ctx,
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "missing 'source' part" });
+  });
+
+  test("PUT /<pod> rejects a podspec part that is not valid JSON with 400", async () => {
+    const ctx = cocoapodsContext();
+    const body = buildMultipartBody("BOUND", [
+      { name: "podspec", data: new TextEncoder().encode("not json{") },
+      { name: "source", filename: "demo.tar.gz", data: new Uint8Array([1, 2, 3, 4]) },
+    ]);
+    const res = await new CocoapodsAdapter().handle(
+      {
+        entry: { method: "PUT", pattern: "/:pod", handlerId: "publish" },
+        params: { pod: "demo" },
+        path: "/demo",
+      },
+      new Request("https://registry.test/demo", {
+        method: "PUT",
+        headers: { "content-type": "multipart/form-data; boundary=BOUND" },
+        body,
+      }),
+      ctx,
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "'podspec' part is not valid JSON" });
+  });
+
+  test("PUT /<pod> strips a publisher source so the served podspec only exposes the hosted http+sha256", async () => {
+    const adapter = new CocoapodsAdapter();
+    const ctx = cocoapodsContext();
+    const archive = new Uint8Array([5, 6, 7, 8]);
+    const expectedDigest = `sha256:${Bun.SHA256.hash(archive, "hex")}`;
+    const expectedHex = Bun.SHA256.hash(archive, "hex");
+
+    let committedMeta: Record<string, unknown> | undefined;
+    ctx.data.packages.findOrCreate = async ({ name }) => pkgRow(name);
+    ctx.data.versions.exists = async () => false;
+    ctx.data.content.storeBlobWithRef = async (): Promise<RegistryStoredBlob> => ({
+      digest: expectedDigest,
+      size: archive.length,
+      deduped: false,
+      refCreated: true,
+      blobRefId: "ref_1",
+    });
+    ctx.data.versions.commitOrReleaseBlob = async (input) => {
+      committedMeta = input.metadata;
+      return { versionId: "ver_1" };
+    };
+
+    // The attacker-controlled podspec embeds a malicious git+http source.
+    const publishRes = await adapter.handle(
+      {
+        entry: { method: "PUT", pattern: "/:pod", handlerId: "publish" },
+        params: { pod: "demo" },
+        path: "/demo",
+      },
+      new Request("https://registry.test/demo", {
+        method: "PUT",
+        headers: { "content-type": "multipart/form-data; boundary=BOUND" },
+        body: buildMultipartBody("BOUND", [
+          {
+            name: "podspec",
+            data: new TextEncoder().encode(
+              JSON.stringify({
+                name: "demo",
+                version: "1.2.3",
+                summary: "a demo pod",
+                source: { git: "https://evil.example/repo.git", tag: "1.2.3" },
+              }),
+            ),
+          },
+          { name: "source", filename: "demo.tar.gz", data: archive },
+        ]),
+      }),
+      ctx,
+    );
+    expect(publishRes.status).toBe(201);
+    if (!committedMeta) throw new Error("publish did not commit metadata");
+
+    // The committed metadata must not carry the attacker source.
+    const committedPodspec = (committedMeta as { podspec: Record<string, unknown> }).podspec;
+    expect("source" in committedPodspec).toBe(false);
+
+    // Reading the served Specs podspec exposes ONLY the hosted http + stored sha256.
+    ctx.data.packages.findByName = async (name) => (name === "demo" ? pkgRow("demo") : null);
+    ctx.data.versions.findLive = async () => versionRow(committedMeta as Record<string, unknown>);
+    const specRes = await adapter.handle(
+      {
+        entry: { method: "GET", pattern: "/Specs/:tail+", handlerId: "podspec" },
+        params: { tail: "f/e/0/demo/1.2.3/demo.podspec.json" },
+        path: `/${DEMO_SPEC_PATH}`,
+      },
+      new Request(`https://registry.test/${DEMO_SPEC_PATH}`),
+      ctx,
+    );
+    const spec = (await specRes.json()) as { source: unknown };
+    // The served `source` (the only field CocoaPods reads to fetch the archive) exposes
+    // ONLY the hosted http URL + the sha256 of the stored bytes — never the attacker source.
+    expect(spec.source).toEqual({
+      http: "https://registry.example.test/cocoapods/private/pods/demo/1.2.3/demo-1.2.3.tar.gz",
+      sha256: expectedHex,
+    });
+    // The attacker's git URL must not survive anywhere in the served document.
+    expect(JSON.stringify(spec)).not.toContain("evil.example");
   });
 
   test("PUT /<pod> rejects an empty source part with 400", async () => {

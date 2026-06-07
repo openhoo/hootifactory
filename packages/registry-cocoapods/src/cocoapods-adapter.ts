@@ -99,7 +99,11 @@ function parseSpecsTail(tail: string): SpecsPathParts | null {
  */
 export class CocoapodsAdapter implements RegistryPlugin {
   readonly id = "cocoapods" as const;
-  readonly capabilities = registryCapabilities("proxyable", "virtualizable");
+  // Only `virtualizable`: a repo mount can be aggregated into a virtual repo. We do NOT
+  // declare `proxyable` because this adapter implements no `proxyIngest`/upstream mirror
+  // (proxy-repo creation is gated on the implementation, not the flag), so advertising it
+  // would be a dishonest capability. Matches the homebrew/maven index-style reference.
+  readonly capabilities = registryCapabilities("virtualizable");
   authChallenge = basicAuthChallenge;
 
   private readonly plugin = registryPlugin(this.id)
@@ -229,7 +233,12 @@ export class CocoapodsAdapter implements RegistryPlugin {
   private async listPodVersions(ctx: RegistryRequestContext): Promise<PodVersions[]> {
     const names = await ctx.data.packages.listNames();
     const out: PodVersions[] = [];
-    for (const { name } of [...names].sort((a, b) => a.name.localeCompare(b.name))) {
+    // Codepoint ordering (not locale-sensitive `localeCompare`) so the generated index
+    // documents — and the ETags derived from them — are stable across ICU/runtime upgrades,
+    // matching the homebrew reference comparator.
+    for (const { name } of [...names].sort((a, b) =>
+      a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
+    )) {
       const pkg = await ctx.data.packages.findByName(name);
       if (!pkg) continue;
       const versions: string[] = [];
