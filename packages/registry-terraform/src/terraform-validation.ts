@@ -145,7 +145,14 @@ export interface TerraformDiscoveryDoc {
  * omits the mount segments would resolve to a path no repository is mounted at.
  */
 export function buildTerraformDiscoveryDoc(mountPath: string): TerraformDiscoveryDoc {
-  const base = `/${mountPath.replace(/^\/+/, "").replace(/\/+$/, "")}`;
+  // Trim leading/trailing slashes with a linear scan instead of a regex: an
+  // anchored `/\/+$/` over caller-supplied input is a polynomial-ReDoS vector
+  // (CodeQL js/polynomial-redos), and a single pass is both safe and clearer.
+  let start = 0;
+  let end = mountPath.length;
+  while (start < end && mountPath[start] === "/") start++;
+  while (end > start && mountPath[end - 1] === "/") end--;
+  const base = `/${mountPath.slice(start, end)}`;
   return {
     "modules.v1": `${base}/v1/modules/`,
     "providers.v1": `${base}/v1/providers/`,
