@@ -55,10 +55,12 @@ describe("loadConfiguredRegistryPlugins", () => {
       "chocolatey",
       "winget",
       "homebrew",
+      "generic",
       "scoop",
       "rpm",
       "oci",
       "helm",
+      "raw",
       "yum",
       "dnf",
     ]);
