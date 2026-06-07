@@ -19,5 +19,14 @@ export {
   parseArchVersionMeta,
   parsePkgInfo,
 } from "./arch-validation";
-export { type AurResponse, type AurResult, buildAurInfoResponse } from "./aur-rpc";
+export { archVercmp } from "./arch-vercmp";
+export {
+  AUR_MAX_ARGS,
+  type AurResponse,
+  type AurResult,
+  aurRequestedNames,
+  aurSearchTerm,
+  buildAurResponse,
+  matchesAurSearch,
+} from "./aur-rpc";
 export { readPkgInfo } from "./pkg-parse";

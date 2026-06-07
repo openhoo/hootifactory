@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { gunzipSync } from "node:zlib";
-import type {
-  RegistryPackageRow,
-  RegistryPackageVersionRow,
-  RegistryStoredBlob,
-  RouteMatch,
+import {
+  computeDigest,
+  digestHex,
+  type RegistryPackageRow,
+  type RegistryPackageVersionRow,
+  type RegistryStoredBlob,
+  type RouteMatch,
 } from "@hootifactory/registry";
 import { createTestRegistryContext } from "@hootifactory/registry/testing";
 import { ArchAdapter } from "./arch-adapter";
@@ -115,9 +117,12 @@ describe("Arch adapter", () => {
     expect(adapter.requiredPermission("GET", dbMatch)).toEqual({ action: "read" });
   });
 
-  test("capabilities advertise proxyable + virtualizable", () => {
+  test("capabilities advertise virtualizable but NOT proxyable (no proxyIngest)", () => {
     const caps = new ArchAdapter().capabilities;
-    expect(caps.proxyable).toBe(true);
+    // `proxyable` is intentionally false: proxy-repo creation is gated on
+    // `adapter.proxyIngest`, which this adapter does not implement. Advertising
+    // proxy support we cannot honor would be rejected at create time.
+    expect(caps.proxyable).toBe(false);
     expect(caps.virtualizable).toBe(true);
     expect(caps.contentAddressable).toBe(false);
     expect(caps.resumableUploads).toBe(false);
@@ -422,11 +427,82 @@ describe("Arch adapter", () => {
     const ctx = archContext();
     const res = await new ArchAdapter().handle(
       rpcMatch(),
-      new Request("https://registry.test/rpc/?v=5&type=search&arg=foo"),
+      new Request("https://registry.test/rpc/?v=5&type=suggest&arg=foo"),
+      ctx,
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ version: 5, type: "suggest", resultcount: 0, results: [] });
+  });
+
+  test("GET /rpc/?type=search substring-matches hosted package names", async () => {
+    const ctx = archContext();
+    ctx.data.packages.list = async () => [
+      { id: "pkg_foo", orgId: "org_1", repositoryId: "repo_1", name: "foo" },
+      { id: "pkg_libbar", orgId: "org_1", repositoryId: "repo_1", name: "libbar" },
+    ];
+    const fooMeta = { ...storedMeta };
+    const barMeta = {
+      ...storedMeta,
+      pkgname: "libbar",
+      filename: "libbar-2.0.0-1-x86_64.pkg.tar.zst",
+      pkgdesc: "the bar runtime library",
+    };
+    ctx.data.versions.listLiveForPackages = async () =>
+      new Map([
+        ["pkg_foo", [versionRow(fooMeta)]],
+        ["pkg_libbar", [versionRow(barMeta)]],
+      ]);
+
+    const res = await new ArchAdapter().handle(
+      rpcMatch(),
+      new Request("https://registry.test/rpc/?v=5&type=search&by=name&arg=bar"),
+      ctx,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      type: string;
+      resultcount: number;
+      results: Array<{ Name: string }>;
+    };
+    expect(body.type).toBe("search");
+    expect(body.resultcount).toBe(1);
+    expect(body.results[0]?.Name).toBe("libbar");
+  });
+
+  test("GET /rpc/?type=search&by=name-desc also matches descriptions", async () => {
+    const ctx = archContext();
+    ctx.data.packages.list = async () => [
+      { id: "pkg_foo", orgId: "org_1", repositoryId: "repo_1", name: "foo" },
+    ];
+    ctx.data.versions.listLiveForPackages = async () =>
+      new Map([["pkg_foo", [versionRow({ ...storedMeta, pkgdesc: "a widget toolkit" })]]]);
+
+    const res = await new ArchAdapter().handle(
+      rpcMatch(),
+      new Request("https://registry.test/rpc/?v=5&type=search&by=name-desc&arg=widget"),
+      ctx,
+    );
+    const body = (await res.json()) as { resultcount: number; results: Array<{ Name: string }> };
+    expect(body.resultcount).toBe(1);
+    expect(body.results[0]?.Name).toBe("foo");
+  });
+
+  test("GET /rpc/?type=search with an empty term returns no results", async () => {
+    const ctx = archContext();
+    let listed = false;
+    ctx.data.packages.list = async () => {
+      listed = true;
+      return [];
+    };
+    const res = await new ArchAdapter().handle(
+      rpcMatch(),
+      new Request("https://registry.test/rpc/?v=5&type=search&arg="),
       ctx,
     );
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ version: 5, type: "search", resultcount: 0, results: [] });
+    // An empty term short-circuits before touching the data layer.
+    expect(listed).toBe(false);
   });
 
   test("scan.referencedDigests surfaces the stored blob digest", () => {
@@ -440,5 +516,254 @@ describe("Arch adapter", () => {
     const graph = scan?.dependencyGraph?.({ metadata: { ...storedMeta } });
     expect(graph?.purlType).toBe("alpm");
     expect(graph?.deps).toEqual({ bar: "", baz: "" });
+  });
+
+  test("GET <repo>.files 404s (no files database is served, not desc bytes)", async () => {
+    const ctx = archContext();
+    await expect(
+      new ArchAdapter().handle(
+        downloadMatch("core.files"),
+        new Request("https://registry.test/core/os/x86_64/core.files"),
+        ctx,
+      ),
+    ).rejects.toMatchObject({ status: 404 });
+    await expect(
+      new ArchAdapter().handle(
+        downloadMatch("core.files.tar.gz"),
+        new Request("https://registry.test/core/os/x86_64/core.files.tar.gz"),
+        ctx,
+      ),
+    ).rejects.toMatchObject({ status: 404 });
+  });
+
+  test("sync DB exposes one canonical (highest vercmp) entry per package name", async () => {
+    const ctx = archContext();
+    ctx.data.packages.list = async () => [
+      { id: "pkg_foo", orgId: "org_1", repositoryId: "repo_1", name: "foo" },
+    ];
+    const v1 = { ...storedMeta, pkgver: "1.2.3-1", filename: "foo-1.2.3-1-x86_64.pkg.tar.zst" };
+    const v2 = { ...storedMeta, pkgver: "1.10.0-1", filename: "foo-1.10.0-1-x86_64.pkg.tar.zst" };
+    // Return the OLDER version last to prove selection is by vercmp, not order
+    // (1.10.0 > 1.2.3 under pacman, despite "1.10" sorting below "1.2" lexically).
+    ctx.data.versions.listLiveForPackages = async () =>
+      new Map([["pkg_foo", [versionRow(v2), versionRow(v1)]]]);
+
+    const res = await new ArchAdapter().handle(
+      dbMatch,
+      new Request("https://registry.test/core/os/x86_64/core.db"),
+      ctx,
+    );
+    const tar = new TextDecoder().decode(gunzipSync(new Uint8Array(await res.arrayBuffer())));
+    expect(tar).toContain("foo-1.10.0-1/desc");
+    expect(tar).not.toContain("foo-1.2.3-1/desc");
+    // Exactly one desc member for the name.
+    expect(tar.match(/\/desc/g)?.length).toBe(1);
+  });
+
+  test("publish -> sync DB -> download round-trips a matching SHA256SUM", async () => {
+    const ctx = archContext();
+    const pkg = buildArchPackage({
+      pkgname: "foo",
+      pkgver: "1.2.3-1",
+      arch: "x86_64",
+      depends: ["bar"],
+    });
+    const expectedDigest = computeDigest(pkg);
+    const expectedSha = digestHex(expectedDigest);
+
+    // Stateful in-memory store: capture the metadata + bytes at publish, then
+    // surface them through the read paths the way the DB layer would.
+    let stored: ArchVersionMeta | null = null;
+    ctx.data.packages.findOrCreate = async ({ name }) => pkgRow(name);
+    ctx.data.versions.exists = async () => false;
+    ctx.data.content.storeBlobWithRef = async (): Promise<RegistryStoredBlob> => ({
+      digest: expectedDigest,
+      size: pkg.length,
+      deduped: false,
+      refCreated: true,
+      blobRefId: "ref_1",
+    });
+    ctx.data.versions.commitOrReleaseBlob = async (input) => {
+      stored = input.metadata as ArchVersionMeta;
+      return { versionId: "ver_1" };
+    };
+
+    const put = await new ArchAdapter().handle(
+      {
+        entry: { method: "PUT", pattern: "/:repo/os/:arch/:file", handlerId: "publish" },
+        params: { repo: "core", arch: "x86_64", file: FILENAME },
+        path: `/core/os/x86_64/${FILENAME}`,
+      },
+      new Request(`https://registry.test/core/os/x86_64/${FILENAME}`, { method: "PUT", body: pkg }),
+      ctx,
+    );
+    expect(put.status).toBe(201);
+    if (!stored) throw new Error("publish did not store metadata");
+    expect((stored as ArchVersionMeta).sha256).toBe(expectedSha);
+
+    // The regenerated .db must carry the just-published FILENAME + that SHA.
+    ctx.data.packages.list = async () => [
+      { id: "pkg_foo", orgId: "org_1", repositoryId: "repo_1", name: "foo" },
+    ];
+    ctx.data.versions.listLiveForPackages = async () =>
+      new Map([["pkg_foo", [versionRow(stored as ArchVersionMeta)]]]);
+    const dbRes = await new ArchAdapter().handle(
+      dbMatch,
+      new Request("https://registry.test/core/os/x86_64/core.db"),
+      ctx,
+    );
+    const desc = new TextDecoder().decode(gunzipSync(new Uint8Array(await dbRes.arrayBuffer())));
+    expect(desc).toContain(`%FILENAME%\n${FILENAME}\n`);
+    expect(desc).toContain(`%SHA256SUM%\n${expectedSha}\n`);
+
+    // The download path serves bytes whose sha256 equals the desc's SHA256SUM.
+    ctx.data.assets.findByScope = async () => ({
+      id: "asset_1",
+      orgId: "org_1",
+      repositoryId: "repo_1",
+      packageId: "pkg_foo",
+      packageVersionId: "ver_1",
+      blobRefId: "ref_1",
+      digest: expectedDigest,
+      role: "arch_package",
+      scope: FILENAME,
+      path: FILENAME,
+      mediaType: "application/octet-stream",
+      sizeBytes: pkg.length,
+      metadata: {},
+      deletedAt: null,
+      createdAt: new Date("2026-01-02T00:00:00.000Z"),
+      updatedAt: new Date("2026-01-02T00:00:00.000Z"),
+    });
+    ctx.data.content.blobRefExists = async () => true;
+    ctx.data.content.serveBlobIfClean = async ({ digest, contentType }) => {
+      // Serve the REAL package bytes for the requested digest.
+      expect(digest).toBe(expectedDigest);
+      return new Response(pkg, { headers: { "content-type": contentType } });
+    };
+    const dl = await new ArchAdapter().handle(
+      downloadMatch(),
+      new Request(`https://registry.test/core/os/x86_64/${FILENAME}`),
+      ctx,
+    );
+    const served = new Uint8Array(await dl.arrayBuffer());
+    expect(digestHex(computeDigest(served))).toBe(expectedSha);
+  });
+
+  test("publish persists pkgbase + provides/conflicts/replaces/optdepends into the desc", async () => {
+    const ctx = archContext();
+    let stored: ArchVersionMeta | null = null;
+    ctx.data.packages.findOrCreate = async ({ name }) => pkgRow(name);
+    ctx.data.versions.exists = async () => false;
+    ctx.data.content.storeBlobWithRef = async (): Promise<RegistryStoredBlob> => ({
+      digest: DIGEST,
+      size: 1,
+      deduped: false,
+      refCreated: true,
+      blobRefId: "ref_1",
+    });
+    ctx.data.versions.commitOrReleaseBlob = async (input) => {
+      stored = input.metadata as ArchVersionMeta;
+      return { versionId: "ver_1" };
+    };
+
+    const pkg = buildArchPackage({
+      pkgname: "foo",
+      pkgbase: "foo-suite",
+      pkgver: "1.2.3-1",
+      arch: "x86_64",
+      provides: ["libfoo.so=1-64"],
+      conflicts: ["oldfoo"],
+      replaces: ["ancientfoo"],
+      optdepends: ["bar: extra goodies"],
+    });
+    const put = await new ArchAdapter().handle(
+      {
+        entry: { method: "PUT", pattern: "/:repo/os/:arch/:file", handlerId: "publish" },
+        params: { repo: "core", arch: "x86_64", file: FILENAME },
+        path: `/core/os/x86_64/${FILENAME}`,
+      },
+      new Request(`https://registry.test/core/os/x86_64/${FILENAME}`, { method: "PUT", body: pkg }),
+      ctx,
+    );
+    expect(put.status).toBe(201);
+    if (!stored) throw new Error("publish did not store metadata");
+    expect(stored).toMatchObject({
+      pkgbase: "foo-suite",
+      provides: ["libfoo.so=1-64"],
+      conflicts: ["oldfoo"],
+      replaces: ["ancientfoo"],
+      optdepends: ["bar: extra goodies"],
+    });
+
+    ctx.data.packages.list = async () => [
+      { id: "pkg_foo", orgId: "org_1", repositoryId: "repo_1", name: "foo" },
+    ];
+    ctx.data.versions.listLiveForPackages = async () =>
+      new Map([["pkg_foo", [versionRow(stored as ArchVersionMeta)]]]);
+    const dbRes = await new ArchAdapter().handle(
+      dbMatch,
+      new Request("https://registry.test/core/os/x86_64/core.db"),
+      ctx,
+    );
+    const desc = new TextDecoder().decode(gunzipSync(new Uint8Array(await dbRes.arrayBuffer())));
+    expect(desc).toContain("%BASE%\nfoo-suite\n");
+    expect(desc).toContain("%PROVIDES%\nlibfoo.so=1-64\n");
+    expect(desc).toContain("%CONFLICTS%\noldfoo\n");
+    expect(desc).toContain("%REPLACES%\nancientfoo\n");
+    expect(desc).toContain("%OPTDEPENDS%\nbar: extra goodies\n");
+
+    // The AUR RPC surfaces the split-package base.
+    ctx.data.packages.findByName = async (name) => (name === "foo" ? pkgRow("foo") : null);
+    ctx.data.versions.listLive = async () => [versionRow(stored as ArchVersionMeta)];
+    const rpc = await new ArchAdapter().handle(
+      rpcMatch(),
+      new Request("https://registry.test/rpc/?v=5&type=info&arg[]=foo"),
+      ctx,
+    );
+    const body = (await rpc.json()) as { results: Array<{ PackageBase: string }> };
+    expect(body.results[0]?.PackageBase).toBe("foo-suite");
+  });
+
+  test("PUT of an .pkg.tar.xz falls back to filename identity with empty depends", async () => {
+    const ctx = archContext();
+    let stored: ArchVersionMeta | null = null;
+    const xzFile = "foo-1.2.3-1-x86_64.pkg.tar.xz";
+    ctx.data.packages.findOrCreate = async ({ name }) => pkgRow(name);
+    ctx.data.versions.exists = async () => false;
+    ctx.data.content.storeBlobWithRef = async (): Promise<RegistryStoredBlob> => ({
+      digest: DIGEST,
+      size: 6,
+      deduped: false,
+      refCreated: true,
+      blobRefId: "ref_1",
+    });
+    ctx.data.versions.commitOrReleaseBlob = async (input) => {
+      stored = input.metadata as ArchVersionMeta;
+      return { versionId: "ver_1" };
+    };
+
+    // An xz package can't be inflated here, so identity comes from the filename
+    // and dependencies are unavailable (empty). The xz magic header makes the
+    // parser report unsupported_compression rather than malformed.
+    const xz = new Uint8Array([0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00]);
+    const res = await new ArchAdapter().handle(
+      {
+        entry: { method: "PUT", pattern: "/:repo/os/:arch/:file", handlerId: "publish" },
+        params: { repo: "core", arch: "x86_64", file: xzFile },
+        path: `/core/os/x86_64/${xzFile}`,
+      },
+      new Request(`https://registry.test/core/os/x86_64/${xzFile}`, { method: "PUT", body: xz }),
+      ctx,
+    );
+    expect(res.status).toBe(201);
+    if (!stored) throw new Error("publish did not store metadata");
+    expect(stored).toMatchObject({
+      pkgname: "foo",
+      pkgver: "1.2.3-1",
+      arch: "x86_64",
+      filename: xzFile,
+      depends: [],
+    });
   });
 });

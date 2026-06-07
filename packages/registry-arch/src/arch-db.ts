@@ -18,15 +18,27 @@ function compare(a: string, b: string): number {
 
 /** Render one `desc` file body for a package version. */
 export function buildDescFile(entry: ArchDbEntry): string {
+  const list = (xs: string[] | undefined): string[] | undefined =>
+    xs && xs.length > 0 ? xs : undefined;
   const sections: Array<[string, string | number | string[] | undefined]> = [
     ["FILENAME", entry.filename],
     ["NAME", entry.pkgname],
+    // %BASE% identifies the split-package base; libalpm and split-aware tooling
+    // read it. Emitted only when it differs from %NAME% (non-split packages).
+    ["BASE", entry.pkgbase],
     ["VERSION", entry.pkgver],
     ["DESC", entry.pkgdesc],
     ["CSIZE", entry.csize],
     ["ARCH", entry.arch],
     ["SHA256SUM", entry.sha256],
-    ["DEPENDS", entry.depends.length > 0 ? entry.depends : undefined],
+    // Relation sections drive dependency resolution / conflict handling:
+    // %PROVIDES% satisfies virtual-package deps; %CONFLICTS%/%REPLACES% block or
+    // supersede installs; %OPTDEPENDS% is informational.
+    ["REPLACES", list(entry.replaces)],
+    ["CONFLICTS", list(entry.conflicts)],
+    ["PROVIDES", list(entry.provides)],
+    ["DEPENDS", list(entry.depends)],
+    ["OPTDEPENDS", list(entry.optdepends)],
   ];
   let out = "";
   for (const [key, value] of sections) {

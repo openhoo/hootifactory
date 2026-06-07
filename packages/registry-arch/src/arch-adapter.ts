@@ -26,7 +26,8 @@ import {
   isValidArchRepo,
   parseArchVersionMeta,
 } from "./arch-validation";
-import { aurRequestedNames, buildAurInfoResponse } from "./aur-rpc";
+import { archVercmp } from "./arch-vercmp";
+import { aurRequestedNames, aurSearchTerm, buildAurResponse, matchesAurSearch } from "./aur-rpc";
 
 const DB_GZIP = { "content-type": "application/gzip" } as const;
 const PKG_CONTENT_TYPE = "application/octet-stream";
@@ -45,9 +46,20 @@ function parseArch(arch: string): string {
   });
 }
 
-/** Whether a `:file` segment names the sync DB (`<repo>.db` / `<repo>.db.tar.gz`). */
+/**
+ * Whether a `:file` segment names the sync DB (`<repo>.db` / `<repo>.db.tar.gz`).
+ *
+ * The `<repo>.files` database is deliberately NOT served: it is a DISTINCT
+ * pacman artifact (a tar of `<pkgname>-<pkgver>/files` members carrying a
+ * `%FILES%` manifest, consumed by `pacman -F`/`-Fy`). We do not capture the
+ * per-package file manifest at publish time, so we cannot produce a correct
+ * files DB. Aliasing it to the desc-only `.db` would make `pacman -F` silently
+ * ingest wrong data; instead such requests fall through to a 404 (honest
+ * "no files database" rather than a misleading one), mirroring how the apt
+ * adapter 404s the endpoints it does not implement.
+ */
 function dbFileNames(repo: string): Set<string> {
-  return new Set([`${repo}.db`, `${repo}.db.tar.gz`, `${repo}.files`, `${repo}.files.tar.gz`]);
+  return new Set([`${repo}.db`, `${repo}.db.tar.gz`]);
 }
 
 /**
@@ -58,7 +70,12 @@ function dbFileNames(repo: string): Set<string> {
  */
 export class ArchAdapter implements RegistryPlugin {
   readonly id = "arch" as const;
-  readonly capabilities = registryCapabilities("proxyable", "virtualizable");
+  // Only `virtualizable` is honest: the platform's generic fan-out virtual
+  // dispatch works without per-adapter machinery (as apt/maven rely on). We do
+  // NOT declare `proxyable` because proxy-repo creation is gated on
+  // `adapter.proxyIngest`, which this adapter does not implement — advertising
+  // it would let an operator pick "proxy" only to be rejected at create time.
+  readonly capabilities = registryCapabilities("virtualizable");
   authChallenge = basicAuthChallenge;
 
   private readonly plugin = registryPlugin(this.id)
@@ -136,21 +153,32 @@ export class ArchAdapter implements RegistryPlugin {
 
   handle = this.delegate.handle;
 
-  /** Collect every live package version across the repo as DB entries. */
+  /**
+   * Collect the CANONICAL sync-DB entries: exactly one per package name — the
+   * highest version under pacman `vercmp` ordering. A real pacman sync DB (as
+   * produced by `repo-add`) holds a single desc per name; libalpm keys its sync
+   * cache by name, so emitting multiple same-NAME entries makes the installed
+   * version non-deterministic. We still serve every published `.pkg` blob; only
+   * the DB is narrowed to the latest per name.
+   */
   private async collectEntries(ctx: RegistryRequestContext): Promise<ArchDbEntry[]> {
     const pkgs: RegistryPackageHandle[] = await ctx.data.packages.list();
     if (pkgs.length === 0) return [];
     const byPackage = await ctx.data.versions.listLiveForPackages(pkgs, {
       orderByCreated: "asc",
     });
-    const out: ArchDbEntry[] = [];
+    const latestByName = new Map<string, ArchVersionMeta>();
     for (const rows of byPackage.values()) {
       for (const row of rows) {
         const meta = parseArchVersionMeta(row.metadata);
-        if (meta) out.push(meta);
+        if (!meta) continue;
+        const current = latestByName.get(meta.pkgname);
+        if (!current || archVercmp(meta.pkgver, current.pkgver) > 0) {
+          latestByName.set(meta.pkgname, meta);
+        }
       }
     }
-    return out;
+    return [...latestByName.values()];
   }
 
   /** `GET /<repo>/os/<arch>/<file>` — sync DB, or a package blob, by extension. */
@@ -211,10 +239,18 @@ export class ArchAdapter implements RegistryPlugin {
     return handleArchPublish(fileRaw, req, ctx);
   }
 
-  /** `GET /rpc/?v=5&type=info&arg[]=<name>` — AUR-style package info lookup. */
+  /**
+   * AUR-style RPC:
+   *   `GET /rpc/?v=5&type=info&arg[]=<name>` resolves exact names;
+   *   `GET /rpc/?v=5&type=search&arg=<keyword>&by=name[-desc]` discovers
+   *   packages by substring (the query yay/paru issue before resolving versions).
+   */
   private async rpc(req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const url = new URL(req.url);
     const type = url.searchParams.get("type") ?? "info";
+    if (type === "search") {
+      return Response.json(buildAurResponse(type, await this.rpcSearch(url, ctx)));
+    }
     if (type !== "info" && type !== "multiinfo") {
       return Response.json({ version: 5, type, resultcount: 0, results: [] });
     }
@@ -228,7 +264,7 @@ export class ArchAdapter implements RegistryPlugin {
       const meta = await this.latestMeta(ctx, pkg);
       if (meta) metas.push(meta);
     }
-    return Response.json(buildAurInfoResponse(type, metas));
+    return Response.json(buildAurResponse(type, metas));
   }
 
   /** Latest live version's stored metadata for a package (newest first). */
@@ -242,6 +278,20 @@ export class ArchAdapter implements RegistryPlugin {
       if (meta) return meta;
     }
     return null;
+  }
+
+  /**
+   * `type=search` over the hosted packages' canonical (latest) metadata. An
+   * empty term yields no results rather than the whole repo. We reuse the same
+   * deduped latest-per-name set the sync DB exposes, so search results agree
+   * with what `pacman -Sy` would install.
+   */
+  private async rpcSearch(url: URL, ctx: RegistryRequestContext): Promise<ArchVersionMeta[]> {
+    const term = aurSearchTerm(url);
+    if (term === null) return [];
+    const by = url.searchParams.get("by") ?? "name-desc";
+    const entries = await this.collectEntries(ctx);
+    return entries.filter((meta) => matchesAurSearch(meta, term, by));
   }
 }
 

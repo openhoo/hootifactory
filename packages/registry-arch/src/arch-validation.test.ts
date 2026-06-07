@@ -79,6 +79,36 @@ describe("arch validation", () => {
       arch: "x86_64",
       pkgdesc: "A demo package",
       depends: ["bar", "baz>=1.0"],
+      provides: [],
+      conflicts: [],
+      replaces: [],
+      optdepends: [],
+    });
+  });
+
+  test("parsePkgInfo captures pkgbase and the provides/conflict/replaces/optdepend relations", () => {
+    const info = parsePkgInfo(
+      [
+        "pkgname = foo",
+        "pkgbase = foo-suite",
+        "pkgver = 1.2.3-1",
+        "arch = x86_64",
+        "provides = libfoo.so=1-64",
+        "conflict = oldfoo",
+        "replaces = ancientfoo",
+        "optdepend = bar: extra goodies",
+      ].join("\n"),
+    );
+    expect(info).toEqual({
+      pkgname: "foo",
+      pkgbase: "foo-suite",
+      pkgver: "1.2.3-1",
+      arch: "x86_64",
+      depends: [],
+      provides: ["libfoo.so=1-64"],
+      conflicts: ["oldfoo"],
+      replaces: ["ancientfoo"],
+      optdepends: ["bar: extra goodies"],
     });
   });
 });

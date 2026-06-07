@@ -47,17 +47,27 @@ export function buildPkgInfoTar(pkginfo: string): Uint8Array {
 
 export interface PkgInfoFixture {
   pkgname: string;
+  pkgbase?: string;
   pkgver: string;
   arch: string;
   pkgdesc?: string;
   depends?: string[];
+  provides?: string[];
+  conflicts?: string[];
+  replaces?: string[];
+  optdepends?: string[];
 }
 
 /** Build a real zstd-compressed pacman package archive carrying a `.PKGINFO`. */
 export function buildArchPackage(input: PkgInfoFixture): Uint8Array {
   const lines = [`pkgname = ${input.pkgname}`, `pkgver = ${input.pkgver}`, `arch = ${input.arch}`];
+  if (input.pkgbase) lines.push(`pkgbase = ${input.pkgbase}`);
   if (input.pkgdesc) lines.push(`pkgdesc = ${input.pkgdesc}`);
   for (const dep of input.depends ?? []) lines.push(`depend = ${dep}`);
+  for (const dep of input.provides ?? []) lines.push(`provides = ${dep}`);
+  for (const dep of input.conflicts ?? []) lines.push(`conflict = ${dep}`);
+  for (const dep of input.replaces ?? []) lines.push(`replaces = ${dep}`);
+  for (const dep of input.optdepends ?? []) lines.push(`optdepend = ${dep}`);
   const tar = buildPkgInfoTar(`${lines.join("\n")}\n`);
   const zst = zstdCompressSync(tar);
   return new Uint8Array(zst.buffer, zst.byteOffset, zst.byteLength);

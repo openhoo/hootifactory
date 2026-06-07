@@ -57,6 +57,9 @@ const Sha256HexSchema = z.string().regex(/^[a-f0-9]{64}$/);
  * fallback) so the sync DB can be rebuilt deterministically and the `.pkg`
  * blob resolved on download without re-reading the archive.
  */
+/** A pacman relation list (`depend`/`provides`/`conflict`/...). */
+const ArchRelationList = z.array(z.string().min(1).max(512)).max(4096);
+
 export const ArchVersionMetaSchema = z.strictObject({
   /** CAS blob digest of the package payload (`sha256:<hex>`). */
   blobDigest: Sha256DigestSchema,
@@ -70,7 +73,21 @@ export const ArchVersionMetaSchema = z.strictObject({
   /** On-disk (compressed) size of the package in bytes. */
   csize: z.number().int().min(0),
   /** Runtime dependencies (`depend = ...` lines from `.PKGINFO`). */
-  depends: z.array(z.string().min(1).max(512)).max(4096),
+  depends: ArchRelationList,
+  /**
+   * `pkgbase` — the base name a split package was built from. Differs from
+   * `pkgname` for split packages; surfaced as `%BASE%` and the AUR
+   * `PackageBase`. Optional (single packages omit it in `.PKGINFO`).
+   */
+  pkgbase: ArchPkgNameSchema.optional(),
+  /** Virtual packages provided (`provides = ...`) → `%PROVIDES%`. */
+  provides: ArchRelationList.optional(),
+  /** Conflicting packages (`conflict = ...`) → `%CONFLICTS%`. */
+  conflicts: ArchRelationList.optional(),
+  /** Packages this one replaces (`replaces = ...`) → `%REPLACES%`. */
+  replaces: ArchRelationList.optional(),
+  /** Optional dependencies (`optdepend = ...`) → `%OPTDEPENDS%`. */
+  optdepends: ArchRelationList.optional(),
   /** `pkgdesc` from `.PKGINFO`, when present. */
   pkgdesc: z.string().max(8192).optional(),
 });
@@ -84,19 +101,31 @@ export function parseArchVersionMeta(value: unknown): ArchVersionMeta | null {
 
 export interface ArchPkgInfo {
   pkgname?: string;
+  pkgbase?: string;
   pkgver?: string;
   arch?: string;
   pkgdesc?: string;
   depends: string[];
+  provides: string[];
+  conflicts: string[];
+  replaces: string[];
+  optdepends: string[];
 }
 
 /**
  * Parse a `.PKGINFO` text body. The format is one `key = value` per line, with
- * `#`-prefixed comment lines; `depend` may appear repeatedly. Unknown keys are
- * ignored. Returns the recognized fields plus the accumulated `depends`.
+ * `#`-prefixed comment lines; the relation keys (`depend`/`provides`/
+ * `conflict`/`replaces`/`optdepend`) may appear repeatedly. Unknown keys are
+ * ignored. Returns the recognized fields plus the accumulated relation lists.
  */
 export function parsePkgInfo(text: string): ArchPkgInfo {
-  const info: ArchPkgInfo = { depends: [] };
+  const info: ArchPkgInfo = {
+    depends: [],
+    provides: [],
+    conflicts: [],
+    replaces: [],
+    optdepends: [],
+  };
   for (const rawLine of text.split("\n")) {
     const line = rawLine.trim();
     if (line === "" || line.startsWith("#")) continue;
@@ -109,6 +138,9 @@ export function parsePkgInfo(text: string): ArchPkgInfo {
       case "pkgname":
         info.pkgname = value;
         break;
+      case "pkgbase":
+        info.pkgbase = value;
+        break;
       case "pkgver":
         info.pkgver = value;
         break;
@@ -120,6 +152,18 @@ export function parsePkgInfo(text: string): ArchPkgInfo {
         break;
       case "depend":
         info.depends.push(value);
+        break;
+      case "provides":
+        info.provides.push(value);
+        break;
+      case "conflict":
+        info.conflicts.push(value);
+        break;
+      case "replaces":
+        info.replaces.push(value);
+        break;
+      case "optdepend":
+        info.optdepends.push(value);
         break;
       default:
         break;

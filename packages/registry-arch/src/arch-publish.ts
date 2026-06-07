@@ -85,6 +85,10 @@ export async function parseArchPublishRequest(
   }
 
   const digest = computeDigest(bytes);
+  // Only persist relation lists / pkgbase when present so the strict schema's
+  // optional fields stay absent (not empty) for single, dependency-free packages.
+  const nonEmpty = (xs: string[] | undefined): string[] | undefined =>
+    xs && xs.length > 0 ? xs : undefined;
   const candidate: ArchVersionMeta = {
     blobDigest: digest,
     sha256: digestHex(digest),
@@ -94,6 +98,11 @@ export async function parseArchPublishRequest(
     arch,
     csize: bytes.length,
     depends: info?.depends ?? [],
+    ...(info?.pkgbase && info.pkgbase !== pkgname ? { pkgbase: info.pkgbase } : {}),
+    ...(nonEmpty(info?.provides) ? { provides: info?.provides } : {}),
+    ...(nonEmpty(info?.conflicts) ? { conflicts: info?.conflicts } : {}),
+    ...(nonEmpty(info?.replaces) ? { replaces: info?.replaces } : {}),
+    ...(nonEmpty(info?.optdepends) ? { optdepends: info?.optdepends } : {}),
     ...(info?.pkgdesc ? { pkgdesc: info.pkgdesc } : {}),
   };
   const metadata = ArchVersionMetaSchema.safeParse(candidate);

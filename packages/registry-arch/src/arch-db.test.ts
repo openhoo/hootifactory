@@ -92,6 +92,32 @@ describe("arch db", () => {
     expect(desc).not.toContain("%DESC%");
   });
 
+  test("desc emits %BASE% and the relation sections when present", () => {
+    const desc = buildDescFile(
+      entry({
+        pkgbase: "foo-suite",
+        provides: ["libfoo.so=1-64"],
+        conflicts: ["oldfoo"],
+        replaces: ["ancientfoo"],
+        optdepends: ["bar: extras"],
+      }),
+    );
+    expect(desc).toContain("%BASE%\nfoo-suite\n");
+    expect(desc).toContain("%PROVIDES%\nlibfoo.so=1-64\n");
+    expect(desc).toContain("%CONFLICTS%\noldfoo\n");
+    expect(desc).toContain("%REPLACES%\nancientfoo\n");
+    expect(desc).toContain("%OPTDEPENDS%\nbar: extras\n");
+  });
+
+  test("desc omits %BASE% and relation sections when absent/empty", () => {
+    const desc = buildDescFile(entry({ pkgbase: undefined }));
+    expect(desc).not.toContain("%BASE%");
+    expect(desc).not.toContain("%PROVIDES%");
+    expect(desc).not.toContain("%CONFLICTS%");
+    expect(desc).not.toContain("%REPLACES%");
+    expect(desc).not.toContain("%OPTDEPENDS%");
+  });
+
   test("db tar contains a <pkgname>-<pkgver>/desc entry per package", () => {
     const tar = buildDbTar([entry()]);
     const files = tarFiles(tar);

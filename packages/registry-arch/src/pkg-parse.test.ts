@@ -20,6 +20,10 @@ describe("pkg parse", () => {
       arch: "x86_64",
       pkgdesc: "demo",
       depends: ["bar", "baz>=1.0"],
+      provides: [],
+      conflicts: [],
+      replaces: [],
+      optdepends: [],
     });
   });
 
