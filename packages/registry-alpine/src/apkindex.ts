@@ -3,9 +3,9 @@
  * gzip-compressed tar containing an `APKINDEX` file. That file holds one stanza
  * per package, fields separated by `\n` and stanzas separated by a blank line.
  * Single-letter fields are used: `C:` (checksum), `P:` (name), `V:` (version),
- * `A:` (arch), `S:` (size), `T:` (description), `D:` (dependencies). We regenerate
- * the index from the live versions on every request so it always reflects the
- * current package set.
+ * `A:` (arch), `S:` (size), `I:` (installed size), `T:` (description),
+ * `D:` (dependencies), `p:` (provides). We regenerate the index from the live
+ * versions on every request so it always reflects the current package set.
  */
 
 export interface ApkIndexEntry {
@@ -16,8 +16,13 @@ export interface ApkIndexEntry {
   checksum: string;
   /** Compressed package size in bytes (the `.apk` blob size). */
   size: number;
+  /** Uncompressed/installed size in bytes (`I:`); omitted from output when null. */
+  installedSize: number | null;
   description: string | null;
+  /** Raw apk dependency tokens (`D:`), kept verbatim (incl. `!conflicts`). */
   depends: string[];
+  /** Raw apk provides tokens (`p:`). */
+  provides: string[];
 }
 
 function compare(a: string, b: string): number {
@@ -33,17 +38,23 @@ export function buildIndexStanza(entry: ApkIndexEntry): string {
     `A:${entry.arch}`,
     `S:${entry.size}`,
   ];
+  if (entry.installedSize !== null) lines.push(`I:${entry.installedSize}`);
   if (entry.description) lines.push(`T:${entry.description}`);
   if (entry.depends.length > 0) lines.push(`D:${entry.depends.join(" ")}`);
+  if (entry.provides.length > 0) lines.push(`p:${entry.provides.join(" ")}`);
   return `${lines.join("\n")}\n`;
 }
 
-/** The full APKINDEX text: deterministically-ordered stanzas, blank-line separated. */
+/**
+ * The full APKINDEX text: deterministically-ordered stanzas, each (including the
+ * last) terminated by a blank line — apk-tools-generated indexes always end the
+ * final record with a separating blank line.
+ */
 export function buildApkIndexText(entries: ApkIndexEntry[]): string {
   const sorted = [...entries].sort(
     (a, b) => compare(a.name, b.name) || compare(a.version, b.version),
   );
-  return sorted.map(buildIndexStanza).join("\n");
+  return sorted.map((entry) => `${buildIndexStanza(entry)}\n`).join("");
 }
 
 /** Pad a ustar numeric field to `width-1` octal digits plus a trailing NUL. */

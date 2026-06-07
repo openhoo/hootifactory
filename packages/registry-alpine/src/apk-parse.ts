@@ -20,9 +20,21 @@ export interface ApkPkgInfo {
   name: string;
   version: string;
   arch: string;
-  /** Bare dependency names parsed from `depend` lines. */
+  /**
+   * Raw apk dependency tokens from `depend` lines, preserved verbatim. Conflict
+   * markers (`!name`), version constraints (`foo>=1.0`), and namespaced provides
+   * (`so:libz.so.1`, `pc:`, `cmd:`) are kept so the APKINDEX `D:` field carries
+   * exactly what apk needs to resolve dependencies — a `!name` conflict must NOT
+   * be reduced to a positive `name` dependency.
+   */
   depends: string[];
+  /**
+   * Raw apk `provides` tokens (`so:libfoo.so.1`, `cmd:foo`, `foo=1.2.3-r0`),
+   * emitted in the APKINDEX `p:` field so intra-repo dependency resolution works.
+   */
+  provides: string[];
   description: string | null;
+  /** Compressed-package `size` from `.PKGINFO`: the uncompressed/installed size. */
   size: number | null;
 }
 
@@ -153,6 +165,7 @@ function q1Checksum(bytes: Uint8Array): string {
 export function parsePkgInfo(text: string): ApkPkgInfo {
   const fields: Record<string, string> = {};
   const depends: string[] = [];
+  const provides: string[] = [];
   for (const rawLine of text.split("\n")) {
     const line = rawLine.trim();
     if (line === "" || line.startsWith("#")) continue;
@@ -162,15 +175,11 @@ export function parsePkgInfo(text: string): ApkPkgInfo {
     const value = line.slice(eq + 1).trim();
     if (key === "") continue;
     fields[key] = value;
-    if (key === "depend" && value !== "") {
-      // Drop the version/conflict operator tail (`so:libc.so.6`, `foo>=1.0`, `!bar`).
-      const bare =
-        value
-          .replace(/^!/, "")
-          .split(/[<>=~]/)[0]
-          ?.trim() ?? "";
-      if (bare !== "") depends.push(bare);
-    }
+    // Preserve the raw apk token verbatim: a `!name` conflict, a versioned
+    // constraint (`foo>=1.0`), or a namespaced provide (`so:libz.so.1`) must
+    // survive into the APKINDEX so apk resolves dependencies correctly.
+    if (key === "depend" && value !== "") depends.push(value);
+    if (key === "provides" && value !== "") provides.push(value);
   }
   const size = fields.size !== undefined ? Number.parseInt(fields.size, 10) : Number.NaN;
   return {
@@ -179,6 +188,7 @@ export function parsePkgInfo(text: string): ApkPkgInfo {
     version: fields.pkgver ?? "",
     arch: fields.arch ?? "",
     depends,
+    provides,
     description: fields.pkgdesc ?? null,
     size: Number.isFinite(size) ? size : null,
   };

@@ -8,7 +8,7 @@ function q1(bytes: Uint8Array): string {
 }
 
 describe("parsePkgInfo", () => {
-  test("extracts name/version/arch and bare dependency names", () => {
+  test("extracts name/version/arch and verbatim dependency tokens", () => {
     const info = parsePkgInfo(
       "pkgname = hello\npkgver = 1.2.3-r0\narch = x86_64\nsize = 4096\n" +
         "pkgdesc = A demo\ndepend = libc\ndepend = so:libz.so.1\ndepend = foo>=2.0\n",
@@ -18,8 +18,9 @@ describe("parsePkgInfo", () => {
     expect(info.arch).toBe("x86_64");
     expect(info.size).toBe(4096);
     expect(info.description).toBe("A demo");
-    // Operator/version tails are stripped to bare names.
-    expect(info.depends).toEqual(["libc", "so:libz.so.1", "foo"]);
+    // Version constraints and namespaced provides are preserved verbatim so the
+    // APKINDEX D: field can be resolved by apk.
+    expect(info.depends).toEqual(["libc", "so:libz.so.1", "foo>=2.0"]);
   });
 
   test("ignores comments and blank lines, keeps the last repeated scalar", () => {
@@ -28,9 +29,18 @@ describe("parsePkgInfo", () => {
     expect(info.size).toBeNull();
   });
 
-  test("drops a leading conflict marker from a dependency", () => {
+  test("preserves a leading conflict marker on a dependency (does not invert it)", () => {
+    // `!name` is an apk CONFLICT; reducing it to `name` would turn a conflict into
+    // a hard install dependency, so the marker must survive verbatim.
     const info = parsePkgInfo("pkgname = a\npkgver = 1-r0\narch = x86\ndepend = !conflicts\n");
-    expect(info.depends).toEqual(["conflicts"]);
+    expect(info.depends).toEqual(["!conflicts"]);
+  });
+
+  test("parses provides tokens verbatim", () => {
+    const info = parsePkgInfo(
+      "pkgname = a\npkgver = 1-r0\narch = x86\nprovides = so:liba.so.1\nprovides = cmd:a=1-r0\n",
+    );
+    expect(info.provides).toEqual(["so:liba.so.1", "cmd:a=1-r0"]);
   });
 });
 

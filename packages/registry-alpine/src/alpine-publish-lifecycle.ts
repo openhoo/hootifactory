@@ -38,11 +38,16 @@ export interface AlpinePublishResult {
  * Publish a `.apk` into `<arch>`. The body is the raw package; we parse its
  * `.PKGINFO`, store the blob, and persist the metadata the APKINDEX is rebuilt
  * from. The on-disk `<arch>` segment must match the package's own `arch` field.
+ * When the request carried a `<filename>` path segment (the named-publish route,
+ * whose authorization is scoped to that segment), it must equal the canonical
+ * `<name>-<version>.apk` derived from `.PKGINFO` — otherwise the authorized
+ * scope and the written scope would diverge (a confused-deputy write).
  */
 export async function handleAlpinePublish(
   arch: string,
   req: Request,
   ctx: RegistryRequestContext,
+  urlFilename?: string,
 ): Promise<AlpinePublishResult> {
   const bytes = new Uint8Array(await req.arrayBuffer());
   const parsed = parseApk(bytes);
@@ -70,6 +75,14 @@ export async function handleAlpinePublish(
   }
 
   const filename = apkFilename(info.name, info.version);
+  if (urlFilename !== undefined && urlFilename !== filename) {
+    return {
+      status: 400,
+      body: {
+        error: `upload filename '${urlFilename}' does not match package '${filename}'`,
+      },
+    };
+  }
   const scope = alpineBlobScope(arch, filename);
   const versionKey = alpineVersionKey(arch, info.version);
 

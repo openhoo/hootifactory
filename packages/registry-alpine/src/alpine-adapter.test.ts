@@ -44,23 +44,30 @@ function versionRow(metadata: Record<string, unknown>): RegistryPackageVersionRo
   };
 }
 
-function helloMeta(arch = "x86_64") {
+/** A fixture `.apk` plus the metadata derived from it — so tests can tie the
+ * served index `C:`/`S:`/`I:` back to the exact package bytes. */
+function helloFixture(arch = "x86_64") {
   const apk = buildApkFixture({
     name: "hello",
     version: "1.2.3-r0",
     arch,
     description: "demo",
-    depends: ["libc"],
+    depends: ["libc", "!evil-conflict"],
     size: 9000,
   });
   const parsed = parseApk(apk);
   if (!parsed.ok) throw new Error("fixture failed to parse");
-  return buildAlpineVersionMeta(parsed.info, {
+  const meta = buildAlpineVersionMeta(parsed.info, {
     digest: DIGEST,
     checksum: parsed.checksum,
     size: apk.byteLength,
     filename: "hello-1.2.3-r0.apk",
   });
+  return { apk, parsed, meta };
+}
+
+function helloMeta(arch = "x86_64") {
+  return helloFixture(arch).meta;
 }
 
 function alpineContext() {
@@ -90,11 +97,13 @@ describe("Alpine adapter", () => {
     ]);
   });
 
-  test("declares the proxyable + virtualizable capabilities", () => {
+  test("declares only the virtualizable capability (no dishonest proxyable)", () => {
+    // There is no proxyIngest, so advertising proxyable would be a dead capability
+    // the platform rejects at proxy-repo creation. Match registry-apt/registry-maven.
     expect(new AlpineAdapter().capabilities).toEqual({
       contentAddressable: false,
       resumableUploads: false,
-      proxyable: true,
+      proxyable: false,
       virtualizable: true,
     });
   });
@@ -144,9 +153,10 @@ describe("Alpine adapter", () => {
 
   test("GET /<arch>/APKINDEX.tar.gz regenerates the index for the arch, cacheable", async () => {
     const ctx = alpineContext();
+    const { apk, meta } = helloFixture("x86_64");
     ctx.data.packages.listNames = async () => [{ name: "hello" }];
     ctx.data.packages.findByName = async (name) => pkgRow(name);
-    ctx.data.versions.listLive = async () => [versionRow(helloMeta("x86_64"))];
+    ctx.data.versions.listLive = async () => [versionRow(meta)];
 
     const res = await new AlpineAdapter().handle(
       { entry: INDEX_MATCH, params: { arch: "x86_64" }, path: "/x86_64/APKINDEX.tar.gz" },
@@ -163,7 +173,17 @@ describe("Alpine adapter", () => {
     expect(text).toContain("P:hello");
     expect(text).toContain("V:1.2.3-r0");
     expect(text).toContain("A:x86_64");
-    expect(text).toContain("D:libc");
+    // C: must equal the Q1 checksum apk recomputes over the downloaded .apk's
+    // control segment — tie the served index field to the real package bytes.
+    const fromBytes = parseApk(apk);
+    if (!fromBytes.ok) throw new Error("fixture failed to parse");
+    expect(text).toContain(`C:${fromBytes.checksum}`);
+    // S: is the compressed blob size; I: is the .PKGINFO installed size (9000).
+    expect(text).toContain(`S:${apk.byteLength}`);
+    expect(text).toContain("I:9000");
+    // The D: conflict marker survives verbatim — `!evil-conflict` must NOT be
+    // emitted as a positive `evil-conflict` dependency.
+    expect(text).toContain("D:libc !evil-conflict");
 
     if (!etag) throw new Error("expected etag");
     const cached = await new AlpineAdapter().handle(
@@ -274,7 +294,9 @@ describe("Alpine adapter", () => {
       version: "1.2.3-r0",
       arch: "x86_64",
       description: "demo",
-      depends: ["libc"],
+      depends: ["libc", "!evil"],
+      size: 9000,
+      extraFields: { provides: "so:libhello.so.1" },
     });
     const res = await new AlpineAdapter().handle(
       {
@@ -303,7 +325,10 @@ describe("Alpine adapter", () => {
       arch: "x86_64",
       blobDigest: DIGEST,
       filename: "hello-1.2.3-r0.apk",
-      depends: ["libc"],
+      // Conflict marker preserved, provides + installed size threaded through.
+      depends: ["libc", "!evil"],
+      provides: ["so:libhello.so.1"],
+      installedSize: 9000,
     });
     // The stored version key is arch-qualified so the same apk version can be
     // published for multiple arches; the metadata/index version stays bare.
@@ -361,6 +386,54 @@ describe("Alpine adapter", () => {
         ctx,
       ),
     ).rejects.toMatchObject({ status: 400, code: "NAME_INVALID" });
+  });
+
+  test("PUT /<arch>/<filename> rejects when the path filename names a different package", async () => {
+    // Confused-deputy guard: authorization on publishNamed is scoped to the URL
+    // filename segment, so a body whose .PKGINFO names a different package must be
+    // rejected (it would otherwise write to a scope the token was not authorized for).
+    const ctx = alpineContext();
+    ctx.data.packages.findOrCreate = async ({ name }) => pkgRow(name);
+    ctx.data.versions.exists = async () => false;
+    const apk = buildApkFixture({ name: "evil", version: "9.9.9-r0", arch: "x86_64" });
+    const res = await new AlpineAdapter().handle(
+      {
+        entry: { method: "PUT", pattern: "/:arch/:filename", handlerId: "publishNamed" },
+        params: { arch: "x86_64", filename: "hello-1.2.3-r0.apk" },
+        path: "/x86_64/hello-1.2.3-r0.apk",
+      },
+      new Request("https://r.test/x86_64/hello-1.2.3-r0.apk", { method: "PUT", body: apk }),
+      ctx,
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({
+      error: "upload filename 'hello-1.2.3-r0.apk' does not match package 'evil-9.9.9-r0.apk'",
+    });
+  });
+
+  test("PUT /<arch>/<filename> accepts a matching path filename", async () => {
+    const ctx = alpineContext();
+    ctx.data.packages.findOrCreate = async ({ name }) => pkgRow(name);
+    ctx.data.versions.exists = async () => false;
+    ctx.data.content.storeBlobWithRef = async (): Promise<RegistryStoredBlob> => ({
+      digest: DIGEST,
+      size: 9000,
+      deduped: false,
+      refCreated: true,
+      blobRefId: "ref_1",
+    });
+    ctx.data.versions.commitOrReleaseBlob = async () => ({ versionId: "ver_1" });
+    const apk = buildApkFixture({ name: "hello", version: "1.2.3-r0", arch: "x86_64" });
+    const res = await new AlpineAdapter().handle(
+      {
+        entry: { method: "PUT", pattern: "/:arch/:filename", handlerId: "publishNamed" },
+        params: { arch: "x86_64", filename: "hello-1.2.3-r0.apk" },
+        path: "/x86_64/hello-1.2.3-r0.apk",
+      },
+      new Request("https://r.test/x86_64/hello-1.2.3-r0.apk", { method: "PUT", body: apk }),
+      ctx,
+    );
+    expect(res.status).toBe(201);
   });
 
   test("PUT rejects a package whose arch differs from the upload arch", async () => {

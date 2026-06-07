@@ -16,8 +16,12 @@ export const AlpineVersionMetaSchema = z.looseObject({
   checksum: z.string().min(1).max(128),
   /** Compressed `.apk` blob size in bytes (index `S:` field). */
   size: z.number().int().nonnegative(),
+  /** Uncompressed/installed size from `.PKGINFO` `size` (index `I:` field). */
+  installedSize: z.number().int().nonnegative().optional(),
   description: z.string().max(4096).nullable().optional(),
   depends: z.array(z.string().min(1).max(256)).max(4096).optional(),
+  /** Raw apk `provides` tokens (index `p:` field). */
+  provides: z.array(z.string().min(1).max(256)).max(4096).optional(),
   blobDigest: Sha256DigestSchema,
   /** Canonical `<name>-<version>.apk` download filename. */
   filename: z.string().min(1).max(512),
@@ -41,8 +45,10 @@ export function buildAlpineVersionMeta(
     arch: info.arch,
     checksum: blob.checksum,
     size: blob.size,
+    ...(info.size !== null ? { installedSize: info.size } : {}),
     description: info.description,
     depends: info.depends,
+    ...(info.provides.length > 0 ? { provides: info.provides } : {}),
     blobDigest: blob.digest,
     filename: blob.filename,
   };

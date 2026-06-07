@@ -39,11 +39,12 @@ function parseApkFilename(filename: string): string {
  * `.PKGINFO` and hosts the blob; `GET /<arch>/APKINDEX.tar.gz` returns a freshly
  * regenerated index over the live versions for that arch, and
  * `GET /<arch>/<name>-<version>.apk` serves the stored package blob. The format
- * is proxyable (mirror dl-cdn.alpinelinux.org) and virtualizable.
+ * is virtualizable; like registry-apt/registry-maven it does not implement a
+ * proxy ingest, so it does not advertise the proxyable capability.
  */
 export class AlpineAdapter implements RegistryPlugin {
   readonly id = "alpine" as const;
-  readonly capabilities = registryCapabilities("proxyable", "virtualizable");
+  readonly capabilities = registryCapabilities("virtualizable");
   authChallenge = basicAuthChallenge;
 
   private readonly plugin = registryPlugin(this.id)
@@ -170,10 +171,11 @@ export class AlpineAdapter implements RegistryPlugin {
   ): Promise<Response> {
     const arch = parseArch(archRaw);
     // `PUT /:arch/:filename` carries a path segment; reject anything that is not a
-    // `.apk` filename before parsing the body. The canonical name is still derived
-    // from `.PKGINFO`, so the segment is validated but not otherwise trusted.
-    if (filenameRaw !== undefined) parseApkFilename(filenameRaw);
-    const result = await handleAlpinePublish(arch, req, ctx);
+    // `.apk` filename before parsing the body. The canonical name is derived from
+    // `.PKGINFO`, but authorization on this route is scoped to the URL segment, so
+    // we forward it to the handler which rejects a mismatch (confused-deputy guard).
+    const urlFilename = filenameRaw !== undefined ? parseApkFilename(filenameRaw) : undefined;
+    const result = await handleAlpinePublish(arch, req, ctx, urlFilename);
     return Response.json(result.body, { status: result.status });
   }
 
@@ -187,8 +189,10 @@ export class AlpineAdapter implements RegistryPlugin {
         arch: meta.arch,
         checksum: meta.checksum,
         size: meta.size,
+        installedSize: meta.installedSize ?? null,
         description: meta.description ?? null,
         depends: meta.depends ?? [],
+        provides: meta.provides ?? [],
       });
     }
     return entries;
