@@ -1,6 +1,4 @@
 import {
-  bearerAuthChallenge,
-  delegateRegistryPlugin,
   type HttpMethod,
   type Permission,
   type RegistryMetadata,
@@ -8,8 +6,7 @@ import {
   type RegistryRequestContext,
   type RouteMatch,
   readWritePermission,
-  registryCapabilities,
-  registryPlugin,
+  registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
 } from "@hootifactory/registry";
@@ -46,85 +43,7 @@ const MAX_RELEASE_LIMIT = 100;
  * `POST /v3/releases` multipart publish. Module/release JSON is regenerated from
  * the live stored versions on every read.
  */
-export class PuppetAdapter implements RegistryPlugin {
-  readonly id = "puppet" as const;
-  readonly capabilities = registryCapabilities("proxyable", "virtualizable");
-  authChallenge = () => bearerAuthChallenge();
-
-  private readonly plugin = registryPlugin(this.id)
-    .module({
-      displayName: "Puppet Forge",
-      mountSegment: "puppet",
-      errorResponseKind: "singleError",
-      compressibleHandlers: ["module", "releaseList", "release"],
-      compressibleContentTypes: [PUPPET_JSON_CONTENT_TYPE],
-      scan: {
-        defaultOsvEcosystem: "Puppet",
-        dependencyGraph: ({ metadata }) => ({
-          deps: puppetDependencyGraph(metadata),
-          osvEcosystem: "Puppet",
-          purlType: "puppet",
-        }),
-        referencedDigests: (metadata) =>
-          typeof metadata.blobDigest === "string" ? [metadata.blobDigest] : [],
-      },
-    })
-    .capabilities(this.capabilities)
-    .authChallenge(this.authChallenge)
-    .generateMetadata((slug, ctx) => this.generateMetadata(slug, ctx))
-    .mergeMetadata((parts) => this.mergeMetadata(parts))
-    .proxyIngest((slug, upstreamBase, ctx) => this.proxyIngest(slug, upstreamBase, ctx))
-    .routes((route) => [
-      // Literal `/v3/releases` (list + publish) is declared before the
-      // `/v3/releases/:release` catch-all so it cannot be shadowed.
-      route.get("/v3/releases", "releaseList", ({ req, ctx }) => this.releaseList(req, ctx)),
-      route.post("/v3/releases", "publish", ({ req, ctx }) => this.publish(req, ctx)),
-      route.get("/v3/releases/:release", "release", ({ params, req, ctx }) =>
-        this.release(params.release, req, ctx),
-      ),
-      route.get("/v3/files/:filename", "file", ({ params, req, ctx }) =>
-        this.file(params.filename, req, ctx),
-      ),
-      route.get(
-        "/v3/modules/:slug",
-        "module",
-        ({ params, req, ctx }) => this.module(params.slug, req, ctx),
-        { proxyRefreshTrigger: true, metadataMergeable: true, packageParam: "slug" },
-      ),
-    ])
-    .build();
-  private readonly delegate = delegateRegistryPlugin(this.plugin);
-
-  get displayName() {
-    return this.plugin.displayName;
-  }
-  get mountSegment() {
-    return this.plugin.mountSegment;
-  }
-  get repositoryNamePolicy() {
-    return this.plugin.repositoryNamePolicy;
-  }
-  get acceptsRegistryBearerToken() {
-    return this.plugin.acceptsRegistryBearerToken;
-  }
-  get apiKeyHeaders() {
-    return this.plugin.apiKeyHeaders;
-  }
-  get errorResponseKind() {
-    return this.plugin.errorResponseKind;
-  }
-  get compressibleHandlers() {
-    return this.plugin.compressibleHandlers;
-  }
-  get compressibleContentTypes() {
-    return this.plugin.compressibleContentTypes;
-  }
-  get scan() {
-    return this.plugin.scan;
-  }
-
-  routes = this.delegate.routes;
-
+class PuppetAdapterState {
   requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
     const permission = readWritePermission(method);
     const handlerId = match?.entry?.handlerId;
@@ -167,8 +86,6 @@ export class PuppetAdapter implements RegistryPlugin {
     return permission;
   }
 
-  handle = this.delegate.handle;
-
   private urlContext(ctx: RegistryRequestContext): PuppetUrlContext {
     return { baseUrl: ctx.baseUrl, mountPath: ctx.repo.mountPath };
   }
@@ -188,11 +105,7 @@ export class PuppetAdapter implements RegistryPlugin {
   }
 
   /** `GET /v3/modules/:slug` — the module JSON regenerated from live releases. */
-  private async module(
-    slugRaw: string,
-    req: Request,
-    ctx: RegistryRequestContext,
-  ): Promise<Response> {
+  async module(slugRaw: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const slug = parsePuppetSlug(slugRaw);
     if (!slug) return puppetBadRequest("invalid module slug");
     const releases = await this.storedReleases(slug.slug, ctx);
@@ -209,11 +122,7 @@ export class PuppetAdapter implements RegistryPlugin {
   }
 
   /** `GET /v3/releases/:release` — the single-release detail object. */
-  private async release(
-    releaseRaw: string,
-    req: Request,
-    ctx: RegistryRequestContext,
-  ): Promise<Response> {
+  async release(releaseRaw: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const release = parsePuppetReleaseSlug(releaseRaw);
     if (!release) return puppetBadRequest("invalid release slug");
     const pkg = await ctx.data.packages.findByName(release.slug);
@@ -234,7 +143,7 @@ export class PuppetAdapter implements RegistryPlugin {
   }
 
   /** `GET /v3/releases?module=<slug>[&limit&offset]` — the paginated release list. */
-  private async releaseList(req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  async releaseList(req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const url = new URL(req.url);
     const moduleParam = url.searchParams.get("module");
     if (!moduleParam) return puppetBadRequest("the 'module' query parameter is required");
@@ -272,11 +181,7 @@ export class PuppetAdapter implements RegistryPlugin {
   }
 
   /** `GET /v3/files/:filename` — serve the hosted release tarball blob. */
-  private async file(
-    filenameRaw: string,
-    req: Request,
-    ctx: RegistryRequestContext,
-  ): Promise<Response> {
+  async file(filenameRaw: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const filename = PuppetFileNameSchema.safeParse(filenameRaw);
     if (!filename.success) return puppetBadRequest("invalid release filename");
     const ref = fileToRelease(filename.data);
@@ -300,7 +205,7 @@ export class PuppetAdapter implements RegistryPlugin {
     });
   }
 
-  private publish(req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  publish(req: Request, ctx: RegistryRequestContext): Promise<Response> {
     return handlePuppetPublish(req, ctx);
   }
 
@@ -434,4 +339,54 @@ function puppetDependencyGraph(metadata: Record<string, unknown>): Record<string
   return Object.fromEntries(deps.map((dep) => [dep.name, dep.version_requirement ?? "*"] as const));
 }
 
+const puppetDefinition = registryAdapter("puppet")
+  .stateClass(PuppetAdapterState)
+  .module((module) =>
+    module
+      .displayName("Puppet Forge")
+      .mount("puppet")
+      .capabilities("proxyable", "virtualizable")
+      .errorResponseKind("singleError")
+      .compressible({
+        handlers: ["module", "releaseList", "release"],
+        contentTypes: [PUPPET_JSON_CONTENT_TYPE],
+      }),
+  )
+  .scan({
+    defaultOsvEcosystem: "Puppet",
+    dependencyGraph: ({ metadata }) => ({
+      deps: puppetDependencyGraph(metadata),
+      osvEcosystem: "Puppet",
+      purlType: "puppet",
+    }),
+    referencedDigests: (metadata) =>
+      typeof metadata.blobDigest === "string" ? [metadata.blobDigest] : [],
+  })
+  .bearerAuth()
+  .fromState((state) =>
+    state
+      .defaultPermission("requiredPermission")
+      .metadata({ generate: "generateMetadata", merge: "mergeMetadata" })
+      .proxyIngest("proxyIngest"),
+  )
+  .routes((route) => [
+    // Literal `/v3/releases` (list + publish) is declared before the
+    // `/v3/releases/:release` catch-all so it cannot be shadowed.
+    route
+      .get("/v3/releases", "releaseList")
+      .calls((state, { req, ctx }) => state.releaseList(req, ctx)),
+    route.post("/v3/releases", "publish").calls((state, { req, ctx }) => state.publish(req, ctx)),
+    route
+      .get("/v3/releases/:release", "release")
+      .calls((state, { params, req, ctx }) => state.release(params.release, req, ctx)),
+    route
+      .get("/v3/files/:filename", "file")
+      .calls((state, { params, req, ctx }) => state.file(params.filename, req, ctx)),
+    route
+      .get("/v3/modules/:slug", "module")
+      .metadata("slug", { proxyRefresh: true })
+      .calls((state, { params, req, ctx }) => state.module(params.slug, req, ctx)),
+  ]);
+
+export class PuppetAdapter extends puppetDefinition.adapterClass() {}
 export const puppetRegistryPlugin: RegistryPlugin = new PuppetAdapter();

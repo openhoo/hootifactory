@@ -76,6 +76,22 @@ function puppetContext() {
   return ctx;
 }
 
+function requireGenerateMetadata(
+  adapter: PuppetAdapter,
+): NonNullable<PuppetAdapter["generateMetadata"]> {
+  if (!adapter.generateMetadata) {
+    throw new Error("expected Puppet adapter to expose generateMetadata");
+  }
+  return adapter.generateMetadata;
+}
+
+function requireMergeMetadata(adapter: PuppetAdapter): NonNullable<PuppetAdapter["mergeMetadata"]> {
+  if (!adapter.mergeMetadata) {
+    throw new Error("expected Puppet adapter to expose mergeMetadata");
+  }
+  return adapter.mergeMetadata;
+}
+
 function uploadRequest(archive: Uint8Array): Request {
   const form = new FormData();
   form.append("file", new File([archive], "module.tar.gz"), "module.tar.gz");
@@ -492,21 +508,23 @@ describe("Puppet adapter", () => {
   test("generateMetadata + mergeMetadata union releases across virtual members", async () => {
     const ctx = puppetContext();
     const adapter = new PuppetAdapter();
+    const generateMetadata = requireGenerateMetadata(adapter);
+    const mergeMetadata = requireMergeMetadata(adapter);
     ctx.data.packages.findByName = async () => pkgRow("puppetlabs-apache");
     ctx.data.versions.listLive = async () => [versionRow("1.2.3", releaseMeta("1.2.3"))];
 
-    const a = await adapter.generateMetadata("puppetlabs-apache", ctx);
+    const a = await generateMetadata("puppetlabs-apache", ctx);
     expect(a).not.toBeNull();
 
     // A second member exposing a higher version.
     const ctx2 = puppetContext();
     ctx2.data.packages.findByName = async () => pkgRow("puppetlabs-apache");
     ctx2.data.versions.listLive = async () => [versionRow("2.0.0", releaseMeta("2.0.0"))];
-    const b = await adapter.generateMetadata("puppetlabs-apache", ctx2);
+    const b = await generateMetadata("puppetlabs-apache", ctx2);
     expect(b).not.toBeNull();
     if (!a || !b) throw new Error("expected metadata");
 
-    const merged = await adapter.mergeMetadata([a, b]);
+    const merged = await mergeMetadata([a, b], ctx);
     const body = JSON.parse(merged.body as string) as {
       releases: { version: string }[];
       current_release: { version: string };
@@ -517,20 +535,22 @@ describe("Puppet adapter", () => {
 
   test("mergeMetadata prefers a stable current_release over a higher prerelease across members", async () => {
     const adapter = new PuppetAdapter();
+    const generateMetadata = requireGenerateMetadata(adapter);
+    const mergeMetadata = requireMergeMetadata(adapter);
 
     // Member A holds the stable 2.0.0; member B holds the higher prerelease 2.1.0-rc1.
     const ctxA = puppetContext();
     ctxA.data.packages.findByName = async () => pkgRow("puppetlabs-apache");
     ctxA.data.versions.listLive = async () => [versionRow("2.0.0", releaseMeta("2.0.0"))];
-    const a = await adapter.generateMetadata("puppetlabs-apache", ctxA);
+    const a = await generateMetadata("puppetlabs-apache", ctxA);
 
     const ctxB = puppetContext();
     ctxB.data.packages.findByName = async () => pkgRow("puppetlabs-apache");
     ctxB.data.versions.listLive = async () => [versionRow("2.1.0-rc1", releaseMeta("2.1.0-rc1"))];
-    const b = await adapter.generateMetadata("puppetlabs-apache", ctxB);
+    const b = await generateMetadata("puppetlabs-apache", ctxB);
     if (!a || !b) throw new Error("expected metadata");
 
-    const merged = await adapter.mergeMetadata([a, b]);
+    const merged = await mergeMetadata([a, b], ctxA);
     const body = JSON.parse(merged.body as string) as {
       releases: { version: string }[];
       current_release: { version: string };
