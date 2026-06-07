@@ -1,4 +1,5 @@
 import type { RegistryPlugin } from "@hootifactory/registry";
+import { alpineRegistryPlugin } from "@hootifactory/registry-alpine";
 import { aptRegistryPlugin } from "@hootifactory/registry-apt";
 import { cargoRegistryPlugin } from "@hootifactory/registry-cargo";
 import { chocolateyRegistryPlugin } from "@hootifactory/registry-chocolatey";
@@ -41,6 +42,7 @@ export const REGISTRY_PLUGIN_MANIFEST: RegistryPluginEntry[] = [
   { plugin: rubygemsRegistryPlugin },
   { plugin: composerRegistryPlugin },
   { plugin: mavenRegistryPlugin },
+  { plugin: alpineRegistryPlugin, aliases: ["apk"] },
   { plugin: aptRegistryPlugin },
   { plugin: pubRegistryPlugin },
   { plugin: swiftRegistryPlugin },
