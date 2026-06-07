@@ -104,10 +104,11 @@ function match(
 describe("P2 adapter", () => {
   test("declares index routes before the plugins/features catch-alls", () => {
     expect(new P2Adapter().routes()).toEqual([
-      { method: "GET", pattern: "/content.xml", handlerId: "contentXml" },
-      { method: "GET", pattern: "/content.jar", handlerId: "contentJar" },
-      { method: "GET", pattern: "/artifacts.xml", handlerId: "artifactsXml" },
-      { method: "GET", pattern: "/artifacts.jar", handlerId: "artifactsJar" },
+      { method: "GET", pattern: "/p2.index", handlerId: "p2Index", serviceIndex: true },
+      { method: "GET", pattern: "/content.xml", handlerId: "contentXml", serviceIndex: true },
+      { method: "GET", pattern: "/content.jar", handlerId: "contentJar", serviceIndex: true },
+      { method: "GET", pattern: "/artifacts.xml", handlerId: "artifactsXml", serviceIndex: true },
+      { method: "GET", pattern: "/artifacts.jar", handlerId: "artifactsJar", serviceIndex: true },
       { method: "GET", pattern: "/plugins/:filename", handlerId: "downloadBundle" },
       { method: "GET", pattern: "/features/:filename", handlerId: "downloadFeature" },
       { method: "PUT", pattern: "/plugins/:filename", handlerId: "publishBundle" },
@@ -115,13 +116,28 @@ describe("P2 adapter", () => {
     ]);
   });
 
-  test("capabilities are proxyable + virtualizable, not content-addressable/resumable", () => {
+  test("capabilities are virtualizable only (not proxyable: no proxyIngest hook)", () => {
     expect(new P2Adapter().capabilities).toEqual({
       contentAddressable: false,
       resumableUploads: false,
-      proxyable: true,
+      proxyable: false,
       virtualizable: true,
     });
+  });
+
+  test("GET /p2.index returns the static factory-order probe document", async () => {
+    const res = await new P2Adapter().handle(
+      match({ method: "GET", pattern: "/p2.index", handlerId: "p2Index" }, {}, "/p2.index"),
+      new Request("https://registry.test/p2.index"),
+      p2Context(),
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/plain");
+    const body = await res.text();
+    expect(body).toContain("version = 1");
+    expect(body).toContain("metadata.repository.factory.order = content.xml,!");
+    expect(body).toContain("artifact.repository.factory.order = artifacts.xml,!");
+    expect(res.headers.get("etag")).toBeTruthy();
   });
 
   test("uses read for GET, write for PUT, and basic auth", () => {
@@ -371,6 +387,26 @@ describe("P2 adapter", () => {
     expect(await res.text()).toBe("jar-bytes");
   });
 
+  test("GET /plugins/<file> returns 403 when the scanner blocks the jar", async () => {
+    const ctx = p2Context();
+    ctx.data.assets.findByScope = async () => assetRow(meta());
+    ctx.data.content.blobRefExists = async () => true;
+    // Drive serveBlobIfClean down the blocked branch (a scanner-flagged jar).
+    ctx.data.content.serveBlobIfClean = async ({ blocked }) => blocked();
+
+    const res = await new P2Adapter().handle(
+      match(
+        { method: "GET", pattern: "/plugins/:filename", handlerId: "downloadBundle" },
+        { filename: "org.example.bundle_1.2.3.jar" },
+        "/plugins/org.example.bundle_1.2.3.jar",
+      ),
+      new Request("https://registry.test/plugins/org.example.bundle_1.2.3.jar"),
+      ctx,
+    );
+    expect(res.status).toBe(403);
+    expect(await res.text()).toBe("artifact blocked by scan policy");
+  });
+
   test("GET /features/<file> resolves against the features scope", async () => {
     const ctx = p2Context();
     ctx.data.assets.findByScope = async ({ scope }) => {
@@ -426,5 +462,132 @@ describe("P2 adapter", () => {
         ctx,
       ),
     ).rejects.toMatchObject({ status: 400, code: "NAME_INVALID" });
+  });
+
+  test("publish -> index -> download round-trip: the persisted metadata drives both", async () => {
+    // An in-memory store that actually retains what publish commits, so the index
+    // renderer and download route read back the SAME metadata publish wrote — this
+    // catches drift between the persisted schema and what liveUnits/serve consume.
+    const versionsByPackage = new Map<
+      string,
+      Array<{ version: string; metadata: Record<string, unknown> }>
+    >();
+    const assetsByScope = new Map<string, RegistryAssetRow>();
+    const ctx = p2Context();
+    let nextDigest = 0;
+    const digestFor = () => `sha256:${String(nextDigest++).padStart(64, "0")}`;
+
+    ctx.data.packages.findOrCreate = async ({ name }) => pkgRow(name);
+    ctx.data.versions.exists = async (pkg, version) =>
+      (versionsByPackage.get(pkg.name) ?? []).some((v) => v.version === version);
+    ctx.data.content.storeBlobWithRef = async (input): Promise<RegistryStoredBlob> => ({
+      digest: digestFor(),
+      size: input.data.byteLength,
+      deduped: false,
+      refCreated: true,
+      blobRefId: "ref_1",
+    });
+    ctx.data.versions.commitOrReleaseBlob = async (input) => {
+      const name = input.package.name;
+      const list = versionsByPackage.get(name) ?? [];
+      list.push({ version: input.version, metadata: input.metadata });
+      versionsByPackage.set(name, list);
+      if (input.asset?.scope) {
+        assetsByScope.set(input.asset.scope, {
+          ...assetRow(meta()),
+          digest: input.stored.digest,
+          scope: input.asset.scope,
+        });
+      }
+      return { versionId: `ver_${name}_${input.version}` };
+    };
+    ctx.data.packages.listNames = async () =>
+      [...versionsByPackage.keys()].map((name) => ({ name }));
+    ctx.data.packages.findByName = async (name) =>
+      versionsByPackage.has(name) ? pkgRow(name) : null;
+    ctx.data.versions.listLive = async (pkg) =>
+      (versionsByPackage.get(pkg.name) ?? []).map((v) => versionRow(v.metadata as P2VersionMeta));
+    ctx.data.assets.findByScope = async ({ scope }) => assetsByScope.get(scope) ?? null;
+    ctx.data.content.blobRefExists = async () => true;
+    ctx.data.content.serveBlobIfClean = async ({ digest, contentType }) =>
+      new Response(`bytes:${digest}`, { headers: { "content-type": contentType } });
+
+    const adapter = new P2Adapter();
+    const publish = (kind: "bundle" | "feature", symbolicName: string, version: string) =>
+      adapter.handle(
+        match(
+          {
+            method: "PUT",
+            pattern: `/${kind === "feature" ? "features" : "plugins"}/:filename`,
+            handlerId: kind === "feature" ? "publishFeature" : "publishBundle",
+          },
+          { filename: "anything.jar" },
+          `/${kind === "feature" ? "features" : "plugins"}/anything.jar`,
+        ),
+        new Request(
+          `https://registry.test/${kind === "feature" ? "features" : "plugins"}/anything.jar`,
+          {
+            method: "PUT",
+            headers: { "content-type": "application/java-archive" },
+            body: bundleJar(symbolicName, version),
+          },
+        ),
+        ctx,
+      );
+
+    const bundleRes = await publish("bundle", "org.example.bundle", "1.2.3");
+    expect(bundleRes.status).toBe(201);
+    const featureRes = await publish("feature", "org.example.feature", "2.0.0");
+    expect(featureRes.status).toBe(201);
+
+    // content.xml renders BOTH published units using the persisted metadata.
+    const contentRes = await adapter.handle(
+      match(
+        { method: "GET", pattern: "/content.xml", handlerId: "contentXml" },
+        {},
+        "/content.xml",
+      ),
+      new Request("https://registry.test/content.xml"),
+      ctx,
+    );
+    const contentXml = await contentRes.text();
+    expect(contentXml).toContain('<unit id="org.example.bundle" version="1.2.3">');
+    expect(contentXml).toContain(
+      '<provided namespace="org.eclipse.equinox.p2.iu" name="org.example.bundle" version="1.2.3"/>',
+    );
+    expect(contentXml).toContain('<unit id="org.example.feature.feature.group" version="2.0.0">');
+
+    // artifacts.xml renders both artifacts with their stored sha-256 + size.
+    const artifactsRes = await adapter.handle(
+      match(
+        { method: "GET", pattern: "/artifacts.xml", handlerId: "artifactsXml" },
+        {},
+        "/artifacts.xml",
+      ),
+      new Request("https://registry.test/artifacts.xml"),
+      ctx,
+    );
+    const artifactsXml = await artifactsRes.text();
+    const bundleDigest = (versionsByPackage.get("org.example.bundle")?.[0]?.metadata.blobDigest ??
+      "") as string;
+    expect(artifactsXml).toContain(
+      `<property name='download.checksum.sha-256' value='${bundleDigest.slice("sha256:".length)}'/>`,
+    );
+    expect(artifactsXml).toContain(
+      '<artifact classifier="org.eclipse.update.feature" id="org.example.feature" version="2.0.0">',
+    );
+
+    // The mapping-rule filename the director computes resolves through download.
+    const downloadRes = await adapter.handle(
+      match(
+        { method: "GET", pattern: "/plugins/:filename", handlerId: "downloadBundle" },
+        { filename: "org.example.bundle_1.2.3.jar" },
+        "/plugins/org.example.bundle_1.2.3.jar",
+      ),
+      new Request("https://registry.test/plugins/org.example.bundle_1.2.3.jar"),
+      ctx,
+    );
+    expect(downloadRes.status).toBe(200);
+    expect(await downloadRes.text()).toBe(`bytes:${bundleDigest}`);
   });
 });

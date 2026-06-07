@@ -13,7 +13,7 @@
  * reflect the current repository contents.
  */
 
-import { classifierForKind, type P2VersionMeta } from "./p2-validation";
+import { classifierForKind, hexDigest, iuIdForUnit, type P2VersionMeta } from "./p2-validation";
 
 /** XML-escape a text/attribute value (the five predefined entities). */
 export function escapeXml(value: string): string {
@@ -39,22 +39,83 @@ function compare(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
-/** A single installable unit (`<unit>`) with the capability it provides. */
+/** A single installable unit (`<unit>`) with the capabilities it provides. */
 function renderUnit(unit: P2VersionMeta): string {
-  const id = escapeXml(unit.symbolicName);
+  // The IU id is the bare symbolic name for bundles, `<name>.feature.group` for
+  // features, so `-installIU <id>` resolves the unit by id (the artifact id stays
+  // the bare symbolic name to match the stored jar filename).
+  const iuId = escapeXml(iuIdForUnit(unit));
+  const artifactId = escapeXml(unit.symbolicName);
   const version = escapeXml(unit.version);
-  // Bundles provide an `osgi.bundle` capability; features provide a feature group.
-  const namespace = unit.kind === "feature" ? "org.eclipse.equinox.p2.iu" : "osgi.bundle";
+  // Every IU MUST advertise its own id in the p2 IU namespace so a director can
+  // resolve it; bundles additionally advertise the OSGi bundle capability.
+  const provides =
+    unit.kind === "feature"
+      ? [
+          `        <provided namespace="org.eclipse.equinox.p2.iu" name="${iuId}" version="${version}"/>`,
+        ]
+      : [
+          `        <provided namespace="org.eclipse.equinox.p2.iu" name="${iuId}" version="${version}"/>`,
+          `        <provided namespace="osgi.bundle" name="${artifactId}" version="${version}"/>`,
+        ];
   return [
-    `    <unit id="${id}" version="${version}">`,
-    "      <provides size='1'>",
-    `        <provided namespace="${escapeXml(namespace)}" name="${id}" version="${version}"/>`,
+    `    <unit id="${iuId}" version="${version}">`,
+    `      <provides size='${provides.length}'>`,
+    ...provides,
     "      </provides>",
     `      <artifacts size='1'>`,
-    `        <artifact classifier="${escapeXml(classifierForKind(unit.kind))}" id="${id}" version="${version}"/>`,
+    `        <artifact classifier="${escapeXml(classifierForKind(unit.kind))}" id="${artifactId}" version="${version}"/>`,
     "      </artifacts>",
+    ...renderTouchpoint(unit),
     "    </unit>",
   ].join("\n");
+}
+
+/**
+ * The p2 engine install action. Bundle units carry the OSGi touchpoint plus a
+ * `manifest` instruction (the director writes the bundle into `plugins/` and
+ * configures it from this); feature-group units carry the null touchpoint.
+ */
+function renderTouchpoint(unit: P2VersionMeta): string[] {
+  if (unit.kind === "feature") {
+    return ["      <touchpoint id='null' version='0.0.0'/>"];
+  }
+  const manifest = escapeXml(
+    `Bundle-SymbolicName: ${unit.symbolicName}\nBundle-Version: ${unit.version}\n`,
+  );
+  return [
+    "      <touchpoint id='org.eclipse.equinox.p2.osgi' version='1.0.0'/>",
+    "      <touchpointData size='1'>",
+    "        <instructions size='1'>",
+    `          <instruction key='manifest'>${manifest}</instruction>`,
+    "        </instructions>",
+    "      </touchpointData>",
+  ];
+}
+
+/**
+ * A content-derived, deterministic `p2.timestamp` (epoch millis). Stable across
+ * identical reads (so the regenerated document and its ETag stay byte-stable) and
+ * changes whenever the unit set changes, which is exactly what a director's
+ * repository cache uses to decide whether to refresh.
+ */
+function repositoryTimestamp(units: P2VersionMeta[]): string {
+  const fingerprint = units
+    .map((u) => `${u.kind}:${u.symbolicName}:${u.version}:${u.blobDigest}`)
+    .join("\n");
+  const hex = new Bun.CryptoHasher("sha1").update(fingerprint).digest("hex").slice(0, 12);
+  // A stable 13-digit epoch-millis value derived from the content fingerprint.
+  return ((Number.parseInt(hex, 16) % 9_000_000_000_000) + 1_000_000_000_000).toString();
+}
+
+/** Repository-level `<properties>` shared by content.xml and artifacts.xml. */
+function repositoryProperties(timestamp: string): string[] {
+  return [
+    "  <properties size='2'>",
+    `    <property name='p2.timestamp' value='${timestamp}'/>`,
+    "    <property name='p2.compressed' value='false'/>",
+    "  </properties>",
+  ];
 }
 
 /** Serialize the metadata repository (`content.xml`) from live installable units. */
@@ -65,9 +126,7 @@ export function buildContentXml(repositoryName: string, units: P2VersionMeta[]):
     '<?xml version="1.0" encoding="UTF-8"?>',
     "<?metadataRepository version='1.1.0'?>",
     `<repository name="${escapeXml(repositoryName)}" type="org.eclipse.equinox.p2.metadata.repository.simpleRepository" version="1">`,
-    "  <properties size='1'>",
-    "    <property name='p2.compressed' value='false'/>",
-    "  </properties>",
+    ...repositoryProperties(repositoryTimestamp(sorted)),
     `  <units size='${sorted.length}'>`,
     ...(body ? [body] : []),
     "  </units>",
@@ -81,10 +140,17 @@ function renderArtifact(unit: P2VersionMeta): string {
   const id = escapeXml(unit.symbolicName);
   const version = escapeXml(unit.version);
   const classifier = escapeXml(classifierForKind(unit.kind));
+  // Jars are STORED, so artifact.size == download.size. The sha-256 checksum lets
+  // the director integrity-verify the download (derived from the stored digest).
+  const properties = [
+    `        <property name='artifact.size' value='${unit.sizeBytes}'/>`,
+    `        <property name='download.size' value='${unit.sizeBytes}'/>`,
+    `        <property name='download.checksum.sha-256' value='${escapeXml(hexDigest(unit.blobDigest))}'/>`,
+  ];
   return [
     `    <artifact classifier="${classifier}" id="${id}" version="${version}">`,
-    "      <properties size='1'>",
-    `        <property name='download.size' value='${unit.sizeBytes}'/>`,
+    `      <properties size='${properties.length}'>`,
+    ...properties,
     "      </properties>",
     "    </artifact>",
   ].join("\n");
@@ -105,9 +171,7 @@ export function buildArtifactsXml(repositoryName: string, units: P2VersionMeta[]
     '<?xml version="1.0" encoding="UTF-8"?>',
     "<?artifactRepository version='1.1.0'?>",
     `<repository name="${escapeXml(repositoryName)}" type="org.eclipse.equinox.p2.artifact.repository.simpleRepository" version="1">`,
-    "  <properties size='1'>",
-    "    <property name='p2.compressed' value='false'/>",
-    "  </properties>",
+    ...repositoryProperties(repositoryTimestamp(sorted)),
     "  <mappings size='2'>",
     RULE_BUNDLE,
     RULE_FEATURE,

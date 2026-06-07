@@ -32,14 +32,32 @@ describe("buildContentXml", () => {
     expect(xml).toContain("<units size='1'>");
     expect(xml).toContain('<unit id="org.example.bundle" version="1.2.3">');
     expect(xml).toContain(
-      '<provided namespace="osgi.bundle" name="org.example.bundle" version="1.2.3"/>',
-    );
-    expect(xml).toContain(
       '<artifact classifier="osgi.bundle" id="org.example.bundle" version="1.2.3"/>',
     );
   });
 
-  test("features provide a p2 IU capability and the feature classifier", () => {
+  test("bundle units self-advertise in the p2 IU namespace AND osgi.bundle", () => {
+    const xml = buildContentXml("acme/repo", [unit()]);
+    // The IU self-capability is what `p2 director -installIU <id>` resolves against.
+    expect(xml).toContain("<provides size='2'>");
+    expect(xml).toContain(
+      '<provided namespace="org.eclipse.equinox.p2.iu" name="org.example.bundle" version="1.2.3"/>',
+    );
+    expect(xml).toContain(
+      '<provided namespace="osgi.bundle" name="org.example.bundle" version="1.2.3"/>',
+    );
+  });
+
+  test("bundle units carry the OSGi touchpoint and a manifest install instruction", () => {
+    const xml = buildContentXml("acme/repo", [unit()]);
+    expect(xml).toContain("<touchpoint id='org.eclipse.equinox.p2.osgi' version='1.0.0'/>");
+    expect(xml).toContain("<instruction key='manifest'>");
+    // The manifest instruction carries the bundle coordinates (newlines escaped).
+    expect(xml).toContain("Bundle-SymbolicName: org.example.bundle");
+    expect(xml).toContain("Bundle-Version: 1.2.3");
+  });
+
+  test("features use the .feature.group IU id, provide it, and carry the null touchpoint", () => {
     const xml = buildContentXml("acme/repo", [
       unit({
         symbolicName: "org.example.feature",
@@ -47,12 +65,23 @@ describe("buildContentXml", () => {
         filename: "org.example.feature_1.2.3.jar",
       }),
     ]);
+    // `-installIU org.example.feature.feature.group` is the conventional way to install a feature.
+    expect(xml).toContain('<unit id="org.example.feature.feature.group" version="1.2.3">');
     expect(xml).toContain(
-      '<provided namespace="org.eclipse.equinox.p2.iu" name="org.example.feature" version="1.2.3"/>',
+      '<provided namespace="org.eclipse.equinox.p2.iu" name="org.example.feature.feature.group" version="1.2.3"/>',
     );
+    expect(xml).toContain("<touchpoint id='null' version='0.0.0'/>");
+    // The artifact id stays the bare symbolic name to match the stored jar.
     expect(xml).toContain(
       '<artifact classifier="org.eclipse.update.feature" id="org.example.feature" version="1.2.3"/>',
     );
+  });
+
+  test("repository properties include a deterministic p2.timestamp", () => {
+    const xml = buildContentXml("acme/repo", [unit()]);
+    expect(xml).toContain("<properties size='2'>");
+    expect(xml).toMatch(/<property name='p2\.timestamp' value='\d+'\/>/);
+    expect(xml).toContain("<property name='p2.compressed' value='false'/>");
   });
 
   test("an empty repository renders zero units", () => {
@@ -84,13 +113,24 @@ describe("buildArtifactsXml", () => {
     );
   });
 
-  test("renders one artifact element per unit with its download size", () => {
+  test("renders one artifact element per unit with size and sha-256 checksum", () => {
     const xml = buildArtifactsXml("acme/repo", [unit()]);
     expect(xml).toContain("<artifacts size='1'>");
     expect(xml).toContain(
       '<artifact classifier="osgi.bundle" id="org.example.bundle" version="1.2.3">',
     );
+    expect(xml).toContain("<properties size='3'>");
+    // STORED jars: artifact.size == download.size.
+    expect(xml).toContain("<property name='artifact.size' value='4096'/>");
     expect(xml).toContain("<property name='download.size' value='4096'/>");
+    // The checksum is the stored blob digest without the `sha256:` prefix.
+    expect(xml).toContain(`<property name='download.checksum.sha-256' value='${"a".repeat(64)}'/>`);
+  });
+
+  test("repository properties include a deterministic p2.timestamp", () => {
+    const xml = buildArtifactsXml("acme/repo", [unit()]);
+    expect(xml).toContain("<properties size='2'>");
+    expect(xml).toMatch(/<property name='p2\.timestamp' value='\d+'\/>/);
   });
 });
 

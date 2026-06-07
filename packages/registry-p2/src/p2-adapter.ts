@@ -27,6 +27,17 @@ import { buildArtifactsXml, buildContentXml, zipSingleEntry } from "./p2-xml";
 
 const XML_HEADERS = { "content-type": "application/xml; charset=utf-8" } as const;
 const JAR_HEADERS = { "content-type": "application/java-archive" } as const;
+const TEXT_HEADERS = { "content-type": "text/plain; charset=utf-8" } as const;
+
+// The `p2.index` property document: pins the `.xml`-first factory order so a
+// director reads content.xml/artifacts.xml directly and skips the exhaustive
+// format probe. `,!` terminates the search so the director never probes `.jar`.
+const P2_INDEX_BODY = [
+  "version = 1",
+  "metadata.repository.factory.order = content.xml,!",
+  "artifact.repository.factory.order = artifacts.xml,!",
+  "",
+].join("\n");
 
 /**
  * Eclipse P2 repository. A p2 director adds the repo's mount URL as an update
@@ -39,7 +50,9 @@ const JAR_HEADERS = { "content-type": "application/java-archive" } as const;
  */
 export class P2Adapter implements RegistryPlugin {
   readonly id = "p2" as const;
-  readonly capabilities = registryCapabilities("proxyable", "virtualizable");
+  // Not `proxyable`: there is no upstream-mirror `proxyIngest` implementation, so
+  // declaring it would advertise proxy P2 repos as creatable when they are not.
+  readonly capabilities = registryCapabilities("virtualizable");
   authChallenge = basicAuthChallenge;
 
   private readonly plugin = registryPlugin(this.id)
@@ -57,14 +70,33 @@ export class P2Adapter implements RegistryPlugin {
     .capabilities(this.capabilities)
     .authChallenge(this.authChallenge)
     .routes((route) => [
-      // Literal index documents declared before the `/:filename` catch-alls.
-      route.get("/content.xml", "contentXml", ({ req, ctx }) => this.contentXml(false, req, ctx)),
-      route.get("/content.jar", "contentJar", ({ req, ctx }) => this.contentXml(true, req, ctx)),
-      route.get("/artifacts.xml", "artifactsXml", ({ req, ctx }) =>
-        this.artifactsXml(false, req, ctx),
+      // Service-discovery probe: a director requests `/p2.index` first to learn
+      // the factory order (read `.xml` directly, skip the exhaustive probe).
+      route.get("/p2.index", "p2Index", ({ req }) => this.p2Index(req), { serviceIndex: true }),
+      // Literal index documents declared before the `/:filename` catch-alls. They
+      // are repo-wide aggregate indexes, so a virtual repo serves them directly
+      // (`serviceIndex`) rather than fanning out — jar downloads still fan out.
+      route.get("/content.xml", "contentXml", ({ req, ctx }) => this.contentXml(false, req, ctx), {
+        serviceIndex: true,
+      }),
+      route.get("/content.jar", "contentJar", ({ req, ctx }) => this.contentXml(true, req, ctx), {
+        serviceIndex: true,
+      }),
+      route.get(
+        "/artifacts.xml",
+        "artifactsXml",
+        ({ req, ctx }) => this.artifactsXml(false, req, ctx),
+        {
+          serviceIndex: true,
+        },
       ),
-      route.get("/artifacts.jar", "artifactsJar", ({ req, ctx }) =>
-        this.artifactsXml(true, req, ctx),
+      route.get(
+        "/artifacts.jar",
+        "artifactsJar",
+        ({ req, ctx }) => this.artifactsXml(true, req, ctx),
+        {
+          serviceIndex: true,
+        },
       ),
       route.get("/plugins/:filename", "downloadBundle", ({ params, req, ctx }) =>
         this.download("bundle", params.filename, req, ctx),
@@ -146,6 +178,11 @@ export class P2Adapter implements RegistryPlugin {
       }
     }
     return units;
+  }
+
+  /** `GET /p2.index` — the static service-discovery probe document. */
+  private p2Index(req: Request): Response {
+    return textResponseWithEtag(req, P2_INDEX_BODY, TEXT_HEADERS);
   }
 
   /** `GET /content.xml` (or `.jar`) — the regenerated metadata repository. */

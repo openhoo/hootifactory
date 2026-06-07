@@ -78,3 +78,19 @@ export function p2JarScope(kind: P2ArtifactKind, filename: string): string {
 export function classifierForKind(kind: P2ArtifactKind): string {
   return kind === "feature" ? "org.eclipse.update.feature" : "osgi.bundle";
 }
+
+/**
+ * The installable-unit id a published bundle/feature is exposed under in
+ * `content.xml`. Bundles use their bare symbolic name; features use the
+ * conventional `<symbolicName>.feature.group` id so `p2 director -installIU
+ * <feature>.feature.group` resolves.
+ */
+export function iuIdForUnit(meta: Pick<P2VersionMeta, "symbolicName" | "kind">): string {
+  return meta.kind === "feature" ? `${meta.symbolicName}.feature.group` : meta.symbolicName;
+}
+
+/** The hex sha256 of a stored blob (the `blobDigest` with the `sha256:` prefix removed). */
+export function hexDigest(blobDigest: string): string {
+  const prefix = "sha256:";
+  return blobDigest.startsWith(prefix) ? blobDigest.slice(prefix.length) : blobDigest;
+}

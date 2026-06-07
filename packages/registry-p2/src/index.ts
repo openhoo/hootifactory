@@ -8,8 +8,10 @@ export { handleP2Publish, P2_JAR_KIND } from "./p2-publish-lifecycle";
 export {
   classifierForKind,
   dirForKind,
+  hexDigest,
   isValidOsgiVersion,
   isValidSymbolicName,
+  iuIdForUnit,
   JarFilenameSchema,
   jarFilename,
   OsgiVersionSchema,
