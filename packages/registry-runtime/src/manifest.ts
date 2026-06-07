@@ -22,6 +22,7 @@ import { rpmRegistryPlugin } from "@hootifactory/registry-rpm";
 import { rubygemsRegistryPlugin } from "@hootifactory/registry-rubygems";
 import { scoopRegistryPlugin } from "@hootifactory/registry-scoop";
 import { swiftRegistryPlugin } from "@hootifactory/registry-swift";
+import { terraformRegistryPlugin } from "@hootifactory/registry-terraform";
 import { vagrantRegistryPlugin } from "@hootifactory/registry-vagrant";
 import { wingetRegistryPlugin } from "@hootifactory/registry-winget";
 
@@ -65,4 +66,5 @@ export const REGISTRY_PLUGIN_MANIFEST: RegistryPluginEntry[] = [
   { plugin: rpmRegistryPlugin, aliases: ["yum", "dnf"] },
   { plugin: ansibleRegistryPlugin, aliases: ["galaxy"] },
   { plugin: gitlfsRegistryPlugin, aliases: ["lfs"] },
+  { plugin: terraformRegistryPlugin },
 ];

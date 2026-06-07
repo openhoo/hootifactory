@@ -35,6 +35,7 @@ describe("loadConfiguredRegistryPlugins", () => {
       "yum",
       "dnf",
       "lfs",
+      "terraform",
     ]) {
       expect(registry.has(id)).toBe(true);
     }
@@ -72,6 +73,7 @@ describe("loadConfiguredRegistryPlugins", () => {
       "rpm",
       "ansible",
       "gitlfs",
+      "terraform",
       "oci",
       "helm",
       "yum",
