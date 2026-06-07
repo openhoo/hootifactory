@@ -15,10 +15,17 @@ const findPasswordResetUser = mock(
   async (_email: string) => null as typeof PASSWORD_RESET_USER | null,
 );
 const dummyPasswordResetWork = mock(async () => {});
+const resetPasswordWithToken = mock(async () => null as { userId: string } | null);
 const createPasswordResetEmail = mock(async () => ({
   job: { template: "password_reset", to: "known@example.test", deliveryKey: "k" },
 }));
 const enqueueEmail = mock(async () => {});
+const consumePasswordResetRequest = mock(
+  async () =>
+    ({ throttled: false, bucket: { count: 0, resetAt: 0 } }) as
+      | { throttled: false; bucket: { count: number; resetAt: number } }
+      | { throttled: true; retryAfter: number },
+);
 
 // Email must be enabled for the handler to reach the normalization branches.
 const env = { ...loadEnv(), EMAIL_ENABLED: true };
@@ -27,7 +34,7 @@ mock.module("@hootifactory/config", () => ({ env, loadEnv }));
 mock.module("@hootifactory/auth", () => ({
   findPasswordResetUser,
   dummyPasswordResetWork,
-  resetPasswordWithToken: mock(async () => null),
+  resetPasswordWithToken,
 }));
 mock.module("./auth-password-reset", () => ({ createPasswordResetEmail }));
 mock.module("./auth-helpers", () => ({
@@ -35,9 +42,7 @@ mock.module("./auth-helpers", () => ({
   clientIp: () => "203.0.113.7",
   publicUrl: (path: string) => `https://app.example.test${path}`,
 }));
-mock.module("./auth-throttle", () => ({
-  consumePasswordResetRequest: mock(async () => ({ throttled: false, retryAfter: 0 })),
-}));
+mock.module("./auth-throttle", () => ({ consumePasswordResetRequest }));
 mock.module("./http", () => ({
   audit: () => {},
   AUDIT_RESULT: { success: "success", failure: "failure" },
@@ -65,6 +70,9 @@ describe("password reset request timing normalization (#223)", () => {
     dummyPasswordResetWork.mockClear();
     createPasswordResetEmail.mockClear();
     enqueueEmail.mockClear();
+    resetPasswordWithToken.mockClear();
+    consumePasswordResetRequest.mockClear();
+    env.EMAIL_ENABLED = true;
   });
 
   test("unknown email runs the dummy normalization work and returns ok", async () => {
@@ -121,5 +129,77 @@ describe("password reset request timing normalization (#223)", () => {
     const [unknownBody, knownBody] = await Promise.all([unknown.json(), known.json()]);
     expect(unknownBody).toEqual(knownBody);
     expect(unknownBody).toEqual({ ok: true });
+  });
+
+  test("rejects invalid request bodies", async () => {
+    const res = await appWithRoutes().fetch(
+      new Request("http://localhost/password-reset/request", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: "not-an-email" }),
+      }),
+    );
+    expect(res.status).toBe(400);
+  });
+
+  test("returns 429 when the request is throttled", async () => {
+    consumePasswordResetRequest.mockResolvedValueOnce({ throttled: true, retryAfter: 30 });
+    const res = await appWithRoutes().fetch(requestReset("known@example.test"));
+    expect(res.status).toBe(429);
+    expect(res.headers.get("retry-after")).toBe("30");
+  });
+
+  test("short-circuits to ok when email delivery is disabled", async () => {
+    env.EMAIL_ENABLED = false;
+    const res = await appWithRoutes().fetch(requestReset("known@example.test"));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+    expect(findPasswordResetUser).not.toHaveBeenCalled();
+  });
+
+  test("swallows email-send failures and still returns ok", async () => {
+    findPasswordResetUser.mockResolvedValueOnce(PASSWORD_RESET_USER);
+    createPasswordResetEmail.mockRejectedValueOnce(new Error("smtp down"));
+    const res = await appWithRoutes().fetch(requestReset("known@example.test"));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+  });
+});
+
+describe("password reset confirmation", () => {
+  beforeEach(() => {
+    resetPasswordWithToken.mockClear();
+    env.EMAIL_ENABLED = true;
+  });
+
+  function confirm(body: unknown): Request {
+    return new Request("http://localhost/password-reset/confirm", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  }
+
+  test("rejects invalid confirmation bodies", async () => {
+    const res = await appWithRoutes().fetch(confirm({ token: "short" }));
+    expect(res.status).toBe(400);
+  });
+
+  test("returns 400 for an invalid or expired token", async () => {
+    resetPasswordWithToken.mockResolvedValueOnce(null);
+    const res = await appWithRoutes().fetch(
+      confirm({ token: "a".repeat(20), password: "supersecret123" }),
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "invalid or expired reset token" });
+  });
+
+  test("confirms a valid reset token", async () => {
+    resetPasswordWithToken.mockResolvedValueOnce({ userId: "user-1" });
+    const res = await appWithRoutes().fetch(
+      confirm({ token: "a".repeat(20), password: "supersecret123" }),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
   });
 });
