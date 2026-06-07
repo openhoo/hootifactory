@@ -31,13 +31,15 @@ interface IndexCacheEntry {
 /**
  * CRAN (R) source repository. Hosts source tarballs at `src/contrib/`, serving a
  * regenerated Debian-control-style `PACKAGES` index (and its `PACKAGES.gz`
- * variant) over the live versions. Publish is a hootifactory extension: clients
- * `PUT` a `<pkg>_<version>.tar.gz`, whose DESCRIPTION we parse for the index.
- * Binary paths under `/bin/...` 404 (no compiled binaries are hosted).
+ * variant) over the live versions. The optional `PACKAGES.rds` index is not
+ * served; its route 404s explicitly so R's `.rds -> .gz -> plain` fallback stays
+ * reliable. Publish is a hootifactory extension: clients `PUT` a
+ * `<pkg>_<version>.tar.gz`, whose DESCRIPTION we parse for the index. Binary
+ * paths under `/bin/...` 404 (no compiled binaries are hosted).
  */
 export class CranAdapter implements RegistryPlugin {
   readonly id = "cran" as const;
-  readonly capabilities = registryCapabilities("proxyable", "virtualizable");
+  readonly capabilities = registryCapabilities("virtualizable");
   authChallenge = basicAuthChallenge;
   private readonly indexCache = new Map<string, IndexCacheEntry>();
 
@@ -69,6 +71,15 @@ export class CranAdapter implements RegistryPlugin {
       route.get("/src/contrib/PACKAGES.gz", "packagesGz", ({ req, ctx }) =>
         this.packages(true, req, ctx),
       ),
+      // R's available.packages()/install.packages() probes PACKAGES.rds FIRST
+      // (preferred over PACKAGES.gz/PACKAGES). This server serves no RDS index,
+      // so the route is registered explicitly to return a deterministic 404 —
+      // documenting the intentional omission and keeping the well-known probe off
+      // the `/:filename` catch-all. R falls back .rds -> .gz -> plain on a clean
+      // 404, so the absence is graceful (mirrors apt's InRelease/Release.gpg 404s).
+      route.get("/src/contrib/PACKAGES.rds", "packagesRds", () => {
+        throw Errors.notFound();
+      }),
       // Superseded versions are fetched by R tooling (remotes::install_version,
       // renv, pak) only under `Archive/<pkg>/`. Declared before the
       // `/src/contrib/:filename` catch-all so the literal `Archive` segment wins.

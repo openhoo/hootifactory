@@ -35,17 +35,24 @@ const DEPENDENCY_FIELDS = ["Depends", "Imports", "LinkingTo"] as const;
  * Parse a `PUT` of a source tarball: read the body, extract & parse the package's
  * DESCRIPTION, and verify its `Package`/`Version` agree with the URL filename so
  * the stored blob can never be indexed under a different identity than it claims.
+ * `maxUploadBytes` bounds the buffered upload with an explicit 413, independent of
+ * the server's request-body cap (the gunzip prefix cap only bounds the decompressed
+ * prefix, not the compressed upload), matching the per-adapter guard in pub/swift.
  */
 export async function parseCranPublishRequest(
   filenameParts: CranFilenameParts,
   req: Request,
+  maxUploadBytes: number,
 ): Promise<CranPublishParseResult> {
   const tarball = new Uint8Array(await req.arrayBuffer());
   if (tarball.byteLength === 0) {
     return { ok: false, error: { error: "empty request body", status: 400 } };
   }
+  if (tarball.byteLength > maxUploadBytes) {
+    return { ok: false, error: { error: "source archive too large", status: 413 } };
+  }
 
-  const description = extractCranDescription(tarball);
+  const description = await extractCranDescription(tarball);
   if (description === null) {
     return {
       ok: false,

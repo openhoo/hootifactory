@@ -80,6 +80,7 @@ describe("CranAdapter", () => {
     expect(new CranAdapter().routes()).toEqual([
       { method: "GET", pattern: "/src/contrib/PACKAGES", handlerId: "packages" },
       { method: "GET", pattern: "/src/contrib/PACKAGES.gz", handlerId: "packagesGz" },
+      { method: "GET", pattern: "/src/contrib/PACKAGES.rds", handlerId: "packagesRds" },
       {
         method: "GET",
         pattern: "/src/contrib/Archive/:pkg/:filename",
@@ -89,6 +90,17 @@ describe("CranAdapter", () => {
       { method: "PUT", pattern: "/src/contrib/:filename", handlerId: "publish" },
       { method: "GET", pattern: "/bin/:path+", handlerId: "binary" },
     ]);
+  });
+
+  test("GET /src/contrib/PACKAGES.rds 404s (no RDS index served; clean fallback)", async () => {
+    const ctx = cranContext();
+    await expect(
+      new CranAdapter().handle(
+        match("packagesRds", "/src/contrib/PACKAGES.rds", {}),
+        new Request("https://r.test/cran/private/src/contrib/PACKAGES.rds"),
+        ctx,
+      ),
+    ).rejects.toMatchObject({ status: 404 });
   });
 
   test("uses read permissions for reads, write for publish, and basic auth", () => {
@@ -115,11 +127,11 @@ describe("CranAdapter", () => {
     });
   });
 
-  test("declares proxyable + virtualizable capabilities", () => {
+  test("declares only virtualizable capability (no unimplemented proxyable)", () => {
     expect(new CranAdapter().capabilities).toEqual({
       contentAddressable: false,
       resumableUploads: false,
-      proxyable: true,
+      proxyable: false,
       virtualizable: true,
     });
   });
@@ -419,6 +431,119 @@ describe("CranAdapter", () => {
         ["License", "MIT"],
       ],
     });
+  });
+
+  test("round-trips publish -> PACKAGES MD5sum -> download bytes (install.packages contract)", async () => {
+    // The central CRAN guarantee: the MD5sum a client reads from PACKAGES verifies
+    // the exact source tarball it then downloads. Drive ONE real fixture through
+    // publish, the regenerated index, and the download — asserting both the
+    // published tarball and the served bytes hash to the MD5sum in PACKAGES.
+    const ctx = cranContext();
+    const tarball = buildCranTarball("demo", DESCRIPTION);
+    const expectedMd5 = new Bun.CryptoHasher("md5").update(tarball).digest("hex");
+    const sha256 = new Bun.CryptoHasher("sha256").update(tarball).digest("hex");
+    const digest = `sha256:${sha256}`;
+
+    // In-memory store shared across the publish and read paths.
+    let storedBytes: Uint8Array | null = null;
+    let storedMetadata: Record<string, unknown> | null = null;
+    ctx.data.packages.findOrCreate = async ({ name }) => pkgRow(name);
+    ctx.data.versions.exists = async () => false;
+    ctx.data.content.storeBlobWithRef = async ({ data }): Promise<RegistryStoredBlob> => {
+      storedBytes = data as Uint8Array;
+      return { digest, size: tarball.length, deduped: false, refCreated: true, blobRefId: "ref_1" };
+    };
+    ctx.data.versions.commitOrReleaseBlob = async (input) => {
+      storedMetadata = input.metadata;
+      return { versionId: "ver_1" };
+    };
+
+    const adapter = new CranAdapter();
+    const publishRes = await adapter.handle(
+      {
+        entry: { method: "PUT", pattern: "/src/contrib/:filename", handlerId: "publish" },
+        params: { filename: "demo_1.2.3.tar.gz" },
+        path: "/src/contrib/demo_1.2.3.tar.gz",
+      },
+      new Request("https://r.test/cran/private/src/contrib/demo_1.2.3.tar.gz", {
+        method: "PUT",
+        body: tarball,
+      }),
+      ctx,
+    );
+    expect(publishRes.status).toBe(201);
+    if (!storedMetadata || !storedBytes) throw new Error("publish did not store blob/metadata");
+    // Read path: serve the stored metadata + the stored bytes back.
+    const meta: Record<string, unknown> = storedMetadata;
+    const blob: Uint8Array = storedBytes;
+    // The blob the registry persisted is byte-identical to the uploaded tarball.
+    expect(blob).toEqual(tarball);
+    ctx.data.packages.listNames = async () => [{ name: "demo" }];
+    ctx.data.packages.findByName = async (name) => pkgRow(name);
+    ctx.data.versions.listLive = async () => [versionRow(meta)];
+    ctx.data.versions.findLive = async () => versionRow(meta);
+    ctx.data.content.blobRefExists = async () => true;
+    ctx.data.content.serveBlobIfClean = async ({ digest: served, contentType }) => {
+      expect(served).toBe(digest);
+      return new Response(blob, { headers: { "content-type": contentType } });
+    };
+
+    // GET PACKAGES and extract the advertised MD5sum.
+    const indexRes = await adapter.handle(
+      match("packages", "/src/contrib/PACKAGES", {}),
+      new Request("https://r.test/cran/private/src/contrib/PACKAGES"),
+      ctx,
+    );
+    expect(indexRes.status).toBe(200);
+    const packages = await indexRes.text();
+    const md5InIndex = packages.match(/^MD5sum: ([a-f0-9]{32})$/m)?.[1];
+    expect(md5InIndex).toBe(expectedMd5);
+    if (md5InIndex === undefined) throw new Error("PACKAGES is missing an MD5sum field");
+
+    // GET the tarball and verify the served bytes hash to that same MD5sum.
+    const dlRes = await adapter.handle(
+      match("download", "/src/contrib/:filename", { filename: "demo_1.2.3.tar.gz" }),
+      new Request("https://r.test/cran/private/src/contrib/demo_1.2.3.tar.gz"),
+      ctx,
+    );
+    expect(dlRes.status).toBe(200);
+    const downloaded = new Uint8Array(await dlRes.arrayBuffer());
+    expect(downloaded).toEqual(tarball);
+    const downloadedMd5 = new Bun.CryptoHasher("md5").update(downloaded).digest("hex");
+    expect(downloadedMd5).toBe(md5InIndex);
+  });
+
+  test("PUT 413s when the upload exceeds ctx.limits.maxUploadBytes", async () => {
+    const ctx = cranContext();
+    ctx.limits = { ...ctx.limits, maxUploadBytes: 1024 };
+    ctx.data.packages.findOrCreate = async ({ name }) => pkgRow(name);
+    ctx.data.versions.exists = async () => false;
+
+    // A valid gzipped package whose compressed size exceeds the 1 KiB cap. Use
+    // incompressible (pseudo-random) filler so gzip cannot shrink it under the cap.
+    let filler = "";
+    let seed = 1;
+    for (let i = 0; i < 16 * 1024; i++) {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      filler += String.fromCharCode(33 + (seed % 94));
+    }
+    const body = buildCranTarball("demo", DESCRIPTION, [{ name: "demo/data/x", body: filler }]);
+    expect(body.byteLength).toBeGreaterThan(1024);
+
+    const res = await new CranAdapter().handle(
+      {
+        entry: { method: "PUT", pattern: "/src/contrib/:filename", handlerId: "publish" },
+        params: { filename: "demo_1.2.3.tar.gz" },
+        path: "/src/contrib/demo_1.2.3.tar.gz",
+      },
+      new Request("https://r.test/cran/private/src/contrib/demo_1.2.3.tar.gz", {
+        method: "PUT",
+        body,
+      }),
+      ctx,
+    );
+    expect(res.status).toBe(413);
+    expect(await res.json()).toEqual({ error: "source archive too large" });
   });
 
   test("PUT returns 409 when the version already exists", async () => {

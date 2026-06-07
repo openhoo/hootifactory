@@ -38,7 +38,7 @@ export async function handleCranPublish(
   req: Request,
   ctx: RegistryRequestContext,
 ): Promise<Response> {
-  const parsed = await parseCranPublishRequest(filenameParts, req);
+  const parsed = await parseCranPublishRequest(filenameParts, req, ctx.limits.maxUploadBytes);
   if (!parsed.ok) {
     return Response.json({ error: parsed.error.error }, { status: parsed.error.status });
   }
