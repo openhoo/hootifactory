@@ -6,6 +6,7 @@ import { chocolateyRegistryPlugin } from "@hootifactory/registry-chocolatey";
 import { cocoapodsRegistryPlugin } from "@hootifactory/registry-cocoapods";
 import { composerRegistryPlugin } from "@hootifactory/registry-composer";
 import { conanRegistryPlugin } from "@hootifactory/registry-conan";
+import { condaRegistryPlugin } from "@hootifactory/registry-conda";
 import { cranRegistryPlugin } from "@hootifactory/registry-cran";
 import { gitlfsRegistryPlugin } from "@hootifactory/registry-gitlfs";
 import { goRegistryPlugin } from "@hootifactory/registry-go";
@@ -69,4 +70,5 @@ export const REGISTRY_PLUGIN_MANIFEST: RegistryPluginEntry[] = [
   { plugin: gitlfsRegistryPlugin, aliases: ["lfs"] },
   { plugin: terraformRegistryPlugin },
   { plugin: conanRegistryPlugin },
+  { plugin: condaRegistryPlugin },
 ];
