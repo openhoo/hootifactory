@@ -1,6 +1,4 @@
 import {
-  basicAuthChallenge,
-  delegateRegistryPlugin,
   Errors,
   type HttpMethod,
   type Permission,
@@ -9,9 +7,8 @@ import {
   type RegistryRequestContext,
   type RouteMatch,
   readWritePermission,
-  registryCapabilities,
+  registryAdapter,
   registryErrorResponseForModule,
-  registryPlugin,
   serveRegistryBlob,
   textResponseWithEtag,
 } from "@hootifactory/registry";
@@ -28,6 +25,8 @@ import {
   parseChecksumPath,
 } from "./ivy-validation";
 
+const IVY_ERROR_MODULE = { errorResponseKind: "singleError" as const };
+
 /**
  * Ivy repository (the layout SBT publishes/resolves against). A path-addressed
  * file store keyed by `[organisation]/[module]/[revision]/<file>`: the
@@ -35,67 +34,7 @@ import {
  * `.sha1`/`.md5` checksum sidecars are served by hashing the stored base blob, so a
  * served checksum always matches the bytes the registry actually returns.
  */
-export class IvyAdapter implements RegistryPlugin {
-  readonly id = "ivy" as const;
-  // Virtualizable only: stored Ivy files are served from member repos via the
-  // application-layer per-file fan-out (identical to the Maven reference). No
-  // proxy/fetch-through is implemented (no proxyIngest), so `proxyable` is NOT
-  // declared — a proxy Ivy repo is correctly rejected at creation time.
-  readonly capabilities = registryCapabilities("virtualizable");
-  authChallenge = basicAuthChallenge;
-
-  private readonly plugin = registryPlugin(this.id)
-    .module({
-      displayName: "Ivy",
-      mountSegment: "ivy",
-      errorResponseKind: "singleError",
-      compressibleHandlers: [],
-      scan: {
-        defaultOsvEcosystem: "Maven",
-        referencedDigests: (metadata) => ivyReferencedDigests(metadata),
-      },
-    })
-    .capabilities(this.capabilities)
-    .authChallenge(this.authChallenge)
-    .routes((route) => [
-      route.put("/:path+", "upload", ({ params, req, ctx }) => this.upload(params.path, req, ctx)),
-      route.get("/:path+", "download", ({ params, req, ctx }) =>
-        this.download(params.path, req, ctx),
-      ),
-    ])
-    .build();
-  private readonly delegate = delegateRegistryPlugin(this.plugin);
-
-  get displayName() {
-    return this.plugin.displayName;
-  }
-  get mountSegment() {
-    return this.plugin.mountSegment;
-  }
-  get repositoryNamePolicy() {
-    return this.plugin.repositoryNamePolicy;
-  }
-  get acceptsRegistryBearerToken() {
-    return this.plugin.acceptsRegistryBearerToken;
-  }
-  get apiKeyHeaders() {
-    return this.plugin.apiKeyHeaders;
-  }
-  get errorResponseKind() {
-    return this.plugin.errorResponseKind;
-  }
-  get compressibleHandlers() {
-    return this.plugin.compressibleHandlers;
-  }
-  get compressibleContentTypes() {
-    return this.plugin.compressibleContentTypes;
-  }
-  get scan() {
-    return this.plugin.scan;
-  }
-
-  routes = this.delegate.routes;
-
+class IvyAdapterState {
   requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
     const permission = readWritePermission(method);
     const path = match?.params.path;
@@ -109,21 +48,15 @@ export class IvyAdapter implements RegistryPlugin {
     return { ...permission, resource: { type: "artifact", artifactRef: path } };
   }
 
-  handle = this.delegate.handle;
-
-  private upload(path: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  upload(path: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const safePath = parseRegistryInput(IvyPathSchema, path, {
       code: "NAME_INVALID",
       message: "invalid ivy path",
     });
-    return handleIvyUpload(safePath, req, ctx, this);
+    return handleIvyUpload(safePath, req, ctx, IVY_ERROR_MODULE);
   }
 
-  private async download(
-    path: string,
-    req: Request,
-    ctx: RegistryRequestContext,
-  ): Promise<Response> {
+  async download(path: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const safePath = parseRegistryInput(IvyPathSchema, path, {
       code: "NAME_INVALID",
       message: "invalid ivy path",
@@ -148,7 +81,7 @@ export class IvyAdapter implements RegistryPlugin {
       contentType: contentTypeForPath(path),
       redirect: req.method === "GET",
       blocked: () =>
-        registryErrorResponseForModule(this, {
+        registryErrorResponseForModule(IVY_ERROR_MODULE, {
           status: 403,
           message: "artifact blocked by scan policy",
         }),
@@ -172,4 +105,30 @@ export class IvyAdapter implements RegistryPlugin {
   }
 }
 
+const ivyDefinition = registryAdapter("ivy")
+  .stateClass(IvyAdapterState)
+  .module((module) =>
+    module
+      .displayName("Ivy")
+      .mount("ivy")
+      // Virtualizable only: no proxyIngest/fetch-through is implemented.
+      .capabilities("virtualizable")
+      .errorResponseKind("singleError"),
+  )
+  .scan({
+    defaultOsvEcosystem: "Maven",
+    referencedDigests: (metadata) => ivyReferencedDigests(metadata),
+  })
+  .basicAuth()
+  .fromState((state) => state.defaultPermission("requiredPermission"))
+  .routes((route) => [
+    route
+      .put("/:path+", "upload")
+      .calls((state, { params, req, ctx }) => state.upload(params.path, req, ctx)),
+    route
+      .get("/:path+", "download")
+      .calls((state, { params, req, ctx }) => state.download(params.path, req, ctx)),
+  ]);
+
+export class IvyAdapter extends ivyDefinition.adapterClass() {}
 export const ivyRegistryPlugin: RegistryPlugin = new IvyAdapter();
