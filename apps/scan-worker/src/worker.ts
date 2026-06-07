@@ -1,25 +1,20 @@
-import { mapWithBoundedConcurrency } from "@hootifactory/core";
-import { and, db, eq, scanOutbox, sql } from "@hootifactory/db";
-import { initializeObservability, logger, withSpan } from "@hootifactory/observability";
+import { initializeObservability, logger } from "@hootifactory/observability";
 import {
   createMaintenanceScheduler,
   installShutdownHandlers,
   intEnv,
   startHealthServer,
 } from "@hootifactory/queue";
-import {
-  reapExpiredContentUploadSessions,
-  sweepUnreferencedCasBlobs,
-} from "@hootifactory/registry-application/content";
 import { loadConfiguredRegistryPlugins } from "@hootifactory/registry-runtime";
-import { SCAN_OUTBOX_STATUS } from "@hootifactory/scan-core";
 import { loadConfiguredScanners } from "@hootifactory/scanner-runtime";
-import { processScan, recordScanFailure, scannerRuntimeFromEnv } from "./pipeline";
+import { scannerRuntimeFromEnv } from "./pipeline";
 import {
-  type ClaimedScanIntent,
-  claimedAttemptFilter,
-  claimedScanIntentsFromExecute,
-} from "./scan-outbox-rows";
+  reapExpiredUploads,
+  reclaimStuckScans,
+  runScanCycle,
+  type ScanWorkerConfig,
+  sweepBlobs,
+} from "./worker-loop";
 
 const workerRole = "scan-worker";
 
@@ -49,63 +44,19 @@ const scanReclaimTimeoutSeconds = intEnv("SCAN_RECLAIM_TIMEOUT_SECONDS", 900, 60
 
 const scannerRuntime = scannerRuntimeFromEnv();
 
-async function claimScanIntents(limit: number): Promise<ClaimedScanIntent[]> {
-  const result = await db.execute(sql`
-    with claimed as (
-      select id
-      from scan_outbox
-      where status = ${SCAN_OUTBOX_STATUS.pending} and next_attempt_at <= now()
-      order by next_attempt_at asc, created_at asc
-      limit ${limit}
-      for update skip locked
-    )
-    update scan_outbox so
-       set status = ${SCAN_OUTBOX_STATUS.processing},
-           attempts = so.attempts + 1,
-           locked_at = now(),
-           updated_at = now()
-      from claimed
-     where so.id = claimed.id
-    returning so.id, so.artifact_id as "artifactId", so.attempts
-  `);
-  return claimedScanIntentsFromExecute(result);
-}
-
-// Terminal writes are gated by claimedAttemptFilter (optimistic concurrency): a
-// worker finalizes only the exact attempt it claimed. If a re-publish reset the row
-// to 'pending' and another worker re-claimed it (advancing attempts), or a reclaim
-// moved it out of 'processing', the filter no longer matches, the UPDATE is a no-op,
-// and a stale worker cannot clobber the newer attempt or a re-requested rescan.
-async function markSucceeded(intent: ClaimedScanIntent): Promise<void> {
-  await db
-    .update(scanOutbox)
-    .set({
-      status: SCAN_OUTBOX_STATUS.succeeded,
-      lockedAt: null,
-      lastError: null,
-      updatedAt: new Date(),
-    })
-    .where(claimedAttemptFilter(intent));
-}
-
-async function markFailed(intent: ClaimedScanIntent, err: unknown): Promise<void> {
-  const error = err instanceof Error ? err.message : String(err);
-  const retry = intent.attempts < maxAttempts;
-  await db
-    .update(scanOutbox)
-    .set({
-      status: retry ? SCAN_OUTBOX_STATUS.pending : SCAN_OUTBOX_STATUS.failed,
-      lockedAt: null,
-      lastError: error.slice(0, 2000),
-      nextAttemptAt: new Date(Date.now() + Math.min(60_000, 1_000 * 2 ** intent.attempts)),
-      updatedAt: new Date(),
-    })
-    .where(claimedAttemptFilter(intent));
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
+const config: ScanWorkerConfig = {
+  batchSize: workerBatchSize,
+  concurrency: workerConcurrency,
+  pollingIntervalSeconds,
+  maxAttempts,
+  uploadReaperBatchSize,
+  uploadReaperIntervalSeconds,
+  blobGcBatchSize,
+  blobGcGraceSeconds,
+  blobGcIntervalSeconds,
+  scanReclaimIntervalSeconds,
+  scanReclaimTimeoutSeconds,
+};
 
 // This worker runs its own claim/process loop (not pg-boss), so it can't use
 // runWorker, but the readiness endpoint and signal/shutdown lifecycle are shared.
@@ -137,138 +88,25 @@ logger.info("scan worker starting", {
 });
 health.setReady(true);
 
-async function reapExpiredUploads(): Promise<void> {
-  try {
-    const result = await withSpan(
-      "upload_sessions.reap_expired",
-      { "upload_reaper.batch_size": uploadReaperBatchSize },
-      () => reapExpiredContentUploadSessions({ limit: uploadReaperBatchSize }),
-    );
-    if (result.aborted > 0) {
-      logger.info("expired upload sessions reaped", { aborted: result.aborted });
-    }
-  } catch (err) {
-    logger.error("expired upload session reaper failed", { error: err });
-  }
-}
-
-async function sweepBlobs(): Promise<void> {
-  try {
-    const result = await withSpan(
-      "blob_gc.sweep",
-      {
-        "blob_gc.batch_size": blobGcBatchSize,
-        "blob_gc.grace_seconds": blobGcGraceSeconds,
-      },
-      () =>
-        sweepUnreferencedCasBlobs({
-          limit: blobGcBatchSize,
-          graceMs: blobGcGraceSeconds * 1000,
-        }),
-    );
-    if (result.candidates > 0 || result.reclaimed > 0) {
-      logger.info("unreferenced CAS blobs swept", result);
-    }
-  } catch (err) {
-    logger.error("unreferenced CAS blob sweeper failed", { error: err });
-  }
-}
-
-async function reclaimStuckScans(): Promise<void> {
-  try {
-    const reclaimed = await withSpan(
-      "scan.outbox.reclaim_stuck",
-      { "scan.reclaim.timeout_seconds": scanReclaimTimeoutSeconds },
-      () =>
-        db
-          .update(scanOutbox)
-          .set({
-            // attempts was already incremented at claim time, so mirror markFailed:
-            // exhaust to 'failed' once attempts reach the cap, otherwise retry.
-            status: sql`case when ${scanOutbox.attempts} >= ${maxAttempts}
-                             then ${SCAN_OUTBOX_STATUS.failed}
-                             else ${SCAN_OUTBOX_STATUS.pending} end`,
-            lockedAt: null,
-            nextAttemptAt: new Date(),
-            lastError: "reclaimed: worker stopped while processing",
-            updatedAt: new Date(),
-          })
-          .where(
-            and(
-              eq(scanOutbox.status, SCAN_OUTBOX_STATUS.processing),
-              sql`${scanOutbox.lockedAt} < now() - make_interval(secs => ${scanReclaimTimeoutSeconds})`,
-            ),
-          )
-          .returning({ id: scanOutbox.id }),
-    );
-    if (reclaimed.length > 0) {
-      logger.warn("reclaimed stuck scan_outbox rows", {
-        reclaimed: reclaimed.length,
-        timeoutSeconds: scanReclaimTimeoutSeconds,
-      });
-    }
-  } catch (err) {
-    logger.error("stuck scan reclaim failed", { error: err });
-  }
-}
-
 const maintenance = createMaintenanceScheduler([
   {
     name: "upload_sessions.reap_expired",
     intervalMs: uploadReaperIntervalSeconds * 1000,
-    run: reapExpiredUploads,
+    run: () => reapExpiredUploads(uploadReaperBatchSize),
   },
   {
     name: "blob_gc.sweep",
     intervalMs: blobGcIntervalSeconds * 1000,
-    run: sweepBlobs,
+    run: () => sweepBlobs(blobGcBatchSize, blobGcGraceSeconds),
   },
   {
     name: "scan.outbox.reclaim_stuck",
     intervalMs: scanReclaimIntervalSeconds * 1000,
-    run: reclaimStuckScans,
+    run: () => reclaimStuckScans(scanReclaimTimeoutSeconds, maxAttempts),
   },
 ]);
 
 while (!lifecycle.isShuttingDown()) {
   await maintenance.runDue();
-  const intents = await withSpan(
-    "scan.outbox.claim",
-    { "worker.batch_size": workerBatchSize },
-    () => claimScanIntents(workerBatchSize),
-  );
-  if (intents.length === 0) {
-    await sleep(pollingIntervalSeconds * 1000);
-    continue;
-  }
-  await mapWithBoundedConcurrency(intents, workerConcurrency, async (intent) => {
-    return withSpan(
-      "scan.outbox.process",
-      {
-        "scan.outbox.id": intent.id,
-        "artifact.id": intent.artifactId,
-        "scan.outbox.attempts": intent.attempts,
-      },
-      async () => {
-        try {
-          await processScan(intent.artifactId, scannerRuntime);
-          await markSucceeded(intent);
-        } catch (err) {
-          logger.error("scan job failed", {
-            artifactId: intent.artifactId,
-            attempt: intent.attempts,
-            error: err,
-          });
-          await recordScanFailure(intent.artifactId, err).catch((recordErr) => {
-            logger.error("scan failure recording failed", {
-              artifactId: intent.artifactId,
-              originalError: err instanceof Error ? err.message : String(err),
-              error: recordErr,
-            });
-          });
-          await markFailed(intent, err);
-        }
-      },
-    );
-  });
+  await runScanCycle(config, scannerRuntime);
 }
