@@ -64,7 +64,12 @@ function jsonNotFound(message: string): Response {
  */
 export class HexAdapter implements RegistryPlugin {
   readonly id = "hex" as const;
-  readonly capabilities = registryCapabilities("proxyable", "virtualizable");
+  // Hex repos can be virtualized (the resolver-index convention shared with
+  // rubygems/cargo/pub). They are NOT proxyable: this adapter implements no
+  // `proxyIngest`, so advertising `proxyable` would be dishonest — the platform's
+  // proxy-create guard keys off the implementation, not the flag, and would reject
+  // every proxy Hex repo anyway.
+  readonly capabilities = registryCapabilities("virtualizable");
   // Hex authenticates with a bearer/bare token in the `authorization` header,
   // which the platform auth middleware handles directly; advertise a bearer
   // challenge for the 401 path.
@@ -94,6 +99,15 @@ export class HexAdapter implements RegistryPlugin {
       // Publish: static routes declared before the `:name` catch-alls.
       route.post("/api/publish", "publish", ({ req, ctx }) => this.publish(req, ctx)),
       route.post("/publish", "publish", ({ req, ctx }) => this.publish(req, ctx)),
+      // The canonical `mix hex.publish` endpoint: hex_core's
+      // `hex_api_release:publish/3` POSTs the raw tarball to the path
+      // `packages/<name>/releases` under the API base (with an optional
+      // `?replace=…` query). The tarball's own metadata.config carries name +
+      // version, so the `:name` path param is informational — declared ahead of
+      // the GET-only `/api/packages/:name` route (method guard disambiguates).
+      route.post("/api/packages/:name/releases", "publish", ({ req, ctx }) =>
+        this.publish(req, ctx),
+      ),
       // Repository resources (literal segments before `/packages/:name`).
       route.get("/names", "names", ({ req, ctx }) => this.names(req, ctx)),
       route.get("/versions", "versions", ({ req, ctx }) => this.versions(req, ctx)),
@@ -308,7 +322,7 @@ function hexDependencyGraph(metadata: Record<string, unknown>): Record<string, s
   const parsed = parseHexVersionMeta(metadata);
   const reqs = parsed?.metadata.requirements;
   if (!reqs) return {};
-  return Object.fromEntries(Object.entries(reqs).map(([name, range]) => [name, String(range)]));
+  return Object.fromEntries(Object.entries(reqs).map(([name, req]) => [name, req.requirement]));
 }
 
 export const hexRegistryPlugin: RegistryPlugin = new HexAdapter();

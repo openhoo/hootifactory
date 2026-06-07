@@ -104,8 +104,14 @@ export function buildHexApiRelease(input: {
 }): HexApiRelease {
   const { name, version, meta, baseUrl, mountPath } = input;
   const requirements: HexApiRelease["requirements"] = {};
-  for (const [dep, requirement] of Object.entries(meta.metadata.requirements ?? {})) {
-    requirements[dep] = { app: dep, optional: false, requirement };
+  for (const [dep, req] of Object.entries(meta.metadata.requirements ?? {})) {
+    requirements[dep] = {
+      // `app` defaults to the dependency name and `optional` to false, matching
+      // Hex's own defaults when the tarball omits them.
+      app: req.app ?? dep,
+      optional: req.optional ?? false,
+      requirement: req.requirement,
+    };
   }
   return {
     version,
@@ -145,13 +151,27 @@ export interface HexVersionsResource {
  * simplification). Carries the outer checksum + dependency requirements so a
  * client could resolve without hitting the HTTP API.
  */
+/**
+ * A single dependency entry in the `/packages/:name` release list, mirroring
+ * Hex's Package protobuf Dependency message: `package`, `requirement`, `optional`,
+ * `app`, and `repository` (the repo the dependency is hosted in — the current repo
+ * for hosted deps).
+ */
+export interface HexPackageDependency {
+  package: string;
+  requirement: string;
+  optional: boolean;
+  app: string;
+  repository: string;
+}
+
 export interface HexPackageResource {
   name: string;
   repository: string;
   releases: {
     version: string;
     checksum: string;
-    dependencies: { package: string; requirement: string }[];
+    dependencies: HexPackageDependency[];
   }[];
 }
 
@@ -171,9 +191,15 @@ export function buildHexPackageResource(input: {
     releases: releases.map((r) => ({
       version: r.version,
       checksum: r.meta.outerChecksum,
-      dependencies: Object.entries(r.meta.metadata.requirements ?? {}).map(
-        ([dep, requirement]) => ({ package: dep, requirement }),
-      ),
+      dependencies: Object.entries(r.meta.metadata.requirements ?? {}).map(([dep, req]) => ({
+        package: dep,
+        requirement: req.requirement,
+        // `optional` defaults to false and `app` to the dependency name (Hex's own
+        // defaults); deps hosted here carry the current repository name.
+        optional: req.optional ?? false,
+        app: req.app ?? dep,
+        repository: repoName,
+      })),
     })),
   };
 }

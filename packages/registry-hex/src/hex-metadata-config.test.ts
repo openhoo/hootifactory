@@ -19,7 +19,10 @@ describe("Hex metadata.config parser", () => {
       description: "a demo package",
       licenses: ["MIT", "Apache-2.0"],
       build_tools: ["mix", "rebar3"],
-      requirements: { poison: "~> 1.0", jason: ">= 1.0.0" },
+      requirements: {
+        poison: { requirement: "~> 1.0", optional: false, app: "poison" },
+        jason: { requirement: ">= 1.0.0" },
+      },
     });
   });
 
@@ -57,7 +60,32 @@ describe("Hex metadata.config parser", () => {
   test("drops requirements entries that lack a name or requirement", () => {
     const text =
       '{<<"requirements">>,[[{<<"app">>,<<"x">>}],[{<<"name">>,<<"ok">>},{<<"requirement">>,<<"1.0">>}]]}.';
-    expect(parseHexMetadataConfig(text).requirements).toEqual({ ok: "1.0" });
+    expect(parseHexMetadataConfig(text).requirements).toEqual({ ok: { requirement: "1.0" } });
+  });
+
+  test("extracts optional + app from a requirement proplist", () => {
+    const text =
+      '{<<"requirements">>,[[{<<"name">>,<<"poison">>},{<<"app">>,<<"poison_app">>},{<<"requirement">>,<<"~> 1.0">>},{<<"optional">>,true}]]}.';
+    expect(parseHexMetadataConfig(text).requirements).toEqual({
+      poison: { requirement: "~> 1.0", optional: true, app: "poison_app" },
+    });
+  });
+
+  test("does not stack-overflow on deeply nested input (returns within a bound)", () => {
+    // A `metadata.config` is attacker-controlled (it rides inside the publish
+    // tarball). A pathologically nested value must not overflow the stack; the
+    // parser caps recursion depth and skips the over-deep structure non-recursively.
+    const deepList = `{<<"licenses">>,${"[".repeat(50000)}${"]".repeat(50000)}}.`;
+    const deepTuple = `{<<"x">>,${"{".repeat(50000)}${"}".repeat(50000)}}.`;
+    for (const text of [deepList, deepTuple]) {
+      expect(() => parseHexMetadataConfig(text)).not.toThrow();
+    }
+    // A well-formed term after over-deep input is still recovered.
+    expect(
+      parseHexMetadataConfig(
+        `{<<"licenses">>,${"[".repeat(50000)}${"]".repeat(50000)}}.\n{<<"name">>,<<"demo">>}.`,
+      ).name,
+    ).toBe("demo");
   });
 
   test("terminates on malformed list/tuple input (no infinite loop)", () => {

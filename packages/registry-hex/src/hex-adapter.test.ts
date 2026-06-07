@@ -1,14 +1,20 @@
 import { describe, expect, test } from "bun:test";
-import type {
-  RegistryPackageRow,
-  RegistryPackageVersionRow,
-  RegistryStoredBlob,
-  RouteMatch,
+import {
+  computeDigest,
+  digestHex,
+  type RegistryPackageRow,
+  type RegistryPackageVersionRow,
+  type RegistryStoredBlob,
+  type RouteMatch,
 } from "@hootifactory/registry";
 import { createTestRegistryContext } from "@hootifactory/registry/testing";
 import { HexAdapter } from "./hex-adapter";
-import { demoHexTarball } from "./hex-tarball.test";
-import { buildHexVersionMeta, HexReleaseMetadataSchema } from "./hex-validation";
+import { buildHexTarball, demoHexTarball } from "./hex-tarball.test";
+import {
+  buildHexVersionMeta,
+  HexReleaseMetadataSchema,
+  parseHexVersionMeta,
+} from "./hex-validation";
 
 const DIGEST = `sha256:${"a".repeat(64)}`;
 const OUTER = "a".repeat(64);
@@ -55,7 +61,7 @@ const storedMeta = buildHexVersionMeta(
     description: "a demo package",
     licenses: ["MIT"],
     build_tools: ["mix"],
-    requirements: { poison: "~> 1.0" },
+    requirements: { poison: { requirement: "~> 1.0" } },
   }),
   { digest: DIGEST, outerChecksum: OUTER, innerChecksum: INNER },
 );
@@ -79,6 +85,7 @@ describe("Hex adapter", () => {
     expect(new HexAdapter().routes()).toEqual([
       { method: "POST", pattern: "/api/publish", handlerId: "publish" },
       { method: "POST", pattern: "/publish", handlerId: "publish" },
+      { method: "POST", pattern: "/api/packages/:name/releases", handlerId: "publish" },
       { method: "GET", pattern: "/names", handlerId: "names" },
       { method: "GET", pattern: "/versions", handlerId: "versions" },
       {
@@ -194,7 +201,15 @@ describe("Hex adapter", () => {
         {
           version: "1.2.3",
           checksum: OUTER,
-          dependencies: [{ package: "poison", requirement: "~> 1.0" }],
+          dependencies: [
+            {
+              package: "poison",
+              requirement: "~> 1.0",
+              optional: false,
+              app: "poison",
+              repository: "private",
+            },
+          ],
         },
       ],
     });
@@ -445,8 +460,12 @@ describe("Hex adapter", () => {
     expect(res.status).toBe(201);
     expect(await res.json()).toEqual({
       url: "https://registry.example.test/hex/private/api/packages/demo/releases/1.2.3",
+      html_url: "https://registry.example.test/hex/private/packages/demo/1.2.3",
       package: "demo",
       version: "1.2.3",
+      has_docs: false,
+      // outer checksum = sha256 of the stored tarball (digest hex).
+      checksum: "a".repeat(64),
     });
     expect(committed.scan).toEqual({
       name: "demo",
@@ -545,5 +564,255 @@ describe("Hex adapter", () => {
       osvEcosystem: "Hex",
       purlType: "hex",
     });
+  });
+
+  test("POST /api/packages/:name/releases (mix hex.publish endpoint) publishes", async () => {
+    const ctx = hexContext();
+    ctx.data.packages.findOrCreate = async ({ name }) => pkgRow(name);
+    ctx.data.versions.exists = async () => false;
+    ctx.data.content.storeBlobWithRef = async (): Promise<RegistryStoredBlob> => ({
+      digest: DIGEST,
+      size: 4,
+      deduped: false,
+      refCreated: true,
+      blobRefId: "ref_1",
+    });
+    ctx.data.versions.commitOrReleaseBlob = async () => ({ versionId: "ver_1" });
+    const res = await new HexAdapter().handle(
+      match(
+        { method: "POST", pattern: "/api/packages/:name/releases", handlerId: "publish" },
+        { name: "demo" },
+        "/api/packages/demo/releases",
+      ),
+      new Request("https://registry.test/api/packages/demo/releases", {
+        method: "POST",
+        headers: { "content-type": "application/octet-stream" },
+        body: demoHexTarball(),
+      }),
+      ctx,
+    );
+    expect(res.status).toBe(201);
+    expect(((await res.json()) as { version: string }).version).toBe("1.2.3");
+  });
+
+  test("publish -> read: outer_checksum advertised == sha256 of the served tarball bytes", async () => {
+    // The integrity invariant `mix deps.get` verifies: the checksum in
+    // /packages/:name and the api-release must equal sha256 of the exact bytes the
+    // download route serves. Drive a real tarball through publish, then read it
+    // back through the package/release/download handlers with NO hardcoded
+    // checksums — the store returns the real digest of the bytes.
+    const tarball = demoHexTarball();
+    const realDigest = computeDigest(tarball); // sha256:<hex> of the exact bytes
+    const expectedChecksum = digestHex(realDigest);
+
+    // 1) Publish: capture the metadata the adapter persists.
+    let committedMetadata: Record<string, unknown> = {};
+    const pubCtx = hexContext();
+    pubCtx.data.packages.findOrCreate = async ({ name }) => pkgRow(name);
+    pubCtx.data.versions.exists = async () => false;
+    pubCtx.data.content.storeBlobWithRef = async (): Promise<RegistryStoredBlob> => ({
+      digest: realDigest,
+      size: tarball.length,
+      deduped: false,
+      refCreated: true,
+      blobRefId: "ref_1",
+    });
+    pubCtx.data.versions.commitOrReleaseBlob = async (input) => {
+      committedMetadata = input.metadata;
+      return { versionId: "ver_1" };
+    };
+    const pubRes = await new HexAdapter().handle(
+      match({ method: "POST", pattern: "/api/publish", handlerId: "publish" }, {}, "/api/publish"),
+      new Request("https://registry.test/api/publish", {
+        method: "POST",
+        headers: { "content-type": "application/octet-stream" },
+        body: tarball,
+      }),
+      pubCtx,
+    );
+    expect(pubRes.status).toBe(201);
+    expect(((await pubRes.json()) as { checksum: string }).checksum).toBe(expectedChecksum);
+
+    // 2) Read back through /packages/:name with the persisted metadata + a store
+    //    that serves the exact published bytes.
+    const readCtx = hexContext();
+    readCtx.data.packages.findByName = async () => pkgRow("demo");
+    readCtx.data.versions.listLive = async () => [versionRow(committedMetadata)];
+    readCtx.data.versions.findLive = async () => versionRow(committedMetadata);
+    readCtx.data.content.blobRefExists = async () => true;
+    readCtx.data.content.serveBlobIfClean = async ({ digest, contentType }) => {
+      expect(digest).toBe(realDigest);
+      return new Response(tarball, { headers: { "content-type": contentType } });
+    };
+
+    const pkgRes = await new HexAdapter().handle(
+      match(
+        { method: "GET", pattern: "/packages/:name", handlerId: "packageResource" },
+        { name: "demo" },
+        "/packages/demo",
+      ),
+      new Request("https://registry.test/packages/demo"),
+      readCtx,
+    );
+    const pkgBody = (await pkgRes.json()) as {
+      releases: { checksum: string }[];
+    };
+    const advertised = pkgBody.releases[0]?.checksum;
+
+    // 3) The /tarballs download bytes hashed must equal the advertised checksum.
+    const dlRes = await new HexAdapter().handle(
+      match(
+        { method: "GET", pattern: "/tarballs/:filename", handlerId: "download" },
+        { filename: "demo-1.2.3.tar" },
+        "/tarballs/demo-1.2.3.tar",
+      ),
+      new Request("https://registry.test/tarballs/demo-1.2.3.tar"),
+      readCtx,
+    );
+    const servedBytes = new Uint8Array(await dlRes.arrayBuffer());
+    expect(advertised).toBe(digestHex(computeDigest(servedBytes)));
+    expect(advertised).toBe(expectedChecksum);
+
+    // The api-release surfaces the same outer checksum + the inner checksum from
+    // the tarball CHECKSUM member (lowercased).
+    const relRes = await new HexAdapter().handle(
+      match(
+        {
+          method: "GET",
+          pattern: "/api/packages/:name/releases/:version",
+          handlerId: "apiRelease",
+        },
+        { name: "demo", version: "1.2.3" },
+        "/api/packages/demo/releases/1.2.3",
+      ),
+      new Request("https://registry.test/api/packages/demo/releases/1.2.3"),
+      readCtx,
+    );
+    const relBody = (await relRes.json()) as { checksum: string; inner_checksum: string };
+    expect(relBody.checksum).toBe(expectedChecksum);
+    expect(relBody.inner_checksum).toBe("b".repeat(64));
+  });
+
+  test("publish derives inner_checksum from the outer digest when CHECKSUM is absent", async () => {
+    // Older-format tarballs omit the CHECKSUM member; inner_checksum must fall
+    // back to the outer digest hex (and still pass the stored-meta schema).
+    const enc = (s: string) => new TextEncoder().encode(s);
+    const metadataConfig = [
+      '{<<"name">>,<<"demo">>}.',
+      '{<<"app">>,<<"demo">>}.',
+      '{<<"version">>,<<"1.2.3">>}.',
+    ].join("\n");
+    const tarball = buildHexTarball([
+      { name: "VERSION", data: enc("3") },
+      { name: "metadata.config", data: enc(metadataConfig) },
+    ]);
+    const realDigest = computeDigest(tarball);
+
+    let committed: Record<string, unknown> = {};
+    const ctx = hexContext();
+    ctx.data.packages.findOrCreate = async ({ name }) => pkgRow(name);
+    ctx.data.versions.exists = async () => false;
+    ctx.data.content.storeBlobWithRef = async (): Promise<RegistryStoredBlob> => ({
+      digest: realDigest,
+      size: tarball.length,
+      deduped: false,
+      refCreated: true,
+      blobRefId: "ref_1",
+    });
+    ctx.data.versions.commitOrReleaseBlob = async (input) => {
+      committed = input.metadata;
+      return { versionId: "ver_1" };
+    };
+    const res = await new HexAdapter().handle(
+      match({ method: "POST", pattern: "/api/publish", handlerId: "publish" }, {}, "/api/publish"),
+      new Request("https://registry.test/api/publish", {
+        method: "POST",
+        headers: { "content-type": "application/octet-stream" },
+        body: tarball,
+      }),
+      ctx,
+    );
+    expect(res.status).toBe(201);
+    expect(committed.innerChecksum).toBe(digestHex(realDigest));
+    expect(committed.outerChecksum).toBe(digestHex(realDigest));
+    // The stored meta must still validate against the version-meta schema.
+    expect(parseHexVersionMeta(committed)).not.toBeNull();
+  });
+
+  test("publish carries optional/app from requirements into /packages/:name deps", async () => {
+    // The demo tarball's `poison` requirement carries {optional:false, app:poison};
+    // the package resource must emit the real Dependency shape, not force defaults.
+    let committed: Record<string, unknown> = {};
+    const pubCtx = hexContext();
+    pubCtx.data.packages.findOrCreate = async ({ name }) => pkgRow(name);
+    pubCtx.data.versions.exists = async () => false;
+    pubCtx.data.content.storeBlobWithRef = async (): Promise<RegistryStoredBlob> => ({
+      digest: DIGEST,
+      size: 4,
+      deduped: false,
+      refCreated: true,
+      blobRefId: "ref_1",
+    });
+    pubCtx.data.versions.commitOrReleaseBlob = async (input) => {
+      committed = input.metadata;
+      return { versionId: "ver_1" };
+    };
+    await new HexAdapter().handle(
+      match({ method: "POST", pattern: "/api/publish", handlerId: "publish" }, {}, "/api/publish"),
+      new Request("https://registry.test/api/publish", {
+        method: "POST",
+        headers: { "content-type": "application/octet-stream" },
+        body: demoHexTarball(),
+      }),
+      pubCtx,
+    );
+
+    const readCtx = hexContext();
+    readCtx.data.packages.findByName = async () => pkgRow("demo");
+    readCtx.data.versions.listLive = async () => [versionRow(committed)];
+    const res = await new HexAdapter().handle(
+      match(
+        { method: "GET", pattern: "/packages/:name", handlerId: "packageResource" },
+        { name: "demo" },
+        "/packages/demo",
+      ),
+      new Request("https://registry.test/packages/demo"),
+      readCtx,
+    );
+    const body = (await res.json()) as { releases: { dependencies: unknown[] }[] };
+    expect(body.releases[0]?.dependencies).toEqual([
+      {
+        package: "poison",
+        requirement: "~> 1.0",
+        optional: false,
+        app: "poison",
+        repository: "private",
+      },
+    ]);
+  });
+
+  test("publish rejects a metadata.config that overflows the parser depth (400 not 500)", async () => {
+    // A deeply nested metadata.config must yield a clean 400, never an uncaught
+    // RangeError surfacing as a 500.
+    const enc = (s: string) => new TextEncoder().encode(s);
+    const deep = `{<<"licenses">>,${"[".repeat(20000)}${"]".repeat(20000)}}.`;
+    const tarball = buildHexTarball([
+      { name: "VERSION", data: enc("3") },
+      { name: "metadata.config", data: enc(deep) },
+    ]);
+    const ctx = hexContext();
+    ctx.data.packages.findOrCreate = async ({ name }) => pkgRow(name);
+    ctx.data.versions.exists = async () => false;
+    const res = await new HexAdapter().handle(
+      match({ method: "POST", pattern: "/api/publish", handlerId: "publish" }, {}, "/api/publish"),
+      new Request("https://registry.test/api/publish", {
+        method: "POST",
+        headers: { "content-type": "application/octet-stream" },
+        body: tarball,
+      }),
+      ctx,
+    );
+    // metadata.config has no valid name/version/app -> 400 (and crucially no throw).
+    expect(res.status).toBe(400);
   });
 });

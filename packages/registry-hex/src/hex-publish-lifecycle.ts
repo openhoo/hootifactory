@@ -41,15 +41,16 @@ export async function handleHexPublish(
     metadata: (stored) =>
       buildHexVersionMeta(metadata, {
         digest: stored.digest,
-        // Documented simplification: real Hex's `outer_checksum` is `hex_tarball`'s
-        // hash over the tarball's inner members, which we do not recompute here.
-        // This hosted impl advertises the sha256 of the whole stored tarball as the
-        // outer checksum — stable, addressable, and verifiable against the exact
-        // bytes the download route serves. Storage hashes with sha256
-        // (`sha256:<hex>`), so `digestHex` yields the bare hex Hex clients expect.
+        // Hex's `outer_checksum` is the SHA256 of the *full release `.tar` bytes*
+        // (`hex_tarball:unpack` computes it from the whole Tarball binary). The
+        // download route serves the stored tarball verbatim, so the sha256 of the
+        // stored blob IS the outer checksum a client recomputes and verifies.
+        // Storage hashes with sha256 (`sha256:<hex>`), so `digestHex` yields the
+        // bare hex Hex clients expect.
         outerChecksum: digestHex(stored.digest),
-        // The inner checksum is taken verbatim from the tarball's CHECKSUM member;
-        // fall back to the outer checksum if the tarball omitted it (older format).
+        // The inner checksum is the SHA256 over the tarball's *inner* members,
+        // recorded verbatim in the CHECKSUM member; fall back to the outer checksum
+        // if the tarball omitted it (older format).
         innerChecksum: innerChecksum ?? digestHex(stored.digest),
       }),
     sizeBytes: tarball.length,
@@ -68,5 +69,20 @@ export async function handleHexPublish(
     return Response.json({ error: "release already exists" }, { status: 409 });
   }
   const url = `${ctx.baseUrl}/${ctx.repo.mountPath}/api/packages/${name}/releases/${version}`;
-  return Response.json({ url, package: name, version }, { status: 201 });
+  const htmlUrl = `${ctx.baseUrl}/${ctx.repo.mountPath}/packages/${name}/${version}`;
+  // Shape the 201 body closer to Hex's release object: `mix hex.publish` gates on
+  // the status, but tooling surfaces `checksum`/`html_url` to the user. The
+  // checksum is the outer sha256 (= sha256 of the stored tarball), matching what
+  // the repository resource and download verify against.
+  return Response.json(
+    {
+      url,
+      html_url: htmlUrl,
+      package: name,
+      version,
+      has_docs: false,
+      checksum: digestHex(result.stored.digest),
+    },
+    { status: 201 },
+  );
 }

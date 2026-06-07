@@ -79,14 +79,14 @@ describe("Hex validation", () => {
         app: "demo",
         description: "demo pkg",
         licenses: ["MIT"],
-        requirements: { poison: "~> 1.0" },
+        requirements: { poison: { requirement: "~> 1.0" } },
       }),
       { digest: DIGEST, outerChecksum: OUTER, innerChecksum: INNER },
     );
     expect(meta.blobDigest).toBe(DIGEST);
     expect(meta.outerChecksum).toBe(OUTER);
     expect(meta.innerChecksum).toBe(INNER);
-    expect(meta.metadata.requirements).toEqual({ poison: "~> 1.0" });
+    expect(meta.metadata.requirements).toEqual({ poison: { requirement: "~> 1.0" } });
     expect(HexVersionMetaSchema.safeParse(meta).success).toBe(true);
     expect(parseHexVersionMeta(meta)).not.toBeNull();
   });

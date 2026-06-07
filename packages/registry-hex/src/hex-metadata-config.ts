@@ -16,6 +16,19 @@
  * external Erlang-term dependency, and the parser does not evaluate anything.
  */
 
+/**
+ * A single dependency requirement, mirroring Hex's `requirements` proplist. Only
+ * `requirement` is mandatory; `optional` (defaults false) and `app` (the OTP
+ * application name, defaults to the dep name) are carried so the repository
+ * resource and HTTP-API release can emit the real Dependency shape rather than
+ * forcing every dep to `optional:false`/`app:<dep>`.
+ */
+export interface ParsedHexRequirement {
+  requirement: string;
+  optional?: boolean;
+  app?: string;
+}
+
 export interface ParsedHexMetadataConfig {
   name?: string;
   version?: string;
@@ -23,7 +36,7 @@ export interface ParsedHexMetadataConfig {
   description?: string;
   licenses?: string[];
   build_tools?: string[];
-  requirements?: Record<string, string>;
+  requirements?: Record<string, ParsedHexRequirement>;
 }
 
 /** A char-cursor tokenizer over the term config text. */
@@ -52,7 +65,16 @@ class Cursor {
   }
 }
 
-type Term = string | Term[] | { proplist: Map<string, Term> };
+type Term = string | boolean | Term[] | { proplist: Map<string, Term> };
+
+/**
+ * Maximum nesting depth for parsed terms. `metadata.config` is attacker-supplied
+ * (it rides inside the publish tarball), and the parser is recursive-descent, so a
+ * deeply nested list/tuple could otherwise overflow the JS call stack and surface
+ * as a 500 instead of a clean 400. Real Hex configs nest at most a few levels
+ * (`requirements` -> proplist -> value), so 64 is far above any legitimate input.
+ */
+const MAX_TERM_DEPTH = 64;
 
 /** Parse a single Erlang binary literal `<<"...">>` at the cursor, or null. */
 function parseBinary(c: Cursor): string | null {
@@ -78,16 +100,74 @@ function parseBinary(c: Cursor): string | null {
 }
 
 /** Parse any term (binary, list, tuple) at the cursor. Returns null on a shape we don't model. */
-function parseTerm(c: Cursor): Term | null {
+function parseTerm(c: Cursor, depth = 0): Term | null {
   c.skipWs();
   const ch = c.peek();
   if (ch === undefined) return null;
   if (ch === "<") return parseBinary(c);
-  if (ch === "[") return parseList(c);
-  if (ch === "{") return parseTuple(c);
+  // Guard the recursive cases against stack overflow on hostile input. We must
+  // still consume the opening bracket/brace and skip past the over-deep structure
+  // so the outer loop keeps making forward progress (rather than spinning).
+  if (ch === "[") {
+    if (depth >= MAX_TERM_DEPTH) {
+      skipNested(c, "[", "]");
+      return null;
+    }
+    return parseList(c, depth + 1);
+  }
+  if (ch === "{") {
+    if (depth >= MAX_TERM_DEPTH) {
+      skipNested(c, "{", "}");
+      return null;
+    }
+    return parseTuple(c, depth + 1);
+  }
+  // The `true`/`false` boolean atoms are the only atoms we surface (Hex's
+  // `optional` requirement flag uses them); recognize them before falling through.
+  if (c.text.startsWith("true", c.pos) && isAtomEnd(c.text[c.pos + 4])) {
+    c.pos += 4;
+    return true;
+  }
+  if (c.text.startsWith("false", c.pos) && isAtomEnd(c.text[c.pos + 5])) {
+    c.pos += 5;
+    return false;
+  }
   // Atoms/numbers/etc. we don't surface: skip the token so the outer loop can recover.
   skipToken(c);
   return null;
+}
+
+/** True when `ch` is a structural delimiter (or end-of-input) bounding an atom. */
+function isAtomEnd(ch: string | undefined): boolean {
+  return (
+    ch === undefined ||
+    ch === "," ||
+    ch === "]" ||
+    ch === "}" ||
+    ch === "." ||
+    ch === " " ||
+    ch === "\t" ||
+    ch === "\r" ||
+    ch === "\n"
+  );
+}
+
+/**
+ * Skip a bracketed structure that is too deeply nested to parse, tracking the
+ * open/close bracket balance non-recursively so a deeply nested input can never
+ * overflow the stack. Stops at end-of-input if the structure is unbalanced.
+ */
+function skipNested(c: Cursor, open: string, close: string): void {
+  let depth = 0;
+  while (c.pos < c.text.length) {
+    const ch = c.text[c.pos];
+    c.pos++;
+    if (ch === open) depth++;
+    else if (ch === close) {
+      depth--;
+      if (depth <= 0) return;
+    }
+  }
 }
 
 /** Skip an unmodeled token up to the next structural delimiter. */
@@ -99,7 +179,7 @@ function skipToken(c: Cursor): void {
   }
 }
 
-function parseList(c: Cursor): Term[] | null {
+function parseList(c: Cursor, depth = 0): Term[] | null {
   if (c.peek() !== "[") return null;
   c.pos++;
   const items: Term[] = [];
@@ -111,7 +191,7 @@ function parseList(c: Cursor): Term[] | null {
     }
     if (c.peek() === undefined) return null;
     const before = c.pos;
-    const term = parseTerm(c);
+    const term = parseTerm(c, depth);
     if (term !== null) items.push(term);
     // `parseTerm` can stall on a stray delimiter (e.g. `}`/`.` inside a list);
     // force forward progress so a malformed term config cannot spin forever.
@@ -125,18 +205,18 @@ function parseList(c: Cursor): Term[] | null {
  * consumed (for forward progress) but discarded. This single-pair shape is what
  * `mergeProplist` relies on when collapsing a proplist literal into one map.
  */
-function parseTuple(c: Cursor): { proplist: Map<string, Term> } | null {
+function parseTuple(c: Cursor, depth = 0): { proplist: Map<string, Term> } | null {
   if (c.peek() !== "{") return null;
   c.pos++;
-  const key = parseTerm(c);
+  const key = parseTerm(c, depth);
   c.skipWs();
-  const value = parseTerm(c);
+  const value = parseTerm(c, depth);
   // Skip any remaining tuple elements up to the closing brace. Guarantee forward
   // progress: `parseTerm` returns without advancing on a stray `]`/`.`, which
   // would otherwise hang on malformed input like `{a,b,]`.
   while (c.pos < c.text.length && c.peek() !== "}") {
     const before = c.pos;
-    parseTerm(c);
+    parseTerm(c, depth);
     c.skipWs();
     if (c.pos === before) c.pos++;
   }
@@ -174,15 +254,27 @@ function mergeProplist(term: Term): Map<string, Term> {
   return out;
 }
 
-/** Map Hex's `requirements` (a list of proplists with `name`/`requirement`) to a flat map. */
-function asRequirements(term: Term | undefined): Record<string, string> | undefined {
+/**
+ * Map Hex's `requirements` (a list of proplists with `name`/`requirement` plus the
+ * optional `optional`/`app` keys) to a flat map keyed by dependency name. `app`
+ * and `optional` are carried through so callers can emit the real Hex Dependency
+ * shape instead of hardcoding `optional:false`/`app:<name>`.
+ */
+function asRequirements(term: Term | undefined): Record<string, ParsedHexRequirement> | undefined {
   if (!Array.isArray(term)) return undefined;
-  const out: Record<string, string> = {};
+  const out: Record<string, ParsedHexRequirement> = {};
   for (const item of term) {
     const props = mergeProplist(item);
     const name = asString(props.get("name"));
     const requirement = asString(props.get("requirement"));
-    if (name && requirement !== undefined) out[name] = requirement;
+    if (name && requirement !== undefined) {
+      const req: ParsedHexRequirement = { requirement };
+      const optional = props.get("optional");
+      if (typeof optional === "boolean") req.optional = optional;
+      const app = asString(props.get("app"));
+      if (app !== undefined) req.app = app;
+      out[name] = req;
+    }
   }
   return Object.keys(out).length > 0 ? out : undefined;
 }

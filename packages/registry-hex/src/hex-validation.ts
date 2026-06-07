@@ -44,6 +44,25 @@ const Sha256DigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
  * required package name; we keep the requirement string so the scanner can build
  * a dependency graph.
  */
+/**
+ * A single dependency requirement. `requirement` is the version constraint Mix
+ * resolves against; `optional` (default false) and `app` (the OTP application
+ * name, default = the dep name) mirror Hex's Dependency message so the repository
+ * resource / HTTP-API release can emit them faithfully.
+ */
+export const HexRequirementSchema = z.object({
+  requirement: z.string().max(256),
+  optional: z.boolean().optional(),
+  app: z
+    .string()
+    .min(1)
+    .max(128)
+    .regex(/^[a-z][a-z0-9_]*$/, "invalid OTP application name")
+    .optional(),
+});
+
+export type HexRequirement = z.output<typeof HexRequirementSchema>;
+
 export const HexReleaseMetadataSchema = z.object({
   name: HexPackageNameSchema,
   version: HexVersionSchema,
@@ -55,7 +74,7 @@ export const HexReleaseMetadataSchema = z.object({
   description: z.string().max(8192).optional(),
   licenses: z.array(z.string().max(256)).max(64).optional(),
   build_tools: z.array(z.string().max(128)).max(64).optional(),
-  requirements: z.record(z.string(), z.string()).optional(),
+  requirements: z.record(z.string(), HexRequirementSchema).optional(),
 });
 
 export type HexReleaseMetadata = z.output<typeof HexReleaseMetadataSchema>;
