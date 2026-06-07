@@ -28,6 +28,8 @@ describe("loadConfiguredRegistryPlugins", () => {
       "rpm",
       "yum",
       "dnf",
+      "gitlfs",
+      "lfs",
     ]) {
       expect(registry.has(id)).toBe(true);
     }
@@ -57,10 +59,12 @@ describe("loadConfiguredRegistryPlugins", () => {
       "homebrew",
       "scoop",
       "rpm",
+      "gitlfs",
       "oci",
       "helm",
       "yum",
       "dnf",
+      "lfs",
     ]);
   });
 
