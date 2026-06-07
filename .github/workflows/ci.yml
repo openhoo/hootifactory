@@ -6,7 +6,7 @@ name: CI
 #   2. lint        — `biome check .` is clean (lint + formatting)
 #   3. typecheck   — `tsc --noEmit` passes across every package
 #   4. architecture — plugin/package import boundaries hold
-#   5. coverage    — unit tests pass and repo-wide line coverage meets the ratchet
+#   5. coverage    — unit tests pass and every package meets the per-package line-coverage floor
 on:
   pull_request:
     # `edited` re-runs commit-lint when the PR title changes (it becomes the
@@ -26,10 +26,11 @@ permissions:
 
 env:
   BUN_VERSION: "1.3.14"
-  # Repo-wide line-coverage floor enforced by scripts/coverage-gate.ts. This is a
-  # ratchet: it sits just under the current baseline (~60.7%) so it blocks
-  # regressions today. Raise it as coverage improves — target 80%. Never lower it.
-  COVERAGE_THRESHOLD: "60"
+  # Per-package line-coverage floor enforced by scripts/coverage-gate.ts. Each
+  # package is measured independently on its own src/ files and must meet this
+  # floor on its own — there is no repo-wide aggregate to hide behind. Never
+  # lower it.
+  COVERAGE_THRESHOLD: "80"
 
 jobs:
   commit-lint:
@@ -123,8 +124,9 @@ jobs:
       # Runs every package's unit tests with coverage; fails if any test fails.
       - name: Run unit tests
         run: bun run test:unit
-      # Aggregates the per-package lcov reports and enforces the threshold.
-      - name: Enforce coverage threshold
+      # Measures each package independently against its own lcov and fails if any
+      # package is below the per-package threshold.
+      - name: Enforce per-package coverage threshold
         run: bun run scripts/coverage-gate.ts
 
   gate:

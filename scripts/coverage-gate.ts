@@ -1,69 +1,100 @@
 /**
- * Repo-wide unit-test coverage gate.
+ * Per-package unit-test coverage gate.
  *
- * `bun run test:unit` already emits a per-package `coverage/lcov.info` (see
- * scripts/package-tests.ts). This script merges every one of those reports into
- * a single repo-wide number and fails the build when line coverage drops below a
- * threshold (default 60%, override with COVERAGE_THRESHOLD or --threshold).
+ * `bun run test:unit` runs each package's `test:unit` with `cwd` set to that
+ * package, so every package emits its OWN `coverage/lcov.info` (see
+ * scripts/package-tests.ts). This script measures EACH package independently
+ * against its own `src/` files and fails the build if ANY package's line
+ * coverage drops below a threshold (default 80%, override with
+ * COVERAGE_THRESHOLD or --threshold). There is no repo-wide aggregate: each
+ * package must test itself.
  *
- * Two things make the number honest:
- *   1. Merging is done *by source file*, not by summing per-package totals: a
- *      file imported across packages (e.g. ../types/src/index.ts shows up in many
- *      reports) would otherwise be counted once per importer. We union the
- *      executions — a line counts as covered if any package's tests hit it.
- *   2. Bun's lcov only lists files a test actually loaded, so untested files
- *      would silently vanish from the denominator. We therefore enumerate every
- *      source file under apps/<pkg>/src and packages/<pkg>/src and count any that
- *      never appear in coverage as fully uncovered (0%). Without this, new
- *      untested code could pass the gate.
+ * Two things make a package's number honest:
+ *   1. A package is measured only on lines belonging to its OWN `src/`. When a
+ *      package's tests load a file from another package (e.g. ../types/src), Bun
+ *      records it in that package's lcov; we discard those cross-package records
+ *      so a package can't borrow coverage from code it merely imports. This is
+ *      exactly what enforces "each package tests itself".
+ *   2. Bun's lcov only lists files a test actually loaded, so untested files in a
+ *      package would silently vanish from its denominator. We therefore enumerate
+ *      every source file under the package's `src/` and count any that never
+ *      appear in its coverage as fully uncovered (0%). Without this, new untested
+ *      code could pass the gate.
  *
- * Excluded from the denominator: tests, generated code (*.gen.ts, *.d.ts),
- * migrations, dist/node_modules, and apps/web (which is covered by Playwright
- * e2e, not unit tests). Extend exclusions with COVERAGE_EXCLUDE (comma-separated
+ * Excluded from every package's denominator: tests, generated code (*.gen.ts,
+ * *.d.ts), migrations, dist/node_modules. Whole packages can be excluded via
+ * EXCLUDED_PACKAGES (apps/web is excluded — it is covered by Playwright e2e, not
+ * unit tests). Extend exclusions with COVERAGE_EXCLUDE (comma-separated
  * substrings/regex fragments matched against the repo-relative path).
  *
  * The default --metric=lines is what CI gates on and is the metric that counts
  * untested files as 0%. --metric=functions is informational and reflects only
  * files that tests loaded (Bun emits no per-function data for untested files).
+ * A package that has measurable runtime lines but zero instrumented functions
+ * (e.g. only top-level statements) has no honest function ratio, so under
+ * --metric=functions it falls back to its line result rather than auto-passing.
  *
- *   bun run scripts/coverage-gate.ts [--threshold=60] [--metric=lines|functions]
+ *   bun run scripts/coverage-gate.ts [--threshold=80] [--metric=lines|functions]
  */
 
 import type { Dirent } from "node:fs";
 import { appendFileSync } from "node:fs";
-import { readdir, readFile } from "node:fs/promises";
-import { dirname, join, relative, resolve } from "node:path";
+import { readdir, readFile, stat } from "node:fs/promises";
+import { join, relative, resolve } from "node:path";
 
 type Metric = "lines" | "functions";
 
 interface FileCoverage {
   lines: Map<number, number>;
   // Bun's lcov only emits aggregate FNF/FNH (functions found/hit) per record, not
-  // per-function FN/FNDA. We take the max across packages: FNF is identical for a
-  // shared file, and max(FNH) approximates "hit by any package's tests".
+  // per-function FN/FNDA. We take the max across records for the same file.
   fnFound: number;
   fnHit: number;
-  // Set only for source files that never appeared in any lcov report: their
-  // approximate executable-line count, all counted as uncovered.
+  // Set only for source files that never appeared in the package's lcov report:
+  // their approximate executable-line count, all counted as uncovered.
   injected?: number;
 }
 
+interface PackageSummary {
+  name: string; // repo-relative package dir, e.g. "packages/core"
+  totalLines: number;
+  coveredLines: number;
+  linePct: number;
+  totalFuncs: number;
+  coveredFuncs: number;
+  functionPct: number;
+  // Per-file detail, sorted worst-first, used to surface failing files.
+  files: FileSummary[];
+  // True when the package has no measurable runtime lines (pure type/barrel
+  // package). Such packages always pass. Keyed off lines (the authoritative
+  // "has runtime code" signal) for BOTH metrics, so the informational functions
+  // metric can't falsely pass a package that has uncovered lines but happens to
+  // expose no instrumented functions.
+  noMeasurableCode: boolean;
+  passed: boolean;
+}
+
 interface FileSummary {
-  file: string;
+  file: string; // repo-relative source path
   totalLines: number;
   coveredLines: number;
   linePct: number;
 }
 
 const repoRoot = resolve(import.meta.dir, "..");
-const DEFAULT_COVERAGE_THRESHOLD = 60;
+const DEFAULT_COVERAGE_THRESHOLD = 80;
 const threshold = parseThreshold();
 const metric = parseMetric();
 
+// Whole packages excluded from the gate. apps/web is covered by Playwright e2e,
+// not unit tests, so it must never appear in the per-package report.
+const EXCLUDED_PACKAGES = new Set<string>(["apps/web"]);
+
 // Files that should never count toward coverage (tests, generated code, type
-// declarations, migrations, and the e2e-tested web UI). Bun already skips most
-// test files, but we belt-and-suspenders it here so the number stays meaningful
-// and stable, and so both the lcov-derived and enumerated file sets agree.
+// declarations, migrations). Bun already skips most test files, but we
+// belt-and-suspenders it here so the number stays meaningful and stable, and so
+// both the lcov-derived and enumerated file sets agree. (apps/web is excluded as
+// a whole package via EXCLUDED_PACKAGES, not here.)
 const IGNORE_PATTERNS: RegExp[] = [
   /\.(test|spec)\.[cm]?[jt]sx?$/,
   /\.d\.ts$/,
@@ -71,7 +102,6 @@ const IGNORE_PATTERNS: RegExp[] = [
   /(^|\/)migrations\//,
   /(^|\/)dist\//,
   /(^|\/)node_modules\//,
-  /^apps\/web\//,
   ...extraExcludes(),
 ];
 
@@ -80,66 +110,161 @@ const SOURCE_ROOTS = ["apps", "packages"];
 const SOURCE_EXT = /\.[cm]?[jt]sx?$/;
 const SKIP_DIRS = new Set(["node_modules", "dist", "build", "coverage", ".turbo", ".vite"]);
 
-const lcovFiles = await findLcovFiles();
+const packageDirs = await findPackages();
 
-if (lcovFiles.length === 0) {
+if (packageDirs.length === 0) {
   fail(
-    "No coverage/lcov.info files found. Run `bun run test:unit` first " +
-      "(it writes per-package coverage reports that this gate aggregates).",
+    "No packages with a src/ directory found under apps/* or packages/*. " +
+      "Run `bun run test:unit` first (it writes per-package coverage reports).",
   );
 }
 
-const files = new Map<string, FileCoverage>();
-for (const lcovPath of lcovFiles) {
-  // <pkg>/coverage/lcov.info -> <pkg>; SF paths are relative to that package dir.
-  const packageDir = dirname(dirname(lcovPath));
-  parseLcov(await readFile(lcovPath, "utf8"), packageDir);
+let sawAnyLcov = false;
+const summaries: PackageSummary[] = [];
+for (const pkgRel of packageDirs) {
+  const summary = await measurePackage(pkgRel);
+  summaries.push(summary);
 }
 
-// Whole-tree honesty: any source file that no test loaded is absent from lcov.
-// Enumerate the source tree and inject those as fully uncovered so untested code
-// counts against the threshold.
-let injectedFiles = 0;
-for (const abs of await findSourceFiles()) {
-  const rel = relative(repoRoot, abs).split("\\").join("/");
-  if (isIgnored(rel) || files.has(rel)) {
-    continue;
-  }
-  const content = await readFile(abs, "utf8");
-  // Declaration-only modules (pure type/interface) compile to no runtime code;
-  // Bun reports them as LF=0 and we drop those, so skip them here too instead of
-  // counting type lines as uncovered (which would make a type file's weight depend
-  // on whether some unrelated test happened to import it).
-  if (!hasRuntimeCode(content)) {
-    continue;
-  }
-  const lineCount = countCodeLines(content);
-  if (lineCount > 0) {
-    files.set(rel, { lines: new Map(), fnFound: 0, fnHit: 0, injected: lineCount });
-    injectedFiles += 1;
-  }
+if (!sawAnyLcov) {
+  fail(
+    "No coverage/lcov.info files found for any package. Run `bun run test:unit` " +
+      "first (it writes a per-package coverage report this gate reads).",
+  );
 }
 
-const summaries = summarize();
-if (summaries.length === 0) {
-  fail("Coverage reports contained no measurable source files.");
+// Worst-first ordering: failing packages bubble to the top. Use pkgValue so the
+// ordering matches the basis each package is judged/reported on (including the
+// functions→lines fallback for packages with runtime lines but no functions).
+summaries.sort((a, b) => pkgValue(a) - pkgValue(b) || a.name.localeCompare(b.name));
+
+const allPassed = summaries.every((s) => s.passed);
+
+report(summaries, allPassed);
+
+process.exit(allPassed ? 0 : 1);
+
+// --- measurement ---------------------------------------------------------
+
+async function measurePackage(pkgRel: string): Promise<PackageSummary> {
+  const pkgDir = join(repoRoot, pkgRel);
+  const srcPrefix = `${pkgRel}/src/`;
+  const files = new Map<string, FileCoverage>();
+
+  // 1. Parse the package's own lcov, keeping only records under <pkg>/src.
+  const lcovPath = join(pkgDir, "coverage", "lcov.info");
+  if (await exists(lcovPath)) {
+    sawAnyLcov = true;
+    parseLcov(await readFile(lcovPath, "utf8"), pkgDir, srcPrefix, files);
+  }
+
+  // 2. Enumerate the package's own src/** and inject any untested files as 0%.
+  for (const abs of await findSourceFiles(pkgDir)) {
+    const rel = relative(repoRoot, abs).split("\\").join("/");
+    if (isIgnored(rel) || files.has(rel)) {
+      continue;
+    }
+    const content = await readFile(abs, "utf8");
+    // Declaration-only modules (pure type/interface) compile to no runtime code;
+    // Bun reports them as LF=0 and we drop those, so skip them here too instead
+    // of counting type lines as uncovered.
+    if (!hasRuntimeCode(content)) {
+      continue;
+    }
+    const lineCount = countCodeLines(content);
+    if (lineCount > 0) {
+      files.set(rel, { lines: new Map(), fnFound: 0, fnHit: 0, injected: lineCount });
+    }
+  }
+
+  // 3. Compute per-file and package totals.
+  const fileSummaries = summarizeFiles(files);
+  let totalLines = 0;
+  let coveredLines = 0;
+  for (const s of fileSummaries) {
+    totalLines += s.totalLines;
+    coveredLines += s.coveredLines;
+  }
+  let totalFuncs = 0;
+  let coveredFuncs = 0;
+  for (const cov of files.values()) {
+    totalFuncs += cov.fnFound;
+    coveredFuncs += cov.fnHit;
+  }
+
+  const linePct = totalLines === 0 ? 100 : (coveredLines / totalLines) * 100;
+  const functionPct = totalFuncs === 0 ? 100 : (coveredFuncs / totalFuncs) * 100;
+  // A package "has no measurable code" only when it has zero executable lines
+  // (pure type/barrel package). We key off lines for both metrics on purpose: a
+  // package can have uncovered runtime lines yet zero instrumented functions
+  // (e.g. only top-level statements), and we must not let the functions metric
+  // treat that as "nothing to measure" and auto-pass it.
+  const noMeasurableCode = totalLines === 0;
+
+  // Integer-safe comparison so a threshold like 80 isn't tripped by float error.
+  let passed: boolean;
+  if (noMeasurableCode) {
+    passed = true;
+  } else if (metric === "functions" && totalFuncs > 0) {
+    passed = coveredFuncs * 100 >= threshold * totalFuncs - 1e-9;
+  } else {
+    // Lines metric, OR the functions metric for a package that has measurable
+    // runtime lines but zero instrumented functions (e.g. only top-level
+    // statements). In the latter case Bun emits no per-function data, so the
+    // functions ratio (0/0) is meaningless; auto-passing it would let a package
+    // with uncovered runtime lines slip through under --metric=functions. We
+    // therefore fall back to the line result for that package instead.
+    passed = coveredLines * 100 >= threshold * totalLines - 1e-9;
+  }
+
+  return {
+    name: pkgRel,
+    totalLines,
+    coveredLines,
+    linePct,
+    totalFuncs,
+    coveredFuncs,
+    functionPct,
+    files: fileSummaries,
+    noMeasurableCode,
+    passed,
+  };
 }
 
-const totals = computeTotals(summaries);
-const value = metric === "functions" ? totals.functionPct : totals.linePct;
-// Integer-safe comparison so a threshold like 80 isn't tripped by float error.
-const passed =
-  metric === "functions"
-    ? totals.coveredFuncs * 100 >= threshold * totals.totalFuncs - 1e-9
-    : totals.coveredLines * 100 >= threshold * totals.totalLines - 1e-9;
-
-report(summaries, totals, value, passed);
-
-process.exit(passed ? 0 : 1);
+function summarizeFiles(files: Map<string, FileCoverage>): FileSummary[] {
+  const out: FileSummary[] = [];
+  for (const [file, cov] of files) {
+    // Measured files use Bun's instrumented lines; injected (untested) files use
+    // their approximate executable-line count, all uncovered.
+    const measured = cov.lines.size;
+    const totalLines = measured > 0 ? measured : (cov.injected ?? 0);
+    if (totalLines === 0) {
+      continue;
+    }
+    let coveredLines = 0;
+    for (const hits of cov.lines.values()) {
+      if (hits > 0) {
+        coveredLines += 1;
+      }
+    }
+    out.push({
+      file,
+      totalLines,
+      coveredLines,
+      linePct: (coveredLines / totalLines) * 100,
+    });
+  }
+  return out.sort((a, b) => a.linePct - b.linePct || a.file.localeCompare(b.file));
+}
 
 // --- parsing -------------------------------------------------------------
 
-function parseLcov(content: string, packageDir: string): void {
+function parseLcov(
+  content: string,
+  packageDir: string,
+  srcPrefix: string,
+  files: Map<string, FileCoverage>,
+): void {
   let current: FileCoverage | null = null;
 
   for (const raw of content.split("\n")) {
@@ -147,7 +272,9 @@ function parseLcov(content: string, packageDir: string): void {
 
     if (line.startsWith("SF:")) {
       const rel = toRepoRelative(packageDir, line.slice(3));
-      if (isIgnored(rel)) {
+      // Keep ONLY this package's own src files. Cross-package spillover (code
+      // this package imported but does not own) and non-src files are dropped.
+      if (!rel.startsWith(srcPrefix) || isIgnored(rel)) {
         current = null;
         continue;
       }
@@ -186,136 +313,109 @@ function isIgnored(relPath: string): boolean {
   return IGNORE_PATTERNS.some((pattern) => pattern.test(relPath));
 }
 
-// --- aggregation ---------------------------------------------------------
-
-function summarize(): FileSummary[] {
-  const summaries: FileSummary[] = [];
-  for (const [file, cov] of files) {
-    // Measured files use Bun's instrumented lines; injected (untested) files use
-    // their approximate executable-line count, all uncovered.
-    const measured = cov.lines.size;
-    const totalLines = measured > 0 ? measured : (cov.injected ?? 0);
-    if (totalLines === 0) {
-      continue;
-    }
-    let coveredLines = 0;
-    for (const hits of cov.lines.values()) {
-      if (hits > 0) {
-        coveredLines += 1;
-      }
-    }
-    summaries.push({
-      file,
-      totalLines,
-      coveredLines,
-      linePct: (coveredLines / totalLines) * 100,
-    });
-  }
-  return summaries.sort((a, b) => a.linePct - b.linePct || a.file.localeCompare(b.file));
-}
-
-function computeTotals(summaries: FileSummary[]) {
-  let totalLines = 0;
-  let coveredLines = 0;
-  for (const summary of summaries) {
-    totalLines += summary.totalLines;
-    coveredLines += summary.coveredLines;
-  }
-
-  let totalFuncs = 0;
-  let coveredFuncs = 0;
-  for (const cov of files.values()) {
-    totalFuncs += cov.fnFound;
-    coveredFuncs += cov.fnHit;
-  }
-
-  return {
-    totalLines,
-    coveredLines,
-    linePct: totalLines === 0 ? 0 : (coveredLines / totalLines) * 100,
-    totalFuncs,
-    coveredFuncs,
-    functionPct: totalFuncs === 0 ? 0 : (coveredFuncs / totalFuncs) * 100,
-  };
-}
-
 // --- reporting -----------------------------------------------------------
 
-function report(
-  summaries: FileSummary[],
-  totals: ReturnType<typeof computeTotals>,
-  value: number,
-  passed: boolean,
-): void {
-  const status = passed ? "PASS" : "FAIL";
-  const worst = summaries.filter((s) => s.linePct < 100).slice(0, 15);
+// Under --metric=functions a package with measurable runtime lines but zero
+// instrumented functions has no honest function ratio (0/0), so the gate falls
+// back to its line result (see measurePackage). Report it on lines too, so its
+// displayed number matches the basis it was actually judged on.
+function usesFunctionMetric(s: PackageSummary): boolean {
+  return metric === "functions" && s.totalFuncs > 0;
+}
+
+function pkgValue(s: PackageSummary): number {
+  return usesFunctionMetric(s) ? s.functionPct : s.linePct;
+}
+
+function pkgCovered(s: PackageSummary): number {
+  return usesFunctionMetric(s) ? s.coveredFuncs : s.coveredLines;
+}
+
+function pkgTotal(s: PackageSummary): number {
+  return usesFunctionMetric(s) ? s.totalFuncs : s.totalLines;
+}
+
+function report(summaries: PackageSummary[], passed: boolean): void {
+  const failing = summaries.filter((s) => !s.passed);
 
   console.log("");
-  console.log(`Coverage gate (${metric} ≥ ${threshold}%)`);
-  console.log("────────────────────────────────────────────");
+  console.log(`Per-package coverage gate (${metric} ≥ ${threshold}% each)`);
+  console.log("──────────────────────────────────────────────────────────");
   console.log(
-    `Lines:     ${fmtPct(totals.linePct)}  (${totals.coveredLines}/${totals.totalLines})`,
+    `${"Package".padEnd(34)} ${"Cov".padStart(8)}  ${"Covered/Total".padStart(15)}  Status`,
   );
-  if (totals.totalFuncs > 0) {
-    console.log(
-      `Functions: ${fmtPct(totals.functionPct)}  (${totals.coveredFuncs}/${totals.totalFuncs})`,
-    );
+  for (const s of summaries) {
+    const label = s.noMeasurableCode ? "  n/a  " : fmtPct(pkgValue(s));
+    const covered = s.noMeasurableCode ? "no measurable code" : `${pkgCovered(s)}/${pkgTotal(s)}`;
+    const status = s.passed ? "PASS" : "FAIL";
+    console.log(`${s.name.padEnd(34)} ${label.padStart(8)}  ${covered.padStart(15)}  ${status}`);
   }
-  console.log(`Files measured: ${summaries.length} (${injectedFiles} untested, counted as 0%)`);
 
-  if (worst.length > 0) {
+  console.log("");
+  console.log(`Packages measured: ${summaries.length}  (failing: ${failing.length})`);
+
+  for (const s of failing) {
+    const worst = s.files.filter((f) => f.linePct < 100).slice(0, 10);
+    if (worst.length === 0) {
+      continue;
+    }
     console.log("");
-    console.log("Lowest-covered files:");
-    for (const s of worst) {
-      console.log(`  ${fmtPct(s.linePct)}  ${s.coveredLines}/${s.totalLines}  ${s.file}`);
+    console.log(`${s.name} — lowest-covered files:`);
+    for (const f of worst) {
+      console.log(`  ${fmtPct(f.linePct)}  ${f.coveredLines}/${f.totalLines}  ${f.file}`);
     }
   }
 
   console.log("");
-  console.log(
-    passed
-      ? `✔ ${status}: ${metric} coverage ${fmtPct(value)} meets the ${threshold}% threshold.`
-      : `✖ ${status}: ${metric} coverage ${fmtPct(value)} is below the ${threshold}% threshold.`,
-  );
+  if (passed) {
+    console.log(`✔ PASS: every package meets the ${threshold}% ${metric} floor.`);
+  } else {
+    const names = failing.map((s) => s.name).join(", ");
+    console.log(
+      `✖ FAIL: ${failing.length} package(s) below the ${threshold}% ${metric} floor: ${names}.`,
+    );
+  }
 
-  writeStepSummary(summaries, totals, value, passed);
+  writeStepSummary(summaries, passed);
 }
 
-function writeStepSummary(
-  summaries: FileSummary[],
-  totals: ReturnType<typeof computeTotals>,
-  value: number,
-  passed: boolean,
-): void {
+function writeStepSummary(summaries: PackageSummary[], passed: boolean): void {
   const summaryPath = process.env.GITHUB_STEP_SUMMARY;
   if (!summaryPath) {
     return;
   }
-  const worst = summaries.filter((s) => s.linePct < 100).slice(0, 15);
+  const failing = summaries.filter((s) => !s.passed);
   const lines: string[] = [
-    `## ${passed ? "✅" : "❌"} Coverage gate — ${metric} ≥ ${threshold}%`,
+    `## ${passed ? "✅" : "❌"} Per-package coverage gate — ${metric} ≥ ${threshold}% each`,
     "",
-    "| Metric | Coverage | Covered / Total |",
-    "| --- | --- | --- |",
-    `| Lines | ${fmtPct(totals.linePct)} | ${totals.coveredLines} / ${totals.totalLines} |`,
+    passed
+      ? `All ${summaries.length} packages meet the ${threshold}% floor.`
+      : `${failing.length} of ${summaries.length} packages are below the ${threshold}% floor.`,
+    "",
+    "| Package | Coverage | Covered / Total | Status |",
+    "| --- | --- | --- | --- |",
   ];
-  if (totals.totalFuncs > 0) {
-    lines.push(
-      `| Functions | ${fmtPct(totals.functionPct)} | ${totals.coveredFuncs} / ${totals.totalFuncs} |`,
-    );
+  for (const s of summaries) {
+    const cov = s.noMeasurableCode ? "n/a" : fmtPct(pkgValue(s));
+    const total = s.noMeasurableCode ? "no measurable code" : `${pkgCovered(s)} / ${pkgTotal(s)}`;
+    const status = s.passed ? "✅ PASS" : "❌ FAIL";
+    lines.push(`| \`${s.name}\` | ${cov} | ${total} | ${status} |`);
   }
-  lines.push(
-    "",
-    `**Gate metric:** ${metric} = ${fmtPct(value)} (threshold ${threshold}%) — ${
-      passed ? "passed" : "failed"
-    }.`,
-    `${summaries.length} source files measured; ${injectedFiles} had no unit test and count as 0%.`,
-  );
-  if (worst.length > 0) {
-    lines.push("", "<details><summary>Lowest-covered files</summary>", "", "| Coverage | File |");
-    lines.push("| --- | --- |");
-    for (const s of worst) {
-      lines.push(`| ${fmtPct(s.linePct)} (${s.coveredLines}/${s.totalLines}) | \`${s.file}\` |`);
+
+  for (const s of failing) {
+    const worst = s.files.filter((f) => f.linePct < 100).slice(0, 10);
+    if (worst.length === 0) {
+      continue;
+    }
+    lines.push(
+      "",
+      `<details><summary><code>${s.name}</code> — lowest-covered files</summary>`,
+      "",
+      "| Coverage | File |",
+      "| --- | --- |",
+    );
+    for (const f of worst) {
+      lines.push(`| ${fmtPct(f.linePct)} (${f.coveredLines}/${f.totalLines}) | \`${f.file}\` |`);
     }
     lines.push("", "</details>");
   }
@@ -324,20 +424,37 @@ function writeStepSummary(
 
 // --- discovery -----------------------------------------------------------
 
-async function findSourceFiles(): Promise<string[]> {
+// Packages = repo-relative dirs under apps/* and packages/* that contain a src/
+// directory, minus EXCLUDED_PACKAGES. Dirs without src/ are skipped entirely.
+async function findPackages(): Promise<string[]> {
   const found: string[] = [];
   for (const root of SOURCE_ROOTS) {
     const rootDir = join(repoRoot, root);
-    let packages: string[];
+    let entries: Dirent[];
     try {
-      packages = await readdir(rootDir);
+      entries = await readdir(rootDir, { withFileTypes: true });
     } catch {
       continue;
     }
-    for (const pkg of packages) {
-      await walkSource(join(rootDir, pkg, "src"), found);
+    for (const entry of entries) {
+      if (!entry.isDirectory()) {
+        continue;
+      }
+      const pkgRel = `${root}/${entry.name}`;
+      if (EXCLUDED_PACKAGES.has(pkgRel)) {
+        continue;
+      }
+      if (await isDirectory(join(rootDir, entry.name, "src"))) {
+        found.push(pkgRel);
+      }
     }
   }
+  return found.sort();
+}
+
+async function findSourceFiles(packageDir: string): Promise<string[]> {
+  const found: string[] = [];
+  await walkSource(join(packageDir, "src"), found);
   return found;
 }
 
@@ -418,32 +535,16 @@ function extraExcludes(): RegExp[] {
     });
 }
 
-async function findLcovFiles(): Promise<string[]> {
-  const found: string[] = [];
-  for (const root of ["apps", "packages"]) {
-    const rootDir = join(repoRoot, root);
-    let entries: string[];
-    try {
-      entries = await readdir(rootDir);
-    } catch {
-      continue;
-    }
-    for (const name of entries) {
-      const candidate = join(rootDir, name, "coverage", "lcov.info");
-      if (await exists(candidate)) {
-        found.push(candidate);
-      }
-    }
-  }
-  const rootLcov = join(repoRoot, "coverage", "lcov.info");
-  if (await exists(rootLcov)) {
-    found.push(rootLcov);
-  }
-  return found.sort();
-}
-
 async function exists(path: string): Promise<boolean> {
   return await Bun.file(path).exists();
+}
+
+async function isDirectory(path: string): Promise<boolean> {
+  try {
+    return (await stat(path)).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 // --- args / helpers ------------------------------------------------------
