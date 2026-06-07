@@ -45,6 +45,7 @@
     "@hootifactory/registry-conan": "workspace:*",
     "@hootifactory/registry-conda": "workspace:*",
     "@hootifactory/registry-generic": "workspace:*",
-    "@hootifactory/registry-alpine": "workspace:*"
+    "@hootifactory/registry-alpine": "workspace:*",
+    "@hootifactory/registry-arch": "workspace:*"
   }
 }

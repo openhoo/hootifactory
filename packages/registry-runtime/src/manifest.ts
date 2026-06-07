@@ -2,6 +2,7 @@ import type { RegistryPlugin } from "@hootifactory/registry";
 import { alpineRegistryPlugin } from "@hootifactory/registry-alpine";
 import { ansibleRegistryPlugin } from "@hootifactory/registry-ansible";
 import { aptRegistryPlugin } from "@hootifactory/registry-apt";
+import { archRegistryPlugin } from "@hootifactory/registry-arch";
 import { cargoRegistryPlugin } from "@hootifactory/registry-cargo";
 import { chocolateyRegistryPlugin } from "@hootifactory/registry-chocolatey";
 import { cocoapodsRegistryPlugin } from "@hootifactory/registry-cocoapods";
@@ -77,4 +78,5 @@ export const REGISTRY_PLUGIN_MANIFEST: RegistryPluginEntry[] = [
   { plugin: genericRegistryPlugin, aliases: ["raw"] },
   { plugin: alpineRegistryPlugin, aliases: ["apk"] },
   { plugin: nixRegistryPlugin },
+  { plugin: archRegistryPlugin, aliases: ["pacman"] },
 ];
