@@ -28,6 +28,7 @@ describe("loadConfiguredRegistryPlugins", () => {
       "rpm",
       "yum",
       "dnf",
+      "terraform",
     ]) {
       expect(registry.has(id)).toBe(true);
     }
@@ -57,6 +58,7 @@ describe("loadConfiguredRegistryPlugins", () => {
       "homebrew",
       "scoop",
       "rpm",
+      "terraform",
       "oci",
       "helm",
       "yum",

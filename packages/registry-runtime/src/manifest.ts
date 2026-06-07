@@ -15,6 +15,7 @@ import { rpmRegistryPlugin } from "@hootifactory/registry-rpm";
 import { rubygemsRegistryPlugin } from "@hootifactory/registry-rubygems";
 import { scoopRegistryPlugin } from "@hootifactory/registry-scoop";
 import { swiftRegistryPlugin } from "@hootifactory/registry-swift";
+import { terraformRegistryPlugin } from "@hootifactory/registry-terraform";
 import { wingetRegistryPlugin } from "@hootifactory/registry-winget";
 
 /** A built-in registry plugin plus any extra module ids it serves. */
@@ -49,4 +50,5 @@ export const REGISTRY_PLUGIN_MANIFEST: RegistryPluginEntry[] = [
   { plugin: homebrewRegistryPlugin },
   { plugin: scoopRegistryPlugin },
   { plugin: rpmRegistryPlugin, aliases: ["yum", "dnf"] },
+  { plugin: terraformRegistryPlugin },
 ];
