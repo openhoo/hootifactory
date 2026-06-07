@@ -8,6 +8,8 @@ import type {
 import {
   type AuthAttributeSpan,
   authorizeVirtualMember,
+  authorizeVirtualMembers,
+  mapVirtualMemberAuthorizations,
   virtualMemberSkipReason,
   withVirtualMemberSpans,
 } from "./registry-virtual-member";
@@ -125,5 +127,54 @@ describe("virtual member authorization", () => {
     expect(authorization.decision.allowed).toBe(false);
     expect(virtualMemberSkipReason(authorization)).toBe("authentication required");
     expect(calls).toEqual([{ "auth.action": "read", "auth.decision": "denied" }]);
+  });
+
+  test("virtualMemberSkipReason falls back to the decision code then a default", () => {
+    expect(
+      virtualMemberSkipReason({
+        decision: { allowed: false, code: "insufficient_scope" },
+      } as never),
+    ).toBe("insufficient_scope");
+    expect(virtualMemberSkipReason({ decision: { allowed: false } } as never)).toBe("denied");
+  });
+
+  test("authorizeVirtualMembers authorizes every member and pairs results with members", async () => {
+    const members = [
+      { ...publicMember, id: "repo_pub", name: "public" },
+      { ...privateMember, id: "repo_priv", name: "private" },
+    ];
+
+    const authorizations = await authorizeVirtualMembers(
+      fakeAdapter("public"),
+      "GET",
+      route,
+      members,
+      parentContext(),
+      "test.virtual.member",
+    );
+
+    expect(authorizations.map((a) => a.member.name)).toEqual(["public", "private"]);
+    expect(authorizations[0]?.authorization.decision.allowed).toBe(true);
+    expect(authorizations[1]?.authorization.decision.allowed).toBe(false);
+  });
+
+  test("mapVirtualMemberAuthorizations applies a handler to each authorization", async () => {
+    const members = [
+      { ...publicMember, id: "repo_1", name: "one" },
+      { ...publicMember, id: "repo_2", name: "two" },
+    ];
+    const authorizations = await authorizeVirtualMembers(
+      fakeAdapter("one"),
+      "GET",
+      route,
+      members,
+      parentContext(),
+      "test.virtual.member",
+    );
+
+    const names = await mapVirtualMemberAuthorizations(authorizations, async ({ member }) =>
+      member.name.toUpperCase(),
+    );
+    expect(names).toEqual(["ONE", "TWO"]);
   });
 });

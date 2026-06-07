@@ -35,6 +35,28 @@ describe("application error responses", () => {
     });
   });
 
+  test("exposes safe HTTP error messages when the error opts into exposure", () => {
+    const err = new HttpError(400, "BAD_REQUEST", "name is required", { expose: true });
+
+    const plan = planApplicationErrorResponse(err, { path: "/api/orgs" });
+
+    expect(plan.status).toBe(400);
+    expect(plan.logLevel).toBe("warn");
+    expect(plan.logMessage).toBe("application error response");
+    expect(plan.message).toBe("name is required");
+    expect(plan.body).toEqual({ error: { code: "BAD_REQUEST", message: "name is required" } });
+  });
+
+  test("clamps out-of-range HTTP error statuses to 500", () => {
+    const err = new HttpError(799, "WEIRD", "off the charts");
+
+    const plan = planApplicationErrorResponse(err, { path: "/api/orgs", requestId: "req-x" });
+
+    expect(plan.status).toBe(500);
+    expect(plan.logLevel).toBe("error");
+    expect(plan.code).toBe("WEIRD");
+  });
+
   test("hides non-exposed HTTP error messages while preserving structured log metadata", () => {
     const cause = new Error("postgres connection refused");
     const err = new HttpError(503, "DATABASE_UNAVAILABLE", "database unavailable", {

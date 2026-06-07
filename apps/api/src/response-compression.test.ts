@@ -114,6 +114,66 @@ describe("registry response compression", () => {
     expect(await response.text()).toBe("v1.0.0\n");
   });
 
+  test("honors a wildcard accept-encoding preference and appends to an existing vary", async () => {
+    clearCompressedResponseCacheForTest();
+
+    const res = new Response(TEXT_BODY, {
+      headers: {
+        "content-type": "application/json",
+        etag: '"vary-v1"',
+        vary: "Accept",
+      },
+    });
+    const compressed = await compressRegistryResponse(
+      new Request("https://registry.test/npm/pkg", { headers: { "accept-encoding": "*" } }),
+      res,
+      { module: npmModule, handlerId: "packument" },
+    );
+
+    expect(compressed.headers.get("content-encoding")).toBe("gzip");
+    // appendVary must extend, not overwrite, the existing Vary header.
+    expect(compressed.headers.get("vary")).toBe("Accept, Accept-Encoding");
+  });
+
+  test("skips compression when gzip is explicitly disabled via q=0", async () => {
+    const res = await compressRegistryResponse(
+      gzipRequest({ "accept-encoding": "gzip;q=0" }),
+      textResponse(),
+      { module: npmModule, handlerId: "packument" },
+    );
+    expect(res.headers.get("content-encoding")).toBeNull();
+  });
+
+  test("skips compression for declared payloads above the response cap", async () => {
+    const res = new Response(TEXT_BODY, {
+      headers: {
+        "content-type": "application/json",
+        etag: '"huge"',
+        "content-length": String(16 * 1024 * 1024),
+      },
+    });
+    const compressed = await compressRegistryResponse(gzipRequest(), res, {
+      module: npmModule,
+      handlerId: "packument",
+    });
+    expect(compressed.headers.get("content-encoding")).toBeNull();
+  });
+
+  test("does not compress when a content-encoding is already set", async () => {
+    const res = new Response(TEXT_BODY, {
+      headers: {
+        "content-type": "application/json",
+        etag: '"pre-encoded"',
+        "content-encoding": "br",
+      },
+    });
+    const compressed = await compressRegistryResponse(gzipRequest(), res, {
+      module: npmModule,
+      handlerId: "packument",
+    });
+    expect(compressed.headers.get("content-encoding")).toBe("br");
+  });
+
   test("only opts in known registry metadata handlers", async () => {
     expect(registryHandlerSupportsCompression(npmModule, "packument")).toBe(true);
     expect(registryHandlerSupportsCompression(goModule, "file")).toBe(true);
