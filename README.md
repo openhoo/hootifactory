@@ -4,10 +4,10 @@
 
 **A self-hostable, multi-format artifact & package manager.**
 
-One service that replaces JFrog Artifactory + Harbor + a standalone supply-chain scanner — speaking **19 package-manager protocols** natively, with built-in malware/vulnerability scanning, policy gates, and multi-tenant RBAC.
+One service that replaces JFrog Artifactory + Harbor + a standalone supply-chain scanner — speaking **37 built-in registry formats** natively, with built-in malware/vulnerability scanning, policy gates, and multi-tenant RBAC.
 
 [![CI](https://github.com/openhoo/hootifactory/actions/workflows/ci.yml/badge.svg)](https://github.com/openhoo/hootifactory/actions/workflows/ci.yml)
-![Formats](https://img.shields.io/badge/formats-19-6aa84f)
+![Formats](https://img.shields.io/badge/formats-37-6aa84f)
 ![Runtime](https://img.shields.io/badge/runtime-Bun%20%E2%89%A5%201.3-black)
 ![Language](https://img.shields.io/badge/TypeScript-strict-3178c6)
 ![Tests](https://img.shields.io/badge/tested-unit%20%C2%B7%20integration%20%C2%B7%20real--client%20e2e-blueviolet)
@@ -16,7 +16,7 @@ One service that replaces JFrog Artifactory + Harbor + a standalone supply-chain
 
 ---
 
-Hootifactory is a single Bun/TypeScript service that gives your team a private home for **every** kind of build artifact — npm packages, Docker images, Python wheels, Helm charts, Cargo crates, Maven JARs, Debian/RPM packages, and a dozen more — behind one auth model, one storage layer, and one scanning pipeline. Point your existing `npm` / `docker` / `pip` / `cargo` / `helm` / `mvn` CLIs at it; no custom client required.
+Hootifactory is a single Bun/TypeScript service that gives your team a private home for **every** kind of build artifact — npm packages, Docker/OCI images, Python wheels, Helm charts, Cargo crates, Maven/Ivy/P2 artifacts, Debian/RPM/Alpine/Arch packages, Terraform modules/providers, Nix binary-cache objects, Git LFS blobs, and many more — behind one auth model, one storage layer, and one scanning pipeline. Point your existing `npm` / `docker` / `pip` / `cargo` / `helm` / `mvn` CLIs at it; no custom client required.
 
 ```bash
 # The whole stack — API, web UI, workers, Postgres, MinIO — in one command:
@@ -26,8 +26,8 @@ docker compose --profile app up --build
 
 ## Why Hootifactory?
 
-- **One tool, every ecosystem.** Stop running a separate registry per language. 19 formats share the same repositories, tokens, quotas, and audit log.
-- **Drop-in for the tools you already use.** Each format speaks its *native* protocol — verified end-to-end against the **real** `npm`, `docker`, `oras`, `pip`/`twine`, `helm`, `go`, `cargo`, `dotnet`, `gem`/`bundler`, `composer`, `mvn`, `apt`, `dnf` and more, driven through pinned container images in CI.
+- **One tool, every ecosystem.** Stop running a separate registry per language. 37 built-in registry formats share the same repositories, tokens, quotas, and audit log.
+- **Drop-in for the tools you already use.** Adapters speak each ecosystem's native protocol. The main client paths are verified end-to-end against the **real** `npm`, `docker`, `oras`, `pip`/`twine`, `helm`, `go`, `cargo`, `dotnet`, `gem`/`bundler`, `composer`, `mvn`, `apt`, `dnf` and more, driven through pinned container images in CI; newer adapters also have package-level protocol and lifecycle coverage.
 - **Secure by default.** Malware + vulnerability scanning with **audit/enforce policy gates**, SSRF-guarded proxies, content-addressable immutable storage, and a production config guard that refuses to boot with dev secrets.
 - **Genuinely multi-tenant.** Organizations, role-based access control with hard org-boundary enforcement, scoped API tokens, and OIDC group→role mapping.
 - **Pluggable to the core.** Every format and every scanner is an independent package behind a small SDK. Adding one is *a new package plus a one-line manifest entry* — the app core never names a concrete format or scanner.
@@ -52,29 +52,49 @@ docker compose --profile app up --build
 
 ## Supported formats
 
-All formats support **hosted** and **virtual** repositories. **Proxy** (pull-through cache) is implemented for **npm** today; the registry SDK supports it for any format. Docker, OCI artifacts, and Helm all share the OCI Distribution `/v2/` endpoint (the `docker` plugin, aliased as `oci`/`helm`); `rpm` is aliased as `yum`/`dnf`.
+The source of truth is [`REGISTRY_PLUGIN_MANIFEST`](packages/registry-runtime/src/manifest.ts), which currently registers 37 concrete built-in registry plugins. All built-ins support **hosted** repositories. **Virtual** repositories are available for every built-in except Git LFS today. **Proxy** (pull-through cache) is implemented where the adapter exposes `proxyIngest`: npm, Generic/raw, Conda, Puppet Forge, and Chef Supermarket.
 
-| Ecosystem | Format | Client tooling | Registry path |
+Docker, OCI artifacts, and Helm all share the OCI Distribution `/v2/` endpoint (the `docker` plugin, aliased as `oci`/`helm`). Other aliases are module ids too: `rpm` -> `yum`/`dnf`, `ansible` -> `galaxy`, `gitlfs` -> `lfs`, `generic` -> `raw`, `alpine` -> `apk`, `arch` -> `pacman`, `puppet` -> `forge`, and `chef` -> `supermarket`.
+
+| Ecosystem | Format | Module id(s) | Registry path |
 |---|---|---|---|
-| JavaScript | **npm** | `npm` / `yarn` / `pnpm` | `/npm/<org>/<repo>/` |
-| Containers | **Docker** | `docker` | `/v2/<org>/<repo>/` |
-| Containers | **OCI artifacts** | `oras` | `/v2/<org>/<repo>/` |
-| Kubernetes | **Helm** (OCI) | `helm` | `oci://…/<org>/<repo>` |
-| Python | **PyPI** | `twine` / `pip` | `/pypi/<org>/<repo>/` |
-| Go | **Go modules** | `go` (GOPROXY) | `/go/<org>/<repo>/` |
-| Rust | **Cargo** | `cargo` (sparse) | `/cargo/<org>/<repo>/` |
-| .NET | **NuGet** (v3) | `dotnet` / `nuget` | `/nuget/<org>/<repo>/v3/index.json` |
-| JVM | **Maven** | `mvn` / Gradle | `/maven/<org>/<repo>/` |
-| Ruby | **RubyGems** | `gem` / `bundler` | `/rubygems/<org>/<repo>/` |
+| JavaScript | **npm** | `npm` | `/npm/<org>/<repo>/` |
+| Containers | **Docker / OCI artifacts / Helm OCI** | `docker`, `oci`, `helm` | `/v2/<org>/<repo>/` |
+| Python | **PyPI** | `pypi` | `/pypi/<org>/<repo>/` |
+| Go | **Go modules** | `go` | `/go/<org>/<repo>/` |
+| Rust | **Cargo** | `cargo` | `/cargo/<org>/<repo>/` |
+| .NET | **NuGet** (v3) | `nuget` | `/nuget/<org>/<repo>/v3/index.json` |
+| Ruby | **RubyGems** | `rubygems` | `/rubygems/<org>/<repo>/` |
 | PHP | **Composer** | `composer` | `/composer/<org>/<repo>/` |
-| Debian | **APT** | `apt` / `dpkg` | `/apt/<org>/<repo>/` |
-| RHEL/Fedora | **RPM** (YUM/DNF) | `dnf` / `yum` | `/rpm/<org>/<repo>/` |
-| Dart/Flutter | **Pub** | `dart pub` / `flutter pub` | `/pub/<org>/<repo>/` |
-| Swift | **Swift** | `swift package-registry` | `/swift/<org>/<repo>/` |
-| Windows | **Chocolatey** | `choco` | `/chocolatey/<org>/<repo>/` |
+| R | **CRAN** | `cran` | `/cran/<org>/<repo>/` |
+| JVM | **Maven** | `maven` | `/maven/<org>/<repo>/` |
+| JVM | **Ivy** | `ivy` | `/ivy/<org>/<repo>/` |
+| Eclipse | **P2** | `p2` | `/p2/<org>/<repo>/` |
+| Debian/Ubuntu | **APT** | `apt` | `/apt/<org>/<repo>/` |
+| RHEL/Fedora | **RPM** (YUM/DNF) | `rpm`, `yum`, `dnf` | `/rpm/<org>/<repo>/` |
+| Alpine Linux | **APK** | `alpine`, `apk` | `/alpine/<org>/<repo>/` |
+| Arch Linux | **Pacman** | `arch`, `pacman` | `/arch/<org>/<repo>/` |
+| Nix | **Nix binary cache** | `nix` | `/nix/<org>/<repo>/` |
+| Dart/Flutter | **Pub** | `pub` | `/pub/<org>/<repo>/` |
+| Swift | **Swift package registry** | `swift` | `/swift/<org>/<repo>/` |
+| Windows | **Chocolatey** | `chocolatey` | `/chocolatey/<org>/<repo>/` |
 | Windows | **winget** | `winget` | `/winget/<org>/<repo>/` |
-| macOS/Linux | **Homebrew** | `brew` | `/homebrew/<org>/<repo>/` |
+| macOS/Linux | **Homebrew** | `homebrew` | `/homebrew/<org>/<repo>/` |
 | Windows | **Scoop** | `scoop` | `/scoop/<org>/<repo>/` |
+| Apple | **CocoaPods** | `cocoapods` | `/cocoapods/<org>/<repo>/` |
+| BEAM | **Hex** | `hex` | `/hex/<org>/<repo>/` |
+| Haskell | **Hackage** | `hackage` | `/hackage/<org>/<repo>/` |
+| OCaml | **OPAM** | `opam` | `/opam/<org>/<repo>/` |
+| Lua | **LuaRocks** | `luarocks` | `/luarocks/<org>/<repo>/` |
+| C/C++ | **Conan** | `conan` | `/conan/<org>/<repo>/` |
+| Data science | **Conda** | `conda` | `/conda/<org>/<repo>/` |
+| Infrastructure | **Terraform modules/providers** | `terraform` | `/terraform/<org>/<repo>/` |
+| Infrastructure | **Vagrant boxes** | `vagrant` | `/vagrant/<org>/<repo>/` |
+| Automation | **Ansible Galaxy** | `ansible`, `galaxy` | `/ansible/<org>/<repo>/` |
+| Git | **Git LFS** | `gitlfs`, `lfs` | `/lfs/<org>/<repo>/` |
+| Generic | **Generic/raw blobs** | `generic`, `raw` | `/generic/<org>/<repo>/` |
+| Configuration | **Puppet Forge** | `puppet`, `forge` | `/puppet/<org>/<repo>/` |
+| Configuration | **Chef Supermarket** | `chef`, `supermarket` | `/chef/<org>/<repo>/` |
 
 > Registries are **immutable**: re-publishing an existing `name@version` returns `409 Conflict`.
 
@@ -117,6 +137,8 @@ bun run dev:mail          # mail worker (Mailpit UI on :8025)
 ## Using it: publish & install
 
 The examples below assume a hosted repo `libs` in org `acme`, a base URL of `http://localhost:3000`, and a scoped API token in `$TOKEN`. Drop `--plain-http` / `--trusted-host` / `allowInsecureConnections` once your instance is served over HTTPS.
+
+This section documents the most common client workflows. The full built-in format set is listed above; newer adapters follow the same `/<mount>/<org>/<repo>/` repository shape, with protocol-specific routes owned by their `packages/registry-<format>` package.
 
 <details>
 <summary><b>npm</b> — <code>npm</code> / <code>yarn</code> / <code>pnpm</code></summary>
@@ -503,8 +525,10 @@ packages/
   registry-application/  agnostic platform use-cases, sliced: routing · runtime · repositories ·
                          content · inventory · packages · governance · assets
   registry-runtime/      static plugin manifest + config-driven loader
-  registry-{npm,oci,pypi,go,cargo,nuget,maven,rubygems,composer,apt,rpm,pub,swift,
-            chocolatey,winget,homebrew,scoop}   ← one package per format
+  registry-{npm,oci,pypi,go,cargo,nuget,rubygems,composer,cran,maven,ivy,apt,p2,pub,swift,
+            chocolatey,cocoapods,winget,homebrew,hex,scoop,vagrant,rpm,ansible,gitlfs,
+            terraform,conan,conda,generic,alpine,nix,arch,hackage,puppet,chef,opam,
+            luarocks}          ← one package per built-in registry format
   scanner/               scanner plugin SDK (ScannerPlugin contract + registry + runners)
   scanner-runtime/       static scanner manifest + config-driven loader
   scanner-{heuristic,grype,trivy,clamav,osv}    ← one package per scanner
@@ -514,7 +538,7 @@ packages/
 
 - Two SDK packages define the contracts: `@hootifactory/registry` (the `RegistryPlugin` descriptor — `routes()`, `requiredPermission()`, `handle()`, plus optional virtual/proxy hooks) and `@hootifactory/scanner` (the `ScannerPlugin` interface). A concrete plugin's *only* `@hootifactory` dependency is its SDK.
 - Registry plugins are **declarative**: a plugin supplies a mount segment, capability flags (`contentAddressable`, `resumableUploads`, `proxyable`, `virtualizable`), route entries with agnostic flags (`searchable`, `metadataMergeable`, `serviceIndex`, …), a `(method, route) → permission` mapping, and optional `generateMetadata` / `mergeMetadata` / `search` / `proxyIngest`. The platform owns HTTP, routing, auth/RBAC, content-addressable storage, and scan execution.
-- Registration is a **static manifest** (`registry-runtime` / `scanner-runtime`) — the single place that imports concrete plugins — optionally narrowed at runtime by the `REGISTRY_PLUGINS` / `SCANNERS` operator allowlists. Aliases are module ids, not packages (`docker` → `oci`/`helm`, `rpm` → `yum`/`dnf`).
+- Registration is a **static manifest** (`registry-runtime` / `scanner-runtime`) — the single place that imports concrete plugins — optionally narrowed at runtime by the `REGISTRY_PLUGINS` / `SCANNERS` operator allowlists. Aliases are module ids, not packages (`docker` -> `oci`/`helm`, `rpm` -> `yum`/`dnf`, `generic` -> `raw`, and so on).
 - **Adding a format = a new `registry-<fmt>` package + one manifest line.** No edit to the app core, the boundary checker, or any sibling plugin.
 
 **Enforced boundaries.** `bun run check:boundaries` discovers plugin packages from the workspace and fails the build if any app or agnostic package imports a concrete format/scanner, re-acquires format-specific identity (e.g. hardcoded `/v2/` grammar or OCI-ish identifiers), or declares workspace dependencies that drift from what it imports. It also validates the `registry-application` slice exports and API v1 contract usage. The boundary check is the source of truth for enforced module rules.
@@ -524,8 +548,8 @@ packages/
 Every repository has a `kind`, dispatched by a single exhaustive switch:
 
 - **Hosted** — read/write locally; the only kind that accepts publishes.
-- **Proxy** (pull-through cache) — read-only; on a local miss it mirrors from a configured upstream **through the format plugin's `proxyIngest`** (never transparent passthrough), so upstream bytes still pass scan policy, quotas, and retention. *Implemented for npm today.*
-- **Virtual** (group/aggregate) — read-only; fans out over ordered member repos (bounded-concurrent, default 8; member cap 32), returns the first non-error response or merges metadata/search, and **rewrites member mount paths back to the virtual mount** so clients keep routing through it. Each member is authorized independently.
+- **Proxy** (pull-through cache) — read-only; on a local miss it mirrors from a configured upstream **through the format plugin's `proxyIngest`** (never transparent passthrough), so upstream bytes still pass scan policy, quotas, and retention. Implemented today for npm, Generic/raw, Conda, Puppet Forge, and Chef Supermarket.
+- **Virtual** (group/aggregate) — read-only; available for plugins that advertise `virtualizable` (currently every built-in except Git LFS). It fans out over ordered member repos (bounded-concurrent, default 8; member cap 32), returns the first non-error response or merges metadata/search, and **rewrites member mount paths back to the virtual mount** so clients keep routing through it. Each member is authorized independently.
 
 **Content-addressable storage.** Artifact bytes live in an S3-compatible store (S3 / MinIO / R2) keyed by `sha256` with two-level prefix fan-out. Dedup is two-tiered: storage-level (skip the write if the digest exists) and DB-level (a shared `blobs` row with per-repo `blob_refs` and reference counting). Org storage quota is charged **once** per digest per org. A grace-period sweeper reclaims unreferenced blobs from both the DB and S3.
 
