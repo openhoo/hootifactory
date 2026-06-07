@@ -23,6 +23,7 @@
     "@hootifactory/registry-rubygems": "workspace:*",
     "@hootifactory/registry-cargo": "workspace:*",
     "@hootifactory/registry-pub": "workspace:*",
+    "@hootifactory/registry-puppet": "workspace:*",
     "@hootifactory/registry-go": "workspace:*",
     "@hootifactory/registry-homebrew": "workspace:*",
     "@hootifactory/registry-scoop": "workspace:*",

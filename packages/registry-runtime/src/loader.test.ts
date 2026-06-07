@@ -26,8 +26,10 @@ describe("loadConfiguredRegistryPlugins", () => {
       "homebrew",
       "scoop",
       "rpm",
+      "puppet",
       "yum",
       "dnf",
+      "forge",
     ]) {
       expect(registry.has(id)).toBe(true);
     }
@@ -57,10 +59,12 @@ describe("loadConfiguredRegistryPlugins", () => {
       "homebrew",
       "scoop",
       "rpm",
+      "puppet",
       "oci",
       "helm",
       "yum",
       "dnf",
+      "forge",
     ]);
   });
 
