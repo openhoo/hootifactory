@@ -75,11 +75,16 @@ export async function moduleDownloadRedirect(
 ): Promise<Response> {
   const meta = await findLiveModule(ctx, namespace, name, system, version);
   if (!meta) return new Response("Not Found", { status: 404 });
+  // The `?archive=tar.gz` hint is REQUIRED: go-getter (which fetches the module
+  // from X-Terraform-Get) selects the decompressor from the URL, not the response
+  // Content-Type. A bare `/archive` path would be treated as a single raw file and
+  // never extracted, so `terraform init` would find no .tf files. The archive blob
+  // is published as a gzip tarball (mediaType application/gzip).
   const archiveUrl = `${ctx.baseUrl}/${ctx.repo.mountPath}/v1/modules/${encodeURIComponent(
     namespace,
   )}/${encodeURIComponent(name)}/${encodeURIComponent(system)}/${encodeURIComponent(
     version,
-  )}/archive`;
+  )}/archive?archive=tar.gz`;
   return new Response(null, {
     status: 204,
     headers: { "x-terraform-get": archiveUrl },

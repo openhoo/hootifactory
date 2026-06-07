@@ -5,12 +5,14 @@ import {
   type Permission,
   parseRegistryInput,
   type RegistryAppRoute,
+  type RegistryAppRouteContext,
   type RegistryPlugin,
   type RegistryRequestContext,
   type RouteMatch,
   readWritePermission,
   registryCapabilities,
   registryPlugin,
+  textResponseWithEtag,
 } from "@hootifactory/registry";
 import {
   listModuleVersions,
@@ -61,18 +63,51 @@ function parsePlatformToken(value: string): string {
   });
 }
 
-/** The service-discovery document Terraform fetches before any registry call. */
+function discoveryResponse(mountPath: string): Response {
+  return new Response(JSON.stringify(buildTerraformDiscoveryDoc(mountPath)), {
+    status: 200,
+    headers: { "content-type": "application/json; charset=utf-8" },
+  });
+}
+
+/**
+ * The host-level service-discovery document Terraform fetches before any
+ * registry call. Terraform always requests `<host>/.well-known/terraform.json`
+ * at the host root, then resolves `modules.v1`/`providers.v1` relative to it and
+ * appends `<namespace>/<name>/<system>` directly — so the advertised base MUST
+ * include the repository mount path (`terraform/<org>/<repo>`), or the resolved
+ * request lands on a path no repository is mounted at and 404s.
+ *
+ * Because a repository is mounted per `<org>/<repo>`, this host-level route tries
+ * to resolve the concrete repository from the request URL and advertise its real
+ * mount path; if no repository can be resolved from the host root it falls back
+ * to the bare mount segment (the repo-mounted `/.well-known/terraform.json` route
+ * declared in {@link TerraformAdapter.routes} carries the authoritative per-repo
+ * document for deployments addressed under the repo mount).
+ */
 export function terraformAppRoutes(): RegistryAppRoute[] {
-  const body = JSON.stringify(buildTerraformDiscoveryDoc(MOUNT_SEGMENT));
-  const handler = () =>
-    new Response(body, {
-      status: 200,
-      headers: { "content-type": "application/json; charset=utf-8" },
-    });
+  const handler = async (ctx: RegistryAppRouteContext): Promise<Response> => {
+    const resolved = await ctx.resolveRepository(ctx.url.pathname);
+    const mountPath =
+      resolved?.repo.moduleId === "terraform" ? resolved.repo.mountPath : MOUNT_SEGMENT;
+    return discoveryResponse(mountPath);
+  };
   return [
     { method: "GET", pattern: "/.well-known/terraform.json", handler },
     { method: "HEAD", pattern: "/.well-known/terraform.json", handler },
   ];
+}
+
+/**
+ * Repo-mounted `GET /.well-known/terraform.json` — the authoritative per-repo
+ * discovery document. Reachable at `terraform/<org>/<repo>/.well-known/terraform.json`,
+ * it advertises `modules.v1`/`providers.v1` built from `ctx.repo.mountPath`, the
+ * same full mount path the download / archive URL builders already use.
+ */
+export function serveTerraformDiscoveryDoc(req: Request, ctx: RegistryRequestContext): Response {
+  return textResponseWithEtag(req, JSON.stringify(buildTerraformDiscoveryDoc(ctx.repo.mountPath)), {
+    "content-type": "application/json; charset=utf-8",
+  });
 }
 
 /**
@@ -82,7 +117,11 @@ export function terraformAppRoutes(): RegistryAppRoute[] {
  */
 export class TerraformAdapter implements RegistryPlugin {
   readonly id = "terraform" as const;
-  readonly capabilities = registryCapabilities("proxyable", "virtualizable");
+  // `proxyable` is intentionally NOT declared: the adapter implements no
+  // `proxyIngest` / upstream-mirror, so proxy repos cannot be created or served.
+  // Advertising it would be dishonest (and the platform gates proxy creation on
+  // `!adapter.proxyIngest`, so it would never work anyway).
+  readonly capabilities = registryCapabilities("virtualizable");
   authChallenge = basicAuthChallenge;
 
   private readonly plugin = registryPlugin(this.id)
@@ -90,7 +129,7 @@ export class TerraformAdapter implements RegistryPlugin {
       displayName: "Terraform",
       mountSegment: MOUNT_SEGMENT,
       errorResponseKind: "singleError",
-      compressibleHandlers: ["moduleVersions", "providerVersions", "providerDownload"],
+      compressibleHandlers: ["discovery", "moduleVersions", "providerVersions", "providerDownload"],
       appRoutes: terraformAppRoutes(),
       scan: {
         defaultOsvEcosystem: undefined,
@@ -100,6 +139,12 @@ export class TerraformAdapter implements RegistryPlugin {
     .capabilities(this.capabilities)
     .authChallenge(this.authChallenge)
     .routes((route) => [
+      // ── service discovery (repo-scoped) ──────────────────────────────────
+      // The authoritative per-repo discovery doc, reachable under the repo mount;
+      // its modules.v1/providers.v1 carry the full `terraform/<org>/<repo>` path.
+      route.get("/.well-known/terraform.json", "discovery", (i) =>
+        Promise.resolve(serveTerraformDiscoveryDoc(i.req, i.ctx)),
+      ),
       // ── module protocol ──────────────────────────────────────────────────
       // `versions` and `archive` are literal trailing segments; they're declared
       // before the `:version/download` catch-all so the matcher can't shadow them.

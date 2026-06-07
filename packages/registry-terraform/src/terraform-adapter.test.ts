@@ -53,6 +53,11 @@ describe("Terraform adapter", () => {
     expect(new TerraformAdapter().routes()).toEqual([
       {
         method: "GET",
+        pattern: "/.well-known/terraform.json",
+        handlerId: "discovery",
+      },
+      {
+        method: "GET",
         pattern: "/v1/modules/:namespace/:name/:system/versions",
         handlerId: "moduleVersions",
       },
@@ -130,12 +135,15 @@ describe("Terraform adapter", () => {
     expect(handlerFor("PUT", "/v1/providers/hashicorp/random")).toBe("providerPublish");
   });
 
-  test("declares proxyable + virtualizable capabilities and Basic auth", () => {
+  test("declares virtualizable (not proxyable, since no proxyIngest) + Basic auth", () => {
     const adapter = new TerraformAdapter();
+    // `proxyable` is intentionally false: the adapter has no proxyIngest /
+    // upstream-mirror, and the platform gates proxy-repo creation on
+    // `!adapter.proxyIngest`, so advertising it would be dishonest and dead.
     expect(adapter.capabilities).toEqual({
       contentAddressable: false,
       resumableUploads: false,
-      proxyable: true,
+      proxyable: false,
       virtualizable: true,
     });
     expect(adapter.authChallenge().header).toBe('Basic realm="hootifactory"');
@@ -181,18 +189,65 @@ describe("Terraform adapter", () => {
     });
   });
 
-  test("serves the service-discovery document at /.well-known/terraform.json", async () => {
+  test("host-level discovery advertises the resolved repo's full mount path", async () => {
     const routes = new TerraformAdapter().appRoutes();
     const route = routes.find(
       (r) => r.method === "GET" && r.pattern === "/.well-known/terraform.json",
     );
     expect(route).toBeDefined();
-    const res = await route?.handler({} as RegistryAppRouteContext);
+    const ctx = {
+      url: new URL("https://registry.test/.well-known/terraform.json"),
+      resolveRepository: async () => ({
+        repo: { moduleId: "terraform", mountPath: "terraform/acme/private" },
+      }),
+    } as unknown as RegistryAppRouteContext;
+    const res = await route?.handler(ctx);
     expect(res?.status).toBe(200);
     expect(res?.headers.get("content-type")).toContain("application/json");
+    // The base MUST carry the full terraform/<org>/<repo> mount path, or a real
+    // terraform client resolves module/provider addresses to an unmounted path.
+    expect(await res?.json()).toEqual({
+      "modules.v1": "/terraform/acme/private/v1/modules/",
+      "providers.v1": "/terraform/acme/private/v1/providers/",
+    });
+  });
+
+  test("host-level discovery falls back to the bare mount segment when no repo resolves", async () => {
+    const route = new TerraformAdapter()
+      .appRoutes()
+      .find((r) => r.method === "GET" && r.pattern === "/.well-known/terraform.json");
+    const ctx = {
+      url: new URL("https://registry.test/.well-known/terraform.json"),
+      resolveRepository: async () => null,
+    } as unknown as RegistryAppRouteContext;
+    const res = await route?.handler(ctx);
     expect(await res?.json()).toEqual({
       "modules.v1": "/terraform/v1/modules/",
       "providers.v1": "/terraform/v1/providers/",
+    });
+  });
+
+  test("repo-mounted GET /.well-known/terraform.json advertises ctx.repo mount path", async () => {
+    const ctx = terraformContext();
+    const res = await new TerraformAdapter().handle(
+      {
+        entry: {
+          method: "GET",
+          pattern: "/.well-known/terraform.json",
+          handlerId: "discovery",
+        },
+        params: {},
+        path: "/.well-known/terraform.json",
+      },
+      new Request("https://registry.test/terraform/private/.well-known/terraform.json"),
+      ctx,
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("application/json");
+    expect(res.headers.get("etag")).toBeTruthy();
+    expect(await res.json()).toEqual({
+      "modules.v1": "/terraform/private/v1/modules/",
+      "providers.v1": "/terraform/private/v1/providers/",
     });
   });
 

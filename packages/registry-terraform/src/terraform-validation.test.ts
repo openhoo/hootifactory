@@ -32,10 +32,26 @@ describe("Terraform identifiers and versions", () => {
 });
 
 describe("Terraform discovery document", () => {
-  test("points modules.v1/providers.v1 at the mount segment", () => {
+  test("points modules.v1/providers.v1 at the bare mount segment", () => {
     expect(buildTerraformDiscoveryDoc("terraform")).toEqual({
       "modules.v1": "/terraform/v1/modules/",
       "providers.v1": "/terraform/v1/providers/",
+    });
+  });
+
+  test("includes the full per-repo mount path so resolved addresses hit the repo", () => {
+    // A real terraform client appends <namespace>/<name>/<system> directly after
+    // the base, so the base must carry the terraform/<org>/<repo> mount path.
+    expect(buildTerraformDiscoveryDoc("terraform/acme/private")).toEqual({
+      "modules.v1": "/terraform/acme/private/v1/modules/",
+      "providers.v1": "/terraform/acme/private/v1/providers/",
+    });
+  });
+
+  test("normalizes leading/trailing slashes in the mount path", () => {
+    expect(buildTerraformDiscoveryDoc("/terraform/acme/private/")).toEqual({
+      "modules.v1": "/terraform/acme/private/v1/modules/",
+      "providers.v1": "/terraform/acme/private/v1/providers/",
     });
   });
 });

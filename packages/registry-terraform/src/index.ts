@@ -1,4 +1,9 @@
-export { TerraformAdapter, terraformAppRoutes, terraformRegistryPlugin } from "./terraform-adapter";
+export {
+  serveTerraformDiscoveryDoc,
+  TerraformAdapter,
+  terraformAppRoutes,
+  terraformRegistryPlugin,
+} from "./terraform-adapter";
 export {
   listModuleVersions,
   MODULE_BLOB_KIND,

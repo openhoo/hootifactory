@@ -115,8 +115,10 @@ describe("Terraform module protocol", () => {
 
     const res = await moduleDownloadRedirect("hashicorp", "consul", "aws", "1.2.3", ctx);
     expect(res.status).toBe(204);
+    // The ?archive=tar.gz hint is required so go-getter extracts the gzip tarball
+    // (it picks the decompressor from the URL, not the Content-Type).
     expect(res.headers.get("x-terraform-get")).toBe(
-      "https://registry.example.test/terraform/private/v1/modules/hashicorp/consul/aws/1.2.3/archive",
+      "https://registry.example.test/terraform/private/v1/modules/hashicorp/consul/aws/1.2.3/archive?archive=tar.gz",
     );
   });
 

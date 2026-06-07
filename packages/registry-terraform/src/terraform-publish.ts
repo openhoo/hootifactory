@@ -11,6 +11,19 @@ export interface TerraformPublishError {
   status: number;
 }
 
+/**
+ * Published artifact filenames are echoed verbatim into download descriptors and
+ * stored in metadata, so they must not contain path separators even though
+ * blob-ref scopes are built from validated os/arch tokens (never the filename).
+ * Reused for the module archive and every provider platform / SHASUMS filename so
+ * all published filenames are uniformly constrained.
+ */
+const TerraformFilenameSchema = z
+  .string()
+  .min(1)
+  .max(512)
+  .refine((value) => !value.includes("/") && !value.includes("\\"), "invalid filename");
+
 interface MultipartPart {
   name: string | null;
   filename: string | null;
@@ -88,7 +101,7 @@ const ProviderPlatformManifestSchema = z.strictObject({
   // and must round-trip through the route matchers, or the version is unreachable.
   os: TerraformPlatformTokenSchema,
   arch: TerraformPlatformTokenSchema,
-  filename: z.string().min(1).max(512),
+  filename: TerraformFilenameSchema,
   shasum: z.string().regex(/^[a-f0-9]{64}$/),
 });
 
@@ -96,8 +109,8 @@ const ProviderManifestSchema = z.looseObject({
   version: TerraformVersionSchema,
   protocols: z.array(TerraformProtocolSchema).min(1).max(32),
   platforms: z.array(ProviderPlatformManifestSchema).min(1).max(256),
-  shasums: z.string().min(1).max(512),
-  shasums_signature: z.string().min(1).max(512).optional(),
+  shasums: TerraformFilenameSchema,
+  shasums_signature: TerraformFilenameSchema.optional(),
   signing_keys: z.array(TerraformSigningKeySchema).max(32).optional(),
 });
 
@@ -219,12 +232,6 @@ function parseManifest<T>(
   }
   return { ok: true, data: result.data };
 }
-
-const TerraformFilenameSchema = z
-  .string()
-  .min(1)
-  .max(512)
-  .refine((value) => !value.includes("/") && !value.includes("\\"), "invalid filename");
 
 function resolveFilename(uploaded: string | null, fallback: string): string {
   const raw = uploaded && uploaded.length > 0 ? uploaded : fallback;

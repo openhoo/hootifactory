@@ -1,4 +1,5 @@
 import {
+  digestHex,
   type RegistryRequestContext,
   serveRegistryBlob,
   textResponseWithEtag,
@@ -220,7 +221,15 @@ export async function publishProviderVersion(
     return Response.json({ error: "version already exists" }, { status: 409 });
   }
 
+  // Blob refs stored before the authoritative version-conflict guard. If that
+  // guard rejects (a race past the early exists() check), these must be released
+  // so a losing publish doesn't leak orphaned platform-zip / signature refs.
+  const orphanRefs: OrphanRef[] = [];
+
   // Store every platform zip in CAS, recording its blob coordinates for the meta.
+  // The stored CAS digest is content-addressed; verify it matches the manifest
+  // `shasum` so the descriptor we later serve cannot disagree with the zip bytes
+  // (otherwise `terraform init`'s post-download SHA256 check fails opaquely).
   const platforms: TerraformProviderPlatform[] = [];
   let totalBytes = 0;
   for (const platform of parsed.plan.platforms) {
@@ -231,6 +240,16 @@ export async function publishProviderVersion(
       scope,
       mediaType: "application/zip",
     });
+    orphanRefs.push({ digest: stored.digest, kind: PROVIDER_ZIP_KIND, scope });
+    if (digestHex(stored.digest) !== platform.shasum) {
+      await releaseOrphanRefs(ctx, orphanRefs);
+      return Response.json(
+        {
+          error: `shasum mismatch for ${platform.os}_${platform.arch}: manifest declares ${platform.shasum} but the uploaded zip hashes to ${digestHex(stored.digest)}`,
+        },
+        { status: 400 },
+      );
+    }
     totalBytes += platform.zip.length;
     platforms.push({
       os: platform.os,
@@ -261,6 +280,7 @@ export async function publishProviderVersion(
       scope: sigScope,
       mediaType: "application/octet-stream",
     });
+    orphanRefs.push({ digest: sigStored.digest, kind: PROVIDER_SHASUMS_KIND, scope: sigScope });
     shasumsSignatureDigest = sigStored.digest;
     totalBytes += parsed.plan.shasumsSignature.data.length;
   }
@@ -294,6 +314,10 @@ export async function publishProviderVersion(
     scan: { name: packageName, version, mediaType: "text/plain; charset=utf-8" },
   });
   if ("conflict" in result) {
+    // commitOrReleaseBlob releases only its own committed (SHASUMS) blob on
+    // conflict; release the platform-zip + signature refs we stored above so the
+    // losing publish leaves no orphaned blob refs.
+    await releaseOrphanRefs(ctx, orphanRefs);
     return Response.json({ error: "version already exists" }, { status: 409 });
   }
 
@@ -309,6 +333,23 @@ export async function publishProviderVersion(
   }
 
   return Response.json({ ok: true, namespace, type, version }, { status: 201 });
+}
+
+interface OrphanRef {
+  digest: string;
+  kind: typeof PROVIDER_ZIP_KIND | typeof PROVIDER_SHASUMS_KIND;
+  scope: string;
+}
+
+/** Release blob refs stored before a rejected publish (shasum mismatch / conflict). */
+async function releaseOrphanRefs(ctx: RegistryRequestContext, refs: OrphanRef[]): Promise<void> {
+  for (const ref of refs) {
+    await ctx.data.content.releaseBlobRef({
+      digest: ref.digest,
+      kind: ref.kind,
+      scope: ref.scope,
+    });
+  }
 }
 
 /** Every CAS digest a stored provider version references (for retention/scan). */

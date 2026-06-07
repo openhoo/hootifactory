@@ -136,8 +136,16 @@ export interface TerraformDiscoveryDoc {
   "providers.v1": string;
 }
 
-export function buildTerraformDiscoveryDoc(mountSegment: string): TerraformDiscoveryDoc {
-  const base = `/${mountSegment}`;
+/**
+ * Build the service-discovery document for a Terraform registry mounted at
+ * `mountPath`. The `modules.v1` / `providers.v1` base URLs MUST include the full
+ * repository mount path (e.g. `terraform/<org>/<repo>`), because Terraform
+ * resolves these bases relative to the host-level discovery URL and appends the
+ * source's `<namespace>/<name>/<system>` directly after them — so a base that
+ * omits the mount segments would resolve to a path no repository is mounted at.
+ */
+export function buildTerraformDiscoveryDoc(mountPath: string): TerraformDiscoveryDoc {
+  const base = `/${mountPath.replace(/^\/+/, "").replace(/\/+$/, "")}`;
   return {
     "modules.v1": `${base}/v1/modules/`,
     "providers.v1": `${base}/v1/providers/`,
