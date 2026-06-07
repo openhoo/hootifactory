@@ -3,11 +3,16 @@ import { multipartBoundary, parseMultipartParts } from "./cocoapods-publish";
 import {
   buildPodVersionMeta,
   buildServedPodspec,
+  COCOAPODS_PREFIX_LENGTHS,
   isValidPodName,
   isValidPodVersion,
   PodspecPublishSchema,
   parsePodVersionMeta,
+  parseShardIndexFilename,
   podArtifactFilename,
+  podInShard,
+  podShardFragment,
+  podShardIndexFilename,
   podShardPrefix,
   podSpecPath,
   podSpecsDir,
@@ -55,6 +60,39 @@ describe("CocoaPods Specs sharding", () => {
 
   test("builds the canonical source archive filename", () => {
     expect(podArtifactFilename("demo", "1.2.3")).toBe("demo-1.2.3.tar.gz");
+  });
+});
+
+describe("CocoaPods CDN shard index", () => {
+  test("advertises a 3-level single-hex prefix layout", () => {
+    expect(COCOAPODS_PREFIX_LENGTHS).toEqual([1, 1, 1]);
+  });
+
+  test("derives the underscore shard fragment + index filename from md5(name)", () => {
+    expect(podShardFragment("AFNetworking")).toBe("a_7_5");
+    expect(podShardFragment("demo")).toBe("f_e_0");
+    expect(podShardIndexFilename("AFNetworking")).toBe("all_pods_versions_a_7_5.txt");
+    expect(podShardIndexFilename("demo")).toBe("all_pods_versions_f_e_0.txt");
+  });
+
+  test("parses well-formed shard-index filenames and rejects others", () => {
+    expect(parseShardIndexFilename("all_pods_versions_f_e_0.txt")).toEqual(["f", "e", "0"]);
+    expect(parseShardIndexFilename("all_pods_versions_a_7_5.txt")).toEqual(["a", "7", "5"]);
+    // Non-hex, wrong segment count, missing suffix, or unrelated names are not shards.
+    expect(parseShardIndexFilename("all_pods_versions_g_e_0.txt")).toBeNull();
+    expect(parseShardIndexFilename("all_pods_versions_f_e.txt")).toBeNull();
+    expect(parseShardIndexFilename("all_pods_versions_f_e_0")).toBeNull();
+    expect(parseShardIndexFilename("all_pods.txt")).toBeNull();
+    expect(parseShardIndexFilename("CocoaPods-version.yml")).toBeNull();
+  });
+
+  test("podInShard matches a pod only against its own md5 shard", () => {
+    expect(podInShard("demo", ["f", "e", "0"])).toBe(true);
+    expect(podInShard("demo", ["a", "7", "5"])).toBe(false);
+    // The shard a pod reports is the one its index filename encodes.
+    const shard = parseShardIndexFilename(podShardIndexFilename("AFNetworking"));
+    expect(shard).not.toBeNull();
+    if (shard) expect(podInShard("AFNetworking", shard)).toBe(true);
   });
 });
 

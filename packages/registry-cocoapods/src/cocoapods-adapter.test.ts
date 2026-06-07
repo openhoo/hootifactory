@@ -7,7 +7,11 @@ import type {
 } from "@hootifactory/registry";
 import { createTestRegistryContext } from "@hootifactory/registry/testing";
 import { CocoapodsAdapter } from "./cocoapods-adapter";
-import { buildPodVersionMeta, PodspecPublishSchema } from "./cocoapods-validation";
+import {
+  buildPodVersionMeta,
+  PodspecPublishSchema,
+  podShardIndexFilename,
+} from "./cocoapods-validation";
 import { buildMultipartBody } from "./cocoapods-validation.test";
 
 const DIGEST = `sha256:${"a".repeat(64)}`;
@@ -65,11 +69,15 @@ function cocoapodsContext() {
 }
 
 describe("CocoaPods adapter", () => {
-  test("declares index, podspec, download, and publish routes (literals before :pod)", () => {
+  test("declares the CDN bootstrap, podspec, download, and publish routes (literals before params)", () => {
     expect(new CocoapodsAdapter().routes()).toEqual([
+      { method: "GET", pattern: "/CocoaPods-version.yml", handlerId: "cdnVersion" },
+      { method: "GET", pattern: "/deprecated_podspecs.txt", handlerId: "deprecated" },
+      { method: "GET", pattern: "/all_pods.txt", handlerId: "allPodsText" },
       { method: "GET", pattern: "/all_pods.json", handlerId: "index" },
       { method: "GET", pattern: "/Specs/:tail+", handlerId: "podspec" },
       { method: "GET", pattern: "/pods/:pod/:version/:filename", handlerId: "download" },
+      { method: "GET", pattern: "/:shardFile", handlerId: "shardIndex" },
       { method: "PUT", pattern: "/:pod", handlerId: "publish" },
     ]);
   });
@@ -544,5 +552,216 @@ describe("CocoaPods adapter", () => {
         ctx,
       ),
     ).rejects.toMatchObject({ status: 400, code: "NAME_INVALID" });
+  });
+});
+
+describe("CocoaPods CDN bootstrap surface", () => {
+  /** Stub the package/version data so listing handlers see the given live pods. */
+  function withLivePods(versionsByPod: Record<string, string[]>) {
+    const ctx = cocoapodsContext();
+    ctx.data.packages.listNames = async () => Object.keys(versionsByPod).map((name) => ({ name }));
+    ctx.data.packages.findByName = async (name) => (name in versionsByPod ? pkgRow(name) : null);
+    ctx.data.versions.listLive = async (row, opts) => {
+      expect(opts).toEqual({ orderByCreated: "asc" });
+      const versions = versionsByPod[row.name] ?? [];
+      return versions.map((v) =>
+        versionRow(
+          buildPodVersionMeta(PodspecPublishSchema.parse({ name: row.name, version: v }), {
+            digest: DIGEST,
+            sha256: HEX,
+            filename: `${row.name}-${v}.tar.gz`,
+          }),
+          v,
+        ),
+      );
+    };
+    return ctx;
+  }
+
+  function get(
+    adapter: CocoapodsAdapter,
+    pattern: string,
+    handlerId: string,
+    path: string,
+    params: Record<string, string>,
+    ctx = withLivePods({}),
+  ) {
+    return adapter.handle(
+      { entry: { method: "GET", pattern, handlerId }, params, path },
+      new Request(`https://registry.test${path}`),
+      ctx,
+    );
+  }
+
+  test("GET /CocoaPods-version.yml advertises the 3-level prefix_lengths the client shards on", async () => {
+    const res = await get(
+      new CocoapodsAdapter(),
+      "/CocoaPods-version.yml",
+      "cdnVersion",
+      "/CocoaPods-version.yml",
+      {},
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("yaml");
+    expect(res.headers.get("etag")).toBeTruthy();
+    const body = await res.text();
+    // prefix_lengths [1,1,1] => the first 3 hex chars of md5(name) form the shard,
+    // which is exactly what podShardIndexFilename/podspec routes assume.
+    expect(body).toContain("prefix_lengths: [1, 1, 1]");
+    expect(body).toContain("min:");
+    expect(body).toContain("last:");
+  });
+
+  test("GET /deprecated_podspecs.txt is a deterministic empty 200 (nothing deprecated)", async () => {
+    const res = await get(
+      new CocoapodsAdapter(),
+      "/deprecated_podspecs.txt",
+      "deprecated",
+      "/deprecated_podspecs.txt",
+      {},
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/plain");
+    expect(await res.text()).toBe("");
+  });
+
+  test("GET /all_pods.txt lists live pod names newline-delimited, alphabetical", async () => {
+    const ctx = withLivePods({ demo: ["1.2.3"], alpha: ["0.1.0"] });
+    const res = await get(
+      new CocoapodsAdapter(),
+      "/all_pods.txt",
+      "allPodsText",
+      "/all_pods.txt",
+      {},
+      ctx,
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/plain");
+    expect(await res.text()).toBe("alpha\ndemo");
+  });
+
+  test("GET shard index lists only pods in that md5 shard with name + versions", async () => {
+    // md5("demo") => f/e/0; md5("alpha") => 2b/... (not f/e/0).
+    const shardFile = podShardIndexFilename("demo");
+    expect(shardFile).toBe("all_pods_versions_f_e_0.txt");
+    const ctx = withLivePods({ demo: ["1.2.3", "1.3.0"], alpha: ["0.1.0"] });
+    const res = await get(
+      new CocoapodsAdapter(),
+      "/:shardFile",
+      "shardIndex",
+      `/${shardFile}`,
+      { shardFile },
+      ctx,
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/plain");
+    // Only `demo` lives in shard f/e/0; line is `<name>/<v1>/<v2>...`.
+    expect(await res.text()).toBe("demo/1.2.3/1.3.0");
+    expect(res.headers.get("etag")).toBeTruthy();
+  });
+
+  test("GET shard index 404s for a non-shard single-segment path", async () => {
+    const res = await get(new CocoapodsAdapter(), "/:shardFile", "shardIndex", "/not-a-shard", {
+      shardFile: "not-a-shard",
+    });
+    expect(res.status).toBe(404);
+  });
+
+  test("publish -> shard index -> podspec -> download is internally consistent", async () => {
+    const adapter = new CocoapodsAdapter();
+    const ctx = cocoapodsContext();
+    const archive = new Uint8Array([9, 8, 7, 6]);
+    const expectedDigest = `sha256:${Bun.SHA256.hash(archive, "hex")}`;
+    const expectedHex = Bun.SHA256.hash(archive, "hex");
+
+    // In-memory store fed by publish and read back by the discovery/read routes.
+    let committedMeta: Record<string, unknown> | undefined;
+    ctx.data.packages.findOrCreate = async ({ name }) => pkgRow(name);
+    ctx.data.versions.exists = async () => false;
+    ctx.data.content.storeBlobWithRef = async (): Promise<RegistryStoredBlob> => ({
+      digest: expectedDigest,
+      size: archive.length,
+      deduped: false,
+      refCreated: true,
+      blobRefId: "ref_1",
+    });
+    ctx.data.versions.commitOrReleaseBlob = async (input) => {
+      committedMeta = input.metadata;
+      return { versionId: "ver_1" };
+    };
+
+    const publishRes = await adapter.handle(
+      {
+        entry: { method: "PUT", pattern: "/:pod", handlerId: "publish" },
+        params: { pod: "demo" },
+        path: "/demo",
+      },
+      new Request("https://registry.test/demo", {
+        method: "PUT",
+        headers: { "content-type": "multipart/form-data; boundary=BOUND" },
+        body: buildMultipartBody("BOUND", [
+          {
+            name: "podspec",
+            data: new TextEncoder().encode(JSON.stringify({ name: "demo", version: "1.2.3" })),
+          },
+          { name: "source", filename: "demo.tar.gz", data: archive },
+        ]),
+      }),
+      ctx,
+    );
+    expect(publishRes.status).toBe(201);
+    if (!committedMeta) throw new Error("publish did not commit metadata");
+
+    // Wire reads to serve back exactly what publish persisted.
+    ctx.data.packages.listNames = async () => [{ name: "demo" }];
+    ctx.data.packages.findByName = async (name) => (name === "demo" ? pkgRow("demo") : null);
+    ctx.data.versions.listLive = async () => [versionRow(committedMeta as Record<string, unknown>)];
+    ctx.data.versions.findLive = async () => versionRow(committedMeta as Record<string, unknown>);
+    ctx.data.content.blobRefExists = async () => true;
+    ctx.data.content.serveBlobIfClean = async ({ digest, contentType }) =>
+      new Response(digest === expectedDigest ? archive : new Uint8Array(), {
+        headers: { "content-type": contentType },
+      });
+
+    // 1) The shard index enumerates the version we just published.
+    const shardFile = podShardIndexFilename("demo");
+    const shardRes = await adapter.handle(
+      {
+        entry: { method: "GET", pattern: "/:shardFile", handlerId: "shardIndex" },
+        params: { shardFile },
+        path: `/${shardFile}`,
+      },
+      new Request(`https://registry.test/${shardFile}`),
+      ctx,
+    );
+    expect(await shardRes.text()).toBe("demo/1.2.3");
+
+    // 2) The podspec route rewrites source to the hosted URL + the stored sha256.
+    const specRes = await adapter.handle(
+      {
+        entry: { method: "GET", pattern: "/Specs/:tail+", handlerId: "podspec" },
+        params: { tail: "f/e/0/demo/1.2.3/demo.podspec.json" },
+        path: `/${DEMO_SPEC_PATH}`,
+      },
+      new Request(`https://registry.test/${DEMO_SPEC_PATH}`),
+      ctx,
+    );
+    const spec = (await specRes.json()) as { source: { http: string; sha256: string } };
+    expect(spec.source.sha256).toBe(expectedHex);
+    expect(spec.source.http).toBe(
+      "https://registry.example.test/cocoapods/private/pods/demo/1.2.3/demo-1.2.3.tar.gz",
+    );
+
+    // 3) Downloading the hosted URL returns the published archive bytes.
+    const dlRes = await adapter.handle(
+      {
+        entry: { method: "GET", pattern: "/pods/:pod/:version/:filename", handlerId: "download" },
+        params: { pod: "demo", version: "1.2.3", filename: "demo-1.2.3.tar.gz" },
+        path: "/pods/demo/1.2.3/demo-1.2.3.tar.gz",
+      },
+      new Request("https://registry.test/pods/demo/1.2.3/demo-1.2.3.tar.gz"),
+      ctx,
+    );
+    expect(new Uint8Array(await dlRes.arrayBuffer())).toEqual(archive);
   });
 });

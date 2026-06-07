@@ -40,6 +40,44 @@ export function podSpecsDir(podName: string): string {
   return `Specs/${a}/${b}/${c}/${podName}`;
 }
 
+/**
+ * The `prefix_lengths` the CDN advertises in `CocoaPods-version.yml`: three single-hex
+ * shard levels (`[1, 1, 1]`), matching the 3-level layout {@link podShardPrefix} enforces.
+ * The CDN client reads this to derive the shard fragment for every index/podspec URL.
+ */
+export const COCOAPODS_PREFIX_LENGTHS: readonly [number, number, number] = [1, 1, 1];
+
+/**
+ * The CDN shard fragment for a pod: the shard prefix joined with `_`, e.g. `a_7_5` for
+ * `AFNetworking`. The client builds `all_pods_versions_<fragment>.txt` from this.
+ */
+export function podShardFragment(podName: string): string {
+  return podShardPrefix(podName).join("_");
+}
+
+/** The per-shard versions index filename a CDN client requests, e.g. `all_pods_versions_a_7_5.txt`. */
+export function podShardIndexFilename(podName: string): string {
+  return `all_pods_versions_${podShardFragment(podName)}.txt`;
+}
+
+const SHARD_INDEX_RE = /^all_pods_versions_([0-9a-f])_([0-9a-f])_([0-9a-f])\.txt$/;
+
+/**
+ * Parse a `all_pods_versions_<a>_<b>_<c>.txt` shard-index request filename into its three
+ * single-hex shard segments, or `null` if it is not a well-formed shard-index filename.
+ */
+export function parseShardIndexFilename(filename: string): [string, string, string] | null {
+  const match = SHARD_INDEX_RE.exec(filename);
+  if (!match) return null;
+  return [match[1] as string, match[2] as string, match[3] as string];
+}
+
+/** Whether a pod name lives in the given three-hex CDN shard. */
+export function podInShard(podName: string, shard: [string, string, string]): boolean {
+  const [a, b, c] = podShardPrefix(podName);
+  return a === shard[0] && b === shard[1] && c === shard[2];
+}
+
 /** The full Specs path to a pod version's `podspec.json`. */
 export function podSpecPath(podName: string, version: string): string {
   return `${podSpecsDir(podName)}/${version}/${podName}.podspec.json`;

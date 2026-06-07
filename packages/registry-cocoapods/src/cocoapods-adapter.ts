@@ -20,14 +20,25 @@ import {
 } from "./cocoapods-publish-lifecycle";
 import {
   buildServedPodspec,
+  COCOAPODS_PREFIX_LENGTHS,
   PodNameSchema,
   PodVersionSchema,
   parsePodVersionMeta,
+  parseShardIndexFilename,
   podArtifactFilename,
+  podInShard,
   podShardPrefix,
 } from "./cocoapods-validation";
 
 const JSON_CONTENT_TYPE = "application/json; charset=utf-8";
+const YAML_CONTENT_TYPE = "text/yaml; charset=utf-8";
+const TEXT_CONTENT_TYPE = "text/plain; charset=utf-8";
+
+/** A live pod and the versions whose stored metadata parses, sorted oldest-first. */
+interface PodVersions {
+  name: string;
+  versions: string[];
+}
 
 function parsePodName(pod: string): string {
   return parseRegistryInput(PodNameSchema, pod, {
@@ -79,6 +90,12 @@ function parseSpecsTail(tail: string): SpecsPathParts | null {
  * documents (with `source` rewritten to a hosted `:http` URL) plus the source
  * archive blobs. Publish is a hootifactory extension: `PUT /:pod` of a `podspec`
  * JSON + the `source` archive, which we host and scan ourselves.
+ *
+ * The CDN bootstrap surface the real `Source::CDN` client fetches in `refresh_metadata`
+ * is served too: `GET /CocoaPods-version.yml` (publishes `prefix_lengths`, fetched
+ * first), the per-shard `GET /all_pods_versions_<a>_<b>_<c>.txt` version indexes the
+ * client reads to resolve which podspec versions exist, `GET /deprecated_podspecs.txt`,
+ * and the newline `GET /all_pods.txt` pod listing.
  */
 export class CocoapodsAdapter implements RegistryPlugin {
   readonly id = "cocoapods" as const;
@@ -90,8 +107,8 @@ export class CocoapodsAdapter implements RegistryPlugin {
       displayName: "CocoaPods",
       mountSegment: "cocoapods",
       errorResponseKind: "singleError",
-      compressibleHandlers: ["index", "podspec"],
-      compressibleContentTypes: [JSON_CONTENT_TYPE],
+      compressibleHandlers: ["index", "podspec", "allPodsText", "shardIndex"],
+      compressibleContentTypes: [JSON_CONTENT_TYPE, TEXT_CONTENT_TYPE, YAML_CONTENT_TYPE],
       scan: {
         defaultOsvEcosystem: undefined,
         referencedDigests: (metadata) =>
@@ -101,14 +118,24 @@ export class CocoapodsAdapter implements RegistryPlugin {
     .capabilities(this.capabilities)
     .authChallenge(this.authChallenge)
     .routes((route) => [
-      // Literal/static routes first so they cannot be shadowed by `/:pod` (the
-      // route-matcher tries routes in order).
+      // Literal/static routes first so they cannot be shadowed by the single-segment
+      // `/:shardFile` (GET) or `/:pod` (PUT) routes — the route-matcher tries routes
+      // in declared order and returns the first match.
+      route.get("/CocoaPods-version.yml", "cdnVersion", ({ req }) => this.cdnVersion(req)),
+      route.get("/deprecated_podspecs.txt", "deprecated", ({ req }) => this.deprecated(req)),
+      route.get("/all_pods.txt", "allPodsText", ({ req, ctx }) => this.allPodsText(req, ctx)),
       route.get("/all_pods.json", "index", ({ req, ctx }) => this.index(req, ctx)),
       route.get("/Specs/:tail+", "podspec", ({ params, req, ctx }) =>
         this.podspec(params.tail, req, ctx),
       ),
       route.get("/pods/:pod/:version/:filename", "download", ({ params, req, ctx }) =>
         this.download(params.pod, params.version, params.filename, req, ctx),
+      ),
+      // Per-shard versions index `all_pods_versions_<a>_<b>_<c>.txt`. The matcher only
+      // binds whole `:param` segments, so this single-segment route catches the shard
+      // filename and the handler validates the exact `all_pods_versions_*.txt` shape.
+      route.get("/:shardFile", "shardIndex", ({ params, req, ctx }) =>
+        this.shardIndex(params.shardFile, req, ctx),
       ),
       route.put("/:pod", "publish", ({ params, req, ctx }) => this.publish(params.pod, req, ctx)),
     ])
@@ -195,13 +222,13 @@ export class CocoapodsAdapter implements RegistryPlugin {
   }
 
   /**
-   * `GET /all_pods.json` — `{ <pod>: [<version>, ...] }` over live packages and
-   * their published versions (CocoaPods' CDN exposes an `all_pods.json` listing).
+   * Enumerate every live pod and its parseable versions, oldest-first, in deterministic
+   * alphabetical pod order so generated indexes (and their ETags) are stable. Pods with
+   * no parseable version are omitted. Shared by all index/listing handlers.
    */
-  private async index(req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  private async listPodVersions(ctx: RegistryRequestContext): Promise<PodVersions[]> {
     const names = await ctx.data.packages.listNames();
-    const index: Record<string, string[]> = {};
-    // Deterministic ordering so the ETag is stable across requests.
+    const out: PodVersions[] = [];
     for (const { name } of [...names].sort((a, b) => a.name.localeCompare(b.name))) {
       const pkg = await ctx.data.packages.findByName(name);
       if (!pkg) continue;
@@ -210,7 +237,73 @@ export class CocoapodsAdapter implements RegistryPlugin {
         const meta = parsePodVersionMeta(row.metadata);
         if (meta) versions.push(row.version);
       }
-      if (versions.length > 0) index[name] = versions;
+      if (versions.length > 0) out.push({ name, versions });
+    }
+    return out;
+  }
+
+  /**
+   * `GET /CocoaPods-version.yml` — the CDN bootstrap document the `Source::CDN` client
+   * fetches FIRST in `refresh_metadata`. It advertises `prefix_lengths`, which drives the
+   * shard fragment the client computes for every subsequent index and podspec URL.
+   */
+  private cdnVersion(req: Request): Response {
+    const [a, b, c] = COCOAPODS_PREFIX_LENGTHS;
+    // Hand-rolled YAML (no YAML dependency in this package); a flow-style sequence and
+    // scalar string values are all the client parses here. `min`/`last` only feed the
+    // client's "newer CocoaPods available" notice; `prefix_lengths` drives sharding.
+    const body = `---\nmin: "1.0.0"\nlast: "1.0.0"\nprefix_lengths: [${a}, ${b}, ${c}]\n`;
+    return textResponseWithEtag(req, body, { "content-type": YAML_CONTENT_TYPE });
+  }
+
+  /**
+   * `GET /deprecated_podspecs.txt` — fetched during `refresh_metadata`. A hosting registry
+   * deprecates nothing, so this is a deterministic empty 200 (strict/older clients treat a
+   * non-200 here as a failure rather than fall through to the `/:pod` matcher).
+   */
+  private deprecated(req: Request): Response {
+    return textResponseWithEtag(req, "", { "content-type": TEXT_CONTENT_TYPE });
+  }
+
+  /**
+   * `GET /all_pods.txt` — the newline-delimited pod listing the CDN exposes (alphabetical,
+   * one pod name per line). This is the real CDN index file (vs. the bespoke `all_pods.json`).
+   */
+  private async allPodsText(req: Request, ctx: RegistryRequestContext): Promise<Response> {
+    const pods = await this.listPodVersions(ctx);
+    const body = pods.map((p) => p.name).join("\n");
+    return textResponseWithEtag(req, body, { "content-type": TEXT_CONTENT_TYPE });
+  }
+
+  /**
+   * `GET /all_pods_versions_<a>_<b>_<c>.txt` — the per-shard version index the CDN client
+   * reads to resolve which versions of a pod exist. One line per pod in the `md5(name)`
+   * shard: `<podName>/<version1>/<version2>/...` (name first, then every live version).
+   */
+  private async shardIndex(
+    shardFile: string,
+    req: Request,
+    ctx: RegistryRequestContext,
+  ): Promise<Response> {
+    const shard = parseShardIndexFilename(shardFile);
+    // Any single segment reaches here; only a well-formed shard filename resolves.
+    if (!shard) return new Response("Not Found", { status: 404 });
+    const pods = await this.listPodVersions(ctx);
+    const lines = pods
+      .filter((p) => podInShard(p.name, shard))
+      .map((p) => [p.name, ...p.versions].join("/"));
+    return textResponseWithEtag(req, lines.join("\n"), { "content-type": TEXT_CONTENT_TYPE });
+  }
+
+  /**
+   * `GET /all_pods.json` — `{ <pod>: [<version>, ...] }` over live packages and their
+   * published versions. This is a hootifactory/UI convenience listing, not a route the
+   * CocoaPods CDN client requests (it reads `all_pods.txt` + the sharded indexes above).
+   */
+  private async index(req: Request, ctx: RegistryRequestContext): Promise<Response> {
+    const index: Record<string, string[]> = {};
+    for (const { name, versions } of await this.listPodVersions(ctx)) {
+      index[name] = versions;
     }
     return textResponseWithEtag(req, JSON.stringify(index), {
       "content-type": JSON_CONTENT_TYPE,
