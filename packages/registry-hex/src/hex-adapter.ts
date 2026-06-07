@@ -1,5 +1,4 @@
 import {
-  delegateRegistryPlugin,
   type HttpMethod,
   type Permission,
   parseRegistryInput,
@@ -7,10 +6,8 @@ import {
   type RegistryRequestContext,
   type RouteMatch,
   readWritePermission,
-  registryBearerAuthChallenge,
-  registryCapabilities,
+  registryAdapter,
   registryErrorResponseForKind,
-  registryPlugin,
   serveRegistryBlob,
   textResponseWithEtag,
 } from "@hootifactory/registry";
@@ -62,103 +59,7 @@ function jsonNotFound(message: string): Response {
  * hosted impl serves a documented JSON representation of the same data instead of
  * shipping a protobuf signer (see hex-metadata.ts for the JSON shapes).
  */
-export class HexAdapter implements RegistryPlugin {
-  readonly id = "hex" as const;
-  // Hex repos can be virtualized (the resolver-index convention shared with
-  // rubygems/cargo/pub). They are NOT proxyable: this adapter implements no
-  // `proxyIngest`, so advertising `proxyable` would be dishonest — the platform's
-  // proxy-create guard keys off the implementation, not the flag, and would reject
-  // every proxy Hex repo anyway.
-  readonly capabilities = registryCapabilities("virtualizable");
-  // Hex authenticates with a bearer/bare token in the `authorization` header,
-  // which the platform auth middleware handles directly; advertise a bearer
-  // challenge for the 401 path.
-  authChallenge = (permission: Permission, ctx: RegistryRequestContext) =>
-    registryBearerAuthChallenge({ ctx, permission });
-
-  private readonly plugin = registryPlugin(this.id)
-    .module({
-      displayName: "Hex",
-      mountSegment: "hex",
-      errorResponseKind: "singleError",
-      compressibleHandlers: ["names", "versions", "packageResource", "apiPackage", "apiRelease"],
-      scan: {
-        defaultOsvEcosystem: "Hex",
-        dependencyGraph: ({ metadata }) => ({
-          deps: hexDependencyGraph(metadata),
-          osvEcosystem: "Hex",
-          purlType: "hex",
-        }),
-        referencedDigests: (metadata) =>
-          typeof metadata.blobDigest === "string" ? [metadata.blobDigest] : [],
-      },
-    })
-    .capabilities(this.capabilities)
-    .authChallenge(this.authChallenge)
-    .routes((route) => [
-      // Publish: static routes declared before the `:name` catch-alls.
-      route.post("/api/publish", "publish", ({ req, ctx }) => this.publish(req, ctx)),
-      route.post("/publish", "publish", ({ req, ctx }) => this.publish(req, ctx)),
-      // The canonical `mix hex.publish` endpoint: hex_core's
-      // `hex_api_release:publish/3` POSTs the raw tarball to the path
-      // `packages/<name>/releases` under the API base (with an optional
-      // `?replace=…` query). The tarball's own metadata.config carries name +
-      // version, so the `:name` path param is informational — declared ahead of
-      // the GET-only `/api/packages/:name` route (method guard disambiguates).
-      route.post("/api/packages/:name/releases", "publish", ({ req, ctx }) =>
-        this.publish(req, ctx),
-      ),
-      // Repository resources (literal segments before `/packages/:name`).
-      route.get("/names", "names", ({ req, ctx }) => this.names(req, ctx)),
-      route.get("/versions", "versions", ({ req, ctx }) => this.versions(req, ctx)),
-      // HTTP API: the `/releases/:version` route is more specific, so it precedes
-      // the `/api/packages/:name` route in the (ordered) match table.
-      route.get("/api/packages/:name/releases/:version", "apiRelease", ({ params, req, ctx }) =>
-        this.apiRelease(params.name, params.version, req, ctx),
-      ),
-      route.get("/api/packages/:name", "apiPackage", ({ params, req, ctx }) =>
-        this.apiPackage(params.name, req, ctx),
-      ),
-      route.get("/tarballs/:filename", "download", ({ params, req, ctx }) =>
-        this.download(params.filename, req, ctx),
-      ),
-      route.get("/packages/:name", "packageResource", ({ params, req, ctx }) =>
-        this.packageResource(params.name, req, ctx),
-      ),
-    ])
-    .build();
-  private readonly delegate = delegateRegistryPlugin(this.plugin);
-
-  get displayName() {
-    return this.plugin.displayName;
-  }
-  get mountSegment() {
-    return this.plugin.mountSegment;
-  }
-  get repositoryNamePolicy() {
-    return this.plugin.repositoryNamePolicy;
-  }
-  get acceptsRegistryBearerToken() {
-    return this.plugin.acceptsRegistryBearerToken;
-  }
-  get apiKeyHeaders() {
-    return this.plugin.apiKeyHeaders;
-  }
-  get errorResponseKind() {
-    return this.plugin.errorResponseKind;
-  }
-  get compressibleHandlers() {
-    return this.plugin.compressibleHandlers;
-  }
-  get compressibleContentTypes() {
-    return this.plugin.compressibleContentTypes;
-  }
-  get scan() {
-    return this.plugin.scan;
-  }
-
-  routes = this.delegate.routes;
-
+class HexAdapterState {
   requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
     const permission = readWritePermission(method);
     const name = match?.params.name;
@@ -182,8 +83,6 @@ export class HexAdapter implements RegistryPlugin {
     return permission;
   }
 
-  handle = this.delegate.handle;
-
   /** Live releases for a package, oldest-first, with parsed metadata. */
   private async storedReleases(
     name: string,
@@ -199,7 +98,7 @@ export class HexAdapter implements RegistryPlugin {
   }
 
   /** `GET /names` — every live package name (JSON; real Hex signs protobuf). */
-  private async names(req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  async names(req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const names = await ctx.data.packages.listNames();
     const sorted = [...names].map((n) => n.name).sort((a, b) => a.localeCompare(b));
     return textResponseWithEtag(req, JSON.stringify(buildHexNamesResource(sorted)), {
@@ -208,7 +107,7 @@ export class HexAdapter implements RegistryPlugin {
   }
 
   /** `GET /versions` — every live package's version list (JSON simplification). */
-  private async versions(req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  async versions(req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const names = await ctx.data.packages.listNames();
     const sorted = [...names].map((n) => n.name).sort((a, b) => a.localeCompare(b));
     const packages: { name: string; versions: string[] }[] = [];
@@ -224,7 +123,7 @@ export class HexAdapter implements RegistryPlugin {
   }
 
   /** `GET /packages/:name` — the package's release list (JSON simplification). */
-  private async packageResource(
+  async packageResource(
     nameRaw: string,
     req: Request,
     ctx: RegistryRequestContext,
@@ -240,11 +139,7 @@ export class HexAdapter implements RegistryPlugin {
   }
 
   /** `GET /api/packages/:name` — HTTP API package metadata + release refs. */
-  private async apiPackage(
-    nameRaw: string,
-    req: Request,
-    ctx: RegistryRequestContext,
-  ): Promise<Response> {
+  async apiPackage(nameRaw: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const name = parseHexName(nameRaw);
     const releases = await this.storedReleases(name, ctx);
     if (!releases || releases.length === 0) return jsonNotFound(`package ${name} not found`);
@@ -261,7 +156,7 @@ export class HexAdapter implements RegistryPlugin {
   }
 
   /** `GET /api/packages/:name/releases/:version` — HTTP API single-release metadata. */
-  private async apiRelease(
+  async apiRelease(
     nameRaw: string,
     versionRaw: string,
     req: Request,
@@ -287,7 +182,7 @@ export class HexAdapter implements RegistryPlugin {
   }
 
   /** `GET /tarballs/<name>-<version>.tar` — serve the hosted release tarball blob. */
-  private async download(
+  async download(
     filenameRaw: string,
     req: Request,
     ctx: RegistryRequestContext,
@@ -313,7 +208,7 @@ export class HexAdapter implements RegistryPlugin {
     });
   }
 
-  private publish(req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  publish(req: Request, ctx: RegistryRequestContext): Promise<Response> {
     return handleHexPublish(req, ctx);
   }
 }
@@ -325,4 +220,67 @@ function hexDependencyGraph(metadata: Record<string, unknown>): Record<string, s
   return Object.fromEntries(Object.entries(reqs).map(([name, req]) => [name, req.requirement]));
 }
 
+const hexDefinition = registryAdapter("hex")
+  .stateClass(HexAdapterState)
+  .module((module) =>
+    module
+      .displayName("Hex")
+      .mount("hex")
+      // Hex repos can be virtualized (the resolver-index convention shared with
+      // rubygems/cargo/pub). They are NOT proxyable: this adapter implements no
+      // `proxyIngest`, so advertising `proxyable` would be dishonest.
+      .capabilities("virtualizable")
+      .errorResponseKind("singleError")
+      .compressibleHandlers("names", "versions", "packageResource", "apiPackage", "apiRelease"),
+  )
+  .scan({
+    defaultOsvEcosystem: "Hex",
+    dependencyGraph: ({ metadata }) => ({
+      deps: hexDependencyGraph(metadata),
+      osvEcosystem: "Hex",
+      purlType: "hex",
+    }),
+    referencedDigests: (metadata) =>
+      typeof metadata.blobDigest === "string" ? [metadata.blobDigest] : [],
+  })
+  // Hex authenticates with a bearer/bare token in the `authorization` header,
+  // which the platform auth middleware handles directly; advertise a bearer
+  // challenge for the 401 path.
+  .registryBearerAuth()
+  .fromState((state) => state.defaultPermission("requiredPermission"))
+  .routes((route) => [
+    // Publish: static routes declared before the `:name` catch-alls.
+    route.post("/api/publish", "publish").calls((state, { req, ctx }) => state.publish(req, ctx)),
+    route.post("/publish", "publish").calls((state, { req, ctx }) => state.publish(req, ctx)),
+    // The canonical `mix hex.publish` endpoint: hex_core's
+    // `hex_api_release:publish/3` POSTs the raw tarball to the path
+    // `packages/<name>/releases` under the API base (with an optional
+    // `?replace=...` query). The tarball's own metadata.config carries name +
+    // version, so the `:name` path param is informational — declared ahead of
+    // the GET-only `/api/packages/:name` route (method guard disambiguates).
+    route
+      .post("/api/packages/:name/releases", "publish")
+      .calls((state, { req, ctx }) => state.publish(req, ctx)),
+    // Repository resources (literal segments before `/packages/:name`).
+    route.get("/names", "names").calls((state, { req, ctx }) => state.names(req, ctx)),
+    route.get("/versions", "versions").calls((state, { req, ctx }) => state.versions(req, ctx)),
+    // HTTP API: the `/releases/:version` route is more specific, so it precedes
+    // the `/api/packages/:name` route in the (ordered) match table.
+    route
+      .get("/api/packages/:name/releases/:version", "apiRelease")
+      .calls((state, { params, req, ctx }) =>
+        state.apiRelease(params.name, params.version, req, ctx),
+      ),
+    route
+      .get("/api/packages/:name", "apiPackage")
+      .calls((state, { params, req, ctx }) => state.apiPackage(params.name, req, ctx)),
+    route
+      .get("/tarballs/:filename", "download")
+      .calls((state, { params, req, ctx }) => state.download(params.filename, req, ctx)),
+    route
+      .get("/packages/:name", "packageResource")
+      .calls((state, { params, req, ctx }) => state.packageResource(params.name, req, ctx)),
+  ]);
+
+export class HexAdapter extends hexDefinition.adapterClass() {}
 export const hexRegistryPlugin: RegistryPlugin = new HexAdapter();
