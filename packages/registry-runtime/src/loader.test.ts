@@ -57,10 +57,12 @@ describe("loadConfiguredRegistryPlugins", () => {
       "homebrew",
       "scoop",
       "rpm",
+      "ansible",
       "oci",
       "helm",
       "yum",
       "dnf",
+      "galaxy",
     ]);
   });
 
