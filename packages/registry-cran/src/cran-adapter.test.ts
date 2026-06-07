@@ -76,10 +76,15 @@ function match(handlerId: string, pattern: string, params: Record<string, string
 }
 
 describe("CranAdapter", () => {
-  test("declares index, download, publish, and binary routes (literals before :filename)", () => {
+  test("declares index, archive, download, publish, and binary routes (literals before :filename)", () => {
     expect(new CranAdapter().routes()).toEqual([
       { method: "GET", pattern: "/src/contrib/PACKAGES", handlerId: "packages" },
       { method: "GET", pattern: "/src/contrib/PACKAGES.gz", handlerId: "packagesGz" },
+      {
+        method: "GET",
+        pattern: "/src/contrib/Archive/:pkg/:filename",
+        handlerId: "archiveDownload",
+      },
       { method: "GET", pattern: "/src/contrib/:filename", handlerId: "download" },
       { method: "PUT", pattern: "/src/contrib/:filename", handlerId: "publish" },
       { method: "GET", pattern: "/bin/:path+", handlerId: "binary" },
@@ -198,6 +203,116 @@ describe("CranAdapter", () => {
     expect(served.digest).toBe(DIGEST);
     expect(res.headers.get("content-type")).toBe("application/gzip");
     expect(await res.text()).toBe("tarball-bytes");
+  });
+
+  test("Archive download serves a superseded version's stored blob", async () => {
+    const ctx = cranContext();
+    const served: { digest?: string; scope?: string } = {};
+    const oldMeta = { ...storedMeta, version: "0.9.1" };
+    ctx.data.packages.findByName = async (name) => {
+      expect(name).toBe("demo");
+      return pkgRow("demo");
+    };
+    ctx.data.versions.findLive = async (_pkg, version) => {
+      expect(version).toBe("0.9.1");
+      return versionRow(oldMeta, "0.9.1");
+    };
+    ctx.data.content.blobRefExists = async ({ scope }) => {
+      served.scope = scope;
+      return true;
+    };
+    ctx.data.content.serveBlobIfClean = async ({ digest, contentType }) => {
+      served.digest = digest;
+      return new Response("old-tarball-bytes", { headers: { "content-type": contentType } });
+    };
+
+    const res = await new CranAdapter().handle(
+      {
+        entry: {
+          method: "GET",
+          pattern: "/src/contrib/Archive/:pkg/:filename",
+          handlerId: "archiveDownload",
+        },
+        params: { pkg: "demo", filename: "demo_0.9.1.tar.gz" },
+        path: "/src/contrib/Archive/demo/demo_0.9.1.tar.gz",
+      },
+      new Request("https://r.test/cran/private/src/contrib/Archive/demo/demo_0.9.1.tar.gz"),
+      ctx,
+    );
+    expect(res.status).toBe(200);
+    expect(served.digest).toBe(DIGEST);
+    // Resolves to the same flat blob scope the live download route uses.
+    expect(served.scope).toBe("src/contrib/demo_0.9.1.tar.gz");
+    expect(res.headers.get("content-type")).toBe("application/gzip");
+    expect(await res.text()).toBe("old-tarball-bytes");
+  });
+
+  test("Archive download permission targets the artifact ref from the filename", () => {
+    const adapter = new CranAdapter();
+    const m = {
+      entry: {
+        method: "GET",
+        pattern: "/src/contrib/Archive/:pkg/:filename",
+        handlerId: "archiveDownload",
+      },
+      params: { pkg: "demo", filename: "demo_0.9.1.tar.gz" },
+      path: "/src/contrib/Archive/demo/demo_0.9.1.tar.gz",
+    } satisfies RouteMatch;
+    expect(adapter.requiredPermission("GET", m)).toEqual({
+      action: "read",
+      resource: {
+        type: "artifact",
+        packageName: "demo",
+        artifactRef: "src/contrib/demo_0.9.1.tar.gz",
+      },
+    });
+  });
+
+  test("Archive download 404s when the :pkg segment disagrees with the filename", async () => {
+    const ctx = cranContext();
+    let lookedUp = false;
+    ctx.data.packages.findByName = async () => {
+      lookedUp = true;
+      return pkgRow("demo");
+    };
+    await expect(
+      new CranAdapter().handle(
+        {
+          entry: {
+            method: "GET",
+            pattern: "/src/contrib/Archive/:pkg/:filename",
+            handlerId: "archiveDownload",
+          },
+          params: { pkg: "other", filename: "demo_0.9.1.tar.gz" },
+          path: "/src/contrib/Archive/other/demo_0.9.1.tar.gz",
+        },
+        new Request("https://r.test/cran/private/src/contrib/Archive/other/demo_0.9.1.tar.gz"),
+        ctx,
+      ),
+    ).rejects.toMatchObject({ status: 404 });
+    // The mismatch is rejected before any data lookup.
+    expect(lookedUp).toBe(false);
+  });
+
+  test("Archive download 404s when the archived version is not live", async () => {
+    const ctx = cranContext();
+    ctx.data.packages.findByName = async () => pkgRow("demo");
+    ctx.data.versions.findLive = async () => null;
+    await expect(
+      new CranAdapter().handle(
+        {
+          entry: {
+            method: "GET",
+            pattern: "/src/contrib/Archive/:pkg/:filename",
+            handlerId: "archiveDownload",
+          },
+          params: { pkg: "demo", filename: "demo_0.0.1.tar.gz" },
+          path: "/src/contrib/Archive/demo/demo_0.0.1.tar.gz",
+        },
+        new Request("https://r.test/cran/private/src/contrib/Archive/demo/demo_0.0.1.tar.gz"),
+        ctx,
+      ),
+    ).rejects.toMatchObject({ status: 404 });
   });
 
   test("download 404s for an unparseable filename", async () => {

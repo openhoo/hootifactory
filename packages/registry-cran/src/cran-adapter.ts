@@ -69,6 +69,12 @@ export class CranAdapter implements RegistryPlugin {
       route.get("/src/contrib/PACKAGES.gz", "packagesGz", ({ req, ctx }) =>
         this.packages(true, req, ctx),
       ),
+      // Superseded versions are fetched by R tooling (remotes::install_version,
+      // renv, pak) only under `Archive/<pkg>/`. Declared before the
+      // `/src/contrib/:filename` catch-all so the literal `Archive` segment wins.
+      route.get("/src/contrib/Archive/:pkg/:filename", "archiveDownload", ({ params, req, ctx }) =>
+        this.archiveDownload(params.pkg, params.filename, req, ctx),
+      ),
       route.get("/src/contrib/:filename", "download", ({ params, req, ctx }) =>
         this.download(params.filename, req, ctx),
       ),
@@ -116,9 +122,10 @@ export class CranAdapter implements RegistryPlugin {
   requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
     const permission = readWritePermission(method);
     const filename = match?.params.filename;
+    const handlerId = match?.entry?.handlerId;
     if (
       filename &&
-      (match?.entry?.handlerId === "download" || match?.entry?.handlerId === "publish")
+      (handlerId === "download" || handlerId === "publish" || handlerId === "archiveDownload")
     ) {
       const parts = parseCranTarballFilename(filename);
       if (parts) {
@@ -179,19 +186,47 @@ export class CranAdapter implements RegistryPlugin {
   }
 
   /** `GET /src/contrib/<pkg>_<version>.tar.gz` — serve the stored source tarball. */
-  private async download(
+  private download(
     filenameRaw: string,
     req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
     const parts = parseCranTarballFilename(filenameRaw);
     if (!parts) throw Errors.notFound();
-    const pkg = await ctx.data.packages.findByName(parts.name);
+    return this.serveTarball(parts.name, parts.version, req, ctx);
+  }
+
+  /**
+   * `GET /src/contrib/Archive/<pkg>/<pkg>_<version>.tar.gz` — serve a superseded
+   * source tarball. R tooling (remotes::install_version, renv, pak) requests any
+   * non-current release exclusively under this Archive layout, so it must resolve
+   * the same stored blob the flat download route would. The `<pkg>` path segment
+   * must agree with the filename's encoded package name.
+   */
+  private archiveDownload(
+    pkgSegment: string,
+    filenameRaw: string,
+    req: Request,
+    ctx: RegistryRequestContext,
+  ): Promise<Response> {
+    const parts = parseCranTarballFilename(filenameRaw);
+    if (!parts || parts.name !== pkgSegment) throw Errors.notFound();
+    return this.serveTarball(parts.name, parts.version, req, ctx);
+  }
+
+  /** Resolve any live version of `name` and stream its stored source tarball. */
+  private async serveTarball(
+    name: string,
+    version: string,
+    req: Request,
+    ctx: RegistryRequestContext,
+  ): Promise<Response> {
+    const pkg = await ctx.data.packages.findByName(name);
     if (!pkg) throw Errors.notFound();
-    const row = await ctx.data.versions.findLive(pkg, parts.version);
+    const row = await ctx.data.versions.findLive(pkg, version);
     const meta = parseCranVersionMeta(row?.metadata);
     if (!meta) throw Errors.notFound();
-    const scope = cranBlobScope(parts.name, parts.version);
+    const scope = cranBlobScope(name, version);
     return serveRegistryBlob(ctx, {
       digest: meta.blobDigest,
       kind: CRAN_TARBALL_KIND,
