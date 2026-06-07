@@ -1,6 +1,4 @@
 import {
-  bearerAuthChallenge,
-  delegateRegistryPlugin,
   Errors,
   type HttpMethod,
   type Permission,
@@ -9,8 +7,7 @@ import {
   type RegistryRequestContext,
   type RouteMatch,
   readWritePermission,
-  registryCapabilities,
-  registryPlugin,
+  registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
 } from "@hootifactory/registry";
@@ -45,91 +42,7 @@ function parseCrateVersion(version: string): string {
 }
 
 /** Cargo sparse registry: config.json, sharded index, publish + download. */
-export class CargoAdapter implements RegistryPlugin {
-  readonly id = "cargo" as const;
-  readonly capabilities = registryCapabilities("virtualizable");
-  authChallenge = () => bearerAuthChallenge();
-
-  private readonly plugin = registryPlugin(this.id)
-    .module({
-      displayName: "Cargo",
-      mountSegment: "cargo",
-      errorResponseKind: "errorsDetail",
-      compressibleHandlers: ["config", "index", "ownersList"],
-      scan: {
-        defaultOsvEcosystem: "crates.io",
-        dependencyGraph: ({ metadata }) => ({
-          deps: cargoDependencyGraph(metadata),
-          osvEcosystem: "crates.io",
-          purlType: "cargo",
-        }),
-        referencedDigests: (metadata) =>
-          typeof metadata.crateDigest === "string" ? [metadata.crateDigest] : [],
-      },
-    })
-    .capabilities(this.capabilities)
-    .authChallenge(this.authChallenge)
-    .routes((route) => [
-      route.get("/config.json", "config", ({ ctx }) =>
-        Response.json({
-          dl: `${ctx.baseUrl}/${ctx.repo.mountPath}/api/v1/crates`,
-          api: `${ctx.baseUrl}/${ctx.repo.mountPath}`,
-        }),
-      ),
-      route.put("/api/v1/crates/new", "publish", ({ req, ctx }) => this.publish(req, ctx)),
-      route.get("/api/v1/crates/:crate/:version/download", "download", ({ params, req, ctx }) =>
-        this.download(params.crate, params.version, req, ctx),
-      ),
-      route.delete("/api/v1/crates/:crate/:version/yank", "yank", ({ params, ctx }) =>
-        this.setYank(params.crate, params.version, true, ctx),
-      ),
-      route.put("/api/v1/crates/:crate/:version/unyank", "unyank", ({ params, ctx }) =>
-        this.setYank(params.crate, params.version, false, ctx),
-      ),
-      route.get("/api/v1/crates/:crate/owners", "ownersList", ({ params, ctx }) =>
-        this.listOwners(params.crate, ctx),
-      ),
-      route.put("/api/v1/crates/:crate/owners", "ownersAdd", ({ params, req, ctx }) =>
-        this.updateOwners(params.crate, req, "add", ctx),
-      ),
-      route.delete("/api/v1/crates/:crate/owners", "ownersRemove", ({ params, req, ctx }) =>
-        this.updateOwners(params.crate, req, "remove", ctx),
-      ),
-      route.get("/:path+", "index", ({ params, req, ctx }) => this.index(params.path, req, ctx)),
-    ])
-    .build();
-  private readonly delegate = delegateRegistryPlugin(this.plugin);
-
-  get displayName() {
-    return this.plugin.displayName;
-  }
-  get mountSegment() {
-    return this.plugin.mountSegment;
-  }
-  get repositoryNamePolicy() {
-    return this.plugin.repositoryNamePolicy;
-  }
-  get acceptsRegistryBearerToken() {
-    return this.plugin.acceptsRegistryBearerToken;
-  }
-  get apiKeyHeaders() {
-    return this.plugin.apiKeyHeaders;
-  }
-  get errorResponseKind() {
-    return this.plugin.errorResponseKind;
-  }
-  get compressibleHandlers() {
-    return this.plugin.compressibleHandlers;
-  }
-  get compressibleContentTypes() {
-    return this.plugin.compressibleContentTypes;
-  }
-  get scan() {
-    return this.plugin.scan;
-  }
-
-  routes = this.delegate.routes;
-
+class CargoAdapterState {
   requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
     const permission = readWritePermission(method);
     const crate = match?.params.crate;
@@ -150,13 +63,11 @@ export class CargoAdapter implements RegistryPlugin {
     return permission;
   }
 
-  handle = this.delegate.handle;
-
-  private findCrate(ctx: RegistryRequestContext, name: string) {
+  findCrate(ctx: RegistryRequestContext, name: string) {
     return ctx.data.packages.findByName(name.toLowerCase());
   }
 
-  private async index(path: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  async index(path: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     path = parseRegistryInput(CargoIndexPathSchema, path, {
       code: "NAME_INVALID",
       message: "invalid cargo index path",
@@ -176,7 +87,7 @@ export class CargoAdapter implements RegistryPlugin {
     return textResponseWithEtag(req, `${lines}\n`, { "content-type": "text/plain" });
   }
 
-  private async download(
+  async download(
     crate: string,
     version: string,
     req: Request,
@@ -203,7 +114,7 @@ export class CargoAdapter implements RegistryPlugin {
   }
 
   /** Toggle the yanked flag in a crate version's stored index entry. */
-  private async setYank(
+  async setYank(
     crate: string,
     version: string,
     yanked: boolean,
@@ -224,7 +135,7 @@ export class CargoAdapter implements RegistryPlugin {
     return Response.json({ ok: true });
   }
 
-  private async listOwners(crate: string, ctx: RegistryRequestContext): Promise<Response> {
+  async listOwners(crate: string, ctx: RegistryRequestContext): Promise<Response> {
     crate = parseCrateName(crate).toLowerCase();
     const pkg = await this.findCrate(ctx, crate);
     if (!pkg) throw Errors.notFound();
@@ -232,7 +143,7 @@ export class CargoAdapter implements RegistryPlugin {
     return Response.json(buildCargoOwnersBody(rows));
   }
 
-  private async updateOwners(
+  async updateOwners(
     crate: string,
     req: Request,
     action: "add" | "remove",
@@ -245,7 +156,7 @@ export class CargoAdapter implements RegistryPlugin {
     return Response.json(buildCargoOwnersUpdateBody(body.users.length, action));
   }
 
-  private async publish(req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  async publish(req: Request, ctx: RegistryRequestContext): Promise<Response> {
     return handleCargoPublish(req, ctx);
   }
 }
@@ -256,4 +167,57 @@ function cargoDependencyGraph(metadata: Record<string, unknown>): Record<string,
   return Object.fromEntries(parsed.index.deps.map((dep) => [dep.name, dep.req]));
 }
 
+const cargoDefinition = registryAdapter("cargo")
+  .stateClass(CargoAdapterState)
+  .module((module) =>
+    module
+      .displayName("Cargo")
+      .mount("cargo")
+      .capabilities("virtualizable")
+      .errorResponseKind("errorsDetail")
+      .compressibleHandlers("config", "index", "ownersList"),
+  )
+  .scan((scan) =>
+    scan
+      .osvEcosystem("crates.io")
+      .purlType("cargo")
+      .dependencies(cargoDependencyGraph)
+      .referencedDigestPaths("crateDigest"),
+  )
+  .bearerAuth()
+  .fromState((state) => state.defaultPermission("requiredPermission"))
+  .routes((route) => [
+    route.get("/config.json", "config").json(({ ctx }) => ({
+      dl: `${ctx.baseUrl}/${ctx.repo.mountPath}/api/v1/crates`,
+      api: `${ctx.baseUrl}/${ctx.repo.mountPath}`,
+    })),
+    route
+      .put("/api/v1/crates/new", "publish")
+      .calls((state, { req, ctx }) => state.publish(req, ctx)),
+    route
+      .get("/api/v1/crates/:crate/:version/download", "download")
+      .calls((state, { params, req, ctx }) =>
+        state.download(params.crate, params.version, req, ctx),
+      ),
+    route
+      .delete("/api/v1/crates/:crate/:version/yank", "yank")
+      .calls((state, { params, ctx }) => state.setYank(params.crate, params.version, true, ctx)),
+    route
+      .put("/api/v1/crates/:crate/:version/unyank", "unyank")
+      .calls((state, { params, ctx }) => state.setYank(params.crate, params.version, false, ctx)),
+    route
+      .get("/api/v1/crates/:crate/owners", "ownersList")
+      .calls((state, { params, ctx }) => state.listOwners(params.crate, ctx)),
+    route
+      .put("/api/v1/crates/:crate/owners", "ownersAdd")
+      .calls((state, { params, req, ctx }) => state.updateOwners(params.crate, req, "add", ctx)),
+    route
+      .delete("/api/v1/crates/:crate/owners", "ownersRemove")
+      .calls((state, { params, req, ctx }) => state.updateOwners(params.crate, req, "remove", ctx)),
+    route
+      .get("/:path+", "index")
+      .calls((state, { params, req, ctx }) => state.index(params.path, req, ctx)),
+  ]);
+
+export class CargoAdapter extends cargoDefinition.adapterClass() {}
 export const cargoRegistryPlugin: RegistryPlugin = new CargoAdapter();
