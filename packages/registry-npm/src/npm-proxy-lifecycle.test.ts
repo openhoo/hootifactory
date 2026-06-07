@@ -324,7 +324,7 @@ describe("handleNpmProxyIngest mirroring", () => {
   test("reuses an existing live version when the upstream dist matches the stored dist", async () => {
     const stored = {
       filename: "pkg-1.0.0.tgz",
-      blobDigest: "sha256:" + "a".repeat(64),
+      blobDigest: `sha256:${"a".repeat(64)}`,
       shasum: "b".repeat(40),
       integrity: "sha512-storedstoredstored",
       size: 12,
@@ -471,7 +471,7 @@ describe("handleNpmProxyIngest mirroring", () => {
   test("re-upserts metadata when the stored dist matches but the manifest changed", async () => {
     const stored = {
       filename: "pkg-1.0.0.tgz",
-      blobDigest: "sha256:" + "c".repeat(64),
+      blobDigest: `sha256:${"c".repeat(64)}`,
       shasum: "d".repeat(40),
       integrity: "sha512-storedstoredstored",
       size: 12,

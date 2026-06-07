@@ -107,7 +107,7 @@ describe("handleNpmPublish: tarball publish", () => {
       expect(input.kind).toBe("npm_tarball");
       expect(input.scope).toBe("pkg@1.0.0");
       return {
-        digest: "sha256:" + "a".repeat(64),
+        digest: `sha256:${"a".repeat(64)}`,
         size: input.data.byteLength,
         deduped: false,
         refCreated: true,
@@ -170,7 +170,7 @@ describe("handleNpmPublish: tarball publish", () => {
     ctx.data.packages.findOrCreate = async () => pkgRow("pkg_1", "pkg");
     ctx.data.versions.exists = async () => false;
     ctx.data.content.storeBlobWithRef = async (input) => ({
-      digest: "sha256:" + "b".repeat(64),
+      digest: `sha256:${"b".repeat(64)}`,
       size: input.data.byteLength,
       deduped: false,
       refCreated: true,
@@ -222,7 +222,7 @@ describe("handleNpmPublish: tarball publish", () => {
     };
     ctx.data.versions.exists = async () => false;
     ctx.data.content.storeBlobWithRef = async (input) => ({
-      digest: "sha256:" + "c".repeat(64),
+      digest: `sha256:${"c".repeat(64)}`,
       size: input.data.byteLength,
       deduped: false,
       refCreated: true,
