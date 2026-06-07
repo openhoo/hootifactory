@@ -1,6 +1,4 @@
 import {
-  basicAuthChallenge,
-  delegateRegistryPlugin,
   Errors,
   type HttpMethod,
   ifNoneMatch,
@@ -11,8 +9,7 @@ import {
   type RegistryRequestContext,
   type RouteMatch,
   readWritePermission,
-  registryCapabilities,
-  registryPlugin,
+  registryAdapter,
   serveRegistryBlob,
 } from "@hootifactory/registry";
 import { type ArchDbEntry, buildArchDb } from "./arch-db";
@@ -68,79 +65,7 @@ function dbFileNames(repo: string): Set<string> {
  * versions, serves the `.pkg.tar.{zst,xz}` package blobs, accepts publish via
  * `PUT` of a package, and exposes an AUR-style `GET /rpc/?type=info` endpoint.
  */
-export class ArchAdapter implements RegistryPlugin {
-  readonly id = "arch" as const;
-  // Only `virtualizable` is honest: the platform's generic fan-out virtual
-  // dispatch works without per-adapter machinery (as apt/maven rely on). We do
-  // NOT declare `proxyable` because proxy-repo creation is gated on
-  // `adapter.proxyIngest`, which this adapter does not implement — advertising
-  // it would let an operator pick "proxy" only to be rejected at create time.
-  readonly capabilities = registryCapabilities("virtualizable");
-  authChallenge = basicAuthChallenge;
-
-  private readonly plugin = registryPlugin(this.id)
-    .module({
-      displayName: "Arch",
-      mountSegment: "arch",
-      errorResponseKind: "singleError",
-      compressibleHandlers: [],
-      scan: {
-        defaultOsvEcosystem: undefined,
-        dependencyGraph: ({ metadata }) => ({
-          deps: archDependencyGraph(metadata),
-          purlType: "alpm",
-        }),
-        referencedDigests: (metadata) =>
-          typeof metadata.blobDigest === "string" ? [metadata.blobDigest] : [],
-      },
-    })
-    .capabilities(this.capabilities)
-    .authChallenge(this.authChallenge)
-    .routes((route) => [
-      // `/rpc/` is a literal prefix declared before the `/:repo/...` catch-alls
-      // (the route-matcher tries routes in declared order).
-      route.get("/rpc/", "rpc", ({ req, ctx }) => this.rpc(req, ctx)),
-      route.get("/rpc", "rpc", ({ req, ctx }) => this.rpc(req, ctx)),
-      route.get("/:repo/os/:arch/:file", "fetch", ({ params, req, ctx }) =>
-        this.fetch(params.repo, params.arch, params.file, req, ctx),
-      ),
-      route.put("/:repo/os/:arch/:file", "publish", ({ params, req, ctx }) =>
-        this.publish(params.repo, params.arch, params.file, req, ctx),
-      ),
-    ])
-    .build();
-  private readonly delegate = delegateRegistryPlugin(this.plugin);
-
-  get displayName() {
-    return this.plugin.displayName;
-  }
-  get mountSegment() {
-    return this.plugin.mountSegment;
-  }
-  get repositoryNamePolicy() {
-    return this.plugin.repositoryNamePolicy;
-  }
-  get acceptsRegistryBearerToken() {
-    return this.plugin.acceptsRegistryBearerToken;
-  }
-  get apiKeyHeaders() {
-    return this.plugin.apiKeyHeaders;
-  }
-  get errorResponseKind() {
-    return this.plugin.errorResponseKind;
-  }
-  get compressibleHandlers() {
-    return this.plugin.compressibleHandlers;
-  }
-  get compressibleContentTypes() {
-    return this.plugin.compressibleContentTypes;
-  }
-  get scan() {
-    return this.plugin.scan;
-  }
-
-  routes = this.delegate.routes;
-
+class ArchAdapterState {
   requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
     const permission = readWritePermission(method);
     const file = match?.params.file;
@@ -150,8 +75,6 @@ export class ArchAdapter implements RegistryPlugin {
     }
     return permission;
   }
-
-  handle = this.delegate.handle;
 
   /**
    * Collect the CANONICAL sync-DB entries: exactly one per package name — the
@@ -182,7 +105,7 @@ export class ArchAdapter implements RegistryPlugin {
   }
 
   /** `GET /<repo>/os/<arch>/<file>` — sync DB, or a package blob, by extension. */
-  private async fetch(
+  async fetch(
     repoRaw: string,
     archRaw: string,
     fileRaw: string,
@@ -227,7 +150,7 @@ export class ArchAdapter implements RegistryPlugin {
     });
   }
 
-  private async publish(
+  async publish(
     repoRaw: string,
     archRaw: string,
     fileRaw: string,
@@ -245,7 +168,7 @@ export class ArchAdapter implements RegistryPlugin {
    *   `GET /rpc/?v=5&type=search&arg=<keyword>&by=name[-desc]` discovers
    *   packages by substring (the query yay/paru issue before resolving versions).
    */
-  private async rpc(req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  async rpc(req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const url = new URL(req.url);
     const type = url.searchParams.get("type") ?? "info";
     if (type === "search") {
@@ -308,4 +231,44 @@ function archDependencyGraph(metadata: Record<string, unknown>): Record<string, 
   return out;
 }
 
+const archDefinition = registryAdapter("arch")
+  .stateClass(ArchAdapterState)
+  .module((module) =>
+    module
+      .displayName("Arch")
+      .mount("arch")
+      // Only `virtualizable` is honest: generic virtual fan-out works without
+      // adapter-specific machinery, while proxy creation requires proxyIngest.
+      .capabilities("virtualizable")
+      .errorResponseKind("singleError"),
+  )
+  .scan({
+    defaultOsvEcosystem: undefined,
+    dependencyGraph: ({ metadata }) => ({
+      deps: archDependencyGraph(metadata),
+      purlType: "alpm",
+    }),
+    referencedDigests: (metadata) =>
+      typeof metadata.blobDigest === "string" ? [metadata.blobDigest] : [],
+  })
+  .basicAuth()
+  .fromState((state) => state.defaultPermission("requiredPermission"))
+  .routes((route) => [
+    // `/rpc/` is a literal prefix declared before the `/:repo/...` catch-alls
+    // (the route-matcher tries routes in declared order).
+    route.get("/rpc/", "rpc").calls((state, { req, ctx }) => state.rpc(req, ctx)),
+    route.get("/rpc", "rpc").calls((state, { req, ctx }) => state.rpc(req, ctx)),
+    route
+      .get("/:repo/os/:arch/:file", "fetch")
+      .calls((state, { params, req, ctx }) =>
+        state.fetch(params.repo, params.arch, params.file, req, ctx),
+      ),
+    route
+      .put("/:repo/os/:arch/:file", "publish")
+      .calls((state, { params, req, ctx }) =>
+        state.publish(params.repo, params.arch, params.file, req, ctx),
+      ),
+  ]);
+
+export class ArchAdapter extends archDefinition.adapterClass() {}
 export const archRegistryPlugin: RegistryPlugin = new ArchAdapter();
