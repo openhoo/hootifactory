@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import type {
-  RegistryBlobRefInput,
-  RegistryStoredBlob,
-  RouteMatch,
-  StoreBlobWithRefInput,
+import {
+  InvalidDigestError,
+  type RegistryBlobRefInput,
+  type RegistryStoredBlob,
+  type RouteMatch,
+  type StoreBlobStreamWithRefInput,
 } from "@hootifactory/registry";
 import { createTestRegistryContext } from "@hootifactory/registry/testing";
 import { GitLfsAdapter } from "./gitlfs-adapter";
@@ -200,14 +201,47 @@ describe("Git LFS adapter", () => {
     expect(res.status).toBe(422);
   });
 
-  // ── upload → download round-trip ───────────────────────────────────────────
-  test("PUT stores the object under its sha256 oid; GET serves it back", async () => {
+  test("batch bounds the number of concurrent existence probes", async () => {
     const ctx = lfsContext();
-    const captured: { stored?: StoreBlobWithRefInput; scannedDigest?: string } = {};
-    ctx.data.content.storeBlobWithRef = async (
-      input: StoreBlobWithRefInput,
+    let inFlight = 0;
+    let peak = 0;
+    ctx.data.content.blobRefExists = async () => {
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      // Yield so several probes overlap before any resolves.
+      await Promise.resolve();
+      inFlight -= 1;
+      return false;
+    };
+
+    const objects = Array.from({ length: 200 }, (_, i) => ({
+      oid: i.toString(16).padStart(64, "0"),
+      size: 1,
+    }));
+    const res = await new GitLfsAdapter().handle(
+      match(BATCH_ENTRY),
+      batchRequest({ operation: "download", objects }),
+      ctx,
+    );
+    expect(res.status).toBe(200);
+    // Far fewer than the 200 objects probed: the fan-out stays bounded.
+    expect(peak).toBeLessThanOrEqual(16);
+    expect(peak).toBeGreaterThan(1);
+  });
+
+  // ── upload → download round-trip ───────────────────────────────────────────
+  test("PUT streams the object under its sha256 oid; GET serves it back", async () => {
+    const ctx = lfsContext();
+    const captured: {
+      stored?: StoreBlobStreamWithRefInput;
+      bytes?: Uint8Array;
+      scannedDigest?: string;
+    } = {};
+    ctx.data.content.storeBlobStreamWithRef = async (
+      input: StoreBlobStreamWithRefInput,
     ): Promise<RegistryStoredBlob> => {
       captured.stored = input;
+      captured.bytes = new Uint8Array(await new Response(input.data).arrayBuffer());
       return {
         digest: HELLO_DIGEST,
         size: HELLO.length,
@@ -231,7 +265,9 @@ describe("Git LFS adapter", () => {
     expect(putRes.status).toBe(200);
     expect(captured.stored?.kind).toBe("gitlfs_object");
     expect(captured.stored?.scope).toBe("lfs-objects");
-    expect(captured.stored && Array.from(captured.stored.data)).toEqual(Array.from(HELLO));
+    // The CAS verifies the streamed bytes against the oid's digest itself.
+    expect(captured.stored?.expectedDigest).toBe(HELLO_DIGEST);
+    expect(captured.bytes && Array.from(captured.bytes)).toEqual(Array.from(HELLO));
     expect(captured.scannedDigest).toBe(HELLO_DIGEST);
 
     // Now GET the object back: serveRegistryBlob checks blobRefExists then serves.
@@ -254,8 +290,13 @@ describe("Git LFS adapter", () => {
     expect(new Uint8Array(await getRes.arrayBuffer())).toEqual(HELLO);
   });
 
-  test("PUT rejects content whose sha256 does not match the oid (DIGEST_INVALID)", async () => {
+  test("PUT maps the CAS digest mismatch to DIGEST_INVALID", async () => {
     const ctx = lfsContext();
+    // The streaming store hashes the body and rejects when it does not match the
+    // oid; the adapter must translate that into the registry DIGEST_INVALID error.
+    ctx.data.content.storeBlobStreamWithRef = async (input: StoreBlobStreamWithRefInput) => {
+      throw new InvalidDigestError(input.expectedDigest ?? "");
+    };
     await expect(
       new GitLfsAdapter().handle(
         match(PUT_ENTRY, { oid: OTHER_OID }),

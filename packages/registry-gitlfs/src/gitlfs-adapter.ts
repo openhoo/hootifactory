@@ -1,9 +1,9 @@
 import {
   basicAuthChallenge,
-  computeDigest,
   delegateRegistryPlugin,
   Errors,
   type HttpMethod,
+  InvalidDigestError,
   type Permission,
   parseRegistryInput,
   type RegistryPlugin,
@@ -15,13 +15,50 @@ import {
   serveRegistryBlob,
 } from "@hootifactory/registry";
 import { buildBatchResponse } from "./gitlfs-batch";
-import { digestToOid, LfsBatchRequestSchema, LfsOidSchema, oidToDigest } from "./gitlfs-validation";
+import { LfsBatchRequestSchema, LfsOidSchema, oidToDigest } from "./gitlfs-validation";
 
 /** Git LFS speaks this media type for the Batch and Locks JSON APIs. */
 const LFS_CONTENT_TYPE = "application/vnd.git-lfs+json";
 /** Stable CAS blob-ref kind + scope: LFS is one flat object store per repo. */
 const LFS_BLOB_KIND = "gitlfs_object";
 const LFS_BLOB_SCOPE = "lfs-objects";
+/**
+ * Cap on in-flight existence probes per batch. A batch may carry up to 1000
+ * objects; fanning all of them out as concurrent DB queries in one request would
+ * cause avoidable load spikes, so we drain the work through a small worker pool.
+ */
+const BATCH_PROBE_CONCURRENCY = 16;
+
+/** An already-closed body for `PUT`s that carry no request stream (empty objects). */
+function emptyStream(): ReadableStream<Uint8Array> {
+  return new ReadableStream({
+    start(controller) {
+      controller.close();
+    },
+  });
+}
+
+/**
+ * Run `worker` over `items` with at most `limit` calls in flight at once,
+ * preserving the input order in the returned results.
+ */
+async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  limit: number,
+  worker: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const index = next++;
+      // `index < items.length` was just checked, so the element is present.
+      results[index] = await worker(items[index] as T, index);
+    }
+  });
+  await Promise.all(runners);
+  return results;
+}
 
 function parseOid(oid: string): string {
   return parseRegistryInput(LfsOidSchema, oid, {
@@ -148,17 +185,17 @@ export class GitLfsAdapter implements RegistryPlugin {
     const { operation, objects } = parsed.data;
 
     // Probe the CAS once per object so the response can flag what is present.
+    // Bound the fan-out (a batch may name up to 1000 objects) so a single request
+    // cannot stampede the database with that many concurrent existence queries.
     const present = new Set<string>();
-    await Promise.all(
-      objects.map(async (object) => {
-        const exists = await ctx.data.content.blobRefExists({
-          digest: oidToDigest(object.oid),
-          kind: LFS_BLOB_KIND,
-          scope: LFS_BLOB_SCOPE,
-        });
-        if (exists) present.add(object.oid);
-      }),
-    );
+    await mapWithConcurrency(objects, BATCH_PROBE_CONCURRENCY, async (object) => {
+      const exists = await ctx.data.content.blobRefExists({
+        digest: oidToDigest(object.oid),
+        kind: LFS_BLOB_KIND,
+        scope: LFS_BLOB_SCOPE,
+      });
+      if (exists) present.add(object.oid);
+    });
 
     const objectsBaseUrl = `${ctx.baseUrl}/${ctx.repo.mountPath}/objects`;
     const response = buildBatchResponse({
@@ -197,26 +234,34 @@ export class GitLfsAdapter implements RegistryPlugin {
     ctx: RegistryRequestContext,
   ): Promise<Response> {
     const oid = parseOid(oidRaw);
-    const body = new Uint8Array(await req.arrayBuffer());
-    // Content addressing is only sound if the uploaded bytes hash to the claimed oid.
-    const digest = computeDigest(body);
-    if (digest !== oidToDigest(oid)) {
-      throw Errors.digestInvalid({ expected: oid, got: digestToOid(digest) });
-    }
-    await ctx.data.content.storeBlobWithRef({
-      data: body,
-      mediaType: "application/octet-stream",
-      kind: LFS_BLOB_KIND,
-      scope: LFS_BLOB_SCOPE,
-      asset: {
-        role: LFS_BLOB_KIND,
-        digest,
-        scope: LFS_BLOB_SCOPE,
-        path: oid,
+    const digest = oidToDigest(oid);
+    // Stream the body straight into the CAS rather than buffering it in memory:
+    // LFS objects can be many gigabytes, so `expectedDigest` lets the store hash
+    // and verify the bytes as they flow (content addressing is only sound if the
+    // uploaded bytes hash to the claimed oid). A mismatch surfaces as
+    // `InvalidDigestError`, which we translate into the registry DIGEST_INVALID.
+    try {
+      await ctx.data.content.storeBlobStreamWithRef({
+        data: req.body ?? emptyStream(),
+        expectedDigest: digest,
         mediaType: "application/octet-stream",
-        metadata: { oid, sizeBytes: body.length },
-      },
-    });
+        kind: LFS_BLOB_KIND,
+        scope: LFS_BLOB_SCOPE,
+        asset: {
+          role: LFS_BLOB_KIND,
+          digest,
+          scope: LFS_BLOB_SCOPE,
+          path: oid,
+          mediaType: "application/octet-stream",
+          metadata: { oid },
+        },
+      });
+    } catch (err) {
+      if (err instanceof InvalidDigestError) {
+        throw Errors.digestInvalid({ expected: oid, error: err.message });
+      }
+      throw err;
+    }
     // Wire the object into the scan pipeline (no-op when scanning is disabled).
     await ctx.enqueueScan({ digest, mediaType: "application/octet-stream" });
     return new Response(null, { status: 200 });
