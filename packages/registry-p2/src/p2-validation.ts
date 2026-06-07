@@ -28,6 +28,15 @@ export type P2ArtifactKind = z.output<typeof P2ArtifactKindSchema>;
 
 const Sha256DigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 
+const FILENAME_RE = /^[A-Za-z0-9._-]+\.jar$/;
+
+export const JarFilenameSchema = z
+  .string()
+  .min(1)
+  .max(512)
+  .refine((value) => !value.includes("/") && !value.includes("\\"), "invalid filename")
+  .refine((value) => FILENAME_RE.test(value), "expected a .jar filename");
+
 /**
  * What we persist per version: the OSGi coordinates plus the blob coordinates the
  * download route resolves against. The package name is the symbolic name and the
@@ -38,7 +47,7 @@ export const P2VersionMetaSchema = z.looseObject({
   version: OsgiVersionSchema,
   kind: P2ArtifactKindSchema,
   /** The served jar filename (no path separators). */
-  filename: z.string().min(1).max(512),
+  filename: JarFilenameSchema,
   blobDigest: Sha256DigestSchema,
   sizeBytes: z.number().int().nonnegative(),
 });
@@ -69,12 +78,3 @@ export function p2JarScope(kind: P2ArtifactKind, filename: string): string {
 export function classifierForKind(kind: P2ArtifactKind): string {
   return kind === "feature" ? "org.eclipse.update.feature" : "osgi.bundle";
 }
-
-const FILENAME_RE = /^[A-Za-z0-9._-]+\.jar$/;
-
-export const JarFilenameSchema = z
-  .string()
-  .min(1)
-  .max(512)
-  .refine((value) => !value.includes("/") && !value.includes("\\"), "invalid filename")
-  .refine((value) => FILENAME_RE.test(value), "expected a .jar filename");

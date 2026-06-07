@@ -66,4 +66,17 @@ describe("parseP2VersionMeta", () => {
     expect(parseP2VersionMeta({ symbolicName: "a.b" })).toBeNull();
     expect(parseP2VersionMeta(null)).toBeNull();
   });
+
+  test("rejects a filename with path separators", () => {
+    expect(
+      parseP2VersionMeta({
+        symbolicName: "a.b",
+        version: "1.2.3",
+        kind: "bundle",
+        filename: "../escape.jar",
+        blobDigest: `sha256:${"a".repeat(64)}`,
+        sizeBytes: 10,
+      }),
+    ).toBeNull();
+  });
 });

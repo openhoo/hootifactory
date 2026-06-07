@@ -60,7 +60,7 @@ function readManifestBytes(zip: Uint8Array): Uint8Array | null {
     if (p + 46 + nameLen + extraLen + commentLen > zip.byteLength) return null;
     const name = new TextDecoder().decode(zip.subarray(p + 46, p + 46 + nameLen));
     p += 46 + nameLen + extraLen + commentLen;
-    // Jar manifest paths are case-insensitive in practice; match exactly.
+    // Jar manifest paths are case-insensitive in practice; match accordingly.
     if (name.toUpperCase() !== MANIFEST_PATH) continue;
     if (compSize > MAX_MANIFEST_BYTES || uncompSize > MAX_MANIFEST_BYTES) return null;
     if (u32(zip, localOff) !== 0x04034b50) return null;
