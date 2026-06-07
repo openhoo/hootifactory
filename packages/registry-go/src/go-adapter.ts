@@ -1,6 +1,4 @@
 import {
-  basicAuthChallenge,
-  delegateRegistryPlugin,
   Errors,
   type HttpMethod,
   type Permission,
@@ -9,8 +7,7 @@ import {
   type RegistryRequestContext,
   type RouteMatch,
   readWritePermission,
-  registryCapabilities,
-  registryPlugin,
+  registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
 } from "@hootifactory/registry";
@@ -26,77 +23,7 @@ import {
 } from "./go-validation";
 
 /** Go module proxy (GOPROXY protocol) + a custom upload endpoint for hosted modules. */
-export class GoAdapter implements RegistryPlugin {
-  readonly id = "go" as const;
-  readonly capabilities = registryCapabilities("virtualizable");
-  authChallenge = basicAuthChallenge;
-
-  private readonly plugin = registryPlugin(this.id)
-    .module({
-      displayName: "Go",
-      mountSegment: "go",
-      errorResponseKind: "singleError",
-      compressibleHandlers: ["list", "latest", "file"],
-      scan: {
-        defaultOsvEcosystem: "Go",
-        dependencyGraph: ({ metadata }) => ({
-          deps: goDependencyGraph(metadata),
-          osvEcosystem: "Go",
-          purlType: "golang",
-        }),
-        referencedDigests: (metadata) =>
-          typeof metadata.zipDigest === "string" ? [metadata.zipDigest] : [],
-      },
-    })
-    .capabilities(this.capabilities)
-    .authChallenge(this.authChallenge)
-    .routes((route) => [
-      route.get("/:module+/@v/list", "list", ({ params, req, ctx }) =>
-        this.list(this.parseModule(params.module), req, ctx),
-      ),
-      route.get("/:module+/@latest", "latest", ({ params, req, ctx }) =>
-        this.latest(this.parseModule(params.module), req, ctx),
-      ),
-      route.get("/:module+/@v/:file", "file", ({ params, req, ctx }) =>
-        this.file(this.parseModule(params.module), params.file, req, ctx),
-      ),
-      route.put("/:module+/@v/:version", "upload", ({ params, req, ctx }) =>
-        this.upload(this.parseModule(params.module), params.version, req, ctx),
-      ),
-    ])
-    .build();
-  private readonly delegate = delegateRegistryPlugin(this.plugin);
-
-  get displayName() {
-    return this.plugin.displayName;
-  }
-  get mountSegment() {
-    return this.plugin.mountSegment;
-  }
-  get repositoryNamePolicy() {
-    return this.plugin.repositoryNamePolicy;
-  }
-  get acceptsRegistryBearerToken() {
-    return this.plugin.acceptsRegistryBearerToken;
-  }
-  get apiKeyHeaders() {
-    return this.plugin.apiKeyHeaders;
-  }
-  get errorResponseKind() {
-    return this.plugin.errorResponseKind;
-  }
-  get compressibleHandlers() {
-    return this.plugin.compressibleHandlers;
-  }
-  get compressibleContentTypes() {
-    return this.plugin.compressibleContentTypes;
-  }
-  get scan() {
-    return this.plugin.scan;
-  }
-
-  routes = this.delegate.routes;
-
+class GoAdapterState {
   requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
     const permission = readWritePermission(method);
     const moduleName = match?.params.module ? decodeBang(match.params.module) : null;
@@ -117,16 +44,14 @@ export class GoAdapter implements RegistryPlugin {
     return permission;
   }
 
-  handle = this.delegate.handle;
-
-  private parseModule(input: string): string {
+  parseModule(input: string): string {
     return parseRegistryInput(GoModuleSchema, decodeBang(input), {
       code: "NAME_INVALID",
       message: "invalid Go module path",
     });
   }
 
-  private async storedVersions(
+  async storedVersions(
     ctx: RegistryRequestContext,
     pkg: { id: string; orgId: string; repositoryId: string; name: string },
   ) {
@@ -137,11 +62,7 @@ export class GoAdapter implements RegistryPlugin {
     });
   }
 
-  private async list(
-    moduleName: string,
-    req: Request,
-    ctx: RegistryRequestContext,
-  ): Promise<Response> {
+  async list(moduleName: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     // Unknown module → 404 so the client falls through the proxy chain. An empty
     // 200 would falsely assert "known module, no versions".
     const pkg = await ctx.data.packages.findByName(moduleName);
@@ -157,11 +78,7 @@ export class GoAdapter implements RegistryPlugin {
     );
   }
 
-  private async latest(
-    moduleName: string,
-    req: Request,
-    ctx: RegistryRequestContext,
-  ): Promise<Response> {
+  async latest(moduleName: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const pkg = await ctx.data.packages.findByName(moduleName);
     if (!pkg) throw Errors.notFound();
     const rows = await this.storedVersions(ctx, pkg);
@@ -178,7 +95,7 @@ export class GoAdapter implements RegistryPlugin {
     );
   }
 
-  private async file(
+  async file(
     moduleName: string,
     file: string,
     req: Request,
@@ -227,7 +144,7 @@ export class GoAdapter implements RegistryPlugin {
     throw Errors.notFound();
   }
 
-  private async upload(
+  async upload(
     moduleName: string,
     versionRaw: string,
     req: Request,
@@ -261,4 +178,47 @@ function goDependencyGraph(metadata: Record<string, unknown>): Record<string, st
   return Object.fromEntries(entries);
 }
 
+const goDefinition = registryAdapter("go")
+  .stateClass(GoAdapterState)
+  .module((module) =>
+    module
+      .displayName("Go")
+      .mount("go")
+      .capabilities("virtualizable")
+      .errorResponseKind("singleError")
+      .compressibleHandlers("list", "latest", "file"),
+  )
+  .scan((scan) =>
+    scan
+      .osvEcosystem("Go")
+      .purlType("golang")
+      .dependencies(goDependencyGraph)
+      .referencedDigestPaths("zipDigest"),
+  )
+  .basicAuth()
+  .fromState((state) => state.defaultPermission("requiredPermission"))
+  .routes((route) => [
+    route
+      .get("/:module+/@v/list", "list")
+      .calls((state, { params, req, ctx }) =>
+        state.list(state.parseModule(params.module), req, ctx),
+      ),
+    route
+      .get("/:module+/@latest", "latest")
+      .calls((state, { params, req, ctx }) =>
+        state.latest(state.parseModule(params.module), req, ctx),
+      ),
+    route
+      .get("/:module+/@v/:file", "file")
+      .calls((state, { params, req, ctx }) =>
+        state.file(state.parseModule(params.module), params.file, req, ctx),
+      ),
+    route
+      .put("/:module+/@v/:version", "upload")
+      .calls((state, { params, req, ctx }) =>
+        state.upload(state.parseModule(params.module), params.version, req, ctx),
+      ),
+  ]);
+
+export class GoAdapter extends goDefinition.adapterClass() {}
 export const goRegistryPlugin: RegistryPlugin = new GoAdapter();

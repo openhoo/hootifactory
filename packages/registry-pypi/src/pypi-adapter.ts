@@ -1,6 +1,4 @@
 import {
-  basicAuthChallenge,
-  delegateRegistryPlugin,
   type HttpMethod,
   type Permission,
   parseRegistryInput,
@@ -8,8 +6,7 @@ import {
   type RegistryRequestContext,
   type RouteMatch,
   readWritePermission,
-  registryCapabilities,
-  registryPlugin,
+  registryAdapter,
   serveRegistryBlob,
   textEtag,
   textResponseWithEtag,
@@ -37,75 +34,8 @@ interface SimpleRootCacheEntry {
   expiresAt: number;
 }
 
-export class PypiAdapter implements RegistryPlugin {
-  readonly id = "pypi" as const;
-  readonly capabilities = registryCapabilities("virtualizable");
-  authChallenge = basicAuthChallenge;
-  private readonly simpleRootCache = new Map<string, SimpleRootCacheEntry>();
-
-  private readonly plugin = registryPlugin(this.id)
-    .module({
-      displayName: "PyPI",
-      mountSegment: "pypi",
-      errorResponseKind: "singleError",
-      compressibleHandlers: ["simpleRoot", "simpleProject"],
-      compressibleContentTypes: ["application/vnd.pypi.simple.v1+json"],
-      scan: {
-        defaultOsvEcosystem: "PyPI",
-        referencedDigests: (metadata) =>
-          Array.isArray(metadata.files)
-            ? metadata.files.flatMap((file) => {
-                const blobDigest = (file as { blobDigest?: unknown } | null)?.blobDigest;
-                return typeof blobDigest === "string" ? [blobDigest] : [];
-              })
-            : [],
-      },
-    })
-    .capabilities(this.capabilities)
-    .authChallenge(this.authChallenge)
-    .routes((route) => [
-      route.get("/simple/", "simpleRoot", ({ req, ctx }) => this.simpleRoot(req, ctx)),
-      route.get("/simple/:project/", "simpleProject", ({ params, req, ctx }) =>
-        this.simpleProject(params.project, req, ctx),
-      ),
-      route.get("/files/:filename", "download", ({ params, req, ctx }) =>
-        this.download(params.filename, req, ctx),
-      ),
-      route.post("/", "upload", ({ req, ctx }) => this.upload(req, ctx)),
-      route.post("/legacy/", "upload", ({ req, ctx }) => this.upload(req, ctx)),
-    ])
-    .build();
-  private readonly delegate = delegateRegistryPlugin(this.plugin);
-
-  get displayName() {
-    return this.plugin.displayName;
-  }
-  get mountSegment() {
-    return this.plugin.mountSegment;
-  }
-  get repositoryNamePolicy() {
-    return this.plugin.repositoryNamePolicy;
-  }
-  get acceptsRegistryBearerToken() {
-    return this.plugin.acceptsRegistryBearerToken;
-  }
-  get apiKeyHeaders() {
-    return this.plugin.apiKeyHeaders;
-  }
-  get errorResponseKind() {
-    return this.plugin.errorResponseKind;
-  }
-  get compressibleHandlers() {
-    return this.plugin.compressibleHandlers;
-  }
-  get compressibleContentTypes() {
-    return this.plugin.compressibleContentTypes;
-  }
-  get scan() {
-    return this.plugin.scan;
-  }
-
-  routes = this.delegate.routes;
+class PypiAdapterState {
+  readonly simpleRootCache = new Map<string, SimpleRootCacheEntry>();
 
   requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
     const permission = readWritePermission(method);
@@ -120,13 +50,11 @@ export class PypiAdapter implements RegistryPlugin {
     return permission;
   }
 
-  handle = this.delegate.handle;
-
-  private simpleRootCacheKey(ctx: RegistryRequestContext, variant: SimpleRootVariant): string {
+  simpleRootCacheKey(ctx: RegistryRequestContext, variant: SimpleRootVariant): string {
     return `${ctx.repo.id}:${variant}`;
   }
 
-  private cachedSimpleRoot(
+  cachedSimpleRoot(
     ctx: RegistryRequestContext,
     variant: SimpleRootVariant,
   ): SimpleRootCacheEntry | null {
@@ -137,7 +65,7 @@ export class PypiAdapter implements RegistryPlugin {
     return null;
   }
 
-  private storeSimpleRoot(
+  storeSimpleRoot(
     ctx: RegistryRequestContext,
     variant: SimpleRootVariant,
     body: string,
@@ -151,19 +79,19 @@ export class PypiAdapter implements RegistryPlugin {
     return entry;
   }
 
-  private clearSimpleRootCache(ctx: RegistryRequestContext): void {
+  clearSimpleRootCache(ctx: RegistryRequestContext): void {
     this.simpleRootCache.delete(this.simpleRootCacheKey(ctx, "html"));
     this.simpleRootCache.delete(this.simpleRootCacheKey(ctx, "json"));
   }
 
-  private redirectToSlash(req: Request): Response | null {
+  redirectToSlash(req: Request): Response | null {
     if (new URL(req.url).pathname.endsWith("/")) return null;
     const url = new URL(req.url);
     url.pathname = `${url.pathname}/`;
     return new Response(null, { status: 308, headers: { location: url.toString() } });
   }
 
-  private async simpleRoot(req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  async simpleRoot(req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const redirect = this.redirectToSlash(req);
     if (redirect) return redirect;
 
@@ -197,10 +125,7 @@ export class PypiAdapter implements RegistryPlugin {
     return textResponseWithEtag(req, entry.body, this.simpleRootHeaders(req, variant), entry.etag);
   }
 
-  private simpleRootHeaders(
-    req: Request,
-    variant: SimpleRootVariant,
-  ): Record<"content-type", string> {
+  simpleRootHeaders(req: Request, variant: SimpleRootVariant): Record<"content-type", string> {
     return {
       "content-type":
         variant === "json"
@@ -209,7 +134,7 @@ export class PypiAdapter implements RegistryPlugin {
     };
   }
 
-  private async simpleProject(
+  async simpleProject(
     projectRaw: string,
     req: Request,
     ctx: RegistryRequestContext,
@@ -244,11 +169,7 @@ export class PypiAdapter implements RegistryPlugin {
     });
   }
 
-  private async download(
-    filename: string,
-    req: Request,
-    ctx: RegistryRequestContext,
-  ): Promise<Response> {
+  async download(filename: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     filename = parseRegistryInput(PypiFilenameSchema, filename, {
       code: "NAME_INVALID",
       message: "invalid distribution filename",
@@ -267,11 +188,47 @@ export class PypiAdapter implements RegistryPlugin {
     });
   }
 
-  private async upload(req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  async upload(req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const res = await handlePypiUpload(req, ctx);
     if (res.status >= 200 && res.status < 300) this.clearSimpleRootCache(ctx);
     return res;
   }
 }
 
+const pypiDefinition = registryAdapter("pypi")
+  .stateClass(PypiAdapterState)
+  .module((module) =>
+    module
+      .displayName("PyPI")
+      .mount("pypi")
+      .capabilities("virtualizable")
+      .errorResponseKind("singleError")
+      .compressibleHandlers("simpleRoot", "simpleProject")
+      .compressibleContentTypes("application/vnd.pypi.simple.v1+json"),
+  )
+  .scan((scan) =>
+    scan.osvEcosystem("PyPI").referencedDigests((metadata) =>
+      Array.isArray(metadata.files)
+        ? metadata.files.flatMap((file) => {
+            const blobDigest = (file as { blobDigest?: unknown } | null)?.blobDigest;
+            return typeof blobDigest === "string" ? [blobDigest] : [];
+          })
+        : [],
+    ),
+  )
+  .basicAuth()
+  .fromState((state) => state.defaultPermission("requiredPermission"))
+  .routes((route) => [
+    route.get("/simple/", "simpleRoot").calls((state, { req, ctx }) => state.simpleRoot(req, ctx)),
+    route
+      .get("/simple/:project/", "simpleProject")
+      .calls((state, { params, req, ctx }) => state.simpleProject(params.project, req, ctx)),
+    route
+      .get("/files/:filename", "download")
+      .calls((state, { params, req, ctx }) => state.download(params.filename, req, ctx)),
+    route.post("/", "upload").calls((state, { req, ctx }) => state.upload(req, ctx)),
+    route.post("/legacy/", "upload").calls((state, { req, ctx }) => state.upload(req, ctx)),
+  ]);
+
+export class PypiAdapter extends pypiDefinition.adapterClass() {}
 export const pypiRegistryPlugin: RegistryPlugin = new PypiAdapter();
