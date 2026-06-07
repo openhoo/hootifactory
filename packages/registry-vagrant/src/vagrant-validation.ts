@@ -119,6 +119,38 @@ export interface VagrantBoxMetadata {
 }
 
 /**
+ * One provider entry in the Vagrant Cloud box-read response. The Cloud API names
+ * the download field `download_url` (vs. `url` in the box-catalog document) and
+ * carries the checksum on the same provider object, so `vagrant box add user/box`
+ * can resolve, download, and verify a short box name in one read.
+ */
+export interface VagrantCloudProvider {
+  name: string;
+  download_url: string;
+  checksum_type: string;
+  checksum: string;
+}
+
+/** One version entry in the Vagrant Cloud box-read response. */
+export interface VagrantCloudVersion {
+  version: string;
+  providers: VagrantCloudProvider[];
+}
+
+/**
+ * The `GET /api/v1/box/:user/:box` body. A Vagrant-Cloud-compatible read alias for
+ * short-name resolution (`config.vm.box = "user/box"` / `vagrant box add user/box`
+ * against `VAGRANT_SERVER_URL`). Mirrors the catalog metadata, re-keyed to the
+ * Cloud field names the modern client (vagrant_cloud gem / go-vagrant) expects.
+ */
+export interface VagrantCloudBox {
+  tag: string;
+  name: string;
+  description?: string;
+  versions: VagrantCloudVersion[];
+}
+
+/**
  * Build a single version's metadata block from its stored providers. `downloadUrl`
  * resolves a provider name to its absolute hosted download endpoint.
  */
@@ -132,6 +164,28 @@ export function buildVagrantMetadataVersion(
   const providers: VagrantMetadataProvider[] = entries.map(([provider, file]) => ({
     name: provider,
     url: downloadUrl(provider),
+    checksum_type: CHECKSUM_TYPE,
+    checksum: file.sha256,
+  }));
+  return { version, providers };
+}
+
+/**
+ * Build one version block of the Vagrant Cloud box-read response from its stored
+ * providers, re-keying the catalog `url` field to the Cloud `download_url` (the
+ * URL itself is identical — both point at the hosted `GET /:user/:box/:version/:provider`
+ * download route). Provider ordering matches the catalog document so both reads
+ * stay deterministic.
+ */
+export function buildVagrantCloudVersion(
+  version: string,
+  meta: VagrantVersionMeta,
+  downloadUrl: (provider: string) => string,
+): VagrantCloudVersion {
+  const entries = Object.entries(meta.providers).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  const providers: VagrantCloudProvider[] = entries.map(([provider, file]) => ({
+    name: provider,
+    download_url: downloadUrl(provider),
     checksum_type: CHECKSUM_TYPE,
     checksum: file.sha256,
   }));

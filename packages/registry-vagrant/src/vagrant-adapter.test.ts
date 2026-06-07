@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import type {
-  RegistryPackageRow,
-  RegistryPackageVersionRow,
-  RegistryStoredBlob,
-  RouteMatch,
+import {
+  computeDigest,
+  digestHex,
+  type RegistryPackageRow,
+  type RegistryPackageVersionRow,
+  type RegistryStoredBlob,
+  type RouteMatch,
 } from "@hootifactory/registry";
 import { createTestRegistryContext } from "@hootifactory/registry/testing";
 import { VagrantAdapter } from "./vagrant-adapter";
@@ -59,6 +61,12 @@ const metadataMatch = {
   path: "/hashicorp/bionic64",
 } satisfies RouteMatch;
 
+const cloudMetadataMatch = {
+  entry: { method: "GET", pattern: "/api/v1/box/:user/:box", handlerId: "cloudMetadata" },
+  params: { user: "hashicorp", box: "bionic64" },
+  path: "/api/v1/box/hashicorp/bionic64",
+} satisfies RouteMatch;
+
 const downloadMatch = {
   entry: { method: "GET", pattern: "/:user/:box/:version/:provider", handlerId: "download" },
   params: { user: "hashicorp", box: "bionic64", version: "1.2.3", provider: "virtualbox" },
@@ -72,12 +80,20 @@ const publishMatch = {
 } satisfies RouteMatch;
 
 describe("Vagrant adapter", () => {
-  test("declares download/publish (4-seg) before metadata (2-seg) routes", () => {
+  test("declares the cloud read alias first, then 4-seg download/publish before 2-seg metadata", () => {
     expect(new VagrantAdapter().routes()).toEqual([
+      { method: "GET", pattern: "/api/v1/box/:user/:box", handlerId: "cloudMetadata" },
       { method: "GET", pattern: "/:user/:box/:version/:provider", handlerId: "download" },
       { method: "PUT", pattern: "/:user/:box/:version/:provider", handlerId: "publish" },
       { method: "GET", pattern: "/:user/:box", handlerId: "metadata" },
     ]);
+  });
+
+  test("declares only the virtualizable capability (no unbacked proxyable claim)", () => {
+    const { capabilities } = new VagrantAdapter();
+    expect(capabilities.virtualizable).toBe(true);
+    // proxyable must stay false: there is no proxyIngest handler to back it.
+    expect(capabilities.proxyable).toBe(false);
   });
 
   test("uses read permissions for reads, write for publish, and basic auth", () => {
@@ -215,6 +231,89 @@ describe("Vagrant adapter", () => {
     const res = await new VagrantAdapter().handle(
       metadataMatch,
       new Request("https://registry.test/hashicorp/bionic64"),
+      ctx,
+    );
+    expect(res.status).toBe(404);
+  });
+
+  test("GET /api/v1/box/:user/:box serves the Vagrant Cloud box shape for short-name resolution", async () => {
+    const ctx = vagrantContext();
+    ctx.data.packages.findByName = async (name) => {
+      expect(name).toBe(NAME);
+      return pkgRow();
+    };
+    ctx.data.versions.listLive = async (_pkg, opts) => {
+      expect(opts).toEqual({ orderByCreated: "desc" });
+      return [
+        versionRow("2.0.0", {
+          description: "Ubuntu bionic",
+          providers: {
+            virtualbox: { blobDigest: DIGEST, sha256: HEX, sizeBytes: 4 },
+            libvirt: { blobDigest: DIGEST, sha256: "b".repeat(64), sizeBytes: 4 },
+          },
+        }),
+        versionRow("1.2.3", {
+          providers: { virtualbox: { blobDigest: DIGEST, sha256: HEX, sizeBytes: 4 } },
+        }),
+      ];
+    };
+
+    const res = await new VagrantAdapter().handle(
+      cloudMetadataMatch,
+      new Request("https://registry.test/api/v1/box/hashicorp/bionic64"),
+      ctx,
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("application/json");
+    expect(res.headers.get("etag")).toBeTruthy();
+    // Cloud shape: `tag`+`name` at top level, providers keyed by `download_url`,
+    // pointing at the same hosted download route as the catalog document.
+    expect(await res.json()).toEqual({
+      tag: NAME,
+      name: NAME,
+      description: "Ubuntu bionic",
+      versions: [
+        {
+          version: "2.0.0",
+          providers: [
+            {
+              name: "libvirt",
+              download_url:
+                "https://registry.example.test/vagrant/private/hashicorp/bionic64/2.0.0/libvirt",
+              checksum_type: "sha256",
+              checksum: "b".repeat(64),
+            },
+            {
+              name: "virtualbox",
+              download_url:
+                "https://registry.example.test/vagrant/private/hashicorp/bionic64/2.0.0/virtualbox",
+              checksum_type: "sha256",
+              checksum: HEX,
+            },
+          ],
+        },
+        {
+          version: "1.2.3",
+          providers: [
+            {
+              name: "virtualbox",
+              download_url:
+                "https://registry.example.test/vagrant/private/hashicorp/bionic64/1.2.3/virtualbox",
+              checksum_type: "sha256",
+              checksum: HEX,
+            },
+          ],
+        },
+      ],
+    });
+  });
+
+  test("GET /api/v1/box/:user/:box 404s when the package is unknown", async () => {
+    const ctx = vagrantContext();
+    ctx.data.packages.findByName = async () => null;
+    const res = await new VagrantAdapter().handle(
+      cloudMetadataMatch,
+      new Request("https://registry.test/api/v1/box/hashicorp/bionic64"),
       ctx,
     );
     expect(res.status).toBe(404);
@@ -490,5 +589,128 @@ describe("Vagrant publish", () => {
         ctx,
       ),
     ).rejects.toMatchObject({ status: 400 });
+  });
+});
+
+/**
+ * Wire a context backed by a tiny in-memory store so a publish actually threads
+ * its content-addressed digest through to the reads: publish computes the real
+ * sha256 of the body and records the bytes by digest, and `serveBlobIfClean`
+ * replays those exact bytes for that digest. This lets a chained
+ * publish -> read-metadata -> download prove the binding a real Vagrant client
+ * relies on: the bytes stored at publish are the bytes served at download, and
+ * their sha256 equals the `checksum` advertised in the metadata for that provider.
+ */
+function roundTripContext() {
+  const ctx = vagrantContext();
+  const blobs = new Map<string, Uint8Array>();
+  const versions = new Map<string, RegistryPackageVersionRow>();
+  const pkg = pkgRow();
+
+  ctx.data.packages.findByName = async () => (versions.size > 0 ? pkg : null);
+  ctx.data.packages.findOrCreate = async () => pkg;
+  ctx.data.assets.findByScope = async () => null;
+  ctx.data.assets.upsert = async () => ({}) as never;
+  ctx.enqueueScan = async () => {};
+
+  ctx.data.content.storeBlobStreamWithRef = async ({ data }) => {
+    const bytes = new Uint8Array(await new Response(data).arrayBuffer());
+    const digest = computeDigest(bytes);
+    blobs.set(digest, bytes);
+    return { digest, size: bytes.byteLength, deduped: false, refCreated: true, blobRefId: "ref_1" };
+  };
+  ctx.data.content.blobRefExists = async () => true;
+  ctx.data.content.serveBlobIfClean = async ({ digest, contentType }) => {
+    const bytes = blobs.get(digest);
+    if (!bytes) return new Response("Not Found", { status: 404 });
+    return new Response(bytes, { headers: { "content-type": contentType } });
+  };
+
+  ctx.data.versions.create = async ({ version, metadata }) => {
+    if (versions.has(version)) return null;
+    versions.set(version, versionRow(version, metadata));
+    return `ver_${version}`;
+  };
+  ctx.data.versions.listLive = async () =>
+    [...versions.values()].sort((a, b) => (a.version < b.version ? 1 : -1));
+  ctx.data.versions.findLive = async (_pkg, version) => versions.get(version) ?? null;
+
+  return ctx;
+}
+
+describe("Vagrant round-trip", () => {
+  test("publish -> metadata -> cloud read -> download keeps bytes and checksum consistent", async () => {
+    const ctx = roundTripContext();
+    const adapter = new VagrantAdapter();
+    const body = new Uint8Array([10, 20, 30, 40, 50]);
+    const expectedChecksum = digestHex(computeDigest(body));
+
+    // 1) Publish a (version, provider) box.
+    const published = await adapter.handle(publishMatch, publishRequest(body), ctx);
+    expect(published.status).toBe(201);
+
+    // 2) Read the box-catalog metadata and pull the provider's advertised url/checksum.
+    const meta = await adapter.handle(
+      metadataMatch,
+      new Request("https://registry.test/hashicorp/bionic64"),
+      ctx,
+    );
+    expect(meta.status).toBe(200);
+    const metaBody = (await meta.json()) as {
+      versions: {
+        version: string;
+        providers: { name: string; url: string; checksum_type: string; checksum: string }[];
+      }[];
+    };
+    const provider = metaBody.versions[0]?.providers.find((p) => p.name === "virtualbox");
+    expect(provider).toBeDefined();
+    if (!provider) throw new Error("expected virtualbox provider");
+    expect(provider.checksum_type).toBe("sha256");
+    // The advertised checksum is the true sha256 of the published bytes.
+    expect(provider.checksum).toBe(expectedChecksum);
+
+    // 3) The Cloud read alias resolves the same box with the same checksum + url.
+    const cloud = await adapter.handle(
+      cloudMetadataMatch,
+      new Request("https://registry.test/api/v1/box/hashicorp/bionic64"),
+      ctx,
+    );
+    expect(cloud.status).toBe(200);
+    const cloudBody = (await cloud.json()) as {
+      tag: string;
+      versions: { providers: { name: string; download_url: string; checksum: string }[] }[];
+    };
+    const cloudProvider = cloudBody.versions[0]?.providers.find((p) => p.name === "virtualbox");
+    expect(cloudBody.tag).toBe(NAME);
+    expect(cloudProvider?.checksum).toBe(expectedChecksum);
+    // The Cloud `download_url` is the same hosted route as the catalog `url`.
+    expect(cloudProvider?.download_url).toBe(provider.url);
+
+    // 4) Download via the provider url and verify the served bytes hash to the
+    //    advertised checksum -- the binding a real `vagrant box add` verifies.
+    const downloadPath = new URL(provider.url).pathname.replace("/vagrant/private", "");
+    const segments = downloadPath.split("/").filter(Boolean);
+    const downloaded = await adapter.handle(
+      {
+        entry: {
+          method: "GET",
+          pattern: "/:user/:box/:version/:provider",
+          handlerId: "download",
+        },
+        params: {
+          user: segments[0] ?? "",
+          box: segments[1] ?? "",
+          version: segments[2] ?? "",
+          provider: segments[3] ?? "",
+        },
+        path: downloadPath,
+      },
+      new Request(`https://registry.test${downloadPath}`),
+      ctx,
+    );
+    expect(downloaded.status).toBe(200);
+    const downloadedBytes = new Uint8Array(await downloaded.arrayBuffer());
+    expect(downloadedBytes).toEqual(body);
+    expect(digestHex(computeDigest(downloadedBytes))).toBe(provider.checksum);
   });
 });
