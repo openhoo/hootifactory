@@ -1,12 +1,14 @@
 import { type RegistryRequestContext, safeFetch } from "@hootifactory/registry";
+import { readBoundedStream } from "./generic-body";
 import { handleGenericStore } from "./generic-store-lifecycle";
 import { isValidGenericPath, normalizeGenericContentType } from "./generic-validation";
 
 /**
- * Build the upstream URL for a path against the configured base. Each segment is
- * percent-encoded so URL-significant characters a generic path may legitimately
- * contain (`?`, `#`, `%`, spaces are already rejected) cannot turn into a query
- * string / fragment and fetch the wrong upstream resource.
+ * Build the upstream URL for a path against the configured base. A generic path
+ * permits any non-control, non-`/`, non-`\` bytes — including URL-significant ones
+ * like `?`, `#`, `%`, and spaces — so each segment is percent-encoded here. That
+ * encoding is what keeps such characters from turning into a query string /
+ * fragment and fetching the wrong upstream resource.
  */
 export function genericUpstreamUrl(upstreamBase: string, path: string): string {
   const encoded = path.split("/").map(encodeURIComponent).join("/");
@@ -58,32 +60,12 @@ export async function handleGenericProxyIngest(
 
 /** Read a response body, enforcing the configured upload byte ceiling. */
 async function readBoundedBody(res: Response, maxBytes: number): Promise<Uint8Array | null> {
+  // Reject up front when the upstream declares an oversized body, otherwise
+  // stream it and stop the moment the running count crosses the limit.
   const declared = Number(res.headers.get("content-length") ?? 0);
   if (declared > maxBytes) {
     await res.body?.cancel().catch(() => {});
     return null;
   }
-  const reader = res.body?.getReader();
-  if (!reader) return new Uint8Array(0);
-
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > maxBytes) {
-      await reader.cancel().catch(() => {});
-      return null;
-    }
-    chunks.push(value);
-  }
-
-  const out = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    out.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return out;
+  return readBoundedStream(res.body, maxBytes);
 }

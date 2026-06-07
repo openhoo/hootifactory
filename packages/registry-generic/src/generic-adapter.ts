@@ -4,7 +4,6 @@ import {
   type HttpMethod,
   type Permission,
   parseRegistryInput,
-  type RegistryPackageHandle,
   type RegistryPlugin,
   type RegistryRequestContext,
   type RouteMatch,
@@ -14,6 +13,7 @@ import {
   serveRegistryBlob,
   textResponseWithEtag,
 } from "@hootifactory/registry";
+import { readBoundedStream } from "./generic-body";
 import { handleGenericProxyIngest } from "./generic-proxy-lifecycle";
 import { handleGenericStore } from "./generic-store-lifecycle";
 import {
@@ -34,7 +34,11 @@ function parsePath(path: string): string {
 }
 
 function parsePrefix(prefix: string): string {
-  return parseRegistryInput(GenericPrefixSchema, prefix, {
+  // The index builder treats `docs` and `docs/` as the same directory, so accept
+  // a single trailing slash from the query by normalizing it away before the
+  // schema (which, like a stored path, forbids a trailing slash) validates it.
+  const normalized = prefix.endsWith("/") ? prefix.slice(0, -1) : prefix;
+  return parseRegistryInput(GenericPrefixSchema, normalized, {
     code: "NAME_INVALID",
     message: "invalid generic prefix",
   });
@@ -184,8 +188,10 @@ export class GenericAdapter implements RegistryPlugin {
     ctx: RegistryRequestContext,
   ): Promise<Response> {
     const path = parsePath(pathRaw);
-    const body = new Uint8Array(await req.arrayBuffer());
-    if (body.length > ctx.limits.maxUploadBytes) {
+    // Stream the body with a running byte count so an oversized upload is rejected
+    // as soon as it crosses the limit, rather than being fully buffered first.
+    const body = await readBoundedStream(req.body, ctx.limits.maxUploadBytes);
+    if (!body) {
       return Response.json({ error: "payload too large" }, { status: 413 });
     }
     const result = await handleGenericStore(path, body, req.headers.get("content-type"), ctx);
@@ -232,25 +238,22 @@ export class GenericAdapter implements RegistryPlugin {
     return handleGenericProxyIngest(path, upstreamBase, ctx);
   }
 
-  /** Every live path's stored metadata across the repo (for the index listing). */
+  /**
+   * Every live path's stored metadata across the repo (for the index listing).
+   * Batches the live-version lookup over all packages in one query instead of a
+   * per-package `findLive`, so the index scales with repo size.
+   */
   private async listMetas(ctx: RegistryRequestContext): Promise<GenericVersionMeta[]> {
-    const names = await ctx.data.packages.listNames();
+    const pkgs = await ctx.data.packages.list();
+    const liveByPackageId = await ctx.data.versions.listLiveForPackages(pkgs);
     const metas: GenericVersionMeta[] = [];
-    for (const { name } of names) {
-      const pkg = await ctx.data.packages.findByName(name);
-      if (!pkg) continue;
-      const meta = await this.liveMeta(ctx, pkg);
+    for (const pkg of pkgs) {
+      const live = liveByPackageId.get(pkg.id) ?? [];
+      const row = live.find((r) => r.version === GENERIC_VERSION);
+      const meta = parseGenericVersionMeta(row?.metadata);
       if (meta) metas.push(meta);
     }
     return metas;
-  }
-
-  private async liveMeta(
-    ctx: RegistryRequestContext,
-    pkg: RegistryPackageHandle,
-  ): Promise<GenericVersionMeta | null> {
-    const row = await ctx.data.versions.findLive(pkg, GENERIC_VERSION);
-    return parseGenericVersionMeta(row?.metadata);
   }
 }
 

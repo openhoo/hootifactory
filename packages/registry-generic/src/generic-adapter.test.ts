@@ -132,9 +132,12 @@ describe("Generic adapter", () => {
 
   test("GET / lists stored paths as JSON, ordered + cacheable", async () => {
     const ctx = genericContext();
-    ctx.data.packages.listNames = async () => [{ name: "z/last.bin" }, { name: "a/first.bin" }];
-    ctx.data.packages.findByName = async (name) => pkgRow(name);
-    ctx.data.versions.findLive = async (pkg) => versionRow(metaFor(pkg.name));
+    ctx.data.packages.list = async () => [
+      { id: "pkg_z", orgId: "org_1", repositoryId: "repo_1", name: "z/last.bin" },
+      { id: "pkg_a", orgId: "org_1", repositoryId: "repo_1", name: "a/first.bin" },
+    ];
+    ctx.data.versions.listLiveForPackages = async (pkgs) =>
+      new Map(pkgs.map((p) => [p.id, [versionRow(metaFor(p.name))]]));
 
     const res = await new GenericAdapter().handle(
       { entry: { method: "GET", pattern: "/", handlerId: "index" }, params: {}, path: "/" },
@@ -166,13 +169,36 @@ describe("Generic adapter", () => {
 
   test("GET /?prefix= filters the listing to a directory", async () => {
     const ctx = genericContext();
-    ctx.data.packages.listNames = async () => [{ name: "docs/readme.md" }, { name: "bin/app" }];
-    ctx.data.packages.findByName = async (name) => pkgRow(name);
-    ctx.data.versions.findLive = async (pkg) => versionRow(metaFor(pkg.name));
+    ctx.data.packages.list = async () => [
+      { id: "pkg_docs", orgId: "org_1", repositoryId: "repo_1", name: "docs/readme.md" },
+      { id: "pkg_bin", orgId: "org_1", repositoryId: "repo_1", name: "bin/app" },
+    ];
+    ctx.data.versions.listLiveForPackages = async (pkgs) =>
+      new Map(pkgs.map((p) => [p.id, [versionRow(metaFor(p.name))]]));
 
     const res = await new GenericAdapter().handle(
       { entry: { method: "GET", pattern: "/", handlerId: "index" }, params: {}, path: "/" },
       new Request("https://registry.test/?prefix=docs"),
+      ctx,
+    );
+    expect(res.status).toBe(200);
+    const body = await readIndex(res);
+    expect(body.prefix).toBe("docs");
+    expect(body.entries.map((e) => e.path)).toEqual(["docs/readme.md"]);
+  });
+
+  test("GET /?prefix=docs/ accepts a trailing slash and normalizes it away", async () => {
+    const ctx = genericContext();
+    ctx.data.packages.list = async () => [
+      { id: "pkg_docs", orgId: "org_1", repositoryId: "repo_1", name: "docs/readme.md" },
+      { id: "pkg_bin", orgId: "org_1", repositoryId: "repo_1", name: "bin/app" },
+    ];
+    ctx.data.versions.listLiveForPackages = async (pkgs) =>
+      new Map(pkgs.map((p) => [p.id, [versionRow(metaFor(p.name))]]));
+
+    const res = await new GenericAdapter().handle(
+      { entry: { method: "GET", pattern: "/", handlerId: "index" }, params: {}, path: "/" },
+      new Request("https://registry.test/?prefix=docs/"),
       ctx,
     );
     expect(res.status).toBe(200);

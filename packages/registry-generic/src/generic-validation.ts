@@ -144,6 +144,8 @@ export function buildGenericIndexEntries(
       contentType: meta.contentType,
     });
   }
-  entries.sort((a, b) => a.path.localeCompare(b.path));
+  // Codepoint ordering (not `localeCompare`, whose result varies by host
+  // locale/ICU) so the listing — and its ETag — is byte-stable across runtimes.
+  entries.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
   return entries;
 }
