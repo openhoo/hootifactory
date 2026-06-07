@@ -132,9 +132,10 @@ function smtpTransport(): Transporter {
 
 /**
  * Render and deliver a job over the given transport, recording span attributes
- * and rejecting if the SMTP server declined every recipient. The transport is a
- * parameter so this can be exercised without the SMTP/env machinery; `sendEmail`
- * supplies the pooled {@link smtpTransport}.
+ * and rejecting if the SMTP server declined any recipient (even a partial
+ * rejection fails the send). The transport is a parameter so this can be
+ * exercised without the SMTP/env machinery; `sendEmail` supplies the pooled
+ * {@link smtpTransport}.
  */
 export async function deliverEmail(job: EmailJob, transport: Transporter): Promise<void> {
   const message = renderEmail(job);

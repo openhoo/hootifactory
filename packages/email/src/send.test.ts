@@ -10,20 +10,25 @@ interface FakeTransport extends Pick<Transporter, "sendMail"> {
 
 // An in-memory transport injected into deliverEmail so the render/send/span
 // logic runs without any SMTP connection or env coupling. `rejected` drives the
-// failure path.
-function fakeTransport(
-  result: { messageId?: string; accepted?: unknown[]; rejected?: unknown[] } = {},
-): FakeTransport {
+// failure path. The `result` object is returned from `sendMail` verbatim, so a
+// test can omit `accepted`/`rejected`/`messageId` entirely to exercise
+// deliverEmail's own `??` fallbacks on a genuinely missing field — the fake adds
+// no defaults of its own.
+function fakeTransport(result?: {
+  messageId?: string;
+  accepted?: unknown[];
+  rejected?: unknown[];
+}): FakeTransport {
   const sent: SentMessage[] = [];
+  // Default to a happy-path response with one accepted recipient and no
+  // rejections; an explicit `result` (even one with missing keys) is returned
+  // untouched so the missing-field path is real, not masked by the fake.
+  const info = result ?? { messageId: "id-1", accepted: ["a@b.test"], rejected: [] };
   return {
     sent,
     sendMail: (async (message: SentMessage) => {
       sent.push(message);
-      return {
-        messageId: result.messageId ?? "id-1",
-        accepted: result.accepted ?? ["a@b.test"],
-        rejected: result.rejected ?? [],
-      };
+      return info;
     }) as Transporter["sendMail"],
   };
 }
@@ -81,9 +86,29 @@ describe("deliverEmail", () => {
     ).rejects.toThrow("email rejected for 1 recipient");
   });
 
-  test("tolerates an SMTP response missing accepted/rejected arrays", async () => {
-    const transport = fakeTransport({ messageId: undefined, accepted: undefined });
-    // accepted/rejected default away; with no rejections this must resolve.
+  test("throws on a partial rejection even when some recipients were accepted", async () => {
+    // deliverEmail treats transactional sends atomically: any non-empty
+    // `rejected` fails the whole send, regardless of how many were accepted.
+    const transport = fakeTransport({ accepted: ["ok@b.test"], rejected: ["bad@b.test"] });
+    await expect(
+      deliverEmail(
+        {
+          template: "password_reset",
+          to: "ok@b.test",
+          resetUrl: "https://hoot.test/reset",
+          expiresAt: "2026-06-01T12:00:00.000Z",
+        },
+        transport as unknown as Transporter,
+      ),
+    ).rejects.toThrow("email rejected for 1 recipient");
+  });
+
+  test("tolerates an SMTP response with truly-missing accepted/rejected/messageId", async () => {
+    // The transport returns a bare object whose accepted/rejected/messageId keys
+    // are genuinely absent, so deliverEmail must rely on its own `??` fallbacks
+    // (rejected absent => no rejections => resolves). The fake adds no defaults,
+    // so this exercises the missing-field path for real rather than vacuously.
+    const transport = fakeTransport({});
     await expect(
       deliverEmail(
         {
