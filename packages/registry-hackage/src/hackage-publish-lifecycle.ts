@@ -15,7 +15,7 @@ export function hackageBlobScope(name: string, version: string): string {
 }
 
 export async function handleHackagePublish(
-  id: { name: string; version: string },
+  id: { name: string; version: string } | null,
   req: Request,
   ctx: RegistryRequestContext,
 ): Promise<Response> {

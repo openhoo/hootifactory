@@ -3,6 +3,7 @@ import { gunzipSync } from "node:zlib";
 import type {
   RegistryPackageRow,
   RegistryPackageVersionRow,
+  RegistryPlugin,
   RegistryStoredBlob,
   RouteMatch,
 } from "@hootifactory/registry";
@@ -65,14 +66,78 @@ function hackageContext() {
   return ctx;
 }
 
+/**
+ * A minimal stateful in-memory data layer wired to the SDK publish/serve
+ * helpers, so a real publish flows through to the index, version list, and the
+ * `.cabal`/sdist downloads with the bytes/checksums it actually persisted.
+ */
+function statefulHackageContext() {
+  const ctx = hackageContext();
+  const packages = new Map<string, RegistryPackageRow>();
+  const versions = new Map<string, RegistryPackageVersionRow[]>();
+  const blobs = new Map<string, Uint8Array>();
+
+  ctx.data.packages.listNames = async () => [...packages.keys()].map((name) => ({ name }));
+  ctx.data.packages.findByName = async (name) => packages.get(name) ?? null;
+  ctx.data.packages.findOrCreate = async ({ name }) => {
+    const existing = packages.get(name);
+    if (existing) return existing;
+    const row = pkgRow(name);
+    packages.set(name, row);
+    return row;
+  };
+  ctx.data.versions.exists = async (pkg, version) =>
+    (versions.get(pkg.name) ?? []).some((row) => row.version === version);
+  ctx.data.versions.findLive = async (pkg, version) =>
+    (versions.get(pkg.name) ?? []).find((row) => row.version === version) ?? null;
+  ctx.data.versions.listLive = async (pkg) => versions.get(pkg.name) ?? [];
+  ctx.data.content.storeBlobWithRef = async (input): Promise<RegistryStoredBlob> => {
+    const digest = `sha256:${new Bun.CryptoHasher("sha256").update(input.data).digest("hex")}`;
+    blobs.set(digest, input.data);
+    return { digest, size: input.data.length, deduped: false, refCreated: true, blobRefId: "ref" };
+  };
+  ctx.data.versions.commitOrReleaseBlob = async (input) => {
+    const list = versions.get(input.package.name) ?? [];
+    list.push(versionRow(input.metadata, input.version));
+    versions.set(input.package.name, list);
+    return { versionId: `ver_${input.version}` };
+  };
+  ctx.data.content.blobRefExists = async ({ digest }) => blobs.has(digest);
+  ctx.data.content.serveBlobIfClean = async ({ digest, contentType }) => {
+    const bytes = blobs.get(digest);
+    if (!bytes) return new Response("Not Found", { status: 404 });
+    return new Response(bytes, { headers: { "content-type": contentType } });
+  };
+  return ctx;
+}
+
+function indexMatch(pattern: string, handlerId: string, path: string): RouteMatch {
+  return { entry: { method: "GET", pattern, handlerId }, params: {}, path };
+}
+
 describe("Hackage adapter", () => {
   test("declares index, download, summary, and publish routes (literals first)", () => {
     expect(new HackageAdapter().routes()).toEqual([
       { method: "GET", pattern: "/01-index.tar.gz", handlerId: "index" },
+      { method: "GET", pattern: "/01-index.tar", handlerId: "indexPlain" },
+      { method: "GET", pattern: "/00-index.tar.gz", handlerId: "indexLegacy" },
+      { method: "POST", pattern: "/packages/", handlerId: "publishUpload" },
+      {
+        method: "GET",
+        pattern: "/package/:id/preferred-versions",
+        handlerId: "preferredVersions",
+      },
       { method: "GET", pattern: "/package/:id/:file", handlerId: "download" },
       { method: "GET", pattern: "/package/:id", handlerId: "summary" },
       { method: "PUT", pattern: "/package/:id", handlerId: "publish" },
     ]);
+  });
+
+  test("declares virtualizable but not proxyable (no proxyIngest handler)", () => {
+    const adapter: RegistryPlugin = new HackageAdapter();
+    expect(adapter.capabilities.virtualizable).toBe(true);
+    expect(adapter.capabilities.proxyable).toBe(false);
+    expect(adapter.proxyIngest).toBeUndefined();
   });
 
   test("uses read permissions for reads, write for publish, and basic auth", () => {
@@ -464,5 +529,268 @@ describe("Hackage adapter", () => {
         ctx,
       ),
     ).rejects.toMatchObject({ status: 400, code: "NAME_INVALID" });
+  });
+
+  test("GET /01-index.tar serves the uncompressed index as x-tar", async () => {
+    const ctx = hackageContext();
+    ctx.data.packages.listNames = async () => [{ name: "demo" }];
+    ctx.data.packages.findByName = async (name) => pkgRow(name);
+    ctx.data.versions.listLive = async () => [versionRow(storedMeta)];
+
+    const res = await new HackageAdapter().handle(
+      indexMatch("/01-index.tar", "indexPlain", "/01-index.tar"),
+      new Request("https://registry.test/01-index.tar"),
+      ctx,
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("application/x-tar");
+    // The body is already-uncompressed tar (no gzip magic), readable directly.
+    const tar = new Uint8Array(await res.arrayBuffer());
+    expect(tar[0]).not.toBe(0x1f); // not a gzip stream
+    expect(new TextDecoder().decode(tar).indexOf("demo/1.2.3/demo.cabal")).toBeGreaterThanOrEqual(
+      0,
+    );
+  });
+
+  test("GET /00-index.tar.gz serves the legacy gzipped index", async () => {
+    const ctx = hackageContext();
+    ctx.data.packages.listNames = async () => [{ name: "demo" }];
+    ctx.data.packages.findByName = async (name) => pkgRow(name);
+    ctx.data.versions.listLive = async () => [versionRow(storedMeta)];
+
+    const res = await new HackageAdapter().handle(
+      indexMatch("/00-index.tar.gz", "indexLegacy", "/00-index.tar.gz"),
+      new Request("https://registry.test/00-index.tar.gz"),
+      ctx,
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("application/gzip");
+    const tar = gunzipSync(new Uint8Array(await res.arrayBuffer()));
+    expect(new TextDecoder().decode(tar).indexOf("demo/1.2.3/demo.cabal")).toBeGreaterThanOrEqual(
+      0,
+    );
+  });
+
+  test("GET /package/<name>/preferred-versions serves a permissive document", async () => {
+    const ctx = hackageContext();
+    ctx.data.packages.findByName = async () => pkgRow("demo");
+    ctx.data.versions.listLive = async () => [versionRow(storedMeta)];
+
+    const res = await new HackageAdapter().handle(
+      {
+        entry: {
+          method: "GET",
+          pattern: "/package/:id/preferred-versions",
+          handlerId: "preferredVersions",
+        },
+        params: { id: "demo" },
+        path: "/package/demo/preferred-versions",
+      },
+      new Request("https://registry.test/package/demo/preferred-versions"),
+      ctx,
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("application/json");
+    expect(await res.json()).toEqual({
+      name: "demo",
+      "preferred-versions": [],
+      deprecated: [],
+    });
+  });
+
+  test("preferred-versions 404s for an unknown package", async () => {
+    const ctx = hackageContext();
+    ctx.data.packages.findByName = async () => null;
+    const res = await new HackageAdapter().handle(
+      {
+        entry: {
+          method: "GET",
+          pattern: "/package/:id/preferred-versions",
+          handlerId: "preferredVersions",
+        },
+        params: { id: "missing" },
+        path: "/package/missing/preferred-versions",
+      },
+      new Request("https://registry.test/package/missing/preferred-versions"),
+      ctx,
+    );
+    expect(res.status).toBe(404);
+  });
+
+  test("POST /packages/ publishes a multipart upload, deriving id from the .cabal", async () => {
+    const ctx = statefulHackageContext();
+    const sdist = buildSdistTarGz([{ path: "demo-1.2.3/demo.cabal", content: CABAL }]);
+    const form = new FormData();
+    form.set("package", new File([sdist], "demo-1.2.3.tar.gz", { type: "application/gzip" }));
+
+    const res = await new HackageAdapter().handle(
+      {
+        entry: { method: "POST", pattern: "/packages/", handlerId: "publishUpload" },
+        params: {},
+        path: "/packages/",
+      },
+      new Request("https://registry.test/packages/", { method: "POST", body: form }),
+      ctx,
+    );
+    expect(res.status).toBe(201);
+    expect(await res.json()).toEqual({ ok: true, package: "demo-1.2.3" });
+  });
+
+  test("POST /packages/ 400s when the multipart 'package' field is missing", async () => {
+    const ctx = hackageContext();
+    const form = new FormData();
+    form.set("notpackage", new File([new Uint8Array([1, 2, 3])], "x.tar.gz"));
+    const res = await new HackageAdapter().handle(
+      {
+        entry: { method: "POST", pattern: "/packages/", handlerId: "publishUpload" },
+        params: {},
+        path: "/packages/",
+      },
+      new Request("https://registry.test/packages/", { method: "POST", body: form }),
+      ctx,
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "missing 'package' file field" });
+  });
+
+  test("publish rejects an empty body with 400", async () => {
+    const ctx = hackageContext();
+    ctx.data.packages.findOrCreate = async ({ name }) => pkgRow(name);
+    ctx.data.versions.exists = async () => false;
+    const res = await new HackageAdapter().handle(
+      {
+        entry: { method: "PUT", pattern: "/package/:id", handlerId: "publish" },
+        params: { id: "demo-1.2.3" },
+        path: "/package/demo-1.2.3",
+      },
+      new Request("https://registry.test/package/demo-1.2.3", {
+        method: "PUT",
+        headers: { "content-type": "application/gzip" },
+        body: new Uint8Array(0),
+      }),
+      ctx,
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "package archive is empty" });
+  });
+
+  test("publish rejects a non-gzip / non-tar body with 400", async () => {
+    const ctx = hackageContext();
+    ctx.data.packages.findOrCreate = async ({ name }) => pkgRow(name);
+    ctx.data.versions.exists = async () => false;
+    const res = await new HackageAdapter().handle(
+      {
+        entry: { method: "PUT", pattern: "/package/:id", handlerId: "publish" },
+        params: { id: "demo-1.2.3" },
+        path: "/package/demo-1.2.3",
+      },
+      new Request("https://registry.test/package/demo-1.2.3", {
+        method: "PUT",
+        headers: { "content-type": "application/gzip" },
+        body: new Uint8Array([1, 2, 3, 4, 5]),
+      }),
+      ctx,
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: "archive is not a valid .tar.gz sdist or has no .cabal file",
+    });
+  });
+
+  test("round-trip: publish then read the index, version list, cabal, and sdist bytes", async () => {
+    const ctx = statefulHackageContext();
+    const adapter = new HackageAdapter();
+    const sdist = buildSdistTarGz([{ path: "demo-1.2.3/demo.cabal", content: CABAL }]);
+    const expectedSha = new Bun.CryptoHasher("sha256").update(sdist).digest("hex");
+
+    // (1) publish
+    const published = await adapter.handle(
+      {
+        entry: { method: "PUT", pattern: "/package/:id", handlerId: "publish" },
+        params: { id: "demo-1.2.3" },
+        path: "/package/demo-1.2.3",
+      },
+      new Request("https://registry.test/package/demo-1.2.3", {
+        method: "PUT",
+        headers: { "content-type": "application/gzip" },
+        body: sdist,
+      }),
+      ctx,
+    );
+    expect(published.status).toBe(201);
+
+    // (2) the version list reflects the publish
+    const list = await adapter.handle(
+      {
+        entry: { method: "GET", pattern: "/package/:id", handlerId: "summary" },
+        params: { id: "demo" },
+        path: "/package/demo",
+      },
+      new Request("https://registry.test/package/demo"),
+      ctx,
+    );
+    expect(await list.json()).toEqual({ name: "demo", versions: ["1.2.3"] });
+
+    // (3) the 01-index contains the exact uploaded .cabal under the canonical path
+    const index = await adapter.handle(
+      indexMatch("/01-index.tar.gz", "index", "/01-index.tar.gz"),
+      new Request("https://registry.test/01-index.tar.gz"),
+      ctx,
+    );
+    const indexTar = gunzipSync(new Uint8Array(await index.arrayBuffer()));
+    const indexText = new TextDecoder().decode(indexTar);
+    expect(indexText).toContain("demo/1.2.3/demo.cabal");
+    expect(indexText).toContain(CABAL);
+
+    // (4) the .cabal download returns the same text verbatim
+    const cabal = await adapter.handle(
+      {
+        entry: { method: "GET", pattern: "/package/:id/:file", handlerId: "download" },
+        params: { id: "demo-1.2.3", file: "demo.cabal" },
+        path: "/package/demo-1.2.3/demo.cabal",
+      },
+      new Request("https://registry.test/package/demo-1.2.3/demo.cabal"),
+      ctx,
+    );
+    expect(await cabal.text()).toBe(CABAL);
+
+    // (5) the sdist download serves the exact bytes published (sha256 matches)
+    const download = await adapter.handle(
+      {
+        entry: { method: "GET", pattern: "/package/:id/:file", handlerId: "download" },
+        params: { id: "demo-1.2.3", file: "demo-1.2.3.tar.gz" },
+        path: "/package/demo-1.2.3/demo-1.2.3.tar.gz",
+      },
+      new Request("https://registry.test/package/demo-1.2.3/demo-1.2.3.tar.gz"),
+      ctx,
+    );
+    const served = new Uint8Array(await download.arrayBuffer());
+    expect(served.length).toBe(sdist.length);
+    expect(new Bun.CryptoHasher("sha256").update(served).digest("hex")).toBe(expectedSha);
+  });
+
+  test("round-trip: re-publishing the same version conflicts (409) via persisted state", async () => {
+    const ctx = statefulHackageContext();
+    const adapter = new HackageAdapter();
+    const sdist = buildSdistTarGz([{ path: "demo-1.2.3/demo.cabal", content: CABAL }]);
+    const publish = () =>
+      adapter.handle(
+        {
+          entry: { method: "PUT", pattern: "/package/:id", handlerId: "publish" },
+          params: { id: "demo-1.2.3" },
+          path: "/package/demo-1.2.3",
+        },
+        new Request("https://registry.test/package/demo-1.2.3", {
+          method: "PUT",
+          headers: { "content-type": "application/gzip" },
+          body: sdist,
+        }),
+        ctx,
+      );
+
+    expect((await publish()).status).toBe(201);
+    const second = await publish();
+    expect(second.status).toBe(409);
+    expect(await second.json()).toEqual({ error: "version already exists" });
   });
 });

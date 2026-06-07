@@ -19,10 +19,11 @@ import {
   buildPackageSummary,
   tarballUrl as buildTarballUrl,
   compareHackageVersions,
+  type HackagePreferredVersions,
   type HackageVersionList,
 } from "./hackage-metadata";
 import { hackageBlobScope, handleHackagePublish } from "./hackage-publish-lifecycle";
-import { buildIndexTarGz, type IndexEntry } from "./hackage-tarball";
+import { buildIndexTar, buildIndexTarGz, type IndexEntry } from "./hackage-tarball";
 import {
   HackageNameSchema,
   type HackageVersionMeta,
@@ -32,7 +33,12 @@ import {
   splitPackageId,
 } from "./hackage-validation";
 
+/** The hackage-security (secure-repo) incremental index, gzip-compressed. */
 const INDEX_PATH = "/01-index.tar.gz";
+/** The same incremental index, uncompressed (hackage-security range/incremental reads). */
+const INDEX_PATH_PLAIN = "/01-index.tar";
+/** The legacy (non-secure `secure: False` repo) index filename, gzip-compressed. */
+const LEGACY_INDEX_PATH = "/00-index.tar.gz";
 
 function parseName(name: string): string {
   return parseRegistryInput(HackageNameSchema, name, {
@@ -43,14 +49,21 @@ function parseName(name: string): string {
 
 /**
  * Hackage (the Haskell package repository). Serves the package index tarball
- * (`01-index.tar.gz`, regenerated from live versions), per-package version lists
- * and per-version summaries, and the sdist tarball / `.cabal` downloads. Publish
- * is `PUT /package/<name>-<version>` of the sdist tarball; the accepted `.cabal`
- * fields (name, version, build-depends, …) are parsed out of it and persisted.
+ * (regenerated from live versions) as `01-index.tar.gz` (secure), `01-index.tar`
+ * (uncompressed) and `00-index.tar.gz` (legacy), per-package version lists,
+ * per-version summaries, optional preferred-versions, and the sdist tarball /
+ * `.cabal` downloads. Publish is `POST /packages/` (the multipart upload that
+ * `cabal upload` sends) or `PUT /package/<name>-<version>`; either way the
+ * accepted `.cabal` fields (name, version, build-depends, …) are parsed out of
+ * the uploaded sdist and persisted.
  */
 export class HackageAdapter implements RegistryPlugin {
   readonly id = "hackage" as const;
-  readonly capabilities = registryCapabilities("proxyable", "virtualizable");
+  // No `proxyable`: there is no `proxyIngest` implementation, and the runtime
+  // gates proxy-repo creation on the handler existing (not the flag), so
+  // declaring `proxyable` would be dishonest and self-defeating. Virtual repos
+  // work via the per-package routes (first-member-wins).
+  readonly capabilities = registryCapabilities("virtualizable");
   authChallenge = basicAuthChallenge;
 
   private readonly plugin = registryPlugin(this.id)
@@ -58,7 +71,9 @@ export class HackageAdapter implements RegistryPlugin {
       displayName: "Hackage",
       mountSegment: "hackage",
       errorResponseKind: "singleError",
-      compressibleHandlers: ["summary", "versions"],
+      // Only declared handler ids belong here; the version-list response rides
+      // the `summary` handler, so there is no separate `versions` handler.
+      compressibleHandlers: ["summary", "preferredVersions"],
       scan: {
         defaultOsvEcosystem: "Hackage",
         referencedDigests: (metadata) =>
@@ -71,6 +86,19 @@ export class HackageAdapter implements RegistryPlugin {
       // Literal routes declared before the `/package/:id` catch-alls so they
       // cannot be shadowed (the matcher tries routes in declared order).
       route.get(INDEX_PATH, "index", ({ req, ctx }) => this.index(req, ctx)),
+      // Uncompressed index (hackage-security incremental reads) and the legacy
+      // `00-index.tar.gz` alias (`secure: False` repos) so an unconfigured or
+      // legacy cabal client can complete `cabal update`.
+      route.get(INDEX_PATH_PLAIN, "indexPlain", ({ req, ctx }) => this.index(req, ctx, "tar")),
+      route.get(LEGACY_INDEX_PATH, "indexLegacy", ({ req, ctx }) => this.index(req, ctx)),
+      // `cabal upload` POSTs the sdist as multipart to `/packages/`; the
+      // name-version is read from the uploaded `.cabal`, not from the path.
+      route.post("/packages/", "publishUpload", ({ req, ctx }) => this.publishUpload(req, ctx)),
+      // Per-package preferred-versions consulted by cabal's solver. Declared
+      // before `/package/:id/:file` so it is not matched as a `:file` download.
+      route.get("/package/:id/preferred-versions", "preferredVersions", ({ params, req, ctx }) =>
+        this.preferredVersions(params.id, req, ctx),
+      ),
       route.get("/package/:id/:file", "download", ({ params, req, ctx }) =>
         this.download(params.id, params.file, req, ctx),
       ),
@@ -143,8 +171,30 @@ export class HackageAdapter implements RegistryPlugin {
 
   handle = this.delegate.handle;
 
-  /** `GET /01-index.tar.gz` — the package index tarball, regenerated from live versions. */
-  private async index(req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  /**
+   * The package index tarball, regenerated from live versions. Served gzipped at
+   * `01-index.tar.gz` (secure) and `00-index.tar.gz` (legacy), and uncompressed
+   * at `01-index.tar` (hackage-security incremental reads).
+   */
+  private async index(
+    req: Request,
+    ctx: RegistryRequestContext,
+    format: "gz" | "tar" = "gz",
+  ): Promise<Response> {
+    const entries = await this.indexEntries(ctx);
+    const body = format === "tar" ? buildIndexTar(entries) : buildIndexTarGz(entries);
+    const contentType = format === "tar" ? "application/x-tar" : "application/gzip";
+    const etag = `"${new Bun.CryptoHasher("sha1").update(body).digest("hex")}"`;
+    if (ifNoneMatch(req, etag)) {
+      return new Response(null, { status: 304, headers: { etag } });
+    }
+    return new Response(body, {
+      headers: { "content-type": contentType, etag },
+    });
+  }
+
+  /** Collect the index entries (`<name>/<version>/<name>.cabal`) in deterministic order. */
+  private async indexEntries(ctx: RegistryRequestContext): Promise<IndexEntry[]> {
     const names = await ctx.data.packages.listNames();
     const entries: IndexEntry[] = [];
     // Deterministic ordering so the body (and ETag) is stable across requests.
@@ -159,14 +209,7 @@ export class HackageAdapter implements RegistryPlugin {
         });
       }
     }
-    const gz = buildIndexTarGz(entries);
-    const etag = `"${new Bun.CryptoHasher("sha1").update(gz).digest("hex")}"`;
-    if (ifNoneMatch(req, etag)) {
-      return new Response(null, { status: 304, headers: { etag } });
-    }
-    return new Response(gz, {
-      headers: { "content-type": "application/gzip", etag },
-    });
+    return entries;
   }
 
   /** `GET /package/:id` — a version summary (id has a version) or a version list (bare name). */
@@ -271,6 +314,39 @@ export class HackageAdapter implements RegistryPlugin {
       message: "invalid Hackage version",
     });
     return handleHackagePublish(split, req, ctx);
+  }
+
+  /**
+   * `POST /packages/` — the transport `cabal upload` actually uses. The sdist is
+   * a multipart `package` field; the name-version is derived from the uploaded
+   * `.cabal` (the path carries no id), then validated like the PUT route.
+   */
+  private async publishUpload(req: Request, ctx: RegistryRequestContext): Promise<Response> {
+    return handleHackagePublish(null, req, ctx);
+  }
+
+  /**
+   * `GET /package/:id/preferred-versions` — cabal's solver consults this to skip
+   * deprecated/unpreferred versions. We track no preferences, so we serve a
+   * permissive (empty) document: all live versions remain eligible. This avoids
+   * a 404 that a real client would otherwise hit.
+   */
+  private async preferredVersions(
+    idRaw: string,
+    req: Request,
+    ctx: RegistryRequestContext,
+  ): Promise<Response> {
+    const name = parseName(idRaw);
+    const pkg = await ctx.data.packages.findByName(name);
+    if (!pkg) return new Response("Not Found", { status: 404 });
+    const metas = await this.liveMetas(ctx, pkg);
+    if (metas.length === 0) return new Response("Not Found", { status: 404 });
+    // No version is preferred/deprecated; an empty constraint string means
+    // "all versions normal" to cabal's solver.
+    const body: HackagePreferredVersions = { name, "preferred-versions": [], deprecated: [] };
+    return textResponseWithEtag(req, JSON.stringify(body), {
+      "content-type": "application/json; charset=utf-8",
+    });
   }
 
   /** All live versions' parsed metadata for a package (oldest first). */

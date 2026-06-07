@@ -4,6 +4,7 @@ export {
   buildPackageSummary,
   compareHackageVersions,
   type HackagePackageSummary,
+  type HackagePreferredVersions,
   type HackageVersionList,
 } from "./hackage-metadata";
 export {

@@ -21,13 +21,16 @@ export type HackagePublishParseResult =
   | { ok: false; error: HackagePublishError };
 
 /**
- * Parse a `PUT /package/:id` upload. `cabal upload` sends the sdist either as a
- * `multipart/form-data` body with a `package` file field, or as the raw
- * `.tar.gz` bytes; we accept both. The `.cabal` member is extracted from the
- * sdist tarball and its name/version must match the requested id.
+ * Parse a publish upload. `cabal upload` sends the sdist either as a
+ * `multipart/form-data` body with a `package` file field (the real
+ * `POST /packages/` transport), or as the raw `.tar.gz` bytes; we accept both.
+ * The `.cabal` member is extracted from the sdist tarball and the name/version
+ * are read from it. When `id` is supplied (the path-keyed `PUT /package/:id`
+ * route), the parsed name/version must match it; for `POST /packages/` there is
+ * no id in the path, so the cabal is the sole source of truth.
  */
 export async function parseHackagePublishRequest(
-  id: { name: string; version: string },
+  id: { name: string; version: string } | null,
   req: Request,
 ): Promise<HackagePublishParseResult> {
   const sdist = await readSdistBytes(req);
@@ -56,7 +59,7 @@ export async function parseHackagePublishRequest(
       error: { error: ".cabal is missing a valid name and version", status: 400 },
     };
   }
-  if (fields.name !== id.name || fields.version !== id.version) {
+  if (id && (fields.name !== id.name || fields.version !== id.version)) {
     return {
       ok: false,
       error: {

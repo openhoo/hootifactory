@@ -20,6 +20,16 @@ export interface HackageVersionList {
   versions: string[];
 }
 
+/**
+ * The `GET /package/:name/preferred-versions` document. We track no preferences,
+ * so both lists are empty: every live version stays eligible for the solver.
+ */
+export interface HackagePreferredVersions {
+  name: string;
+  "preferred-versions": string[];
+  deprecated: string[];
+}
+
 /** Build the absolute sdist tarball download URL for a package id. */
 export function tarballUrl(
   baseUrl: string,

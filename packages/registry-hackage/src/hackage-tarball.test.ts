@@ -62,6 +62,15 @@ describe("extractCabalFromSdist", () => {
   test("returns null for non-gzip input", () => {
     expect(extractCabalFromSdist(new Uint8Array([1, 2, 3, 4]))).toBeNull();
   });
+
+  test("returns null for a decompression bomb that exceeds the 64 MiB cap", () => {
+    // A tiny gzip of ~80 MiB of zeros: well under the cap on disk, far over it
+    // once inflated. node:zlib's maxOutputLength must reject it (→ null) rather
+    // than allocate it all into RAM.
+    const bomb = Bun.gzipSync(new Uint8Array(80 * 1024 * 1024));
+    expect(bomb.length).toBeLessThan(1024 * 1024);
+    expect(extractCabalFromSdist(bomb)).toBeNull();
+  });
 });
 
 describe("buildIndexTar", () => {
