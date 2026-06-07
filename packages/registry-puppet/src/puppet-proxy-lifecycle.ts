@@ -137,15 +137,13 @@ async function fetchPuppetUpstreamModule(
 }
 
 async function readJson(res: Response, maxBytes: number): Promise<unknown> {
-  const declared = Number(res.headers.get("content-length") ?? 0);
-  if (declared > maxBytes) {
-    await res.body?.cancel().catch(() => {});
-    return null;
-  }
-  const text = await res.text().catch(() => null);
-  if (text === null || text.length > maxBytes) return null;
+  // Stream the body through the same byte-capped reader used for tarballs so an
+  // absent/incorrect `content-length` cannot pull an unbounded response into RAM,
+  // and the cap is enforced in actual bytes (not UTF-16 code units).
+  const bytes = await readBytes(res, maxBytes);
+  if (!bytes) return null;
   try {
-    return JSON.parse(text);
+    return JSON.parse(new TextDecoder().decode(bytes));
   } catch {
     return null;
   }

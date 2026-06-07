@@ -1,13 +1,32 @@
+import { gunzipSync } from "node:zlib";
+
 /**
  * Minimal reader for a Puppet module archive (a gzipped USTAR tar). A Puppet
  * module tarball wraps its files under a single top-level directory named
  * `<owner>-<name>-<version>/`, so `metadata.json` lives at
  * `<owner>-<name>-<version>/metadata.json`. We walk 512-byte tar headers and
  * return the first `metadata.json` member regardless of its parent directory. No
- * external tar/gzip dependency — only Bun.gunzipSync.
+ * external tar/gzip dependency — only node:zlib.
  */
 
 const TAR_BLOCK = 512;
+
+/**
+ * Cap the gunzipped tar so a decompression bomb (a tiny gzip of repetitive bytes
+ * expanding to hundreds of GB) can never be materialized in RAM and stall the
+ * single Bun event loop. A `metadata.json` is a few KiB; 8 MiB is generous for
+ * the small tar that carries it. Matches APT's `MAX_CONTROL_TAR_BYTES` and pub's
+ * `MAX_PUB_TAR_BYTES`.
+ */
+const MAX_PUPPET_TAR_BYTES = 8 * 1024 * 1024;
+
+/**
+ * Cap how many tar headers we walk before giving up. A crafted tar (within the
+ * allowed size) could pack hundreds of thousands of tiny entries into a tight
+ * scan loop; metadata.json lives near the archive root, so 256 entries is more
+ * than enough. Matches APT's `scanned < 256` guard.
+ */
+const MAX_TAR_ENTRIES = 256;
 const TAR_NAME_OFFSET = 0;
 const TAR_NAME_LENGTH = 100;
 const TAR_SIZE_OFFSET = 124;
@@ -51,7 +70,8 @@ function isZeroBlock(block: Uint8Array): boolean {
  */
 export function readTarEntryByBasename(tar: Uint8Array, wantedBasename: string): Uint8Array | null {
   let offset = 0;
-  while (offset + TAR_BLOCK <= tar.length) {
+  let scanned = 0;
+  while (offset + TAR_BLOCK <= tar.length && scanned < MAX_TAR_ENTRIES) {
     const header = tar.subarray(offset, offset + TAR_BLOCK);
     if (isZeroBlock(header)) break;
     const path = entryPath(header).replace(/^\.\//, "");
@@ -62,26 +82,19 @@ export function readTarEntryByBasename(tar: Uint8Array, wantedBasename: string):
     if (basename === wantedBasename) return tar.subarray(dataStart, dataStart + size);
     // Advance past the data, rounded up to the next 512-byte boundary.
     offset = dataStart + Math.ceil(size / TAR_BLOCK) * TAR_BLOCK;
+    scanned += 1;
   }
   return null;
-}
-
-/**
- * Re-view bytes over a plain `ArrayBuffer` so Bun's zlib bindings (which require
- * an `ArrayBuffer`, not a `SharedArrayBuffer`-backed view) accept them.
- */
-function toArrayBufferView(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
-  const copy = new ArrayBuffer(bytes.byteLength);
-  const view = new Uint8Array(copy);
-  view.set(bytes);
-  return view;
 }
 
 /** Gunzip a `.tar.gz` module archive and return the `metadata.json` text, if present. */
 export function extractPuppetMetadataJson(archive: Uint8Array): string | null {
   let tar: Uint8Array;
   try {
-    tar = Bun.gunzipSync(toArrayBufferView(archive));
+    // node:zlib enforces `maxOutputLength` (Bun.gunzipSync ignores it), so a
+    // decompression bomb is rejected here rather than allocating unbounded and
+    // stalling the single Bun event loop.
+    tar = gunzipSync(archive, { maxOutputLength: MAX_PUPPET_TAR_BYTES });
   } catch {
     return null;
   }

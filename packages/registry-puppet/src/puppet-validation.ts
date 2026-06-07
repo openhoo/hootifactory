@@ -3,10 +3,11 @@ import { z } from "@hootifactory/registry";
 /**
  * Puppet Forge identifiers. A module is owned by a Forge username and has a short
  * module name; the two are joined with a dash into a *slug* (`<owner>-<name>`).
- * Forge usernames and module names are lowercase-ish identifiers — letters,
- * digits, and underscores; the owner additionally permits a leading uppercase in
- * the wild, but the canonical form is lowercased. We are deliberately permissive
- * on case (Forge lowercases) but reject anything outside `[A-Za-z0-9_]`.
+ * Forge usernames are alphanumeric only (`[a-z0-9]`, no underscores or dashes),
+ * so the first dash in a slug unambiguously separates the owner from the module
+ * name. We are deliberately permissive on case (Forge lowercases) but reject
+ * anything outside `[A-Za-z0-9]` for the owner. Module names additionally allow
+ * underscores and must start with a letter (`[a-z][a-z0-9_]*`).
  */
 const OWNER_RE = /^[A-Za-z0-9]+$/;
 const MODULE_NAME_RE = /^[a-z][a-z0-9_]*$/;
