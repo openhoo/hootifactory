@@ -73,7 +73,7 @@ function condaContext() {
 }
 
 describe("Conda adapter", () => {
-  test("declares repodata, repodataBz2, download, and publish routes in order", () => {
+  test("declares repodata, repodataZst, download, and publish routes in order", () => {
     expect(new CondaAdapter().routes()).toEqual([
       {
         method: "GET",
@@ -83,7 +83,7 @@ describe("Conda adapter", () => {
         metadataMergeable: true,
         packageParam: "subdir",
       },
-      { method: "GET", pattern: "/:subdir/repodata.json.bz2", handlerId: "repodataBz2" },
+      { method: "GET", pattern: "/:subdir/repodata.json.zst", handlerId: "repodataZst" },
       { method: "GET", pattern: "/:subdir/:filename", handlerId: "download" },
       { method: "PUT", pattern: "/:subdir/:filename", handlerId: "publish" },
     ]);
@@ -183,7 +183,7 @@ describe("Conda adapter", () => {
     expect(cached.status).toBe(304);
   });
 
-  test("GET /<subdir>/repodata.json.bz2 returns a gzip-compressed variant", async () => {
+  test("GET /<subdir>/repodata.json.zst returns a zstd-compressed variant", async () => {
     const ctx = condaContext();
     ctx.data.packages.listNames = async () => [{ name: "numpy" }];
     ctx.data.packages.findByName = async (name) => pkgRow(name);
@@ -191,17 +191,17 @@ describe("Conda adapter", () => {
 
     const res = await new CondaAdapter().handle(
       {
-        entry: { method: "GET", pattern: "/:subdir/repodata.json.bz2", handlerId: "repodataBz2" },
+        entry: { method: "GET", pattern: "/:subdir/repodata.json.zst", handlerId: "repodataZst" },
         params: { subdir: "linux-64" },
-        path: "/linux-64/repodata.json.bz2",
+        path: "/linux-64/repodata.json.zst",
       },
-      new Request("https://registry.test/linux-64/repodata.json.bz2"),
+      new Request("https://registry.test/linux-64/repodata.json.zst"),
       ctx,
     );
     expect(res.status).toBe(200);
-    expect(res.headers.get("content-type")).toBe("application/gzip");
-    const gz = new Uint8Array(await res.arrayBuffer());
-    const json = JSON.parse(new TextDecoder().decode(Bun.gunzipSync(gz)));
+    expect(res.headers.get("content-type")).toBe("application/zstd");
+    const compressed = new Uint8Array(await res.arrayBuffer());
+    const json = JSON.parse(new TextDecoder().decode(Bun.zstdDecompressSync(compressed)));
     expect(json.info).toEqual({ subdir: "linux-64" });
   });
 
@@ -356,6 +356,38 @@ describe("Conda adapter", () => {
       packageKind: "conda",
       blobDigest: DIGEST,
       sha256: HEX,
+    });
+  });
+
+  test("PUT rejects an artifact filename that disagrees with the URL path", async () => {
+    const ctx = condaContext();
+    // The uploaded part is named `evil-...`, but the URL (and permission scope)
+    // targets `numpy-...`; storing the mismatched filename must be rejected.
+    const body = buildMultipartBody("BOUND", [
+      {
+        name: "index",
+        data: new TextEncoder().encode(
+          JSON.stringify({ name: "evil", version: "1.0.0", build: "0" }),
+        ),
+      },
+      { name: "artifact", filename: "evil-1.0.0-0.conda", data: new Uint8Array([1, 2]) },
+    ]);
+    const res = await new CondaAdapter().handle(
+      {
+        entry: { method: "PUT", pattern: "/:subdir/:filename", handlerId: "publish" },
+        params: { subdir: "linux-64", filename: "numpy-1.21.0-py39_0.conda" },
+        path: "/linux-64/numpy-1.21.0-py39_0.conda",
+      },
+      new Request("https://registry.test/linux-64/numpy-1.21.0-py39_0.conda", {
+        method: "PUT",
+        headers: { "content-type": "multipart/form-data; boundary=BOUND" },
+        body,
+      }),
+      ctx,
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: "artifact filename does not match the upload path",
     });
   });
 

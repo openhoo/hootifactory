@@ -87,14 +87,14 @@ export class CondaAdapter implements RegistryPlugin {
         ({ params, req, ctx }) => this.repodata(params.subdir, req, ctx),
         { proxyRefreshTrigger: true, metadataMergeable: true, packageParam: "subdir" },
       ),
-      route.get("/:subdir/repodata.json.bz2", "repodataBz2", ({ params, req, ctx }) =>
+      route.get("/:subdir/repodata.json.zst", "repodataZst", ({ params, req, ctx }) =>
         this.repodataCompressed(params.subdir, req, ctx),
       ),
       route.get("/:subdir/:filename", "download", ({ params, req, ctx }) =>
         this.download(params.subdir, params.filename, req, ctx),
       ),
       route.put("/:subdir/:filename", "publish", ({ params, req, ctx }) =>
-        this.publish(params.subdir, req, ctx),
+        this.publish(params.subdir, params.filename, req, ctx),
       ),
     ])
     .build();
@@ -181,7 +181,11 @@ export class CondaAdapter implements RegistryPlugin {
     return textResponseWithEtag(req, serializeCondaRepodata(doc), REPODATA_CONTENT_TYPE);
   }
 
-  /** `GET /<subdir>/repodata.json.bz2` — a gzip-compressed repodata variant. */
+  /**
+   * `GET /<subdir>/repodata.json.zst` — a zstd-compressed repodata variant.
+   * Modern conda/mamba clients fetch the compressed index by name and decode it
+   * by its suffix, so the bytes must be real zstd (`application/zstd`), not gzip.
+   */
   private async repodataCompressed(
     subdirRaw: string,
     req: Request,
@@ -190,10 +194,10 @@ export class CondaAdapter implements RegistryPlugin {
     const subdir = parseSubdir(subdirRaw);
     const doc = await this.buildSubdirRepodata(ctx, subdir);
     const body = new TextEncoder().encode(serializeCondaRepodata(doc));
-    const gz = Bun.gzipSync(body);
-    const etag = `"${new Bun.CryptoHasher("md5").update(gz).digest("hex")}"`;
+    const compressed = Bun.zstdCompressSync(body);
+    const etag = `"${new Bun.CryptoHasher("md5").update(compressed).digest("hex")}"`;
     if (ifNoneMatch(req, etag)) return new Response(null, { status: 304, headers: { etag } });
-    return new Response(gz, { headers: { "content-type": "application/gzip", etag } });
+    return new Response(compressed, { headers: { "content-type": "application/zstd", etag } });
   }
 
   /** `GET /<subdir>/<filename>` — serve the hosted package blob. */
@@ -247,11 +251,19 @@ export class CondaAdapter implements RegistryPlugin {
 
   private async publish(
     subdirRaw: string,
+    filenameRaw: string,
     req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
     const subdir = parseSubdir(subdirRaw);
-    return handleCondaPublish(subdir, req, ctx);
+    // The permission check (and audit scope) is performed against the URL
+    // `:subdir/:filename`; the publish must store exactly that path, never the
+    // filename the uploaded part happens to carry.
+    const filename = parseRegistryInput(CondaFilenameSchema, filenameRaw, {
+      code: "NAME_INVALID",
+      message: "invalid package filename",
+    });
+    return handleCondaPublish(subdir, filename, req, ctx);
   }
 
   proxyIngest(name: string, upstreamBase: string, ctx: RegistryRequestContext): Promise<boolean> {

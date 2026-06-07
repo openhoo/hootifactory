@@ -5,6 +5,7 @@ import { handleCondaProxyIngest } from "./conda-proxy";
 
 const PACKAGE_BYTES = new Uint8Array([1, 2, 3, 4, 5]);
 const PACKAGE_SHA256 = new Bun.CryptoHasher("sha256").update(PACKAGE_BYTES).digest("hex");
+const PACKAGE_MD5 = new Bun.CryptoHasher("md5").update(PACKAGE_BYTES).digest("hex");
 
 function pkgRow(name: string): RegistryPackageRow {
   return {
@@ -78,7 +79,7 @@ describe("Conda proxy ingest", () => {
             build_number: 0,
             depends: ["python >=3.9"],
             sha256: PACKAGE_SHA256,
-            md5: "0".repeat(32),
+            md5: PACKAGE_MD5,
             size: PACKAGE_BYTES.length,
           },
         },
@@ -132,6 +133,98 @@ describe("Conda proxy ingest", () => {
             version: "1.21.0",
             build: "py39_0",
             sha256: "f".repeat(64),
+            size: PACKAGE_BYTES.length,
+          },
+        },
+      },
+      PACKAGE_BYTES,
+    );
+
+    const ok = await handleCondaProxyIngest(
+      "linux-64",
+      "https://conda.anaconda.org/conda-forge",
+      ctx,
+    );
+    expect(ok).toBe(false);
+    expect(upserted).toBe(false);
+  });
+
+  test("verifies legacy md5-only records and rejects an md5 mismatch", async () => {
+    const ctx = createTestRegistryContext();
+    let upserted = false;
+    ctx.data.packages.findByName = async () => null;
+    ctx.data.packages.findOrCreate = async ({ name }) => pkgRow(name);
+    ctx.data.versions.exists = async () => false;
+    ctx.data.versions.upsertWithBlobRef = async () => {
+      upserted = true;
+      return {
+        stored: {
+          digest: `sha256:${PACKAGE_SHA256}`,
+          size: 0,
+          deduped: false,
+          refCreated: true,
+          blobRefId: "ref_1",
+        },
+        versionId: "ver_1",
+      };
+    };
+
+    // A legacy `.tar.bz2` record with only md5, and the md5 does not match.
+    mockUpstream(
+      {
+        info: { subdir: "linux-64" },
+        packages: {
+          "numpy-1.21.0-py39_0.tar.bz2": {
+            name: "numpy",
+            version: "1.21.0",
+            build: "py39_0",
+            md5: "0".repeat(32),
+            size: PACKAGE_BYTES.length,
+          },
+        },
+        "packages.conda": {},
+      },
+      PACKAGE_BYTES,
+    );
+
+    const ok = await handleCondaProxyIngest(
+      "linux-64",
+      "https://conda.anaconda.org/conda-forge",
+      ctx,
+    );
+    expect(ok).toBe(false);
+    expect(upserted).toBe(false);
+  });
+
+  test("refuses to mirror a package the index declares no checksum for", async () => {
+    const ctx = createTestRegistryContext();
+    let upserted = false;
+    ctx.data.packages.findByName = async () => null;
+    ctx.data.packages.findOrCreate = async ({ name }) => pkgRow(name);
+    ctx.data.versions.exists = async () => false;
+    ctx.data.versions.upsertWithBlobRef = async () => {
+      upserted = true;
+      return {
+        stored: {
+          digest: `sha256:${PACKAGE_SHA256}`,
+          size: 0,
+          deduped: false,
+          refCreated: true,
+          blobRefId: "ref_1",
+        },
+        versionId: "ver_1",
+      };
+    };
+
+    mockUpstream(
+      {
+        info: { subdir: "linux-64" },
+        packages: {},
+        "packages.conda": {
+          "numpy-1.21.0-py39_0.conda": {
+            name: "numpy",
+            version: "1.21.0",
+            build: "py39_0",
             size: PACKAGE_BYTES.length,
           },
         },

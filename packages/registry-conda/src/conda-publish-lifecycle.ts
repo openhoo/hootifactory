@@ -37,10 +37,11 @@ function md5Hex(bytes: Uint8Array): string {
 
 export async function handleCondaPublish(
   subdir: string,
+  expectedFilename: string,
   req: Request,
   ctx: RegistryRequestContext,
 ): Promise<Response> {
-  const parsed = await parseCondaPublishRequest(subdir, req);
+  const parsed = await parseCondaPublishRequest(subdir, expectedFilename, req);
   if (!parsed.ok) {
     return Response.json({ error: parsed.error.error }, { status: parsed.error.status });
   }

@@ -99,14 +99,14 @@ async function fetchUpstreamRepodata(
     headers: { accept: "application/json" },
   }).catch(() => null);
   if (!res?.ok) return null;
-  const declared = Number(res.headers.get("content-length") ?? 0);
-  if (declared > ctx.limits.maxUploadBytes) {
-    await res.body?.cancel().catch(() => {});
-    return null;
-  }
+  // Stream with a byte cap instead of `res.json()`: a chunked (no
+  // content-length) or lying upstream could otherwise read an unbounded body
+  // into memory.
+  const bytes = await readBoundedBody(res, ctx.limits.maxUploadBytes);
+  if (!bytes) return null;
   let json: unknown;
   try {
-    json = await res.json();
+    json = JSON.parse(new TextDecoder().decode(bytes));
   } catch {
     return null;
   }
@@ -114,6 +114,40 @@ async function fetchUpstreamRepodata(
   const packages = isJsonObject(json.packages) ? json.packages : {};
   const packagesConda = isJsonObject(json["packages.conda"]) ? json["packages.conda"] : {};
   return { packages, packagesConda };
+}
+
+/**
+ * Read a response body into memory, aborting if it exceeds `maxBytes`. The
+ * declared `content-length` is only a hint; we enforce the cap while streaming
+ * so a chunked or mis-declared body cannot exhaust memory.
+ */
+async function readBoundedBody(res: Response, maxBytes: number): Promise<Uint8Array | null> {
+  const declared = Number(res.headers.get("content-length") ?? 0);
+  if (declared > maxBytes) {
+    await res.body?.cancel().catch(() => {});
+    return null;
+  }
+  const reader = res.body?.getReader();
+  if (!reader) return null;
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => {});
+      return null;
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
 }
 
 async function mirrorPackage(input: {
@@ -139,13 +173,19 @@ async function mirrorPackage(input: {
   if (existing && (await ctx.data.versions.exists(existing, versionKey))) return true;
 
   const declaredSha256 = typeof record.sha256 === "string" ? record.sha256 : null;
+  const declaredMd5 = typeof record.md5 === "string" ? record.md5 : null;
+  // The upstream repodata is untrusted JSON: refuse to mirror a package the
+  // index does not let us verify at all. Newer `.conda` records carry sha256;
+  // legacy `.tar.bz2` records may only carry md5.
+  if (!declaredSha256 && !declaredMd5) return false;
   const url = `${base}/${subdir}/${encodeURIComponent(filename)}`;
   const downloaded = await fetchPackage(url, upstreamHost, ctx);
   if (!downloaded) return false;
   const { bytes, sha256, md5 } = downloaded;
-  // The upstream repodata is untrusted JSON: only store the blob if its bytes
-  // hash to the sha256 the index advertised.
+  // Only store the blob if its bytes hash to every checksum the index
+  // advertised.
   if (declaredSha256 && declaredSha256 !== sha256) return false;
+  if (declaredMd5 && declaredMd5 !== md5) return false;
 
   const pkg = existing ?? (await ctx.data.packages.findOrCreate({ name: index.name }));
   const scope = condaBlobScope(subdir, filename);

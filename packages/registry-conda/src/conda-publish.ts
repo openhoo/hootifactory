@@ -31,10 +31,12 @@ const MultipartContentTypeSchema = z
  * Parse a package upload: `multipart/form-data` with an `index` part (the
  * package's `index.json` metadata) and an `artifact` part (the `.conda` /
  * `.tar.bz2` blob). The artifact's `filename` is required and must agree with
- * the index `name`/`version`/`build`.
+ * the index `name`/`version`/`build` and with the request URL's `:filename`
+ * (`expectedFilename`) — the path the permission check was scoped against.
  */
 export async function parseCondaPublishRequest(
   subdir: string,
+  expectedFilename: string,
   req: Request,
 ): Promise<CondaPublishParseResult> {
   const contentType = req.headers.get("content-type") ?? "";
@@ -85,6 +87,17 @@ export async function parseCondaPublishRequest(
     rawFilename,
     { code: "NAME_INVALID", message: "invalid artifact filename" },
   );
+
+  // The uploaded filename must match the request URL's `:filename`. The
+  // permission check (and audit scope) ran against the URL path, so storing a
+  // different filename would let an authorized upload target an unexpected
+  // `subdir/filename` scope.
+  if (filename !== expectedFilename) {
+    return {
+      ok: false,
+      error: { error: "artifact filename does not match the upload path", status: 400 },
+    };
+  }
 
   const coords = parseCondaFilename(filename);
   if (!coords || condaPackageKind(filename) === null) {
