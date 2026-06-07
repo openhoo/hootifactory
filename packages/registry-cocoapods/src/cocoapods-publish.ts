@@ -18,7 +18,11 @@ export type CocoapodsPublishParseResult =
 const MultipartContentTypeSchema = z
   .string()
   .max(512)
-  .refine((value) => multipartBoundary(value) != null, "multipart boundary is required");
+  .refine(
+    (value) =>
+      /^\s*multipart\/form-data\s*(?:;|$)/i.test(value) && multipartBoundary(value) != null,
+    "expected multipart/form-data with a boundary",
+  );
 
 /**
  * Parse the `PUT /:pod` publish: multipart/form-data with a `podspec` (JSON) part
@@ -49,6 +53,9 @@ export async function parseCocoapodsPublishRequest(
   const sourcePart = parts.find((part) => part.name === "source");
   if (!sourcePart) {
     return { ok: false, error: { error: "missing 'source' part", status: 400 } };
+  }
+  if (sourcePart.data.length === 0) {
+    return { ok: false, error: { error: "'source' part is empty", status: 400 } };
   }
 
   let podspecJson: unknown;

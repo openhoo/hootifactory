@@ -475,6 +475,58 @@ describe("CocoaPods adapter", () => {
     expect(res.status).toBe(400);
   });
 
+  test("PUT /<pod> rejects a non-multipart content-type that carries a boundary= param", async () => {
+    const ctx = cocoapodsContext();
+    const body = buildMultipartBody("BOUND", [
+      {
+        name: "podspec",
+        data: new TextEncoder().encode(JSON.stringify({ name: "demo", version: "1.2.3" })),
+      },
+      { name: "source", filename: "demo.tar.gz", data: new Uint8Array([1, 2, 3, 4]) },
+    ]);
+    const res = await new CocoapodsAdapter().handle(
+      {
+        entry: { method: "PUT", pattern: "/:pod", handlerId: "publish" },
+        params: { pod: "demo" },
+        path: "/demo",
+      },
+      new Request("https://registry.test/demo", {
+        method: "PUT",
+        // A boundary= param alone must not be enough; the media type must be multipart/form-data.
+        headers: { "content-type": "text/plain; boundary=BOUND" },
+        body,
+      }),
+      ctx,
+    );
+    expect(res.status).toBe(400);
+  });
+
+  test("PUT /<pod> rejects an empty source part with 400", async () => {
+    const ctx = cocoapodsContext();
+    const body = buildMultipartBody("BOUND", [
+      {
+        name: "podspec",
+        data: new TextEncoder().encode(JSON.stringify({ name: "demo", version: "1.2.3" })),
+      },
+      { name: "source", filename: "demo.tar.gz", data: new Uint8Array([]) },
+    ]);
+    const res = await new CocoapodsAdapter().handle(
+      {
+        entry: { method: "PUT", pattern: "/:pod", handlerId: "publish" },
+        params: { pod: "demo" },
+        path: "/demo",
+      },
+      new Request("https://registry.test/demo", {
+        method: "PUT",
+        headers: { "content-type": "multipart/form-data; boundary=BOUND" },
+        body,
+      }),
+      ctx,
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "'source' part is empty" });
+  });
+
   test("PUT /<pod> with an invalid pod name throws NAME_INVALID", async () => {
     const ctx = cocoapodsContext();
     await expect(
