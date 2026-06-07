@@ -119,6 +119,19 @@ export interface ParsedNarInfo {
 }
 
 /**
+ * Parse a strictly-decimal, non-negative size field. Nix writes `FileSize`/
+ * `NarSize` as plain decimal byte counts, so anything with a sign, trailing
+ * garbage (`12abc`), or beyond the safe-integer range is rejected rather than
+ * silently coerced — a malformed size would otherwise persist into the stored
+ * manifest and the re-served narinfo.
+ */
+function parseNonNegativeInt(raw: string): number | null {
+  if (!/^\d+$/.test(raw)) return null;
+  const value = Number(raw);
+  return Number.isSafeInteger(value) ? value : null;
+}
+
+/**
  * Parse a narinfo text body into its fields. The narinfo grammar is one
  * `Key: value` per line; `References` is space-separated; `Sig` may repeat.
  * Returns `null` when a required field is missing or malformed.
@@ -147,9 +160,9 @@ export function parseNarInfoText(body: string): ParsedNarInfo | null {
   const narSizeRaw = single("NarSize");
   if (!storePath || !url || !fileHash || !narHash || !fileSizeRaw || !narSizeRaw) return null;
 
-  const fileSize = Number.parseInt(fileSizeRaw, 10);
-  const narSize = Number.parseInt(narSizeRaw, 10);
-  if (!Number.isInteger(fileSize) || !Number.isInteger(narSize)) return null;
+  const fileSize = parseNonNegativeInt(fileSizeRaw);
+  const narSize = parseNonNegativeInt(narSizeRaw);
+  if (fileSize === null || narSize === null) return null;
 
   const compression =
     (NAR_COMPRESSIONS as Record<string, string>)[compressionRaw] !== undefined
@@ -181,12 +194,16 @@ export function parseNarInfoText(body: string): ParsedNarInfo | null {
 
 /**
  * Extract the bare NAR file hash (no `sha256:` prefix, no extension) from a
- * narinfo `URL` line such as `nar/<filehash>.nar.xz`.
+ * narinfo `URL` line. The `URL` must be a relative `nar/<filehash>.nar[.ext]`
+ * reference into this registry's own `/nar/...` route — absolute URLs or any
+ * other path shape are rejected so a publisher can't persist a narinfo that
+ * redirects clients to an arbitrary location. The extracted hash must itself be
+ * a valid NAR file hash.
  */
 export function narFileHashFromUrl(url: string): string | null {
-  const file = url.split("/").pop() ?? "";
-  const match = file.match(/^([^.]+)\.nar(?:\.[A-Za-z0-9]+)?$/);
-  return match?.[1] ?? null;
+  const match = url.match(/^nar\/([^/.]+)\.nar(?:\.[A-Za-z0-9]+)?$/);
+  const hash = match?.[1];
+  return hash && isValidNarFileHash(hash) ? hash : null;
 }
 
 /** Serialise stored narinfo metadata back into the canonical narinfo text body. */

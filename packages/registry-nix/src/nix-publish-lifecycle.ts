@@ -1,4 +1,11 @@
-import { publishImmutableVersionBlob, type RegistryRequestContext } from "@hootifactory/registry";
+import {
+  commitPackageVersionBlob,
+  findOrCreateRegistryPackage,
+  publishImmutableVersionBlob,
+  type RegistryRequestContext,
+  releaseRegistryBlobRef,
+  storeRegistryBlobStreamWithRef,
+} from "@hootifactory/registry";
 import {
   buildNarInfoMeta,
   narFileHashFromUrl,
@@ -26,37 +33,50 @@ export async function handleNarUpload(
   req: Request,
   ctx: RegistryRequestContext,
 ): Promise<Response> {
-  const data = new Uint8Array(await req.arrayBuffer());
+  if (!req.body) {
+    return new Response("missing NAR body", { status: 400 });
+  }
   const scope = narBlobScope(fileHash);
-  const result = await publishImmutableVersionBlob(ctx, {
-    package: { name: scope },
+
+  // Stream the NAR straight into content-addressable storage rather than
+  // buffering the whole archive in memory — NARs can be gigabytes, so
+  // `req.arrayBuffer()` would invite OOM and cap throughput. CAS computes the
+  // digest and size as it consumes the stream.
+  const stored = await storeRegistryBlobStreamWithRef(ctx, {
+    data: req.body,
+    kind: NAR_BLOB_KIND,
+    scope,
+    mediaType: "application/x-nix-nar",
+  });
+
+  const pkg = await findOrCreateRegistryPackage(ctx, { name: scope });
+  const result = await commitPackageVersionBlob(ctx, {
+    stored,
+    package: pkg,
     version: NARINFO_VERSION,
     kind: NAR_BLOB_KIND,
     scope,
-    blob: {
-      data,
-      kind: NAR_BLOB_KIND,
-      scope,
-      mediaType: "application/x-nix-nar",
-    },
-    metadata: (stored) => ({ fileHash, blobDigest: stored.digest, sizeBytes: data.length }),
-    sizeBytes: data.length,
+    metadata: { fileHash, blobDigest: stored.digest, sizeBytes: stored.size },
+    sizeBytes: stored.size,
     scan: {
       name: scope,
       version: NARINFO_VERSION,
       mediaType: "application/x-nix-nar",
     },
-    asset: (stored) => ({
+    asset: {
       role: NAR_BLOB_KIND,
       scope,
       path: `${fileHash}.nar`,
       mediaType: "application/x-nix-nar",
       metadata: { fileHash, blobDigest: stored.digest },
-    }),
-    // Content-addressed: re-uploading the same NAR is a no-op success, not a conflict.
-    versionConflict: () => Promise.resolve(false),
+    },
   });
-  if (!result.ok) {
+  if ("conflict" in result) {
+    // A version already holds this NAR. Release the ref we just created so the
+    // freshly-streamed (deduped) blob isn't left orphaned.
+    if (stored.refCreated) {
+      await releaseRegistryBlobRef(ctx, { digest: stored.digest, kind: NAR_BLOB_KIND, scope });
+    }
     return new Response("conflict", { status: 409 });
   }
   return new Response(null, { status: 200 });

@@ -51,6 +51,20 @@ describe("nix-validation", () => {
     expect(narFileHashFromUrl(`nar/${FILE_HASH}.nar.zst`)).toBe(FILE_HASH);
   });
 
+  test("narFileHashFromUrl rejects absolute URLs and non-nar/ paths", () => {
+    // Absolute URL pointing at an arbitrary host must not be accepted.
+    expect(narFileHashFromUrl(`https://evil.example/${FILE_HASH}.nar.xz`)).toBeNull();
+    // Path-traversal / nested segments are not the registry's own nar/ route.
+    expect(narFileHashFromUrl(`../nar/${FILE_HASH}.nar`)).toBeNull();
+    expect(narFileHashFromUrl(`sub/nar/${FILE_HASH}.nar`)).toBeNull();
+    expect(narFileHashFromUrl(`/nar/${FILE_HASH}.nar`)).toBeNull();
+    expect(narFileHashFromUrl(`nar/${FILE_HASH}.tar.xz`)).toBeNull();
+    // A bare filename without the nar/ prefix is rejected.
+    expect(narFileHashFromUrl(`${FILE_HASH}.nar`)).toBeNull();
+    // The extracted hash must itself be a valid NAR file hash.
+    expect(narFileHashFromUrl("nar/not-a-valid-hash.nar")).toBeNull();
+  });
+
   test("parseNarInfoText reads all fields, splitting References and collecting Sig", () => {
     const parsed = parseNarInfoText(BODY);
     expect(parsed).not.toBeNull();
@@ -70,6 +84,19 @@ describe("nix-validation", () => {
   test("parseNarInfoText rejects unknown compression algorithms", () => {
     const bad = BODY.replace("Compression: xz", "Compression: rar");
     expect(parseNarInfoText(bad)).toBeNull();
+  });
+
+  test("parseNarInfoText rejects non-canonical and negative size fields", () => {
+    // Trailing garbage must not be silently coerced (was parsed as 12).
+    expect(parseNarInfoText(BODY.replace("FileSize: 41232", "FileSize: 12abc"))).toBeNull();
+    expect(parseNarInfoText(BODY.replace("NarSize: 226552", "NarSize: 99x"))).toBeNull();
+    // Negative sizes are not valid byte counts.
+    expect(parseNarInfoText(BODY.replace("FileSize: 41232", "FileSize: -5"))).toBeNull();
+    // Hex / non-decimal forms are rejected.
+    expect(parseNarInfoText(BODY.replace("NarSize: 226552", "NarSize: 0x10"))).toBeNull();
+    // A plain zero is a valid size.
+    const zero = parseNarInfoText(BODY.replace("FileSize: 41232", "FileSize: 0"));
+    expect(zero?.fileSize).toBe(0);
   });
 
   test("buildNarInfoText round-trips a parsed body through stored metadata", () => {

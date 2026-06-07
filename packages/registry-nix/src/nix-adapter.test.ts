@@ -255,16 +255,20 @@ describe("Nix adapter", () => {
     expect(res.status).toBe(404);
   });
 
-  test("PUT /nar/<filehash>.nar stores the NAR blob content-addressably", async () => {
+  test("PUT /nar/<filehash>.nar streams the NAR blob into content-addressable storage", async () => {
     const ctx = nixContext();
-    const committed: { metadata?: Record<string, unknown>; scope?: string } = {};
+    const committed: { metadata?: Record<string, unknown>; scope?: string; sizeBytes?: number } =
+      {};
     ctx.data.packages.findOrCreate = async ({ name }) => pkgRow(name);
-    ctx.data.content.storeBlobWithRef = async (input): Promise<RegistryStoredBlob> => {
+    ctx.data.content.storeBlobStreamWithRef = async (input): Promise<RegistryStoredBlob> => {
+      // The handler must hand us the request body stream, not a buffered copy.
+      expect(input.data).toBeInstanceOf(ReadableStream);
       committed.scope = input.scope;
       return { digest: NAR_DIGEST, size: 4, deduped: false, refCreated: true, blobRefId: "ref_1" };
     };
     ctx.data.versions.commitOrReleaseBlob = async (input) => {
       committed.metadata = input.metadata;
+      committed.sizeBytes = input.sizeBytes;
       return { versionId: "ver_1" };
     };
 
@@ -278,6 +282,8 @@ describe("Nix adapter", () => {
     );
     expect(res.status).toBe(200);
     expect(committed.scope).toBe(`nar/${FILE_HASH}`);
+    // Size is derived from the stored blob, not a pre-buffered request body.
+    expect(committed.sizeBytes).toBe(4);
     expect(committed.metadata).toMatchObject({ fileHash: FILE_HASH, blobDigest: NAR_DIGEST });
   });
 
@@ -348,10 +354,11 @@ describe("Nix adapter", () => {
     const versions = new Map<string, Record<string, unknown>>();
     ctx.data.packages.findOrCreate = async ({ name }) => pkgRow(name);
     ctx.data.packages.findByName = async (name) => (versions.has(name) ? pkgRow(name) : null);
-    ctx.data.content.storeBlobWithRef = async (input): Promise<RegistryStoredBlob> => {
-      const digest = `sha256:${Bun.CryptoHasher.hash("sha256", input.data, "hex")}`;
-      blobs.set(digest, input.data);
-      return { digest, size: input.data.length, deduped: false, refCreated: true, blobRefId: "r" };
+    ctx.data.content.storeBlobStreamWithRef = async (input): Promise<RegistryStoredBlob> => {
+      const bytes = new Uint8Array(await new Response(input.data).arrayBuffer());
+      const digest = `sha256:${Bun.CryptoHasher.hash("sha256", bytes, "hex")}`;
+      blobs.set(digest, bytes);
+      return { digest, size: bytes.length, deduped: false, refCreated: true, blobRefId: "r" };
     };
     ctx.data.versions.commitOrReleaseBlob = async (input) => {
       versions.set(input.package.name, input.metadata);
