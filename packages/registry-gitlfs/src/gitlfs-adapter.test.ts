@@ -444,6 +444,55 @@ describe("Git LFS adapter", () => {
     expect(await res.json()).toEqual({ message: "uploaded content does not match the object id" });
   });
 
+  test("PUT with no request body streams an empty object into the CAS", async () => {
+    // The sha256 of the empty byte string.
+    const EMPTY_OID = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    const ctx = lfsContext();
+    let drained: number | undefined;
+    ctx.data.content.storeBlobStreamWithRef = async (input: StoreBlobStreamWithRefInput) => {
+      // The adapter substitutes an already-closed stream for a missing body so the
+      // CAS still receives a (zero-length) stream to hash.
+      drained = (await new Response(input.data).arrayBuffer()).byteLength;
+      return {
+        digest: `sha256:${EMPTY_OID}`,
+        size: 0,
+        deduped: false,
+        refCreated: true,
+        blobRefId: "ref_empty",
+      };
+    };
+    let scanned = false;
+    ctx.enqueueScan = async () => {
+      scanned = true;
+    };
+
+    const res = await new GitLfsAdapter().handle(
+      match(PUT_ENTRY, { oid: EMPTY_OID }),
+      new Request(`https://registry.test/lfs/private/objects/${EMPTY_OID}`, { method: "PUT" }),
+      ctx,
+    );
+    expect(res.status).toBe(200);
+    expect(drained).toBe(0);
+    expect(scanned).toBe(true);
+  });
+
+  test("PUT rethrows non-digest storage errors instead of masking them as 422", async () => {
+    const ctx = lfsContext();
+    ctx.data.content.storeBlobStreamWithRef = async () => {
+      throw new Error("S3 is down");
+    };
+    await expect(
+      new GitLfsAdapter().handle(
+        match(PUT_ENTRY, { oid: HELLO_OID }),
+        new Request(`https://registry.test/lfs/private/objects/${HELLO_OID}`, {
+          method: "PUT",
+          body: HELLO,
+        }),
+        ctx,
+      ),
+    ).rejects.toThrow("S3 is down");
+  });
+
   test("PUT rejects a malformed oid with an LFS-shaped 422", async () => {
     const ctx = lfsContext();
     const res = await new GitLfsAdapter().handle(
