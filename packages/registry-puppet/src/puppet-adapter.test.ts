@@ -1,14 +1,22 @@
 import { describe, expect, test } from "bun:test";
-import type {
-  RegistryPackageRow,
-  RegistryPackageVersionRow,
-  RegistryStoredBlob,
-  RouteMatch,
+import {
+  computeDigest,
+  digestHex,
+  type RegistryPackageRow,
+  type RegistryPackageVersionRow,
+  type RegistryStoredBlob,
+  type RouteMatch,
 } from "@hootifactory/registry";
 import { createTestRegistryContext } from "@hootifactory/registry/testing";
 import { PuppetAdapter } from "./puppet-adapter";
 import { puppetArchive } from "./puppet-tarball.test";
 import type { PuppetReleaseMeta } from "./puppet-validation";
+
+function md5Hex(bytes: Uint8Array): string {
+  const hasher = new Bun.CryptoHasher("md5");
+  hasher.update(bytes);
+  return hasher.digest("hex");
+}
 
 const DIGEST = `sha256:${"a".repeat(64)}`;
 const HEX = "a".repeat(64);
@@ -449,6 +457,24 @@ describe("Puppet adapter", () => {
     expect(body.message).toContain("puppetlabs-apache-1.2.3");
   });
 
+  test("POST /v3/releases rejects an empty archive with 400", async () => {
+    const ctx = puppetContext();
+    const res = await new PuppetAdapter().handle(
+      publishMatch,
+      uploadRequest(new Uint8Array(0)),
+      ctx,
+    );
+    expect(res.status).toBe(400);
+  });
+
+  test("POST /v3/releases rejects metadata.json whose name is not an <owner>-<name> slug", async () => {
+    const ctx = puppetContext();
+    // A name with no dash cannot split into owner/name → INVALID_INPUT 400.
+    const archive = puppetArchive("noseparator", "1.2.3");
+    const res = await new PuppetAdapter().handle(publishMatch, uploadRequest(archive), ctx);
+    expect(res.status).toBe(400);
+  });
+
   test("POST /v3/releases rejects a non-multipart body with 400", async () => {
     const ctx = puppetContext();
     const res = await new PuppetAdapter().handle(
@@ -487,5 +513,137 @@ describe("Puppet adapter", () => {
     };
     expect(body.releases.map((r) => r.version)).toEqual(["2.0.0", "1.2.3"]);
     expect(body.current_release.version).toBe("2.0.0");
+  });
+
+  test("mergeMetadata prefers a stable current_release over a higher prerelease across members", async () => {
+    const adapter = new PuppetAdapter();
+
+    // Member A holds the stable 2.0.0; member B holds the higher prerelease 2.1.0-rc1.
+    const ctxA = puppetContext();
+    ctxA.data.packages.findByName = async () => pkgRow("puppetlabs-apache");
+    ctxA.data.versions.listLive = async () => [versionRow("2.0.0", releaseMeta("2.0.0"))];
+    const a = await adapter.generateMetadata("puppetlabs-apache", ctxA);
+
+    const ctxB = puppetContext();
+    ctxB.data.packages.findByName = async () => pkgRow("puppetlabs-apache");
+    ctxB.data.versions.listLive = async () => [versionRow("2.1.0-rc1", releaseMeta("2.1.0-rc1"))];
+    const b = await adapter.generateMetadata("puppetlabs-apache", ctxB);
+    if (!a || !b) throw new Error("expected metadata");
+
+    const merged = await adapter.mergeMetadata([a, b]);
+    const body = JSON.parse(merged.body as string) as {
+      releases: { version: string }[];
+      current_release: { version: string };
+    };
+    // Both releases are unioned, ordered version-desc...
+    expect(body.releases.map((r) => r.version)).toEqual(["2.1.0-rc1", "2.0.0"]);
+    // ...but current_release stays on the stable 2.0.0, never the higher prerelease,
+    // so a virtual repo never drives `puppet module install` to a prerelease.
+    expect(body.current_release.version).toBe("2.0.0");
+  });
+
+  test("GET /v3/releases?module= orders results version-desc regardless of DB creation order", async () => {
+    const ctx = puppetContext();
+    ctx.data.packages.findByName = async () => pkgRow("puppetlabs-apache");
+    // DB rows come back creation-ordered: a 1.5.0 backport published AFTER 2.0.0
+    // appears first under orderByCreated:'desc', out of version order.
+    ctx.data.versions.listLive = async () => [
+      versionRow("1.5.0", releaseMeta("1.5.0")),
+      versionRow("2.0.0", releaseMeta("2.0.0")),
+      versionRow("1.0.0", releaseMeta("1.0.0")),
+    ];
+
+    const res = await new PuppetAdapter().handle(
+      releaseListMatch,
+      new Request("https://registry.test/puppet/private/v3/releases?module=puppetlabs-apache"),
+      ctx,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { results: { version: string }[] };
+    // The list endpoint is version-desc, matching the module endpoint's `releases`.
+    expect(body.results.map((r) => r.version)).toEqual(["2.0.0", "1.5.0", "1.0.0"]);
+  });
+
+  test("publish -> read JSON -> download round-trips identical bytes and consistent checksums", async () => {
+    const ctx = puppetContext();
+    const archive = puppetArchive("puppetlabs-apache", "1.2.3", { summary: "Apache module" });
+    // The real CAS digest of the published bytes — the file_sha256 must derive from it.
+    const realDigest = computeDigest(archive);
+    const realSha256 = digestHex(realDigest);
+    const realMd5 = md5Hex(archive);
+
+    // Capture in arrays (not `let` vars) so control-flow narrowing doesn't collapse
+    // the closure-assigned values to `never` after the guard below.
+    const metas: PuppetReleaseMeta[] = [];
+    const byteCaptures: Uint8Array[] = [];
+
+    ctx.data.packages.findByName = async () => null;
+    ctx.data.packages.findOrCreate = async ({ name }) => pkgRow(name);
+    ctx.data.versions.exists = async () => false;
+    // storeBlobWithRef returns the ACTUAL content-addressed digest of the bytes.
+    ctx.data.content.storeBlobWithRef = async (input): Promise<RegistryStoredBlob> => {
+      byteCaptures.push(input.data);
+      return {
+        digest: computeDigest(input.data),
+        size: input.data.length,
+        deduped: false,
+        refCreated: true,
+        blobRefId: "ref_1",
+      };
+    };
+    ctx.data.versions.commitOrReleaseBlob = async (input) => {
+      metas.push(input.metadata as unknown as PuppetReleaseMeta);
+      return { versionId: "ver_1" };
+    };
+
+    const publishRes = await new PuppetAdapter().handle(publishMatch, uploadRequest(archive), ctx);
+    expect(publishRes.status).toBe(201);
+    const meta = metas[0];
+    const bytes = byteCaptures[0];
+    if (!meta || !bytes) throw new Error("expected the publish to store the blob");
+
+    // The advertised checksums are derived from the stored bytes, not hard-coded.
+    expect(meta.fileSha256).toBe(realSha256);
+    expect(meta.fileMd5).toBe(realMd5);
+    expect(meta.fileSize).toBe(archive.length);
+    expect(meta.blobDigest).toBe(realDigest);
+
+    // Now read GET /v3/releases/:release back and assert the JSON advertises exactly
+    // those checksums (cross-endpoint consistency `puppet module install` relies on).
+    const readCtx = puppetContext();
+    readCtx.data.packages.findByName = async () => pkgRow("puppetlabs-apache");
+    readCtx.data.versions.findLive = async () => versionRow("1.2.3", meta);
+    const releaseRes = await new PuppetAdapter().handle(
+      releaseMatch,
+      new Request("https://registry.test/puppet/private/v3/releases/puppetlabs-apache-1.2.3"),
+      readCtx,
+    );
+    const releaseBody = (await releaseRes.json()) as {
+      file_sha256: string;
+      file_md5: string;
+      file_size: number;
+    };
+    expect(releaseBody.file_sha256).toBe(realSha256);
+    expect(releaseBody.file_md5).toBe(realMd5);
+    expect(releaseBody.file_size).toBe(archive.length);
+
+    // And GET /v3/files/:filename serves bytes byte-identical to what was published,
+    // addressed by the digest threaded through publish (not a constant).
+    const served: { digest?: string } = {};
+    readCtx.data.content.blobRefExists = async () => true;
+    readCtx.data.content.serveBlobIfClean = async ({ digest, contentType }) => {
+      served.digest = digest;
+      return new Response(bytes, { headers: { "content-type": contentType } });
+    };
+    const fileRes = await new PuppetAdapter().handle(
+      fileMatch,
+      new Request("https://registry.test/puppet/private/v3/files/puppetlabs-apache-1.2.3.tar.gz"),
+      readCtx,
+    );
+    expect(served.digest).toBe(realDigest);
+    const downloaded = new Uint8Array(await fileRes.arrayBuffer());
+    expect([...downloaded]).toEqual([...archive]);
+    // The bytes downloaded hash to the advertised file_sha256.
+    expect(digestHex(computeDigest(downloaded))).toBe(realSha256);
   });
 });

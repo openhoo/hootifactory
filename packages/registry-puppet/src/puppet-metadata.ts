@@ -186,13 +186,23 @@ export function buildPuppetModuleObject(input: {
   const current = (stable.length > 0 ? stable : sorted)[0];
   if (!current) return null;
   const slug = puppetModuleSlug(owner, name);
+  // Module timestamps reflect actual publish chronology (min/max of release
+  // `published`), not the version-sorted ends — so updated_at >= created_at holds
+  // even when releases are published out of version order or proxy-mirrored.
+  let created_at = current.meta.published;
+  let updated_at = current.meta.published;
+  for (const release of sorted) {
+    const t = release.meta.published;
+    if (t < created_at) created_at = t;
+    if (t > updated_at) updated_at = t;
+  }
   return {
     uri: `/${url.mountPath}/v3/modules/${slug}`,
     slug,
     name,
     downloads: 0,
-    created_at: sorted[sorted.length - 1]?.meta.published ?? current.meta.published,
-    updated_at: sorted[0]?.meta.published ?? current.meta.published,
+    created_at,
+    updated_at,
     deprecated_at: null,
     deprecated_for: null,
     owner: {

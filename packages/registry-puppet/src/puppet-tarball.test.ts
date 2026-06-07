@@ -73,6 +73,36 @@ describe("Puppet tarball reader", () => {
   test("returns null for non-gzip input", () => {
     expect(extractPuppetMetadataJson(new TextEncoder().encode("not a gzip"))).toBeNull();
   });
+
+  test("rejects a gzip bomb that expands beyond the tar size cap", () => {
+    // 16 MiB of zeros gunzips well past the 8 MiB MAX_PUPPET_TAR_BYTES cap, so
+    // maxOutputLength must abort decompression rather than materialize it in RAM.
+    const huge = Bun.gzipSync(new Uint8Array(16 * 1024 * 1024));
+    expect(extractPuppetMetadataJson(huge)).toBeNull();
+  });
+
+  test("stops walking after the tar-entry cap without finding a late metadata.json", () => {
+    // 300 tiny entries before metadata.json exceeds the 256-entry scan bound, so
+    // the reader gives up (a crafted tar can't force an unbounded scan loop).
+    const entries: Uint8Array[] = [];
+    for (let i = 0; i < 300; i++) entries.push(tarEntry(`pad/file${i}.txt`, "x"));
+    entries.push(tarEntry("pkg/metadata.json", METADATA));
+    const tar = concat(...entries, new Uint8Array(1024));
+    expect(readTarEntryByBasename(tar, "metadata.json")).toBeNull();
+  });
+
+  test("rejects a tar header whose declared size overruns the buffer", () => {
+    const header = new Uint8Array(512);
+    const enc = new TextEncoder();
+    header.set(enc.encode("pkg/metadata.json"), 0);
+    header.set(enc.encode("0000644\0"), 100);
+    // Declare a 4096-byte member but provide no data blocks after the header.
+    header.set(enc.encode(`${(4096).toString(8).padStart(11, "0")}\0`), 124);
+    header[156] = 0x30;
+    header.set(enc.encode("ustar\0"), 257);
+    const tar = concat(header);
+    expect(readTarEntryByBasename(tar, "metadata.json")).toBeNull();
+  });
 });
 
 export { concat, puppetArchive, tarEntry };

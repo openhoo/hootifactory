@@ -19,6 +19,7 @@ import {
   buildPuppetReleaseListResponse,
   buildPuppetReleaseObject,
   comparePuppetVersions,
+  isPrereleasePuppetVersion,
   type PuppetReleaseInput,
   type PuppetReleaseListEntry,
   type PuppetUrlContext,
@@ -243,6 +244,11 @@ export class PuppetAdapter implements RegistryPlugin {
     const limit = clampLimit(url.searchParams.get("limit"));
     const offset = clampOffset(url.searchParams.get("offset"));
     const releases = await this.storedReleases(slug.slug, ctx);
+    // Forge orders the release list newest-version-first. storedReleases is in DB
+    // creation order, which diverges from version order for out-of-order publishes
+    // and unordered proxy mirroring, so sort by version-desc before paginating to
+    // stay deterministic and consistent with the module endpoint's `releases`.
+    releases.sort((a, b) => comparePuppetVersionsDesc(a.version, b.version));
     const total = releases.length;
     const page = releases.slice(offset, offset + limit);
     const entries: PuppetReleaseListEntry[] = page.map((release) => ({
@@ -345,7 +351,11 @@ export class PuppetAdapter implements RegistryPlugin {
     }
 
     const releaseByVersion = new Map<string, unknown>();
-    let current: { version: string; release: unknown } | null = null;
+    // Each member advertises a full `current_release` object; collect them keyed by
+    // version so we can re-select the merged current with the SAME stable-preference
+    // rule buildPuppetModuleObject uses, rather than blindly taking the highest
+    // version overall (which could surface a prerelease a single repo never would).
+    const currentCandidates = new Map<string, unknown>();
     for (const object of objects) {
       const owner = object?.owner?.username;
       const name = object?.name;
@@ -356,13 +366,16 @@ export class PuppetAdapter implements RegistryPlugin {
         }
       }
       const currentRelease = object.current_release as { version?: string } | undefined;
-      if (
-        currentRelease?.version &&
-        (!current || comparePuppetVersionsDesc(currentRelease.version, current.version) < 0)
-      ) {
-        current = { version: currentRelease.version, release: currentRelease };
+      if (currentRelease?.version && !currentCandidates.has(currentRelease.version)) {
+        currentCandidates.set(currentRelease.version, currentRelease);
       }
     }
+
+    // Prefer the highest non-prerelease current_release across members, falling back
+    // to the highest overall only when no member's current is a stable release.
+    const candidateVersions = [...currentCandidates.keys()].sort(comparePuppetVersionsDesc);
+    const stableCurrent = candidateVersions.find((v) => !isPrereleasePuppetVersion(v));
+    const currentVersion = stableCurrent ?? candidateVersions[0];
 
     const merged = {
       ...primary,
@@ -372,7 +385,9 @@ export class PuppetAdapter implements RegistryPlugin {
           (b as { version: string }).version,
         ),
       ),
-      current_release: current?.release ?? primary.current_release,
+      current_release:
+        (currentVersion !== undefined ? currentCandidates.get(currentVersion) : undefined) ??
+        primary.current_release,
     };
     return { contentType: PUPPET_JSON_CONTENT_TYPE, body: JSON.stringify(merged) };
   }
