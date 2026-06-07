@@ -18,6 +18,17 @@ export function sha512Hex(data: Uint8Array): string {
   return hasher.digest("hex");
 }
 
+/**
+ * Compute the md5 sidecar hex of an in-memory blob. Raw-store clients and the
+ * artifact hosts this format interoperates with (Artifactory/Nexus) surface and
+ * verify against an md5 checksum, so we persist and serve it alongside sha256.
+ */
+export function md5Hex(data: Uint8Array): string {
+  const hasher = new Bun.CryptoHasher("md5");
+  hasher.update(data);
+  return hasher.digest("hex");
+}
+
 export interface GenericStoreResult {
   path: string;
   meta: GenericVersionMeta;
@@ -43,11 +54,13 @@ export async function handleGenericStore(
   // The content hashes are derived from the bytes, so we can compute them up
   // front and assert the store agrees on the sha256 digest below.
   const blobDigest = computeDigest(data);
+  const md5 = md5Hex(data);
   const sha256 = digestHex(blobDigest);
   const sha512 = sha512Hex(data);
   const meta = buildGenericVersionMeta({
     path,
     blobDigest,
+    md5,
     sha256,
     sha512,
     size: data.length,
@@ -76,7 +89,7 @@ export async function handleGenericStore(
         scope,
         path,
         mediaType,
-        metadata: { path, sha256, sha512 },
+        metadata: { path, md5, sha256, sha512 },
       },
     },
   });

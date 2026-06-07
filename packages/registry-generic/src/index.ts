@@ -3,6 +3,7 @@ export { genericUpstreamUrl, handleGenericProxyIngest } from "./generic-proxy-li
 export {
   type GenericStoreResult,
   handleGenericStore,
+  md5Hex,
   sha512Hex,
 } from "./generic-store-lifecycle";
 export {

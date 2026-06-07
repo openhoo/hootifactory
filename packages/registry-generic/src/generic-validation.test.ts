@@ -77,12 +77,34 @@ describe("metadata round-trip", () => {
     const meta = buildGenericVersionMeta({
       path: "a/b.bin",
       blobDigest: `sha256:${"a".repeat(64)}`,
+      md5: "c".repeat(32),
       sha256: "a".repeat(64),
       sha512: "b".repeat(128),
       size: 42,
       contentType: "application/octet-stream",
     });
+    expect(meta.md5).toBe("c".repeat(32));
     expect(parseGenericVersionMeta(meta)).toEqual(meta);
+  });
+
+  test("parseGenericVersionMeta tolerates legacy metadata without an md5 sidecar", () => {
+    // Metadata persisted before md5 was tracked must still parse so existing
+    // blobs keep resolving; the md5 sidecar header is simply omitted for them.
+    const legacy = {
+      path: "a/b.bin",
+      blobDigest: `sha256:${"a".repeat(64)}`,
+      sha256: "a".repeat(64),
+      sha512: "b".repeat(128),
+      size: 42,
+      contentType: "application/octet-stream",
+    };
+    const parsed = parseGenericVersionMeta(legacy);
+    expect(parsed).not.toBeNull();
+    expect(parsed?.md5).toBeUndefined();
+  });
+
+  test("parseGenericVersionMeta rejects a malformed md5", () => {
+    expect(parseGenericVersionMeta({ ...validMeta(), md5: "short" })).toBeNull();
   });
 
   test("parseGenericVersionMeta rejects malformed metadata", () => {
@@ -90,6 +112,18 @@ describe("metadata round-trip", () => {
     expect(parseGenericVersionMeta(null)).toBeNull();
   });
 });
+
+function validMeta() {
+  return {
+    path: "a/b.bin",
+    blobDigest: `sha256:${"a".repeat(64)}`,
+    md5: "c".repeat(32),
+    sha256: "a".repeat(64),
+    sha512: "b".repeat(128),
+    size: 42,
+    contentType: "application/octet-stream",
+  };
+}
 
 describe("genericBlobScope", () => {
   test("namespaces the path under generic/", () => {
@@ -102,6 +136,7 @@ describe("buildGenericIndexEntries", () => {
     buildGenericVersionMeta({
       path: "docs/readme.md",
       blobDigest: `sha256:${"a".repeat(64)}`,
+      md5: "a".repeat(32),
       sha256: "a".repeat(64),
       sha512: "a".repeat(128),
       size: 1,
@@ -110,6 +145,7 @@ describe("buildGenericIndexEntries", () => {
     buildGenericVersionMeta({
       path: "bin/app",
       blobDigest: `sha256:${"b".repeat(64)}`,
+      md5: "b".repeat(32),
       sha256: "b".repeat(64),
       sha512: "b".repeat(128),
       size: 2,
@@ -119,9 +155,41 @@ describe("buildGenericIndexEntries", () => {
 
   test("sorts entries by path and projects the listing shape", () => {
     expect(buildGenericIndexEntries(metas, "")).toEqual([
-      { path: "bin/app", size: 2, sha256: "b".repeat(64), contentType: "application/octet-stream" },
-      { path: "docs/readme.md", size: 1, sha256: "a".repeat(64), contentType: "text/markdown" },
+      {
+        path: "bin/app",
+        size: 2,
+        md5: "b".repeat(32),
+        sha256: "b".repeat(64),
+        contentType: "application/octet-stream",
+      },
+      {
+        path: "docs/readme.md",
+        size: 1,
+        md5: "a".repeat(32),
+        sha256: "a".repeat(64),
+        contentType: "text/markdown",
+      },
     ]);
+  });
+
+  test("omits md5 from a listing entry whose stored meta predates md5 tracking", () => {
+    const legacyMeta = parseGenericVersionMeta({
+      path: "old/blob.bin",
+      blobDigest: `sha256:${"c".repeat(64)}`,
+      sha256: "c".repeat(64),
+      sha512: "c".repeat(128),
+      size: 3,
+      contentType: "application/octet-stream",
+    });
+    if (!legacyMeta) throw new Error("expected legacy meta to parse");
+    const [entry] = buildGenericIndexEntries([legacyMeta], "");
+    expect(entry).toEqual({
+      path: "old/blob.bin",
+      size: 3,
+      sha256: "c".repeat(64),
+      contentType: "application/octet-stream",
+    });
+    expect("md5" in (entry ?? {})).toBe(false);
   });
 
   test("filters by directory prefix (with and without a trailing slash)", () => {

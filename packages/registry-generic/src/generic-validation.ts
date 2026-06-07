@@ -48,17 +48,21 @@ export const GenericPrefixSchema = z
   .refine(isValidGenericPrefix, "invalid generic prefix");
 
 const Sha256DigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
+const Md5HexSchema = z.string().regex(/^[a-f0-9]{32}$/);
 const Sha256HexSchema = z.string().regex(/^[a-f0-9]{64}$/);
 const Sha512HexSchema = z.string().regex(/^[a-f0-9]{128}$/);
 
 /**
  * What we persist per stored path. The blob lives in CAS keyed by `blobDigest`;
- * `sha256`/`sha512` are the checksum sidecars served back on reads and exposed by
- * the index listing. `contentType` is the media type the uploader declared.
+ * `md5`/`sha256`/`sha512` are the checksum sidecars served back on reads and
+ * exposed by the index listing. `contentType` is the media type the uploader
+ * declared. `md5` is optional so metadata persisted before md5 was tracked still
+ * parses (its sidecar header is simply omitted for those legacy blobs).
  */
 export const GenericVersionMetaSchema = z.looseObject({
   path: GenericPathSchema,
   blobDigest: Sha256DigestSchema,
+  md5: Md5HexSchema.optional(),
   sha256: Sha256HexSchema,
   sha512: Sha512HexSchema,
   size: z.number().int().nonnegative(),
@@ -75,6 +79,7 @@ export function parseGenericVersionMeta(value: unknown): GenericVersionMeta | nu
 export interface GenericStoredBlobInfo {
   path: string;
   blobDigest: string;
+  md5: string;
   sha256: string;
   sha512: string;
   size: number;
@@ -87,6 +92,7 @@ export function buildGenericVersionMeta(
   return {
     path: info.path,
     blobDigest: info.blobDigest,
+    md5: info.md5,
     sha256: info.sha256,
     sha512: info.sha512,
     size: info.size,
@@ -124,6 +130,7 @@ export function normalizeGenericContentType(raw: string | null): string {
 export interface GenericIndexEntry {
   path: string;
   size: number;
+  md5?: string;
   sha256: string;
   contentType: string;
 }
@@ -140,6 +147,9 @@ export function buildGenericIndexEntries(
     entries.push({
       path: meta.path,
       size: meta.size,
+      // Omit md5 entirely for legacy metas that predate it (rather than emitting
+      // `md5: undefined`) so the JSON body — and its ETag — stays stable.
+      ...(meta.md5 ? { md5: meta.md5 } : {}),
       sha256: meta.sha256,
       contentType: meta.contentType,
     });

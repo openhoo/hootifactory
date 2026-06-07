@@ -50,12 +50,20 @@ function sha512hex(data: Uint8Array): string {
   return h.digest("hex");
 }
 
+function md5hex(data: Uint8Array): string {
+  const h = new Bun.CryptoHasher("md5");
+  h.update(data);
+  return h.digest("hex");
+}
+
 const SHA512_REAL = sha512hex(DATA);
+const MD5_REAL = md5hex(DATA);
 
 function metaFor(path: string, contentType = "application/octet-stream") {
   return buildGenericVersionMeta({
     path,
     blobDigest: DIGEST,
+    md5: MD5_REAL,
     sha256: SHA256,
     sha512: SHA512_REAL,
     size: DATA.length,
@@ -71,7 +79,7 @@ function genericContext() {
 
 interface IndexBody {
   prefix: string;
-  entries: { path: string; size: number; sha256: string; contentType: string }[];
+  entries: { path: string; size: number; md5?: string; sha256: string; contentType: string }[];
 }
 
 async function readIndex(res: Response): Promise<IndexBody> {
@@ -82,7 +90,15 @@ describe("Generic adapter", () => {
   test("declares index, download, head, publish, and delete routes (index before :path+)", () => {
     expect(new GenericAdapter().routes()).toEqual([
       { method: "GET", pattern: "/", handlerId: "index" },
-      { method: "GET", pattern: "/:path+", handlerId: "download" },
+      // The download route opts into proxy pull-through: a read miss against a
+      // proxy repo mirrors `params.path` from upstream via proxyIngest.
+      {
+        method: "GET",
+        pattern: "/:path+",
+        handlerId: "download",
+        proxyRefreshTrigger: true,
+        packageParam: "path",
+      },
       { method: "HEAD", pattern: "/:path+", handlerId: "head" },
       { method: "PUT", pattern: "/:path+", handlerId: "publish" },
       { method: "DELETE", pattern: "/:path+", handlerId: "remove" },
@@ -154,6 +170,7 @@ describe("Generic adapter", () => {
     expect(body.entries[0]).toEqual({
       path: "a/first.bin",
       size: 4,
+      md5: MD5_REAL,
       sha256: SHA256,
       contentType: "application/octet-stream",
     });
@@ -239,24 +256,77 @@ describe("Generic adapter", () => {
     expect(res.status).toBe(200);
     expect(served.digest).toBe(DIGEST);
     expect(served.contentType).toBe("application/wasm");
+    expect(res.headers.get("etag")).toBe(`"${SHA256}"`);
+    expect(res.headers.get("x-checksum-md5")).toBe(MD5_REAL);
     expect(res.headers.get("x-checksum-sha256")).toBe(SHA256);
     expect(res.headers.get("x-checksum-sha512")).toBe(SHA512_REAL);
+    // A GET streams the body chunked, so no content-length is advertised.
+    expect(res.headers.get("content-length")).toBeNull();
     expect(await res.text()).toBe("blob-bytes");
   });
 
-  test("GET /<path> 404s when the path is unknown", async () => {
+  test("GET /<path> with a matching If-None-Match short-circuits to 304", async () => {
     const ctx = genericContext();
-    ctx.data.packages.findByName = async () => null;
+    ctx.data.packages.findByName = async (name) => pkgRow(name);
+    ctx.data.versions.findLive = async () => versionRow(metaFor("app.bin"));
+    ctx.data.content.blobRefExists = async () => true;
+    // serveBlobIfClean invokes notModified() before serving; mirror the core
+    // contract by honoring a returned Response so the body is never streamed.
+    ctx.data.content.serveBlobIfClean = async ({ contentType, notModified }) => {
+      const not = notModified?.();
+      if (not) return not;
+      return new Response("blob-bytes", { headers: { "content-type": contentType } });
+    };
+
     const res = await new GenericAdapter().handle(
       {
         entry: { method: "GET", pattern: "/:path+", handlerId: "download" },
-        params: { path: "missing.bin" },
-        path: "/missing.bin",
+        params: { path: "app.bin" },
+        path: "/app.bin",
       },
-      new Request("https://registry.test/missing.bin"),
+      new Request("https://registry.test/app.bin", {
+        headers: { "if-none-match": `"${SHA256}"` },
+      }),
       ctx,
     );
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(304);
+    expect(res.headers.get("etag")).toBe(`"${SHA256}"`);
+    expect(await res.text()).toBe("");
+  });
+
+  test("GET /<path> throws NOT_FOUND when the path is unknown (singleError JSON shape)", async () => {
+    const ctx = genericContext();
+    ctx.data.packages.findByName = async () => null;
+    // Throwing Errors.notFound() (rather than a hand-rolled plain-text 404) lets
+    // the dispatch layer serialize the module's declared singleError JSON shape.
+    await expect(
+      new GenericAdapter().handle(
+        {
+          entry: { method: "GET", pattern: "/:path+", handlerId: "download" },
+          params: { path: "missing.bin" },
+          path: "/missing.bin",
+        },
+        new Request("https://registry.test/missing.bin"),
+        ctx,
+      ),
+    ).rejects.toMatchObject({ status: 404, code: "NOT_FOUND" });
+  });
+
+  test("GET /<path> throws NOT_FOUND when the package exists but its metadata is missing", async () => {
+    const ctx = genericContext();
+    ctx.data.packages.findByName = async (name) => pkgRow(name);
+    ctx.data.versions.findLive = async () => null;
+    await expect(
+      new GenericAdapter().handle(
+        {
+          entry: { method: "GET", pattern: "/:path+", handlerId: "download" },
+          params: { path: "stale.bin" },
+          path: "/stale.bin",
+        },
+        new Request("https://registry.test/stale.bin"),
+        ctx,
+      ),
+    ).rejects.toMatchObject({ status: 404, code: "NOT_FOUND" });
   });
 
   test("GET /<path> with a traversal path throws NAME_INVALID", async () => {
@@ -319,6 +389,7 @@ describe("Generic adapter", () => {
     expect(captured.metadata).toMatchObject({
       path: "releases/app.bin",
       blobDigest: DIGEST,
+      md5: MD5_REAL,
       sha256: SHA256,
       sha512: SHA512_REAL,
       size: 4,
@@ -375,15 +446,15 @@ describe("Generic adapter", () => {
     expect(res.status).toBe(413);
   });
 
-  test("HEAD /<path> resolves the stored blob without a redirect", async () => {
+  test("HEAD /<path> resolves the stored blob without a redirect and advertises size + checksums", async () => {
     const ctx = genericContext();
     const served: { redirect?: boolean } = {};
     ctx.data.packages.findByName = async (name) => pkgRow(name);
     ctx.data.versions.findLive = async () => versionRow(metaFor("app.bin"));
     ctx.data.content.blobRefExists = async () => true;
-    ctx.data.content.serveBlobIfClean = async ({ contentType, redirect }) => {
+    ctx.data.content.serveBlobIfClean = async ({ contentType, redirect, extraHeaders }) => {
       served.redirect = redirect;
-      return new Response(null, { headers: { "content-type": contentType } });
+      return new Response(null, { headers: { "content-type": contentType, ...extraHeaders } });
     };
     const res = await new GenericAdapter().handle(
       {
@@ -396,6 +467,13 @@ describe("Generic adapter", () => {
     );
     expect(res.status).toBe(200);
     expect(served.redirect).toBe(false);
+    // A HEAD carries no body, so the exact size is surfaced for the client to
+    // size the artifact before issuing the GET.
+    expect(res.headers.get("content-length")).toBe(String(DATA.length));
+    expect(res.headers.get("etag")).toBe(`"${SHA256}"`);
+    expect(res.headers.get("x-checksum-md5")).toBe(MD5_REAL);
+    expect(res.headers.get("x-checksum-sha256")).toBe(SHA256);
+    expect(res.headers.get("x-checksum-sha512")).toBe(SHA512_REAL);
   });
 
   test("DELETE /<path> tombstones the version, releases the ref, returns 204", async () => {
@@ -427,19 +505,20 @@ describe("Generic adapter", () => {
     expect(released.scope).toBe("generic/app.bin");
   });
 
-  test("DELETE /<path> 404s when the path is unknown", async () => {
+  test("DELETE /<path> throws NOT_FOUND when the path is unknown", async () => {
     const ctx = genericContext();
     ctx.data.packages.findByName = async () => null;
-    const res = await new GenericAdapter().handle(
-      {
-        entry: { method: "DELETE", pattern: "/:path+", handlerId: "remove" },
-        params: { path: "missing.bin" },
-        path: "/missing.bin",
-      },
-      new Request("https://registry.test/missing.bin", { method: "DELETE" }),
-      ctx,
-    );
-    expect(res.status).toBe(404);
+    await expect(
+      new GenericAdapter().handle(
+        {
+          entry: { method: "DELETE", pattern: "/:path+", handlerId: "remove" },
+          params: { path: "missing.bin" },
+          path: "/missing.bin",
+        },
+        new Request("https://registry.test/missing.bin", { method: "DELETE" }),
+        ctx,
+      ),
+    ).rejects.toMatchObject({ status: 404, code: "NOT_FOUND" });
   });
 
   test("proxyIngest mirrors an upstream path into the repo", async () => {
@@ -490,6 +569,78 @@ describe("Generic adapter", () => {
     const ok = await new GenericAdapter().proxyIngest(
       "../escape",
       "https://upstream.example.com/files",
+      ctx,
+    );
+    expect(ok).toBe(false);
+  });
+
+  test("download route is wired for proxy pull-through with the correct package param", async () => {
+    // Lock in the contract the agnostic proxy dispatcher relies on: it only
+    // mirrors from upstream when the matched route carries proxyRefreshTrigger,
+    // and it derives the package name as params[entry.packageParam ?? "pkg"].
+    // Reproduce that derivation against the REAL route entry so a regression in
+    // either flag (missing trigger, or the param defaulting to the absent "pkg")
+    // is caught here, not only in a live proxy repo.
+    const adapter = new GenericAdapter();
+    const downloadEntry = adapter
+      .routes()
+      .find((r) => r.method === "GET" && r.handlerId === "download");
+    if (!downloadEntry) throw new Error("expected a download route");
+    expect(downloadEntry.proxyRefreshTrigger).toBe(true);
+
+    const params = { path: "releases/app.bin" };
+    const dispatcherPackageName = params[(downloadEntry.packageParam ?? "pkg") as "path"] ?? "";
+    expect(dispatcherPackageName).toBe("releases/app.bin");
+
+    const ctx = genericContext();
+    ctx.limits = { ...ctx.limits, enforcePublicNetwork: false };
+    const stored: { path?: string } = {};
+    ctx.data.packages.findOrCreate = async ({ name }) => pkgRow(name);
+    ctx.data.versions.findLive = async () => null;
+    ctx.data.versions.upsertWithBlobRef = async (input) => {
+      stored.path = input.package.name;
+      return {
+        stored: {
+          digest: DIGEST,
+          size: 4,
+          deduped: false,
+          refCreated: true,
+          blobRefId: "ref_1",
+        } satisfies RegistryStoredBlob,
+        versionId: "ver_1",
+      };
+    };
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(DATA, {
+        status: 200,
+        headers: { "content-type": "application/octet-stream", "content-length": "4" },
+      })) as unknown as typeof fetch;
+    try {
+      // This is exactly the call dispatchProxy makes on a read miss.
+      const ok = await adapter.proxyIngest(
+        dispatcherPackageName,
+        "https://upstream.example.com/files",
+        ctx,
+      );
+      expect(ok).toBe(true);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    // The mirrored blob is stored under the matched path (not the empty "" that a
+    // missing packageParam would have produced).
+    expect(stored.path).toBe("releases/app.bin");
+  });
+
+  test("proxyIngest rejects a loopback upstream under public-network enforcement", async () => {
+    const ctx = genericContext();
+    // With enforcement on, safeFetch must block a private/loopback upstream host
+    // before any bytes are read — no fetch stub, so a real attempt would throw.
+    ctx.limits = { ...ctx.limits, enforcePublicNetwork: true };
+    const ok = await new GenericAdapter().proxyIngest(
+      "releases/app.bin",
+      "http://127.0.0.1:9000/files",
       ctx,
     );
     expect(ok).toBe(false);
