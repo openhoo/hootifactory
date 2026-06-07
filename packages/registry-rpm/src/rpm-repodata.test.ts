@@ -81,6 +81,24 @@ describe("RPM repodata builder", () => {
     expect(buildRepomd(primary)).toContain("<revision>0</revision>");
   });
 
+  test("escapes XML metacharacters in name, summary, and href", () => {
+    const m = meta({ name: "weird", arch: "x86_64", ver: "1", rel: "1", summary: "a&b<c>d\"e'f" });
+    const xml = new TextDecoder().decode(
+      buildPrimary([{ meta: m, href: "packages/a&b.rpm", buildTime: 10 }]).plain,
+    );
+    expect(xml).toContain("<summary>a&amp;b&lt;c&gt;d&quot;e&apos;f</summary>");
+    expect(xml).toContain('<location href="packages/a&amp;b.rpm"/>');
+  });
+
+  test("falls back to href as the final tiebreak when name/arch/version match", () => {
+    const m = meta({ name: "dup", arch: "x86_64", ver: "1", rel: "1" });
+    const first = { meta: m, href: "packages/a.rpm", buildTime: 5 };
+    const second = { meta: m, href: "packages/b.rpm", buildTime: 5 };
+    const xml = new TextDecoder().decode(buildPrimary([second, first]).plain);
+    // a.rpm must sort before b.rpm.
+    expect(xml.indexOf("packages/a.rpm")).toBeLessThan(xml.indexOf("packages/b.rpm"));
+  });
+
   test("renders required primary fields per package", () => {
     const xml = new TextDecoder().decode(buildPrimary([packages[0] as RpmPrimaryPackage]).plain);
     expect(xml).toContain('<package type="rpm">');
