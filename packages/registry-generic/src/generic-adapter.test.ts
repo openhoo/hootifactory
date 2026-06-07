@@ -77,6 +77,11 @@ function genericContext() {
   return ctx;
 }
 
+function requireProxyIngest(adapter: GenericAdapter): NonNullable<GenericAdapter["proxyIngest"]> {
+  if (!adapter.proxyIngest) throw new Error("expected Generic adapter to expose proxyIngest");
+  return adapter.proxyIngest;
+}
+
 interface IndexBody {
   prefix: string;
   entries: { path: string; size: number; md5?: string; sha256: string; contentType: string }[];
@@ -550,7 +555,7 @@ describe("Generic adapter", () => {
         headers: { "content-type": "application/octet-stream", "content-length": "4" },
       })) as unknown as typeof fetch;
     try {
-      const ok = await new GenericAdapter().proxyIngest(
+      const ok = await requireProxyIngest(new GenericAdapter())(
         "releases/app.bin",
         "https://upstream.example.com/files",
         ctx,
@@ -566,7 +571,7 @@ describe("Generic adapter", () => {
 
   test("proxyIngest returns false for an invalid path", async () => {
     const ctx = genericContext();
-    const ok = await new GenericAdapter().proxyIngest(
+    const ok = await requireProxyIngest(new GenericAdapter())(
       "../escape",
       "https://upstream.example.com/files",
       ctx,
@@ -582,6 +587,7 @@ describe("Generic adapter", () => {
     // either flag (missing trigger, or the param defaulting to the absent "pkg")
     // is caught here, not only in a live proxy repo.
     const adapter = new GenericAdapter();
+    const proxyIngest = requireProxyIngest(adapter);
     const downloadEntry = adapter
       .routes()
       .find((r) => r.method === "GET" && r.handlerId === "download");
@@ -619,7 +625,7 @@ describe("Generic adapter", () => {
       })) as unknown as typeof fetch;
     try {
       // This is exactly the call dispatchProxy makes on a read miss.
-      const ok = await adapter.proxyIngest(
+      const ok = await proxyIngest(
         dispatcherPackageName,
         "https://upstream.example.com/files",
         ctx,
@@ -638,7 +644,7 @@ describe("Generic adapter", () => {
     // With enforcement on, safeFetch must block a private/loopback upstream host
     // before any bytes are read — no fetch stub, so a real attempt would throw.
     ctx.limits = { ...ctx.limits, enforcePublicNetwork: true };
-    const ok = await new GenericAdapter().proxyIngest(
+    const ok = await requireProxyIngest(new GenericAdapter())(
       "releases/app.bin",
       "http://127.0.0.1:9000/files",
       ctx,

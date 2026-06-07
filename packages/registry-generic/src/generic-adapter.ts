@@ -1,6 +1,4 @@
 import {
-  basicAuthChallenge,
-  delegateRegistryPlugin,
   Errors,
   type HttpMethod,
   ifNoneMatch,
@@ -10,8 +8,7 @@ import {
   type RegistryRequestContext,
   type RouteMatch,
   readWritePermission,
-  registryCapabilities,
-  registryPlugin,
+  registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
 } from "@hootifactory/registry";
@@ -55,80 +52,7 @@ const INDEX_CONTENT_TYPE = "application/json; charset=utf-8";
  * `DELETE /<path>` removes it, and `GET /` returns a directory listing (optionally
  * filtered by a `?prefix=` query). Proxyable (pull-through) and virtualizable.
  */
-export class GenericAdapter implements RegistryPlugin {
-  readonly id = "generic" as const;
-  readonly capabilities = registryCapabilities("proxyable", "virtualizable");
-  authChallenge = basicAuthChallenge;
-
-  private readonly plugin = registryPlugin(this.id)
-    .module({
-      displayName: "Generic",
-      mountSegment: "generic",
-      errorResponseKind: "singleError",
-      compressibleHandlers: ["index"],
-      scan: {
-        defaultOsvEcosystem: undefined,
-        referencedDigests: (metadata) =>
-          typeof metadata.blobDigest === "string" ? [metadata.blobDigest] : [],
-      },
-    })
-    .capabilities(this.capabilities)
-    .authChallenge(this.authChallenge)
-    .proxyIngest((name, upstreamBase, ctx) => this.proxyIngest(name, upstreamBase, ctx))
-    .routes((route) => [
-      // The bare-root listing is a literal route declared before the `:path+`
-      // catch-alls so it cannot be shadowed (the matcher tries routes in order).
-      route.get("/", "index", ({ req, ctx }) => this.index(req, ctx)),
-      // `proxyRefreshTrigger` + `packageParam: "path"` opt this read into the
-      // agnostic proxy dispatcher: on a read miss against a proxy repo it invokes
-      // `proxyIngest(params.path, ...)` to mirror the blob from upstream, then
-      // retries locally. The greedy param is named `path`, so the dispatcher needs
-      // `packageParam` to know which match param carries the blob address.
-      route.get(
-        "/:path+",
-        "download",
-        ({ params, req, ctx }) => this.download(params.path, req, ctx),
-        { proxyRefreshTrigger: true, packageParam: "path" },
-      ),
-      route.head("/:path+", "head", ({ params, req, ctx }) => this.download(params.path, req, ctx)),
-      route.put("/:path+", "publish", ({ params, req, ctx }) =>
-        this.publish(params.path, req, ctx),
-      ),
-      route.delete("/:path+", "remove", ({ params, ctx }) => this.remove(params.path, ctx)),
-    ])
-    .build();
-  private readonly delegate = delegateRegistryPlugin(this.plugin);
-
-  get displayName() {
-    return this.plugin.displayName;
-  }
-  get mountSegment() {
-    return this.plugin.mountSegment;
-  }
-  get repositoryNamePolicy() {
-    return this.plugin.repositoryNamePolicy;
-  }
-  get acceptsRegistryBearerToken() {
-    return this.plugin.acceptsRegistryBearerToken;
-  }
-  get apiKeyHeaders() {
-    return this.plugin.apiKeyHeaders;
-  }
-  get errorResponseKind() {
-    return this.plugin.errorResponseKind;
-  }
-  get compressibleHandlers() {
-    return this.plugin.compressibleHandlers;
-  }
-  get compressibleContentTypes() {
-    return this.plugin.compressibleContentTypes;
-  }
-  get scan() {
-    return this.plugin.scan;
-  }
-
-  routes = this.delegate.routes;
-
+class GenericAdapterState {
   requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
     const permission = readWritePermission(method);
     const raw = match?.params.path;
@@ -144,14 +68,12 @@ export class GenericAdapter implements RegistryPlugin {
     };
   }
 
-  handle = this.delegate.handle;
-
   /**
    * `GET /` — list stored paths as JSON. An optional `?prefix=<dir>` query filters
    * to entries under that directory. The body is deterministically ordered so the
    * ETag is stable across requests.
    */
-  private async index(req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  async index(req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const url = new URL(req.url);
     const prefix = parsePrefix(url.searchParams.get("prefix") ?? "");
     const metas = await this.listMetas(ctx);
@@ -162,11 +84,7 @@ export class GenericAdapter implements RegistryPlugin {
   }
 
   /** `GET`/`HEAD /<path>` — serve the stored blob with checksum sidecar headers. */
-  private async download(
-    pathRaw: string,
-    req: Request,
-    ctx: RegistryRequestContext,
-  ): Promise<Response> {
+  async download(pathRaw: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const path = parsePath(pathRaw);
     const pkg = await ctx.data.packages.findByName(path);
     if (!pkg) throw Errors.notFound();
@@ -203,11 +121,7 @@ export class GenericAdapter implements RegistryPlugin {
   }
 
   /** `PUT /<path>` — store a raw blob at the path (overwriting any existing blob). */
-  private async publish(
-    pathRaw: string,
-    req: Request,
-    ctx: RegistryRequestContext,
-  ): Promise<Response> {
+  async publish(pathRaw: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const path = parsePath(pathRaw);
     // Stream the body with a running byte count so an oversized upload is rejected
     // as soon as it crosses the limit, rather than being fully buffered first.
@@ -229,7 +143,7 @@ export class GenericAdapter implements RegistryPlugin {
   }
 
   /** `DELETE /<path>` — remove the stored blob, releasing its CAS ref. */
-  private async remove(pathRaw: string, ctx: RegistryRequestContext): Promise<Response> {
+  async remove(pathRaw: string, ctx: RegistryRequestContext): Promise<Response> {
     const path = parsePath(pathRaw);
     const pkg = await ctx.data.packages.findByName(path);
     if (!pkg) throw Errors.notFound();
@@ -278,4 +192,41 @@ export class GenericAdapter implements RegistryPlugin {
   }
 }
 
+const genericDefinition = registryAdapter("generic")
+  .stateClass(GenericAdapterState)
+  .module((module) =>
+    module
+      .displayName("Generic")
+      .mount("generic")
+      .capabilities("proxyable", "virtualizable")
+      .errorResponseKind("singleError")
+      .compressibleHandlers("index"),
+  )
+  .scan({
+    defaultOsvEcosystem: undefined,
+    referencedDigests: (metadata) =>
+      typeof metadata.blobDigest === "string" ? [metadata.blobDigest] : [],
+  })
+  .basicAuth()
+  .fromState((state) => state.defaultPermission("requiredPermission").proxyIngest("proxyIngest"))
+  .routes((route) => [
+    // The bare-root listing is declared before the `:path+` catch-alls.
+    route.get("/", "index").calls((state, { req, ctx }) => state.index(req, ctx)),
+    // On a proxy repo, a read miss mirrors the upstream blob by `params.path`.
+    route
+      .get("/:path+", "download")
+      .proxyRefresh("path")
+      .calls((state, { params, req, ctx }) => state.download(params.path, req, ctx)),
+    route
+      .head("/:path+", "head")
+      .calls((state, { params, req, ctx }) => state.download(params.path, req, ctx)),
+    route
+      .put("/:path+", "publish")
+      .calls((state, { params, req, ctx }) => state.publish(params.path, req, ctx)),
+    route
+      .delete("/:path+", "remove")
+      .calls((state, { params, ctx }) => state.remove(params.path, ctx)),
+  ]);
+
+export class GenericAdapter extends genericDefinition.adapterClass() {}
 export const genericRegistryPlugin: RegistryPlugin = new GenericAdapter();
