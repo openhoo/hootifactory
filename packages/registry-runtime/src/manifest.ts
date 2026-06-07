@@ -9,6 +9,7 @@ import { mavenRegistryPlugin } from "@hootifactory/registry-maven";
 import { npmRegistryPlugin } from "@hootifactory/registry-npm";
 import { nugetRegistryPlugin } from "@hootifactory/registry-nuget";
 import { dockerRegistryPlugin } from "@hootifactory/registry-oci";
+import { opamRegistryPlugin } from "@hootifactory/registry-opam";
 import { pubRegistryPlugin } from "@hootifactory/registry-pub";
 import { pypiRegistryPlugin } from "@hootifactory/registry-pypi";
 import { rpmRegistryPlugin } from "@hootifactory/registry-rpm";
@@ -49,4 +50,5 @@ export const REGISTRY_PLUGIN_MANIFEST: RegistryPluginEntry[] = [
   { plugin: homebrewRegistryPlugin },
   { plugin: scoopRegistryPlugin },
   { plugin: rpmRegistryPlugin, aliases: ["yum", "dnf"] },
+  { plugin: opamRegistryPlugin },
 ];
