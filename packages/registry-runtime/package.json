@@ -26,6 +26,7 @@
     "@hootifactory/registry-cran": "workspace:*",
     "@hootifactory/registry-rubygems": "workspace:*",
     "@hootifactory/registry-cargo": "workspace:*",
+    "@hootifactory/registry-gitlfs": "workspace:*",
     "@hootifactory/registry-pub": "workspace:*",
     "@hootifactory/registry-go": "workspace:*",
     "@hootifactory/registry-hex": "workspace:*",

@@ -6,6 +6,7 @@ import { chocolateyRegistryPlugin } from "@hootifactory/registry-chocolatey";
 import { cocoapodsRegistryPlugin } from "@hootifactory/registry-cocoapods";
 import { composerRegistryPlugin } from "@hootifactory/registry-composer";
 import { cranRegistryPlugin } from "@hootifactory/registry-cran";
+import { gitlfsRegistryPlugin } from "@hootifactory/registry-gitlfs";
 import { goRegistryPlugin } from "@hootifactory/registry-go";
 import { hexRegistryPlugin } from "@hootifactory/registry-hex";
 import { homebrewRegistryPlugin } from "@hootifactory/registry-homebrew";
@@ -63,4 +64,5 @@ export const REGISTRY_PLUGIN_MANIFEST: RegistryPluginEntry[] = [
   { plugin: vagrantRegistryPlugin },
   { plugin: rpmRegistryPlugin, aliases: ["yum", "dnf"] },
   { plugin: ansibleRegistryPlugin, aliases: ["galaxy"] },
+  { plugin: gitlfsRegistryPlugin, aliases: ["lfs"] },
 ];

@@ -13,7 +13,7 @@ function tarMember(name: string, data: Uint8Array): Uint8Array {
   header.set(enc("0000000\0"), 108);
   header.set(enc("0000000\0"), 116);
   // size (12-byte octal, NUL-terminated).
-  header.set(enc(data.length.toString(8).padStart(11, "0") + "\0"), 124);
+  header.set(enc(`${data.length.toString(8).padStart(11, "0")}\0`), 124);
   // mtime.
   header.set(enc("00000000000\0"), 136);
   // type flag '0' (regular file).
@@ -25,7 +25,7 @@ function tarMember(name: string, data: Uint8Array): Uint8Array {
   for (let i = 148; i < 156; i++) header[i] = 0x20;
   let sum = 0;
   for (const b of header) sum += b;
-  header.set(enc(sum.toString(8).padStart(6, "0") + "\0 "), 148);
+  header.set(enc(`${sum.toString(8).padStart(6, "0")}\0 `), 148);
 
   const padded = Math.ceil(data.length / TAR_BLOCK) * TAR_BLOCK;
   const body = new Uint8Array(padded);

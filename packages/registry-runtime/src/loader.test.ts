@@ -9,6 +9,7 @@ describe("loadConfiguredRegistryPlugins", () => {
     for (const id of [
       "npm",
       "docker",
+      "gitlfs",
       "oci",
       "helm",
       "pypi",
@@ -33,6 +34,7 @@ describe("loadConfiguredRegistryPlugins", () => {
       "rpm",
       "yum",
       "dnf",
+      "lfs",
     ]) {
       expect(registry.has(id)).toBe(true);
     }
@@ -69,11 +71,13 @@ describe("loadConfiguredRegistryPlugins", () => {
       "vagrant",
       "rpm",
       "ansible",
+      "gitlfs",
       "oci",
       "helm",
       "yum",
       "dnf",
       "galaxy",
+      "lfs",
     ]);
   });
 
