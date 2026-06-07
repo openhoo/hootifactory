@@ -5,6 +5,7 @@ import { cargoRegistryPlugin } from "@hootifactory/registry-cargo";
 import { chocolateyRegistryPlugin } from "@hootifactory/registry-chocolatey";
 import { cocoapodsRegistryPlugin } from "@hootifactory/registry-cocoapods";
 import { composerRegistryPlugin } from "@hootifactory/registry-composer";
+import { conanRegistryPlugin } from "@hootifactory/registry-conan";
 import { cranRegistryPlugin } from "@hootifactory/registry-cran";
 import { gitlfsRegistryPlugin } from "@hootifactory/registry-gitlfs";
 import { goRegistryPlugin } from "@hootifactory/registry-go";
@@ -67,4 +68,5 @@ export const REGISTRY_PLUGIN_MANIFEST: RegistryPluginEntry[] = [
   { plugin: ansibleRegistryPlugin, aliases: ["galaxy"] },
   { plugin: gitlfsRegistryPlugin, aliases: ["lfs"] },
   { plugin: terraformRegistryPlugin },
+  { plugin: conanRegistryPlugin },
 ];

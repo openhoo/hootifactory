@@ -270,6 +270,13 @@
         "@hootifactory/registry": "workspace:*",
       },
     },
+    "packages/registry-conan": {
+      "name": "@hootifactory/registry-conan",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/registry": "workspace:*",
+      },
+    },
     "packages/registry-cran": {
       "name": "@hootifactory/registry-cran",
       "version": "0.0.0",
@@ -387,6 +394,7 @@
         "@hootifactory/registry-chocolatey": "workspace:*",
         "@hootifactory/registry-cocoapods": "workspace:*",
         "@hootifactory/registry-composer": "workspace:*",
+        "@hootifactory/registry-conan": "workspace:*",
         "@hootifactory/registry-cran": "workspace:*",
         "@hootifactory/registry-gitlfs": "workspace:*",
         "@hootifactory/registry-go": "workspace:*",
@@ -728,6 +736,8 @@
     "@hootifactory/registry-cocoapods": ["@hootifactory/registry-cocoapods@workspace:packages/registry-cocoapods"],
 
     "@hootifactory/registry-composer": ["@hootifactory/registry-composer@workspace:packages/registry-composer"],
+
+    "@hootifactory/registry-conan": ["@hootifactory/registry-conan@workspace:packages/registry-conan"],
 
     "@hootifactory/registry-cran": ["@hootifactory/registry-cran@workspace:packages/registry-cran"],
 
