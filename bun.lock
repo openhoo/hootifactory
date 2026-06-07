@@ -277,6 +277,13 @@
         "@hootifactory/registry": "workspace:*",
       },
     },
+    "packages/registry-nix": {
+      "name": "@hootifactory/registry-nix",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/registry": "workspace:*",
+      },
+    },
     "packages/registry-npm": {
       "name": "@hootifactory/registry-npm",
       "version": "0.0.0",
@@ -339,6 +346,7 @@
         "@hootifactory/registry-go": "workspace:*",
         "@hootifactory/registry-homebrew": "workspace:*",
         "@hootifactory/registry-maven": "workspace:*",
+        "@hootifactory/registry-nix": "workspace:*",
         "@hootifactory/registry-npm": "workspace:*",
         "@hootifactory/registry-nuget": "workspace:*",
         "@hootifactory/registry-oci": "workspace:*",
@@ -658,6 +666,8 @@
     "@hootifactory/registry-homebrew": ["@hootifactory/registry-homebrew@workspace:packages/registry-homebrew"],
 
     "@hootifactory/registry-maven": ["@hootifactory/registry-maven@workspace:packages/registry-maven"],
+
+    "@hootifactory/registry-nix": ["@hootifactory/registry-nix@workspace:packages/registry-nix"],
 
     "@hootifactory/registry-npm": ["@hootifactory/registry-npm@workspace:packages/registry-npm"],
 

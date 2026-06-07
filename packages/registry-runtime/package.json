@@ -27,6 +27,7 @@
     "@hootifactory/registry-homebrew": "workspace:*",
     "@hootifactory/registry-scoop": "workspace:*",
     "@hootifactory/registry-rpm": "workspace:*",
+    "@hootifactory/registry-nix": "workspace:*",
     "@hootifactory/registry-npm": "workspace:*",
     "@hootifactory/registry-nuget": "workspace:*",
     "@hootifactory/registry-oci": "workspace:*",
