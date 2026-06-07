@@ -28,6 +28,7 @@ import {
   AnsibleVersionSchema,
   collectionFqcn,
   parseAnsibleVersionMeta,
+  splitFqcn,
 } from "./ansible-validation";
 
 const ARTIFACT_MEDIA_TYPE = "application/gzip";
@@ -62,7 +63,11 @@ function parsePositiveInt(value: string | null, fallback: number, max?: number):
  */
 export class AnsibleAdapter implements RegistryPlugin {
   readonly id = "ansible" as const;
-  readonly capabilities = registryCapabilities("proxyable", "virtualizable");
+  // Only `virtualizable`: virtual repos resolve a collection from the first member
+  // that hosts it. `proxyable` is intentionally NOT declared — proxy support gates
+  // on a `proxyIngest` hook (which this adapter does not implement), so advertising
+  // it would let the UI offer proxy repos that every create call then rejects.
+  readonly capabilities = registryCapabilities("virtualizable");
   authChallenge = () => bearerAuthChallenge();
 
   private readonly plugin = registryPlugin(this.id)
@@ -70,7 +75,7 @@ export class AnsibleAdapter implements RegistryPlugin {
       displayName: "Ansible Galaxy",
       mountSegment: "ansible",
       errorResponseKind: "errorsDetail",
-      compressibleHandlers: ["root", "v3Root", "summary", "versions", "version"],
+      compressibleHandlers: ["root", "v3Root", "summary", "versions", "version", "import"],
       compressibleContentTypes: ["application/json"],
       scan: {
         defaultOsvEcosystem: undefined,
@@ -91,6 +96,13 @@ export class AnsibleAdapter implements RegistryPlugin {
       ),
       route.get("/api/v3/collections/download/:filename", "download", ({ params, req, ctx }) =>
         this.download(params.filename, req, ctx),
+      ),
+      // Import-task polling: `ansible-galaxy collection publish` (without
+      // `--no-wait`) reads `task` off the publish response and polls this URL
+      // until the body reports a terminal `finished_at`. Imports are synchronous
+      // here, so a stored version resolves to an immediately-completed task.
+      route.get("/api/v3/imports/collections/:id/", "import", ({ params, req, ctx }) =>
+        this.importTask(params.id, req, ctx),
       ),
       route.get(
         "/api/v3/collections/:namespace/:name/versions/:version/",
@@ -305,6 +317,41 @@ export class AnsibleAdapter implements RegistryPlugin {
     );
   }
 
+  /**
+   * `GET /api/v3/imports/collections/:id/` — the import-task status the publish
+   * client polls. The id is `<fqcn>-<version>` (e.g. `acme.tools-1.2.3`). When it
+   * resolves to a stored version we report a terminal `completed` task so the
+   * client's `wait_import_task` loop exits successfully; an unknown id 404s.
+   */
+  private async importTask(
+    idRaw: string,
+    req: Request,
+    ctx: RegistryRequestContext,
+  ): Promise<Response> {
+    const parsed = parseImportTaskId(idRaw);
+    if (!parsed) return ansibleBadRequest("invalid import task id");
+    const { fqcn, version } = parsed;
+    const pkg = await ctx.data.packages.findByName(fqcn);
+    if (!pkg) return ansibleNotFound(`import task ${idRaw} not found`);
+    const row = await ctx.data.versions.findLive(pkg, version);
+    const metadata = parseAnsibleVersionMeta(row?.metadata);
+    if (!metadata) return ansibleNotFound(`import task ${idRaw} not found`);
+    // Imports are synchronous: started_at/finished_at use the publish timestamp.
+    const at = metadata.published;
+    return textResponseWithEtag(
+      req,
+      JSON.stringify({
+        id: idRaw,
+        state: "completed",
+        started_at: at,
+        finished_at: at,
+        error: null,
+        messages: [],
+      }),
+      { "content-type": "application/json; charset=utf-8" },
+    );
+  }
+
   /** `GET /api/v3/collections/download/:filename` — serve the hosted artifact blob. */
   private async download(
     filenameRaw: string,
@@ -365,6 +412,22 @@ function splitArtifactFile(
   if (!AnsibleNameSchema.safeParse(name).success) return null;
   if (!AnsibleVersionSchema.safeParse(version).success) return null;
   return { namespace, name, version };
+}
+
+/**
+ * Parse an import-task id `<fqcn>-<version>` (e.g. `acme.tools-1.2.3`) back into
+ * its collection + version. The fqcn (`namespace.name`) holds no dashes — both
+ * identifiers are dash-free — so the first dash unambiguously begins the
+ * (dash-bearing) SemVer version. Each half is re-validated against its grammar.
+ */
+function parseImportTaskId(id: string): { fqcn: string; version: string } | null {
+  const firstDash = id.indexOf("-");
+  if (firstDash <= 0) return null;
+  const fqcn = id.slice(0, firstDash);
+  const version = id.slice(firstDash + 1);
+  if (!splitFqcn(fqcn)) return null;
+  if (!AnsibleVersionSchema.safeParse(version).success) return null;
+  return { fqcn, version };
 }
 
 export const ansibleRegistryPlugin: RegistryPlugin = new AnsibleAdapter();

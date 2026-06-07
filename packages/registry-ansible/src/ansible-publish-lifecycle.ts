@@ -1,10 +1,11 @@
 import {
+  computeDigest,
   digestHex,
   findRegistryPackage,
   publishImmutableVersionBlob,
   type RegistryRequestContext,
 } from "@hootifactory/registry";
-import { ansibleConflict, ansibleErrorResponse } from "./ansible-errors";
+import { ansibleBadRequest, ansibleConflict, ansibleErrorResponse } from "./ansible-errors";
 import { type AnsibleUploadPlan, parseAnsibleUploadRequest } from "./ansible-publish";
 import { type AnsibleVersionMeta, ansibleArtifactFile } from "./ansible-validation";
 
@@ -33,10 +34,10 @@ export function buildAnsibleVersionMetadata(
 }
 
 /**
- * Handle POST /api/v3/artifacts/collections/: read the artifact, parse its
- * MANIFEST, reject a duplicate version, store the blob immutably, and respond
- * with the galaxy import-task envelope (a 201 carrying a `task` URL the client
- * may poll).
+ * Handle POST /api/v3/artifacts/collections/: read the artifact, verify the
+ * client-declared sha256, parse its MANIFEST, reject a duplicate version, store
+ * the blob immutably, and respond with the galaxy import-task envelope (a 202
+ * carrying a `task` URL the client polls until the import reports completed).
  */
 export async function handleAnsiblePublish(
   req: Request,
@@ -48,6 +49,17 @@ export async function handleAnsiblePublish(
   }
   const { plan } = parsed;
   const { fqcn, version, scope } = plan;
+
+  // Verify the client-declared sha256 (the multipart `sha256` field) against the
+  // actual bytes *before* persisting, so an upload corrupted/truncated in transit
+  // is rejected at publish rather than silently stored. `computeDigest` is the
+  // canonical `sha256:<hex>` of the archive; `digestHex` drops the prefix.
+  if (plan.declaredSha256 !== null) {
+    const actual = digestHex(computeDigest(plan.archiveBytes));
+    if (actual !== plan.declaredSha256) {
+      return ansibleBadRequest("artifact sha256 does not match uploaded bytes");
+    }
+  }
 
   const existingPkg = await findRegistryPackage(ctx, fqcn);
   if (existingPkg && (await ctx.data.versions.exists(existingPkg, version))) {
@@ -81,8 +93,9 @@ export async function handleAnsiblePublish(
     return ansibleConflict(`collection ${fqcn} version ${version} already exists`);
   }
 
-  // Galaxy returns a 201 with a `task` URL the client may poll for import status.
-  // We import synchronously, so the task is already complete.
+  // Galaxy returns 202 Accepted with a `task` URL the client polls for import
+  // status. We import synchronously, so that task already reports completed (see
+  // the `import` route). The id is `<fqcn>-<version>`.
   const taskUrl = `${ctx.baseUrl}/${ctx.repo.mountPath}/api/v3/imports/collections/${fqcn}-${version}/`;
-  return Response.json({ task: taskUrl }, { status: 201 });
+  return Response.json({ task: taskUrl }, { status: 202 });
 }
