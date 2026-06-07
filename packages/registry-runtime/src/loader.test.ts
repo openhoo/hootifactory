@@ -42,6 +42,7 @@ describe("loadConfiguredRegistryPlugins", () => {
       "raw",
       "alpine",
       "apk",
+      "nix",
     ]) {
       expect(registry.has(id)).toBe(true);
     }
@@ -84,6 +85,7 @@ describe("loadConfiguredRegistryPlugins", () => {
       "conda",
       "generic",
       "alpine",
+      "nix",
       "oci",
       "helm",
       "yum",

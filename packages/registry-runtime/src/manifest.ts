@@ -16,6 +16,7 @@ import { hexRegistryPlugin } from "@hootifactory/registry-hex";
 import { homebrewRegistryPlugin } from "@hootifactory/registry-homebrew";
 import { ivyRegistryPlugin } from "@hootifactory/registry-ivy";
 import { mavenRegistryPlugin } from "@hootifactory/registry-maven";
+import { nixRegistryPlugin } from "@hootifactory/registry-nix";
 import { npmRegistryPlugin } from "@hootifactory/registry-npm";
 import { nugetRegistryPlugin } from "@hootifactory/registry-nuget";
 import { dockerRegistryPlugin } from "@hootifactory/registry-oci";
@@ -75,4 +76,5 @@ export const REGISTRY_PLUGIN_MANIFEST: RegistryPluginEntry[] = [
   { plugin: condaRegistryPlugin },
   { plugin: genericRegistryPlugin, aliases: ["raw"] },
   { plugin: alpineRegistryPlugin, aliases: ["apk"] },
+  { plugin: nixRegistryPlugin },
 ];
