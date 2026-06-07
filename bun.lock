@@ -219,6 +219,13 @@
         "@hootifactory/registry": "workspace:*",
       },
     },
+    "packages/registry-ansible": {
+      "name": "@hootifactory/registry-ansible",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/registry": "workspace:*",
+      },
+    },
     "packages/registry-application": {
       "name": "@hootifactory/registry-application",
       "version": "0.0.0",
@@ -256,8 +263,50 @@
         "@hootifactory/registry": "workspace:*",
       },
     },
+    "packages/registry-cocoapods": {
+      "name": "@hootifactory/registry-cocoapods",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/registry": "workspace:*",
+      },
+    },
     "packages/registry-composer": {
       "name": "@hootifactory/registry-composer",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/registry": "workspace:*",
+      },
+    },
+    "packages/registry-conan": {
+      "name": "@hootifactory/registry-conan",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/registry": "workspace:*",
+      },
+    },
+    "packages/registry-conda": {
+      "name": "@hootifactory/registry-conda",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/registry": "workspace:*",
+      },
+    },
+    "packages/registry-cran": {
+      "name": "@hootifactory/registry-cran",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/registry": "workspace:*",
+      },
+    },
+    "packages/registry-generic": {
+      "name": "@hootifactory/registry-generic",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/registry": "workspace:*",
+      },
+    },
+    "packages/registry-gitlfs": {
+      "name": "@hootifactory/registry-gitlfs",
       "version": "0.0.0",
       "dependencies": {
         "@hootifactory/registry": "workspace:*",
@@ -270,8 +319,22 @@
         "@hootifactory/registry": "workspace:*",
       },
     },
+    "packages/registry-hex": {
+      "name": "@hootifactory/registry-hex",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/registry": "workspace:*",
+      },
+    },
     "packages/registry-homebrew": {
       "name": "@hootifactory/registry-homebrew",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/registry": "workspace:*",
+      },
+    },
+    "packages/registry-ivy": {
+      "name": "@hootifactory/registry-ivy",
       "version": "0.0.0",
       "dependencies": {
         "@hootifactory/registry": "workspace:*",
@@ -300,6 +363,13 @@
     },
     "packages/registry-oci": {
       "name": "@hootifactory/registry-oci",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/registry": "workspace:*",
+      },
+    },
+    "packages/registry-p2": {
+      "name": "@hootifactory/registry-p2",
       "version": "0.0.0",
       "dependencies": {
         "@hootifactory/registry": "workspace:*",
@@ -340,22 +410,34 @@
         "@hootifactory/config": "workspace:*",
         "@hootifactory/registry": "workspace:*",
         "@hootifactory/registry-alpine": "workspace:*",
+        "@hootifactory/registry-ansible": "workspace:*",
         "@hootifactory/registry-apt": "workspace:*",
         "@hootifactory/registry-cargo": "workspace:*",
         "@hootifactory/registry-chocolatey": "workspace:*",
+        "@hootifactory/registry-cocoapods": "workspace:*",
         "@hootifactory/registry-composer": "workspace:*",
+        "@hootifactory/registry-conan": "workspace:*",
+        "@hootifactory/registry-conda": "workspace:*",
+        "@hootifactory/registry-cran": "workspace:*",
+        "@hootifactory/registry-generic": "workspace:*",
+        "@hootifactory/registry-gitlfs": "workspace:*",
         "@hootifactory/registry-go": "workspace:*",
+        "@hootifactory/registry-hex": "workspace:*",
         "@hootifactory/registry-homebrew": "workspace:*",
+        "@hootifactory/registry-ivy": "workspace:*",
         "@hootifactory/registry-maven": "workspace:*",
         "@hootifactory/registry-npm": "workspace:*",
         "@hootifactory/registry-nuget": "workspace:*",
         "@hootifactory/registry-oci": "workspace:*",
+        "@hootifactory/registry-p2": "workspace:*",
         "@hootifactory/registry-pub": "workspace:*",
         "@hootifactory/registry-pypi": "workspace:*",
         "@hootifactory/registry-rpm": "workspace:*",
         "@hootifactory/registry-rubygems": "workspace:*",
         "@hootifactory/registry-scoop": "workspace:*",
         "@hootifactory/registry-swift": "workspace:*",
+        "@hootifactory/registry-terraform": "workspace:*",
+        "@hootifactory/registry-vagrant": "workspace:*",
         "@hootifactory/registry-winget": "workspace:*",
       },
     },
@@ -368,6 +450,20 @@
     },
     "packages/registry-swift": {
       "name": "@hootifactory/registry-swift",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/registry": "workspace:*",
+      },
+    },
+    "packages/registry-terraform": {
+      "name": "@hootifactory/registry-terraform",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/registry": "workspace:*",
+      },
+    },
+    "packages/registry-vagrant": {
+      "name": "@hootifactory/registry-vagrant",
       "version": "0.0.0",
       "dependencies": {
         "@hootifactory/registry": "workspace:*",
@@ -653,6 +749,8 @@
 
     "@hootifactory/registry-alpine": ["@hootifactory/registry-alpine@workspace:packages/registry-alpine"],
 
+    "@hootifactory/registry-ansible": ["@hootifactory/registry-ansible@workspace:packages/registry-ansible"],
+
     "@hootifactory/registry-application": ["@hootifactory/registry-application@workspace:packages/registry-application"],
 
     "@hootifactory/registry-apt": ["@hootifactory/registry-apt@workspace:packages/registry-apt"],
@@ -661,11 +759,27 @@
 
     "@hootifactory/registry-chocolatey": ["@hootifactory/registry-chocolatey@workspace:packages/registry-chocolatey"],
 
+    "@hootifactory/registry-cocoapods": ["@hootifactory/registry-cocoapods@workspace:packages/registry-cocoapods"],
+
     "@hootifactory/registry-composer": ["@hootifactory/registry-composer@workspace:packages/registry-composer"],
+
+    "@hootifactory/registry-conan": ["@hootifactory/registry-conan@workspace:packages/registry-conan"],
+
+    "@hootifactory/registry-conda": ["@hootifactory/registry-conda@workspace:packages/registry-conda"],
+
+    "@hootifactory/registry-cran": ["@hootifactory/registry-cran@workspace:packages/registry-cran"],
+
+    "@hootifactory/registry-generic": ["@hootifactory/registry-generic@workspace:packages/registry-generic"],
+
+    "@hootifactory/registry-gitlfs": ["@hootifactory/registry-gitlfs@workspace:packages/registry-gitlfs"],
 
     "@hootifactory/registry-go": ["@hootifactory/registry-go@workspace:packages/registry-go"],
 
+    "@hootifactory/registry-hex": ["@hootifactory/registry-hex@workspace:packages/registry-hex"],
+
     "@hootifactory/registry-homebrew": ["@hootifactory/registry-homebrew@workspace:packages/registry-homebrew"],
+
+    "@hootifactory/registry-ivy": ["@hootifactory/registry-ivy@workspace:packages/registry-ivy"],
 
     "@hootifactory/registry-maven": ["@hootifactory/registry-maven@workspace:packages/registry-maven"],
 
@@ -674,6 +788,8 @@
     "@hootifactory/registry-nuget": ["@hootifactory/registry-nuget@workspace:packages/registry-nuget"],
 
     "@hootifactory/registry-oci": ["@hootifactory/registry-oci@workspace:packages/registry-oci"],
+
+    "@hootifactory/registry-p2": ["@hootifactory/registry-p2@workspace:packages/registry-p2"],
 
     "@hootifactory/registry-pub": ["@hootifactory/registry-pub@workspace:packages/registry-pub"],
 
@@ -688,6 +804,10 @@
     "@hootifactory/registry-scoop": ["@hootifactory/registry-scoop@workspace:packages/registry-scoop"],
 
     "@hootifactory/registry-swift": ["@hootifactory/registry-swift@workspace:packages/registry-swift"],
+
+    "@hootifactory/registry-terraform": ["@hootifactory/registry-terraform@workspace:packages/registry-terraform"],
+
+    "@hootifactory/registry-vagrant": ["@hootifactory/registry-vagrant@workspace:packages/registry-vagrant"],
 
     "@hootifactory/registry-winget": ["@hootifactory/registry-winget@workspace:packages/registry-winget"],
 
