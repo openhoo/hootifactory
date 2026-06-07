@@ -20,6 +20,7 @@
     "@hootifactory/registry-winget": "workspace:*",
     "@hootifactory/registry-maven": "workspace:*",
     "@hootifactory/registry-composer": "workspace:*",
+    "@hootifactory/registry-cran": "workspace:*",
     "@hootifactory/registry-rubygems": "workspace:*",
     "@hootifactory/registry-cargo": "workspace:*",
     "@hootifactory/registry-pub": "workspace:*",
