@@ -12,7 +12,9 @@ import { stopBoss, work } from "./index";
 
 /** Parse a numeric env var with a fallback default and a lower bound. */
 export function intEnv(name: string, fallback: number, min: number): number {
-  return Math.max(min, Number(process.env[name] ?? fallback) || fallback);
+  const raw = process.env[name];
+  const parsed = raw === undefined ? fallback : Number(raw);
+  return Math.max(min, Number.isFinite(parsed) ? parsed : fallback);
 }
 
 export interface HealthServer {
@@ -121,11 +123,24 @@ export interface RunWorkerConfig<T extends object> {
 type WorkerJob<T extends object> = T & { telemetry?: TelemetryContextCarrier };
 
 /**
+ * Injectable boss-facing dependencies. Defaults to the shared pg-boss-backed
+ * `work`/`stopBoss`; tests pass fakes so the worker lifecycle can be exercised
+ * without a database or the module-level boss singleton.
+ */
+export interface RunWorkerDeps {
+  work: typeof work;
+  stopBoss: typeof stopBoss;
+}
+
+/**
  * Shared worker runtime: optional readiness health endpoint, the `worker.start`
  * span + queue registration, per-job instrumentation, and the signal/shutdown
  * lifecycle. Workers supply only their queue, job handler, and log details.
  */
-export async function runWorker<T extends object>(config: RunWorkerConfig<T>): Promise<void> {
+export async function runWorker<T extends object>(
+  config: RunWorkerConfig<T>,
+  deps: RunWorkerDeps = { work, stopBoss },
+): Promise<void> {
   const { role, logLabel, queue, batchSize, pollingIntervalSeconds } = config;
 
   // Optional health endpoint so orchestrators can wait for readiness. Reports 503
@@ -151,7 +166,7 @@ export async function runWorker<T extends object>(config: RunWorkerConfig<T>): P
           workerPort: process.env.WORKER_PORT,
           ...extraStartLog,
         });
-        const workerId = await work<WorkerJob<T>>(
+        const workerId = await deps.work<WorkerJob<T>>(
           queue,
           async (jobs: Job<WorkerJob<T>>[]) =>
             instrumentQueueBatch(queue, jobs, async () => {
@@ -189,7 +204,7 @@ export async function runWorker<T extends object>(config: RunWorkerConfig<T>): P
       health.setReady(false);
       await health.server?.stop();
       await config.onShutdown?.();
-      await stopBoss();
+      await deps.stopBoss();
     },
   });
 
