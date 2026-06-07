@@ -55,13 +55,21 @@ function isZeroBlock(block: Uint8Array): boolean {
   return true;
 }
 
+/** A top-level `<top>/DESCRIPTION` member: its bytes and its top directory name. */
+interface DescriptionEntry {
+  top: string;
+  bytes: Uint8Array;
+}
+
 /**
  * Find the first member whose path is `<top>/DESCRIPTION` (the package's root
  * DESCRIPTION) inside an already-gunzipped tar buffer. Only a top-level
  * DESCRIPTION (exactly one path segment before the filename) is accepted so a
- * nested `inst/.../DESCRIPTION` in test fixtures cannot be mistaken for it.
+ * nested `inst/.../DESCRIPTION` in test fixtures cannot be mistaken for it. The
+ * top directory name is returned so the caller can verify it matches `Package:`
+ * (a valid CRAN source layout roots everything under `<packageName>/`).
  */
-function readDescription(tar: Uint8Array): Uint8Array | null {
+function readDescription(tar: Uint8Array): DescriptionEntry | null {
   let offset = 0;
   while (offset + TAR_BLOCK <= tar.length) {
     const header = tar.subarray(offset, offset + TAR_BLOCK);
@@ -71,8 +79,9 @@ function readDescription(tar: Uint8Array): Uint8Array | null {
     const dataStart = offset + TAR_BLOCK;
     if (dataStart + size > tar.length) break;
     const segments = path.split("/");
-    if (segments.length === 2 && segments[1] === "DESCRIPTION") {
-      return tar.subarray(dataStart, dataStart + size);
+    const [top, leaf] = segments;
+    if (segments.length === 2 && top && leaf === "DESCRIPTION") {
+      return { top, bytes: tar.subarray(dataStart, dataStart + size) };
     }
     // Advance past the data, rounded up to the next 512-byte boundary.
     offset = dataStart + Math.ceil(size / TAR_BLOCK) * TAR_BLOCK;
@@ -80,8 +89,18 @@ function readDescription(tar: Uint8Array): Uint8Array | null {
   return null;
 }
 
-/** Gunzip a `.tar.gz` source package and return the `DESCRIPTION` text, if present. */
-export function extractCranDescription(archive: Uint8Array): string | null {
+/** A gunzipped source package's `DESCRIPTION`: its text and its root directory name. */
+export interface CranDescription {
+  /** The top-level directory the DESCRIPTION lived under (the claimed package root). */
+  top: string;
+  text: string;
+}
+
+/**
+ * Gunzip a `.tar.gz` source package and return its top-level `DESCRIPTION` text
+ * plus the root directory it came from, or `null` if absent/undecompressable.
+ */
+export function extractCranDescription(archive: Uint8Array): CranDescription | null {
   let tar: Uint8Array;
   try {
     tar = gunzipSync(archive, { maxOutputLength: MAX_CRAN_TAR_BYTES });
@@ -89,5 +108,5 @@ export function extractCranDescription(archive: Uint8Array): string | null {
     return null;
   }
   const entry = readDescription(tar);
-  return entry ? new TextDecoder().decode(entry) : null;
+  return entry ? { top: entry.top, text: new TextDecoder().decode(entry.bytes) } : null;
 }

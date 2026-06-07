@@ -52,11 +52,18 @@ export function buildCranTarball(
 const DESCRIPTION = "Package: demo\nVersion: 1.2.3\nTitle: A Demo Package\n";
 
 describe("CRAN tarball reader", () => {
-  test("extracts a top-level DESCRIPTION from a gzipped source package", () => {
+  test("extracts a top-level DESCRIPTION + its root directory from a gzipped package", () => {
     const archive = buildCranTarball("demo", DESCRIPTION, [
       { name: "demo/R/demo.R", body: "f <- function() 1\n" },
     ]);
-    expect(extractCranDescription(archive)).toBe(DESCRIPTION);
+    expect(extractCranDescription(archive)).toEqual({ top: "demo", text: DESCRIPTION });
+  });
+
+  test("reports the actual top directory even when it differs from the package name", () => {
+    // A misnamed root (`other/DESCRIPTION`) is still read, but the caller can now
+    // see `top` disagrees with `Package:` and reject the publish.
+    const archive = buildCranTarball("other", DESCRIPTION);
+    expect(extractCranDescription(archive)).toEqual({ top: "other", text: DESCRIPTION });
   });
 
   test("ignores a nested (non-top-level) DESCRIPTION", () => {

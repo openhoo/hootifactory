@@ -2,6 +2,7 @@ import { parseControlFields, parseDependencyNames } from "./control-stanza";
 import { extractCranDescription } from "./cran-tarball";
 import {
   type CranFilenameParts,
+  CranVersionMetaSchema,
   isValidCranPackageName,
   isValidCranVersion,
 } from "./cran-validation";
@@ -52,7 +53,7 @@ export async function parseCranPublishRequest(
     };
   }
 
-  const fields = parseControlFields(description);
+  const fields = parseControlFields(description.text);
   const name = fields.Package?.trim();
   const version = fields.Version?.trim();
   if (!name || !version) {
@@ -70,6 +71,14 @@ export async function parseCranPublishRequest(
       error: { error: "filename does not match the DESCRIPTION Package/Version", status: 422 },
     };
   }
+  // A valid CRAN source layout roots everything under `<packageName>/`; a tarball
+  // whose top directory disagrees would be indexed here but fail `install.packages()`.
+  if (description.top !== name) {
+    return {
+      ok: false,
+      error: { error: "tarball top directory does not match the package name", status: 422 },
+    };
+  }
 
   // Preserve DESCRIPTION field order (drop Package/Version, re-derived by index).
   const controlFields: Array<[string, string]> = [];
@@ -84,6 +93,26 @@ export async function parseCranPublishRequest(
   }
 
   const md5 = new Bun.CryptoHasher("md5").update(tarball).digest("hex");
+
+  // Bound controlFields/deps to the same limits the read path enforces via
+  // CranVersionMetaSchema. Without this, an oversized DESCRIPTION could publish
+  // but then 404 (stored metadata fails to re-parse) or store unbounded data.
+  const metaCheck = CranVersionMetaSchema.safeParse({
+    name,
+    version,
+    controlFields,
+    deps: [...deps],
+    blobDigest: `sha256:${"0".repeat(64)}`,
+    sha256: "0".repeat(64),
+    md5,
+    sizeBytes: tarball.byteLength,
+  });
+  if (!metaCheck.success) {
+    return {
+      ok: false,
+      error: { error: "DESCRIPTION metadata exceeds allowed size limits", status: 422 },
+    };
+  }
 
   return {
     ok: true,

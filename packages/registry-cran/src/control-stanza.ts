@@ -47,6 +47,29 @@ export function serializeControlStanza(fields: Array<[string, string]>): string 
 }
 
 /**
+ * Strip `(...)` spans from a dependency entry in a single linear pass. A regex
+ * with the `g` flag (`/\([^)]*\)/g`) would rescan from every `(` on unterminated
+ * input like `((((`, which is quadratic (js/polynomial-redos); this manual scan
+ * is O(n). Text inside an unclosed `(` is dropped, matching CRAN clients which
+ * only read the bare name before the version constraint.
+ */
+function stripVersionConstraints(part: string): string {
+  let out = "";
+  let depth = 0;
+  for (let i = 0; i < part.length; i++) {
+    const ch = part[i];
+    if (ch === "(") {
+      depth++;
+    } else if (ch === ")" && depth > 0) {
+      depth--;
+    } else if (depth === 0) {
+      out += ch;
+    }
+  }
+  return out;
+}
+
+/**
  * Bare dependency names from a `Depends:`/`Imports:`/`LinkingTo:`/`Suggests:`
  * value (no version constraints). CRAN dependency lists are comma-separated
  * `name (>= x.y)` entries; the parenthesized constraint is dropped. The pseudo
@@ -56,6 +79,6 @@ export function parseDependencyNames(value: string | undefined): string[] {
   if (!value) return [];
   return value
     .split(",")
-    .map((part) => part.replace(/\([^)]*\)/g, "").trim())
+    .map((part) => stripVersionConstraints(part).trim())
     .filter(Boolean);
 }

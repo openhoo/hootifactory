@@ -36,7 +36,7 @@ export interface CranFilenameParts {
 
 /**
  * Parse a `<pkg>_<version>.tar.gz` filename into `{ name, version }`. The package
- * name and version are validated against their schemas; the split uses the LAST
+ * name and version are validated against their schemas; the split uses the FIRST
  * underscore before the suffix because CRAN versions never contain `_` while
  * package names never do either, so any `_` separates the two unambiguously.
  */

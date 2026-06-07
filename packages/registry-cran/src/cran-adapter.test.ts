@@ -384,4 +384,53 @@ describe("CranAdapter", () => {
     );
     expect(res.status).toBe(422);
   });
+
+  test("PUT 422s when the tarball top directory does not match the package name", async () => {
+    const ctx = cranContext();
+    ctx.data.packages.findOrCreate = async ({ name }) => pkgRow(name);
+    ctx.data.versions.exists = async () => false;
+
+    // DESCRIPTION declares `Package: demo` but the tarball roots under `wrong/`.
+    const res = await new CranAdapter().handle(
+      {
+        entry: { method: "PUT", pattern: "/src/contrib/:filename", handlerId: "publish" },
+        params: { filename: "demo_1.2.3.tar.gz" },
+        path: "/src/contrib/demo_1.2.3.tar.gz",
+      },
+      new Request("https://r.test/cran/private/src/contrib/demo_1.2.3.tar.gz", {
+        method: "PUT",
+        body: buildCranTarball("wrong", DESCRIPTION),
+      }),
+      ctx,
+    );
+    expect(res.status).toBe(422);
+    expect(await res.json()).toMatchObject({
+      error: "tarball top directory does not match the package name",
+    });
+  });
+
+  test("PUT 422s when a DESCRIPTION field exceeds the stored-metadata size limit", async () => {
+    const ctx = cranContext();
+    ctx.data.packages.findOrCreate = async ({ name }) => pkgRow(name);
+    ctx.data.versions.exists = async () => false;
+
+    // A single field value over the 65536-char cap enforced by CranVersionMetaSchema.
+    const oversized = `Package: demo\nVersion: 1.2.3\nTitle: ${"x".repeat(70000)}\nLicense: MIT\n`;
+    const res = await new CranAdapter().handle(
+      {
+        entry: { method: "PUT", pattern: "/src/contrib/:filename", handlerId: "publish" },
+        params: { filename: "demo_1.2.3.tar.gz" },
+        path: "/src/contrib/demo_1.2.3.tar.gz",
+      },
+      new Request("https://r.test/cran/private/src/contrib/demo_1.2.3.tar.gz", {
+        method: "PUT",
+        body: buildCranTarball("demo", oversized),
+      }),
+      ctx,
+    );
+    expect(res.status).toBe(422);
+    expect(await res.json()).toMatchObject({
+      error: "DESCRIPTION metadata exceeds allowed size limits",
+    });
+  });
 });
