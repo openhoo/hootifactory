@@ -18,6 +18,7 @@ import { hackageRegistryPlugin } from "@hootifactory/registry-hackage";
 import { hexRegistryPlugin } from "@hootifactory/registry-hex";
 import { homebrewRegistryPlugin } from "@hootifactory/registry-homebrew";
 import { ivyRegistryPlugin } from "@hootifactory/registry-ivy";
+import { luarocksRegistryPlugin } from "@hootifactory/registry-luarocks";
 import { mavenRegistryPlugin } from "@hootifactory/registry-maven";
 import { nixRegistryPlugin } from "@hootifactory/registry-nix";
 import { npmRegistryPlugin } from "@hootifactory/registry-npm";
@@ -87,4 +88,5 @@ export const REGISTRY_PLUGIN_MANIFEST: RegistryPluginEntry[] = [
   { plugin: puppetRegistryPlugin, aliases: ["forge"] },
   { plugin: chefRegistryPlugin, aliases: ["supermarket"] },
   { plugin: opamRegistryPlugin },
+  { plugin: luarocksRegistryPlugin },
 ];
