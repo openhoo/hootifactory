@@ -31,6 +31,16 @@ describe("aurRequestedNames", () => {
     expect(aurRequestedNames(urlWith(["a", "b", "a", "c"]))).toEqual(["a", "b", "c"]);
   });
 
+  test("appends the single arg= form and skips empty names", () => {
+    const url = new URL("https://registry.test/rpc/?v=5&type=info&arg[]=a&arg[]=&arg=b");
+    expect(aurRequestedNames(url)).toEqual(["a", "b"]);
+  });
+
+  test("ignores a duplicate single arg= already seen in arg[]", () => {
+    const url = new URL("https://registry.test/rpc/?arg[]=dup&arg=dup");
+    expect(aurRequestedNames(url)).toEqual(["dup"]);
+  });
+
   test("caps the number of requested names at AUR_MAX_ARGS (DoS guard)", () => {
     const many = Array.from({ length: AUR_MAX_ARGS + 50 }, (_, i) => `pkg${i}`);
     const names = aurRequestedNames(urlWith(many));
@@ -69,5 +79,34 @@ describe("buildAurResponse", () => {
     expect(res.version).toBe(5);
     expect(res.resultcount).toBe(1);
     expect(res.results[0]).toMatchObject({ Name: "foo", PackageBase: "foo-suite" });
+  });
+
+  test("falls back to the package name as PackageBase and copies depends when present", () => {
+    const res = buildAurResponse("multiinfo", [
+      meta({ pkgname: "foo", pkgver: "1.0.0-1", pkgdesc: "tool", depends: ["bar", "baz"] }),
+      meta({ pkgname: "qux", depends: [] }),
+    ]);
+    expect(res.type).toBe("multiinfo");
+    expect(res.resultcount).toBe(2);
+    expect(res.results[0]).toMatchObject({
+      ID: 1,
+      PackageBaseID: 1,
+      PackageBase: "foo",
+      Description: "tool",
+      Depends: ["bar", "baz"],
+    });
+    // No depends => the optional Depends field is omitted; pkgdesc defaults to null.
+    const second = res.results[1];
+    expect(second).toMatchObject({ ID: 2, PackageBase: "qux", Description: null });
+    expect(second?.Depends).toBeUndefined();
+  });
+
+  test("returns an empty result set for no metas", () => {
+    expect(buildAurResponse("search", [])).toEqual({
+      version: 5,
+      type: "search",
+      resultcount: 0,
+      results: [],
+    });
   });
 });
