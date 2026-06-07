@@ -28,6 +28,7 @@ describe("loadConfiguredRegistryPlugins", () => {
       "rpm",
       "yum",
       "dnf",
+      "luarocks",
     ]) {
       expect(registry.has(id)).toBe(true);
     }
@@ -57,6 +58,7 @@ describe("loadConfiguredRegistryPlugins", () => {
       "homebrew",
       "scoop",
       "rpm",
+      "luarocks",
       "oci",
       "helm",
       "yum",
