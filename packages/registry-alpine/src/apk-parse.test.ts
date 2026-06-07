@@ -70,19 +70,26 @@ describe("parseApk", () => {
   });
 
   test("parses a package whose data segment is far larger than the control segment", () => {
-    // A multi-megabyte data payload would blow a naive whole-stream size cap, but
-    // we never inflate the data segment — we stop at the control member.
-    const dataPayload = new Uint8Array(20 * 1024 * 1024).fill(0x41);
+    // The (uncompressed) data payload dwarfs the few-hundred-byte control segment,
+    // yet parsing stays cheap because we stop at the control member and never
+    // inflate the data tarball. 256 KiB is comfortably "far larger" while keeping
+    // the test fast and deterministic on slow CI runners — a naive whole-stream
+    // inflate would have to expand the entire data member, this parser must not.
+    const dataPayload = new Uint8Array(256 * 1024).fill(0x41);
     const { apk, control } = buildApkFixtureParts({
       name: "big",
       version: "1.0-r0",
       arch: "x86_64",
       dataPayload,
     });
+    // The data payload alone is two orders of magnitude larger than the control.
+    expect(dataPayload.length).toBeGreaterThan(control.length * 100);
     const result = parseApk(apk);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.info.name).toBe("big");
+    // The checksum is over the control member only — the large data member is
+    // never inflated or hashed.
     expect(result.checksum).toBe(q1(control));
   });
 

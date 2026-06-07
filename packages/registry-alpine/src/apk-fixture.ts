@@ -5,6 +5,18 @@ import { gzipSync } from "node:zlib";
  * segments) so adapter/parse tests can exercise real package bytes.
  */
 
+/** Concatenate byte chunks without spreading large typed arrays (which is O(n) slow). */
+function concatBytes(chunks: Uint8Array[]): Uint8Array {
+  const total = chunks.reduce((n, c) => n + c.length, 0);
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return out;
+}
+
 function octalField(value: number, width: number): string {
   return `${value.toString(8).padStart(width - 1, "0")}\0`;
 }
@@ -29,21 +41,13 @@ export function tarEntry(name: string, data: Uint8Array): Uint8Array {
   const padded = Math.ceil(data.length / 512) * 512;
   const body = new Uint8Array(padded);
   body.set(data, 0);
-  return new Uint8Array([...header, ...body]);
+  return concatBytes([header, body]);
 }
 
 function tarArchive(files: { name: string; data: Uint8Array }[]): Uint8Array {
   const parts = files.map((f) => tarEntry(f.name, f.data));
-  const trailer = new Uint8Array(1024);
-  const total = parts.reduce((n, p) => n + p.length, 0) + trailer.length;
-  const out = new Uint8Array(total);
-  let offset = 0;
-  for (const part of parts) {
-    out.set(part, offset);
-    offset += part.length;
-  }
-  out.set(trailer, offset);
-  return out;
+  parts.push(new Uint8Array(1024)); // end-of-archive trailer
+  return concatBytes(parts);
 }
 
 export interface ApkFixtureInput {
@@ -79,7 +83,7 @@ export function buildApkFixtureParts(input: ApkFixtureInput): ApkFixtureParts {
   const data = gzipSync(
     tarArchive([{ name: "usr/bin/demo", data: input.dataPayload ?? enc.encode("ELF") }]),
   );
-  return { apk: new Uint8Array([...sig, ...control, ...data]), control: new Uint8Array(control) };
+  return { apk: concatBytes([sig, control, data]), control: new Uint8Array(control) };
 }
 
 /** Build a `.apk`: signature gzip member + control (`.PKGINFO`) member + data member. */

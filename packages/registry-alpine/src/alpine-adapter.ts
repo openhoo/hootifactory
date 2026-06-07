@@ -70,7 +70,7 @@ export class AlpineAdapter implements RegistryPlugin {
         this.download(params.arch, params.filename, req, ctx),
       ),
       route.put("/:arch/:filename", "publishNamed", ({ params, req, ctx }) =>
-        this.publish(params.arch, req, ctx),
+        this.publish(params.arch, req, ctx, params.filename),
       ),
       route.put("/:arch", "publish", ({ params, req, ctx }) => this.publish(params.arch, req, ctx)),
     ])
@@ -111,7 +111,10 @@ export class AlpineAdapter implements RegistryPlugin {
     const permission = readWritePermission(method);
     const arch = match?.params.arch;
     const filename = match?.params.filename;
-    if (arch && filename && match?.entry?.handlerId === "download") {
+    // Scope both the download read and the named-publish write to the concrete
+    // `<arch>/<filename>` artifact so authorization can restrict either to a path.
+    const handlerId = match?.entry?.handlerId;
+    if (arch && filename && (handlerId === "download" || handlerId === "publishNamed")) {
       return {
         ...permission,
         resource: { type: "artifact", artifactRef: alpineBlobScope(arch, filename) },
@@ -163,8 +166,13 @@ export class AlpineAdapter implements RegistryPlugin {
     archRaw: string,
     req: Request,
     ctx: RegistryRequestContext,
+    filenameRaw?: string,
   ): Promise<Response> {
     const arch = parseArch(archRaw);
+    // `PUT /:arch/:filename` carries a path segment; reject anything that is not a
+    // `.apk` filename before parsing the body. The canonical name is still derived
+    // from `.PKGINFO`, so the segment is validated but not otherwise trusted.
+    if (filenameRaw !== undefined) parseApkFilename(filenameRaw);
     const result = await handleAlpinePublish(arch, req, ctx);
     return Response.json(result.body, { status: result.status });
   }

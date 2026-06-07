@@ -17,6 +17,18 @@ export function alpineBlobScope(arch: string, filename: string): string {
   return `${arch}/${filename}`;
 }
 
+/**
+ * The internal version-row key for a published `.apk`. Version uniqueness is keyed
+ * per `(package, version)`, so the same apk version (e.g. `1.2.3-r0`) must be
+ * publishable for several architectures of one package — a standard multi-arch
+ * Alpine repository layout. We qualify the stored key with the arch to keep those
+ * distinct; the index's `V:` field and the download filename still use the bare
+ * `.PKGINFO` version (carried in the persisted metadata), so this stays internal.
+ */
+export function alpineVersionKey(arch: string, version: string): string {
+  return `${arch}/${version}`;
+}
+
 export interface AlpinePublishResult {
   status: number;
   body: Record<string, unknown>;
@@ -59,10 +71,11 @@ export async function handleAlpinePublish(
 
   const filename = apkFilename(info.name, info.version);
   const scope = alpineBlobScope(arch, filename);
+  const versionKey = alpineVersionKey(arch, info.version);
 
   const result = await publishImmutableVersionBlob(ctx, {
     package: { name: info.name },
-    version: info.version,
+    version: versionKey,
     kind: ALPINE_APK_KIND,
     scope,
     blob: {
@@ -91,8 +104,9 @@ export async function handleAlpinePublish(
       mediaType: APK_MEDIA_TYPE,
       metadata: { arch, name: info.name, version: info.version, checksum },
     }),
-    // `.apk` artifacts are immutable: a re-publish of an existing version conflicts.
-    versionConflict: (pkg) => ctx.data.versions.exists(pkg, info.version),
+    // `.apk` artifacts are immutable: a re-publish of an existing (arch, version)
+    // conflicts, but the same version under a different arch is allowed.
+    versionConflict: (pkg) => ctx.data.versions.exists(pkg, versionKey),
   });
 
   if (!result.ok) {

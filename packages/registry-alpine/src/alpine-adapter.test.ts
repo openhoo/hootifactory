@@ -119,6 +119,29 @@ describe("Alpine adapter", () => {
     });
   });
 
+  test("named-publish write permission targets the arch/filename artifact ref", () => {
+    const adapter = new AlpineAdapter();
+    const match = {
+      entry: { method: "PUT", pattern: "/:arch/:filename", handlerId: "publishNamed" },
+      params: { arch: "x86_64", filename: "hello-1.2.3-r0.apk" },
+      path: "/x86_64/hello-1.2.3-r0.apk",
+    } satisfies RouteMatch;
+    expect(adapter.requiredPermission("PUT", match)).toEqual({
+      action: "write",
+      resource: { type: "artifact", artifactRef: "x86_64/hello-1.2.3-r0.apk" },
+    });
+  });
+
+  test("unnamed-publish write permission stays unscoped (no filename segment)", () => {
+    const adapter = new AlpineAdapter();
+    const match = {
+      entry: { method: "PUT", pattern: "/:arch", handlerId: "publish" },
+      params: { arch: "x86_64" },
+      path: "/x86_64",
+    } satisfies RouteMatch;
+    expect(adapter.requiredPermission("PUT", match)).toEqual({ action: "write" });
+  });
+
   test("GET /<arch>/APKINDEX.tar.gz regenerates the index for the arch, cacheable", async () => {
     const ctx = alpineContext();
     ctx.data.packages.listNames = async () => [{ name: "hello" }];
@@ -229,7 +252,7 @@ describe("Alpine adapter", () => {
 
   test("PUT /<arch> publishes a .apk and stores derived metadata", async () => {
     const ctx = alpineContext();
-    const committed: { metadata?: Record<string, unknown>; scan?: unknown } = {};
+    const committed: { metadata?: Record<string, unknown>; scan?: unknown; version?: string } = {};
     ctx.data.packages.findOrCreate = async ({ name }) => pkgRow(name);
     ctx.data.versions.exists = async () => false;
     ctx.data.content.storeBlobWithRef = async (): Promise<RegistryStoredBlob> => ({
@@ -242,6 +265,7 @@ describe("Alpine adapter", () => {
     ctx.data.versions.commitOrReleaseBlob = async (input) => {
       committed.metadata = input.metadata;
       committed.scan = input.scan;
+      committed.version = input.version;
       return { versionId: "ver_1" };
     };
 
@@ -281,6 +305,62 @@ describe("Alpine adapter", () => {
       filename: "hello-1.2.3-r0.apk",
       depends: ["libc"],
     });
+    // The stored version key is arch-qualified so the same apk version can be
+    // published for multiple arches; the metadata/index version stays bare.
+    expect(committed.version).toBe("x86_64/1.2.3-r0");
+  });
+
+  test("the same apk version publishes for multiple arches without conflict", async () => {
+    const seen: Array<{ namespace?: string | null; version: string }> = [];
+    const publishArch = async (arch: string) => {
+      const ctx = alpineContext();
+      ctx.data.packages.findOrCreate = async ({ name }) => pkgRow(name);
+      // Conflict only when this exact (package, arch-qualified version) already exists.
+      ctx.data.versions.exists = async (_pkg, version) => seen.some((s) => s.version === version);
+      ctx.data.content.storeBlobWithRef = async (): Promise<RegistryStoredBlob> => ({
+        digest: DIGEST,
+        size: 9000,
+        deduped: false,
+        refCreated: true,
+        blobRefId: "ref_1",
+      });
+      ctx.data.versions.commitOrReleaseBlob = async (input) => {
+        seen.push({ version: input.version });
+        return { versionId: `ver_${seen.length}` };
+      };
+      const apk = buildApkFixture({ name: "hello", version: "1.2.3-r0", arch });
+      return new AlpineAdapter().handle(
+        {
+          entry: { method: "PUT", pattern: "/:arch", handlerId: "publish" },
+          params: { arch },
+          path: `/${arch}`,
+        },
+        new Request(`https://r.test/${arch}`, { method: "PUT", body: apk }),
+        ctx,
+      );
+    };
+
+    expect((await publishArch("x86_64")).status).toBe(201);
+    expect((await publishArch("aarch64")).status).toBe(201);
+    expect(seen.map((s) => s.version)).toEqual(["x86_64/1.2.3-r0", "aarch64/1.2.3-r0"]);
+    // Re-publishing the same (arch, version) still conflicts.
+    expect((await publishArch("x86_64")).status).toBe(409);
+  });
+
+  test("PUT /<arch>/<filename> rejects a non-.apk path segment", async () => {
+    const ctx = alpineContext();
+    const apk = buildApkFixture({ name: "hello", version: "1.2.3-r0", arch: "x86_64" });
+    await expect(
+      new AlpineAdapter().handle(
+        {
+          entry: { method: "PUT", pattern: "/:arch/:filename", handlerId: "publishNamed" },
+          params: { arch: "x86_64", filename: "not-an-apk.txt" },
+          path: "/x86_64/not-an-apk.txt",
+        },
+        new Request("https://r.test/x86_64/not-an-apk.txt", { method: "PUT", body: apk }),
+        ctx,
+      ),
+    ).rejects.toMatchObject({ status: 400, code: "NAME_INVALID" });
   });
 
   test("PUT rejects a package whose arch differs from the upload arch", async () => {
