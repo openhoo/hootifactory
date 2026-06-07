@@ -30,18 +30,50 @@ function fakeDb(rowsByCall: unknown[][] = []) {
   return { builder, calls, ops: () => calls.map((c) => c.op) };
 }
 
+/**
+ * Holder for the active fake db builder. The `@hootifactory/db` mock below is
+ * registered ONCE at module scope (before `./assets` is ever imported) so the
+ * system under test can never bind the real `db` client — which would attempt a
+ * real connection and hang for ~6s in CI where no Postgres is reachable. Each
+ * test swaps in a fresh builder via `withFakeDb` instead of re-registering the
+ * mock, keeping the registration order leak-proof.
+ */
+let activeDb: { builder: any; calls: { op: string; args: unknown[] }[] } = fakeDb([]);
+
+// Stable forwarding proxy: any access on `db` is routed to the current builder.
+// Because this is registered before the SUT import, the SUT's `db` live binding
+// always resolves to this stub regardless of module cache / load ordering.
+const dbStub: any = new Proxy(
+  {},
+  {
+    get(_t, prop) {
+      return activeDb.builder[prop];
+    },
+    apply(_t, thisArg, args) {
+      return Reflect.apply(activeDb.builder as any, thisArg, args);
+    },
+  },
+);
+
+// Keep the real drizzle operators + schema tables (importing the module is lazy
+// and never opens a connection), but replace `db` with the stable stub above.
+// Registering this at module scope — before `./assets` is imported anywhere —
+// guarantees the SUT's `db` binding resolves to the stub, not the real client.
+const real = await import("@hootifactory/db");
+await mock.module("@hootifactory/db", () => ({ ...real, db: dbStub }));
+
 async function withFakeDb<T>(
   rowsByCall: unknown[][],
   run: (calls: { op: string; args: unknown[] }[]) => Promise<T>,
 ): Promise<T> {
-  const real = await import("@hootifactory/db");
-  const { builder, calls } = fakeDb(rowsByCall);
-  await mock.module("@hootifactory/db", () => ({ ...real, db: builder }));
-  return run(calls);
+  activeDb = fakeDb(rowsByCall);
+  return run(activeDb.calls);
 }
 
 describe("registry asset writes", () => {
-  afterEach(() => mock.restore());
+  afterEach(() => {
+    activeDb = fakeDb([]);
+  });
 
   test("upsertRegistryAsset returns the inserted row and defaults optional fields", async () => {
     const row = await withFakeDb([[{ id: "asset_1", role: "npm_tarball" }]], async (calls) => {
@@ -72,7 +104,9 @@ describe("registry asset writes", () => {
 });
 
 describe("registry asset reads", () => {
-  afterEach(() => mock.restore());
+  afterEach(() => {
+    activeDb = fakeDb([]);
+  });
 
   test("findRegistryAssetByScope returns the first matching row or null", async () => {
     const found = await withFakeDb([[{ id: "a1", role: "r", scope: "s" }]], async () => {
