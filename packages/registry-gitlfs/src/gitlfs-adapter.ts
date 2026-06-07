@@ -96,11 +96,12 @@ export class GitLfsAdapter implements RegistryPlugin {
       displayName: "Git LFS",
       mountSegment: "lfs",
       errorResponseKind: "singleError",
-      scan: {
-        // Each stored version's metadata records the object's CAS digest.
-        referencedDigests: (metadata) =>
-          typeof metadata.blobDigest === "string" ? [metadata.blobDigest] : [],
-      },
+      // No `scan.referencedDigests`: that hook feeds version-retention GC, which
+      // ranks/prunes `package_versions` rows. Git LFS is a flat content-addressed
+      // object store — it never publishes a version (objects are stored via
+      // `storeBlobStreamWithRef`), so retention never sees an LFS row and the hook
+      // would be inert. Orphaned objects are reclaimed through asset/blob-ref
+      // refcounting on the CAS, not keep-last-N version retention.
     })
     .capabilities(this.capabilities)
     .authChallenge(this.authChallenge)

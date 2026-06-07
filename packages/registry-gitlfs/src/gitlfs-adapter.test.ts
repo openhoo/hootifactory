@@ -384,9 +384,11 @@ describe("Git LFS adapter", () => {
     expect(res.status).toBe(501);
   });
 
-  test("scan.referencedDigests surfaces the stored blob digest", () => {
-    const scan = new GitLfsAdapter().scan;
-    expect(scan?.referencedDigests?.({ blobDigest: HELLO_DIGEST })).toEqual([HELLO_DIGEST]);
-    expect(scan?.referencedDigests?.({})).toEqual([]);
+  test("declares no version-retention scan provider (flat CAS, no package_versions)", () => {
+    // LFS stores objects via storeBlobStreamWithRef and never publishes a version,
+    // so the version-retention referencedDigests hook would never fire. The adapter
+    // therefore declares no scan provider rather than an inert one that reads a
+    // metadata field (blobDigest) the publish path never writes.
+    expect(new GitLfsAdapter().scan).toBeUndefined();
   });
 });
