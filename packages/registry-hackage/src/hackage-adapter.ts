@@ -236,7 +236,9 @@ export class HackageAdapter implements RegistryPlugin {
     const meta = parseHackageVersionMeta(row?.metadata);
     if (!meta) return new Response("Not Found", { status: 404 });
 
-    const file = decodeURIComponent(fileRaw);
+    // Route params arrive already percent-decoded from the router; decoding
+    // again would double-decode and could throw on a literal `%` (→ 500).
+    const file = fileRaw;
     if (file === `${name}.cabal`) {
       return textResponseWithEtag(req, meta.cabal, {
         "content-type": "text/plain; charset=utf-8",

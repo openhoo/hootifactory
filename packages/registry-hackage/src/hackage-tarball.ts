@@ -106,7 +106,7 @@ function pushTarEntry(out: number[], name: string, data: Uint8Array): void {
   // Names longer than 100 bytes would need the USTAR prefix split; index paths
   // (`<name>/<version>/<name>.cabal`) stay well within 100 bytes for our limits.
   header.set(nameBytes.subarray(0, TAR_NAME_LENGTH), TAR_NAME_OFFSET);
-  writeOctal(header, 100, TAR_NAME_OFFSET + 100, 0o644); // mode
+  writeOctal(header, 8, 100, 0o644); // mode
   writeOctal(header, 8, 108, 0); // uid
   writeOctal(header, 8, 116, 0); // gid
   writeOctal(header, TAR_SIZE_LENGTH, TAR_SIZE_OFFSET, data.length); // size
