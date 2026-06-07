@@ -2,6 +2,7 @@ import type { RegistryPlugin } from "@hootifactory/registry";
 import { aptRegistryPlugin } from "@hootifactory/registry-apt";
 import { cargoRegistryPlugin } from "@hootifactory/registry-cargo";
 import { chocolateyRegistryPlugin } from "@hootifactory/registry-chocolatey";
+import { cocoapodsRegistryPlugin } from "@hootifactory/registry-cocoapods";
 import { composerRegistryPlugin } from "@hootifactory/registry-composer";
 import { cranRegistryPlugin } from "@hootifactory/registry-cran";
 import { goRegistryPlugin } from "@hootifactory/registry-go";
@@ -48,6 +49,7 @@ export const REGISTRY_PLUGIN_MANIFEST: RegistryPluginEntry[] = [
   { plugin: pubRegistryPlugin },
   { plugin: swiftRegistryPlugin },
   { plugin: chocolateyRegistryPlugin },
+  { plugin: cocoapodsRegistryPlugin },
   { plugin: wingetRegistryPlugin },
   { plugin: homebrewRegistryPlugin },
   { plugin: scoopRegistryPlugin },
