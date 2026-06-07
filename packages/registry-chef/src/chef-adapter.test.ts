@@ -512,4 +512,20 @@ describe("Chef adapter", () => {
     expect(body.name).toBe("nginx");
     expect(body.versions).toEqual(["a", "b", "c"]);
   });
+
+  test("mergeChefCookbooks re-sorts merged version URLs newest-first", () => {
+    const url = (v: string) => `https://h/r/api/v1/cookbooks/nginx/versions/${v}`;
+    const merged = mergeChefCookbooks([
+      {
+        contentType: "application/json",
+        body: JSON.stringify({ name: "nginx", versions: [url("1_0_0"), url("1_2_0")] }),
+      },
+      {
+        contentType: "application/json",
+        body: JSON.stringify({ name: "nginx", versions: [url("1_1_0"), url("2_0_0")] }),
+      },
+    ]);
+    const body = JSON.parse(merged.body as string);
+    expect(body.versions).toEqual([url("2_0_0"), url("1_2_0"), url("1_1_0"), url("1_0_0")]);
+  });
 });

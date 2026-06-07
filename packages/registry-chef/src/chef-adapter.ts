@@ -22,6 +22,7 @@ import {
   type ChefStoredVersion,
   type ChefUniverse,
   chefVersionFromSegment,
+  compareChefVersionsDesc,
 } from "./chef-metadata";
 import { handleChefProxyIngest } from "./chef-proxy-lifecycle";
 import { chefBlobScope, handleChefPublish } from "./chef-publish-lifecycle";
@@ -347,8 +348,34 @@ export function mergeChefCookbooks(parts: RegistryMetadata[]): RegistryMetadata 
       }
     }
   }
-  const merged = { ...(base ?? {}), versions: versionUrls };
+  const merged = { ...(base ?? {}), versions: sortVersionUrlsDesc(versionUrls) };
   return { contentType: JSON_CONTENT_TYPE, body: JSON.stringify(merged) };
+}
+
+/**
+ * Re-sort merged cookbook `versions` URLs newest-first to preserve the plugin's
+ * own contract (buildChefCookbook emits descending). URLs whose trailing segment
+ * is not a recognizable version keep their original relative order, after the
+ * parseable ones.
+ */
+function sortVersionUrlsDesc(urls: string[]): string[] {
+  return urls
+    .map((url, index) => ({ url, index, version: chefVersionFromUrl(url) }))
+    .sort((a, b) => {
+      if (a.version && b.version) return compareChefVersionsDesc(a.version, b.version);
+      if (a.version) return -1;
+      if (b.version) return 1;
+      return a.index - b.index;
+    })
+    .map((entry) => entry.url);
+}
+
+/** Extract the dotted version from a `.../versions/<segment>` URL, or null. */
+function chefVersionFromUrl(url: string): string | null {
+  const segment = /\/versions\/([^/?#]+)/.exec(url)?.[1];
+  if (!segment) return null;
+  const version = chefVersionFromSegment(segment);
+  return ChefVersionSchema.safeParse(version).success ? version : null;
 }
 
 function chefDependencyGraph(metadata: Record<string, unknown>): Record<string, string> {

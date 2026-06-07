@@ -3,6 +3,7 @@ import {
   mapWithBoundedConcurrency,
   type RegistryRequestContext,
   safeFetch,
+  safeJsonParse,
 } from "@hootifactory/registry";
 import {
   type ChefUpstreamVersion,
@@ -119,12 +120,10 @@ async function fetchJson(
     headers: { accept: "application/json" },
   }).catch(() => null);
   if (!res?.ok) return null;
-  const declared = Number(res.headers.get("content-length") ?? 0);
-  if (declared > MAX_JSON_BYTES) {
-    await res.body?.cancel().catch(() => {});
-    return null;
-  }
-  return res.json().catch(() => null);
+  const bytes = await readCappedBody(res, MAX_JSON_BYTES);
+  if (!bytes) return null;
+  const parsed = safeJsonParse(new TextDecoder().decode(bytes));
+  return parsed.success ? parsed.data : null;
 }
 
 async function fetchTarball(
@@ -138,12 +137,42 @@ async function fetchTarball(
     enforcePublicNetwork: ctx.limits.enforcePublicNetwork,
   }).catch(() => null);
   if (!res?.ok) return null;
+  const bytes = await readCappedBody(res, ctx.limits.maxUploadBytes);
+  if (!bytes || bytes.length === 0) return null;
+  return bytes;
+}
+
+/**
+ * Read an upstream response body, capped at `maxBytes`, streaming so an upstream
+ * cannot exhaust memory by omitting/understating `Content-Length`. Rejects (and
+ * cancels the body) as soon as the declared length or streamed total exceeds the
+ * cap. Returns null on overflow so callers skip the offending resource.
+ */
+async function readCappedBody(res: Response, maxBytes: number): Promise<Uint8Array | null> {
   const declared = Number(res.headers.get("content-length") ?? 0);
-  if (declared > ctx.limits.maxUploadBytes) {
+  if (declared > maxBytes) {
     await res.body?.cancel().catch(() => {});
     return null;
   }
-  const bytes = new Uint8Array(await res.arrayBuffer());
-  if (bytes.length === 0 || bytes.length > ctx.limits.maxUploadBytes) return null;
-  return bytes;
+  const reader = res.body?.getReader();
+  if (!reader) return new Uint8Array(0);
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => {});
+      return null;
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out;
 }
