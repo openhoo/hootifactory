@@ -1,4 +1,4 @@
-import { z } from "@hootifactory/registry";
+import { textEtag, z } from "@hootifactory/registry";
 
 /**
  * Conan recipe-reference name/version/user/channel segments. Conan permits
@@ -136,4 +136,80 @@ export function buildConanFilesResponse(files: Record<string, ConanFileEntry>): 
   const out: Record<string, Record<string, never>> = {};
   for (const name of Object.keys(files).sort()) out[name] = {};
   return { files: out };
+}
+
+/**
+ * Emit a JSON response with an explicit `application/json; charset=utf-8`
+ * Content-Type (note the space). The Conan v2 client validates the metadata
+ * Content-Type with an exact string compare and accepts ONLY `application/json`
+ * or `application/json; charset=utf-8` WITH a space; Bun's bare `Response.json`
+ * emits `application/json;charset=utf-8` (no space), which the client rejects
+ * with `ConanException("Response from remote is not json")`.
+ *
+ * A content-derived ETag is attached so the response-compression middleware
+ * (which bails when no ETag is present) can actually gzip these payloads, making
+ * the module's `compressibleHandlers` declaration real rather than dead.
+ */
+export function conanJsonResponse(body: unknown, init?: { status?: number }): Response {
+  const text = JSON.stringify(body);
+  return new Response(text, {
+    status: init?.status ?? 200,
+    headers: { "content-type": "application/json; charset=utf-8", etag: textEtag(text) },
+  });
+}
+
+/**
+ * Translate a Conan search glob (`*`/`?` wildcards) into a `RegExp`. Conan's
+ * search patterns are shell-style globs over the reference string; we escape
+ * every regex metacharacter and map only `*`->`.*` and `?`->`.`. The pattern is
+ * anchored, so `zlib/*` matches `zlib/1.2.13@acme/stable` but not `zlibng/...`.
+ */
+export function conanSearchPatternToRegExp(pattern: string, ignoreCase: boolean): RegExp {
+  let body = "";
+  for (const ch of pattern) {
+    if (ch === "*") body += ".*";
+    else if (ch === "?") body += ".";
+    else body += ch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+  return new RegExp(`^${body}$`, ignoreCase ? "i" : "");
+}
+
+/**
+ * Parse the relevant `[settings]`, `[options]` and `[requires]` sections of a
+ * Conan `conaninfo.txt` (an INI-like document). The recipe/package search
+ * endpoints return, per package_id, exactly these three sections so a client can
+ * pick a binary by its settings/options. We read only the leading (effective)
+ * sections and ignore the `full_*` mirrors and the trailing recipe hash.
+ */
+export function parseConanInfo(text: string): {
+  settings: Record<string, string>;
+  options: Record<string, string>;
+  requires: string[];
+} {
+  const settings: Record<string, string> = {};
+  const options: Record<string, string> = {};
+  const requires: string[] = [];
+  let section: "settings" | "options" | "requires" | null = null;
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (line.length === 0 || line.startsWith("#")) continue;
+    if (line.startsWith("[") && line.endsWith("]")) {
+      const name = line.slice(1, -1);
+      section = name === "settings" || name === "options" || name === "requires" ? name : null;
+      continue;
+    }
+    if (section === "requires") {
+      requires.push(line);
+      continue;
+    }
+    if (section === "settings" || section === "options") {
+      const eq = line.indexOf("=");
+      if (eq < 0) continue;
+      const key = line.slice(0, eq).trim();
+      const value = line.slice(eq + 1).trim();
+      if (key.length === 0) continue;
+      (section === "settings" ? settings : options)[key] = value;
+    }
+  }
+  return { settings, options, requires };
 }

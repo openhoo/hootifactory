@@ -4,8 +4,16 @@ import { Errors, type RegistryRequestContext } from "@hootifactory/registry";
  * The capabilities banner returned on `GET /v1/ping`. Conan clients read the
  * `X-Conan-Server-Capabilities` header to decide which protocol features to use;
  * advertising `revisions` is what enables the v2 revision-addressed endpoints.
+ *
+ * We advertise only what the route table actually serves:
+ *   - `revisions`: the v2 revision-addressed recipe/package endpoints.
+ *   - `complex_search`: the `GET /v2/conans/search` recipe-search endpoint and
+ *     the per-recipe package-search endpoints.
+ * `checksum_deploy` is deliberately NOT advertised: we have no SHA1-keyed dedup
+ * probe handler, and the client's empty-body `X-Checksum-Deploy` PUT would hit
+ * the upload handler's empty-body rejection and fatally abort the upload.
  */
-export const CONAN_SERVER_CAPABILITIES = ["complex_search", "revisions", "checksum_deploy"];
+export const CONAN_SERVER_CAPABILITIES = ["complex_search", "revisions"];
 
 /** `GET /v1/ping` — liveness + capability advertisement. */
 export function conanPing(): Response {

@@ -2,9 +2,14 @@ import { describe, expect, test } from "bun:test";
 import {
   buildConanFilesResponse,
   ConanFilenameSchema,
+  ConanPackageIdSchema,
+  ConanRevisionSchema,
   ConanSegmentSchema,
   conanFileScope,
+  conanJsonResponse,
+  conanSearchPatternToRegExp,
   packageVersionKey,
+  parseConanInfo,
   parseConanRevisionMeta,
   recipeVersionKey,
   referenceToPackageName,
@@ -90,5 +95,76 @@ describe("conan-validation", () => {
         "conanfile.py": { blobDigest: DIGEST, sizeBytes: 4 },
       }),
     ).toEqual({ files: { "conanfile.py": {}, "conanmanifest.txt": {} } });
+  });
+
+  test("conanJsonResponse sets the space-separated JSON content-type + etag", () => {
+    const res = conanJsonResponse({ a: 1 });
+    expect(res.headers.get("content-type")).toBe("application/json; charset=utf-8");
+    expect(res.headers.get("etag")).toBeTruthy();
+    expect(res.status).toBe(200);
+  });
+
+  test("conanSearchPatternToRegExp maps globs and escapes regex metachars", () => {
+    const re = conanSearchPatternToRegExp("zlib/*", false);
+    expect(re.test("zlib/1.2.13@acme/stable")).toBe(true);
+    expect(re.test("zlibng/1.0@acme/stable")).toBe(false);
+    // The `.` in the pattern is a literal, not a wildcard.
+    const dot = conanSearchPatternToRegExp("a.b", false);
+    expect(dot.test("a.b")).toBe(true);
+    expect(dot.test("axb")).toBe(false);
+    // `?` matches exactly one character.
+    const q = conanSearchPatternToRegExp("z?ib", false);
+    expect(q.test("zlib")).toBe(true);
+    expect(q.test("zllib")).toBe(false);
+    // ignoreCase honoured.
+    expect(conanSearchPatternToRegExp("ZLIB", true).test("zlib")).toBe(true);
+    expect(conanSearchPatternToRegExp("ZLIB", false).test("zlib")).toBe(false);
+  });
+
+  test("parseConanInfo extracts settings/options/requires and ignores other sections", () => {
+    const text = [
+      "[settings]",
+      "    arch=x86_64",
+      "    build_type=Release",
+      "    compiler.version=11",
+      "[requires]",
+      "    fmt/9.Y.Z",
+      "[options]",
+      "    shared=False",
+      "[full_settings]",
+      "    arch=x86_64",
+      "    os=Linux",
+      "[recipe_hash]",
+      "    abc123",
+      "",
+    ].join("\n");
+    expect(parseConanInfo(text)).toEqual({
+      settings: { arch: "x86_64", build_type: "Release", "compiler.version": "11" },
+      options: { shared: "False" },
+      requires: ["fmt/9.Y.Z"],
+    });
+  });
+
+  test("parseConanInfo returns empty sections for an empty document", () => {
+    expect(parseConanInfo("")).toEqual({ settings: {}, options: {}, requires: [] });
+  });
+
+  test("revision schema rejects the separators that would let keys collide", () => {
+    expect(ConanRevisionSchema.safeParse("rrev1").success).toBe(true);
+    // ':' and '#' are the package-version-key separators; a revision must never
+    // contain them, or a recipe key could collide with a package key.
+    expect(ConanRevisionSchema.safeParse("r:1").success).toBe(false);
+    expect(ConanRevisionSchema.safeParse("r#1").success).toBe(false);
+    expect(ConanRevisionSchema.safeParse("r 1").success).toBe(false);
+    expect(ConanRevisionSchema.safeParse("").success).toBe(false);
+    expect(ConanRevisionSchema.safeParse("a".repeat(129)).success).toBe(false);
+  });
+
+  test("package-id schema rejects separators, spaces, and empty", () => {
+    expect(ConanPackageIdSchema.safeParse("pkgid01").success).toBe(true);
+    expect(ConanPackageIdSchema.safeParse("p:1").success).toBe(false);
+    expect(ConanPackageIdSchema.safeParse("p#1").success).toBe(false);
+    expect(ConanPackageIdSchema.safeParse("p 1").success).toBe(false);
+    expect(ConanPackageIdSchema.safeParse("").success).toBe(false);
   });
 });

@@ -28,7 +28,10 @@ import {
   ConanRevisionSchema,
   ConanSegmentSchema,
   conanFileScope,
+  conanJsonResponse,
+  conanSearchPatternToRegExp,
   packageVersionKey,
+  parseConanInfo,
   parseConanRevisionMeta,
   recipeVersionKey,
   referenceToPackageName,
@@ -88,7 +91,11 @@ function parseReference(
  */
 export class ConanAdapter implements RegistryPlugin {
   readonly id = "conan" as const;
-  readonly capabilities = registryCapabilities("proxyable", "virtualizable");
+  // `virtualizable` only: revision-addressed reads are satisfied by the agnostic
+  // per-member fan-out. `proxyable` is intentionally NOT declared — there is no
+  // proxyIngest implementation, so proxy-repo creation (gated on adapter.proxyIngest)
+  // would be rejected; advertising the flag would be dishonest.
+  readonly capabilities = registryCapabilities("virtualizable");
   authChallenge = (perm: Permission, ctx: RegistryRequestContext) =>
     registryBearerAuthChallenge({ ctx, permission: perm, service: REGISTRY_TOKEN_SERVICE });
 
@@ -105,6 +112,9 @@ export class ConanAdapter implements RegistryPlugin {
         "packageRevisions",
         "packageLatest",
         "packageFiles",
+        "recipeSearch",
+        "packageConfigSearch",
+        "packageRevisionSearch",
       ],
       scan: {
         defaultOsvEcosystem: "ConanCenter",
@@ -121,11 +131,26 @@ export class ConanAdapter implements RegistryPlugin {
     .routes((route) => [
       // ── prelude ────────────────────────────────────────────────────────────
       route.get("/v1/ping", "ping", () => conanPing()),
-      route.post("/v2/users/authenticate", "authenticate", ({ req, ctx }) =>
+      // The real Conan v2 client issues authenticate as a GET (HTTP Basic ->
+      // token text); we keep a POST alias for tolerance with other tooling.
+      route.get("/v2/users/authenticate", "authenticate", ({ req, ctx }) =>
+        conanAuthenticate(req, ctx),
+      ),
+      route.post("/v2/users/authenticate", "authenticatePost", ({ req, ctx }) =>
         conanAuthenticate(req, ctx),
       ),
       route.get("/v2/users/check_credentials", "checkCredentials", ({ ctx }) =>
         conanCheckCredentials(ctx),
+      ),
+      // ── recipe search ────────────────────────────────────────────────────────
+      // `GET /v2/conans/search?q=<glob>` drives `conan search <pattern> -r`. It is
+      // a single segment after `conans`, so it can never be shadowed by the
+      // 4-segment `.../:name/:version/:user/:channel/...` recipe routes.
+      route.get(
+        "/v2/conans/search",
+        "recipeSearch",
+        ({ req, ctx }) => this.recipeSearch(req, ctx),
+        { searchable: true },
       ),
       // ── package-binary routes (declared before recipe-file routes so the more
       //     specific `.../packages/...` paths win over `.../files/...`) ─────────
@@ -195,6 +220,19 @@ export class ConanAdapter implements RegistryPlugin {
             ctx,
           ),
       ),
+      // ── package-configuration search ─────────────────────────────────────────
+      // `GET .../revisions/:rrev/search` enumerates the binary package_ids under a
+      // specific recipe revision, returning each one's settings/options/requires.
+      route.get(
+        "/v2/conans/:name/:version/:user/:channel/revisions/:rrev/search",
+        "packageRevisionSearch",
+        ({ params, ctx }) =>
+          this.packageConfigSearch(
+            parseReference(params.name, params.version, params.user, params.channel),
+            params.rrev,
+            ctx,
+          ),
+      ),
       // ── recipe-file routes ───────────────────────────────────────────────────
       route.get(
         "/v2/conans/:name/:version/:user/:channel/revisions/:rrev/files",
@@ -250,6 +288,19 @@ export class ConanAdapter implements RegistryPlugin {
         ({ params, ctx }) =>
           this.recipeRevisions(
             parseReference(params.name, params.version, params.user, params.channel),
+            ctx,
+          ),
+      ),
+      // `GET .../channel/search` enumerates the binary package_ids of a recipe's
+      // latest recipe revision (`conan search <ref>:* -r`). `search` is a distinct
+      // literal segment from the `latest`/`revisions` siblings, so no shadowing.
+      route.get(
+        "/v2/conans/:name/:version/:user/:channel/search",
+        "packageConfigSearch",
+        ({ params, ctx }) =>
+          this.packageConfigSearch(
+            parseReference(params.name, params.version, params.user, params.channel),
+            undefined,
             ctx,
           ),
       ),
@@ -351,7 +402,7 @@ export class ConanAdapter implements RegistryPlugin {
     if (!pkg) return notFound();
     const metas = await this.revisionsOfKind(ctx, pkg, "recipe");
     if (metas.length === 0) return notFound();
-    return Response.json({
+    return conanJsonResponse({
       revisions: metas.map((meta) => ({ revision: meta.rrev, time: meta.time })),
     });
   }
@@ -365,7 +416,7 @@ export class ConanAdapter implements RegistryPlugin {
     if (!pkg) return notFound();
     const [latest] = await this.revisionsOfKind(ctx, pkg, "recipe");
     if (!latest) return notFound();
-    return Response.json({ revision: latest.rrev, time: latest.time });
+    return conanJsonResponse({ revision: latest.rrev, time: latest.time });
   }
 
   /** GET .../revisions/:rrev/files — the file map of a recipe revision. */
@@ -380,7 +431,7 @@ export class ConanAdapter implements RegistryPlugin {
     const row = await ctx.data.versions.findLive(pkg, recipeVersionKey(rrev));
     const meta = parseConanRevisionMeta(row?.metadata);
     if (meta?.kind !== "recipe") return notFound();
-    return Response.json(buildConanFilesResponse(meta.files));
+    return conanJsonResponse(buildConanFilesResponse(meta.files));
   }
 
   /** GET .../packages/:pkgid/revisions — package-binary revisions newest-first. */
@@ -396,7 +447,7 @@ export class ConanAdapter implements RegistryPlugin {
     if (!pkg) return notFound();
     const metas = await this.revisionsOfKind(ctx, pkg, "package", { rrev, packageId: pkgid });
     if (metas.length === 0) return notFound();
-    return Response.json({
+    return conanJsonResponse({
       revisions: metas.map((meta) => ({ revision: meta.prev, time: meta.time })),
     });
   }
@@ -414,7 +465,7 @@ export class ConanAdapter implements RegistryPlugin {
     if (!pkg) return notFound();
     const [latest] = await this.revisionsOfKind(ctx, pkg, "package", { rrev, packageId: pkgid });
     if (!latest) return notFound();
-    return Response.json({ revision: latest.prev, time: latest.time });
+    return conanJsonResponse({ revision: latest.prev, time: latest.time });
   }
 
   /** GET .../packages/:pkgid/revisions/:prev/files — package-binary file map. */
@@ -433,7 +484,7 @@ export class ConanAdapter implements RegistryPlugin {
     const row = await ctx.data.versions.findLive(pkg, packageVersionKey(rrev, pkgid, prev));
     const meta = parseConanRevisionMeta(row?.metadata);
     if (meta?.kind !== "package") return notFound();
-    return Response.json(buildConanFilesResponse(meta.files));
+    return conanJsonResponse(buildConanFilesResponse(meta.files));
   }
 
   /** GET .../files/:filename — serve a stored recipe or package file blob. */
@@ -463,14 +514,99 @@ export class ConanAdapter implements RegistryPlugin {
       scope,
       contentType: "application/octet-stream",
       redirect: req.method === "GET",
-      blocked: () => Response.json({ error: "artifact blocked by scan policy" }, { status: 403 }),
+      blocked: () =>
+        conanJsonResponse({ error: "artifact blocked by scan policy" }, { status: 403 }),
       missing: () => notFound(),
     });
+  }
+
+  /**
+   * GET /v2/conans/search?q=<glob> — recipe search. Returns Conan's
+   * `{ "results": ["name/version@user/channel", ...] }`, honouring the `?q=` glob
+   * (`*`/`?` wildcards) and the optional `?ignorecase=` flag. With no pattern all
+   * recipes are returned. The package names stored in this module are already the
+   * canonical `name/version@user/channel` references.
+   */
+  private async recipeSearch(req: Request, ctx: RegistryRequestContext): Promise<Response> {
+    const url = new URL(req.url);
+    const pattern = url.searchParams.get("q") ?? url.searchParams.get("query") ?? "*";
+    const ignoreCase = url.searchParams.get("ignorecase") !== "False";
+    const matcher = conanSearchPatternToRegExp(pattern, ignoreCase);
+    const names = await ctx.data.packages.listNames();
+    const results = names
+      .map((row) => row.name)
+      .filter((name) => matcher.test(name))
+      .sort();
+    return conanJsonResponse({ results });
+  }
+
+  /**
+   * GET .../search and GET .../revisions/:rrev/search — package-configuration
+   * search. Enumerates the binary package_ids under a recipe revision (the latest
+   * recipe revision when no rrev is given), returning each one's
+   * `{ settings, options, requires }` parsed from its stored `conaninfo.txt`.
+   * Shape: `{ "<package_id>": { settings, options, requires } }`.
+   */
+  private async packageConfigSearch(
+    reference: ConanReference,
+    rrevRaw: string | undefined,
+    ctx: RegistryRequestContext,
+  ): Promise<Response> {
+    const pkg = await this.findRecipe(ctx, reference);
+    if (!pkg) return notFound();
+    let rrev: string;
+    if (rrevRaw === undefined) {
+      const [latest] = await this.revisionsOfKind(ctx, pkg, "recipe");
+      if (!latest) return notFound();
+      rrev = latest.rrev;
+    } else {
+      rrev = parseRevision(rrevRaw);
+    }
+    const referenceName = referenceToPackageName(reference);
+    // Newest package revision per package_id under this recipe revision.
+    const rows = await ctx.data.versions.listLive(pkg, { orderByCreated: "desc" });
+    const seen = new Set<string>();
+    const out: Record<
+      string,
+      { settings: Record<string, string>; options: Record<string, string>; requires: string[] }
+    > = {};
+    for (const row of rows) {
+      const meta = parseConanRevisionMeta(row.metadata);
+      if (meta?.kind !== "package" || meta.rrev !== rrev || !meta.packageId || !meta.prev) {
+        continue;
+      }
+      if (seen.has(meta.packageId)) continue;
+      seen.add(meta.packageId);
+      const info = meta.files["conaninfo.txt"];
+      if (!info) {
+        out[meta.packageId] = { settings: {}, options: {}, requires: [] };
+        continue;
+      }
+      const scope = conanFileScope({
+        reference: referenceName,
+        rrev,
+        packageId: meta.packageId,
+        prev: meta.prev,
+        filename: "conaninfo.txt",
+      });
+      const blob = await ctx.data.content.getBlobRef({
+        digest: info.blobDigest,
+        kind: CONAN_FILE_KIND,
+        scope,
+      });
+      if (!blob) {
+        out[meta.packageId] = { settings: {}, options: {}, requires: [] };
+        continue;
+      }
+      const text = await new Response(blob.get()).text();
+      out[meta.packageId] = parseConanInfo(text);
+    }
+    return conanJsonResponse(out);
   }
 }
 
 function notFound(): Response {
-  return Response.json({ error: "Not Found" }, { status: 404 });
+  return conanJsonResponse({ error: "Not Found" }, { status: 404 });
 }
 
 export const conanRegistryPlugin: RegistryPlugin = new ConanAdapter();
