@@ -161,18 +161,49 @@ export function computeChecksumHex(data: Uint8Array, algorithm: "sha1" | "md5"):
   return hasher.digest("hex");
 }
 
+/**
+ * The checksum hex of a stored Ivy path's blob, hashed by streaming the blob's
+ * `ReadableStream` through the hasher chunk-by-chunk so a large artifact never has
+ * to be fully buffered in memory. Returns null when no asset/blob exists for `path`.
+ */
+export async function streamIvyChecksumHex(
+  ctx: RegistryRequestContext,
+  path: string,
+  algorithm: "sha1" | "md5",
+): Promise<string | null> {
+  const blob = await getIvyBlobRef(ctx, path);
+  if (!blob) return null;
+  const hasher = new Bun.CryptoHasher(algorithm);
+  const reader = blob.get().getReader();
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) hasher.update(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return hasher.digest("hex");
+}
+
+/** Resolve the referenced blob for a stored Ivy path, or null when no asset exists. */
+async function getIvyBlobRef(ctx: RegistryRequestContext, path: string) {
+  const asset = await ctx.data.assets.findByScope({ role: IVY_FILE_KIND, scope: path });
+  if (!asset) return null;
+  return ctx.data.content.getBlobRef({
+    digest: asset.digest,
+    kind: IVY_FILE_KIND,
+    scope: path,
+  });
+}
+
 /** Read the full bytes of a stored Ivy path's blob, or null when no asset exists. */
 export async function readIvyBlobBytes(
   ctx: RegistryRequestContext,
   path: string,
 ): Promise<Uint8Array | null> {
-  const asset = await ctx.data.assets.findByScope({ role: IVY_FILE_KIND, scope: path });
-  if (!asset) return null;
-  const blob = await ctx.data.content.getBlobRef({
-    digest: asset.digest,
-    kind: IVY_FILE_KIND,
-    scope: path,
-  });
+  const blob = await getIvyBlobRef(ctx, path);
   if (!blob) return null;
   return new Uint8Array(await new Response(blob.get()).arrayBuffer());
 }

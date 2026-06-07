@@ -15,11 +15,10 @@ import {
   textResponseWithEtag,
 } from "@hootifactory/registry";
 import {
-  computeChecksumHex,
   handleIvyUpload,
   IVY_FILE_KIND,
   ivyReferencedDigests,
-  readIvyBlobBytes,
+  streamIvyChecksumHex,
 } from "./ivy-upload-lifecycle";
 import {
   contentTypeForPath,
@@ -158,9 +157,8 @@ export class IvyAdapter implements RegistryPlugin {
     req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
-    const bytes = await readIvyBlobBytes(ctx, basePath);
-    if (!bytes) throw Errors.notFound();
-    const checksum = computeChecksumHex(bytes, algorithm);
+    const checksum = await streamIvyChecksumHex(ctx, basePath, algorithm);
+    if (checksum === null) throw Errors.notFound();
     return textResponseWithEtag(req, checksum, { "content-type": "text/plain; charset=utf-8" });
   }
 }

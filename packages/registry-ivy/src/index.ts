@@ -5,6 +5,7 @@ export {
   IVY_FILE_KIND,
   ivyReferencedDigests,
   readIvyBlobBytes,
+  streamIvyChecksumHex,
 } from "./ivy-upload-lifecycle";
 export {
   ivyDescriptorFile,

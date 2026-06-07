@@ -50,13 +50,19 @@ function packageRow(name: string): RegistryPackageRow {
 }
 
 function referencedBlob(bytes: Uint8Array, digest = DIGEST): RegistryReferencedBlob {
+  return chunkedBlob([bytes], digest);
+}
+
+/** A blob whose stream yields the given chunks in order, to exercise streaming reads. */
+function chunkedBlob(chunks: Uint8Array[], digest = DIGEST): RegistryReferencedBlob {
+  const size = chunks.reduce((total, chunk) => total + chunk.byteLength, 0);
   return {
     digest,
-    size: bytes.byteLength,
+    size,
     get: () =>
       new ReadableStream<Uint8Array>({
         start(controller) {
-          controller.enqueue(bytes);
+          for (const chunk of chunks) controller.enqueue(chunk);
           controller.close();
         },
       }),
@@ -202,6 +208,25 @@ describe("IvyAdapter", () => {
     );
     expect(res.status).toBe(200);
     expect(await res.text()).toBe(computeChecksumHex(ARTIFACT_BYTES, "md5"));
+  });
+
+  test("hashes a multi-chunk blob stream incrementally without buffering it whole", async () => {
+    const ctx = createTestRegistryContext();
+    const chunks = [new Uint8Array([1, 2]), new Uint8Array([3]), new Uint8Array([4])];
+    const whole = new Uint8Array([1, 2, 3, 4]);
+    ctx.data.assets.findByScope = async () => assetRow(ARTIFACT_PATH);
+    ctx.data.content.getBlobRef = async () => chunkedBlob(chunks);
+    const res = await new IvyAdapter().handle(
+      createTestRouteMatch(
+        { method: "GET", pattern: "/:path+", handlerId: "download" },
+        { path: `${ARTIFACT_PATH}.sha1` },
+      ),
+      new Request(`https://r.test/ivy/o/r/${ARTIFACT_PATH}.sha1`),
+      ctx,
+    );
+    expect(res.status).toBe(200);
+    // Streaming the chunks must yield the same digest as hashing the whole buffer.
+    expect(await res.text()).toBe(computeChecksumHex(whole, "sha1"));
   });
 
   test("checksum request 404s when the base file is missing (dispatch maps it to 404)", async () => {
