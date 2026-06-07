@@ -1,6 +1,4 @@
 import {
-  basicAuthChallenge,
-  delegateRegistryPlugin,
   Errors,
   type HttpMethod,
   type Permission,
@@ -9,8 +7,7 @@ import {
   type RegistryRequestContext,
   type RouteMatch,
   readWritePermission,
-  registryCapabilities,
-  registryPlugin,
+  registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
 } from "@hootifactory/registry";
@@ -43,68 +40,7 @@ function parseAppVersion(version: string): string {
  * is a hootifactory extension: real Scoop buckets are git repos PR'd by hand, so we
  * accept a `PUT /<app>` of the manifest + artifact and host the blob ourselves.
  */
-export class ScoopAdapter implements RegistryPlugin {
-  readonly id = "scoop" as const;
-  readonly capabilities = registryCapabilities("virtualizable");
-  authChallenge = basicAuthChallenge;
-
-  private readonly plugin = registryPlugin(this.id)
-    .module({
-      displayName: "Scoop",
-      mountSegment: "scoop",
-      errorResponseKind: "singleError",
-      compressibleHandlers: ["index", "manifest"],
-      scan: {
-        defaultOsvEcosystem: undefined,
-        referencedDigests: (metadata) =>
-          typeof metadata.blobDigest === "string" ? [metadata.blobDigest] : [],
-      },
-    })
-    .capabilities(this.capabilities)
-    .authChallenge(this.authChallenge)
-    .routes((route) => [
-      // `/index.json` is a literal segment declared before `/:app` so it cannot be
-      // shadowed by the app-manifest route (route-matcher tries routes in order).
-      route.get("/index.json", "index", ({ req, ctx }) => this.index(req, ctx)),
-      route.get("/download/:app/:version/:filename", "download", ({ params, req, ctx }) =>
-        this.download(params.app, params.version, params.filename, req, ctx),
-      ),
-      route.get("/:app", "manifest", ({ params, req, ctx }) => this.manifest(params.app, req, ctx)),
-      route.put("/:app", "publish", ({ params, req, ctx }) => this.publish(params.app, req, ctx)),
-    ])
-    .build();
-  private readonly delegate = delegateRegistryPlugin(this.plugin);
-
-  get displayName() {
-    return this.plugin.displayName;
-  }
-  get mountSegment() {
-    return this.plugin.mountSegment;
-  }
-  get repositoryNamePolicy() {
-    return this.plugin.repositoryNamePolicy;
-  }
-  get acceptsRegistryBearerToken() {
-    return this.plugin.acceptsRegistryBearerToken;
-  }
-  get apiKeyHeaders() {
-    return this.plugin.apiKeyHeaders;
-  }
-  get errorResponseKind() {
-    return this.plugin.errorResponseKind;
-  }
-  get compressibleHandlers() {
-    return this.plugin.compressibleHandlers;
-  }
-  get compressibleContentTypes() {
-    return this.plugin.compressibleContentTypes;
-  }
-  get scan() {
-    return this.plugin.scan;
-  }
-
-  routes = this.delegate.routes;
-
+class ScoopAdapterState {
   requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
     const permission = readWritePermission(method);
     const app = this.appFromMatch(match);
@@ -126,10 +62,8 @@ export class ScoopAdapter implements RegistryPlugin {
     return permission;
   }
 
-  handle = this.delegate.handle;
-
   /** Resolve the app name from a match, stripping the `.json` suffix on manifest reads. */
-  private appFromMatch(match?: RouteMatch): string | null {
+  appFromMatch(match?: RouteMatch): string | null {
     const raw = match?.params.app;
     if (!raw) return null;
     const stripped =
@@ -140,7 +74,7 @@ export class ScoopAdapter implements RegistryPlugin {
   }
 
   /** `GET /index.json` — `{<app>: {version}}` over live packages + their latest version. */
-  private async index(req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  async index(req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const names = await ctx.data.packages.listNames();
     const index: Record<string, { version: string }> = {};
     // Deterministic ordering so the ETag is stable across requests.
@@ -156,11 +90,7 @@ export class ScoopAdapter implements RegistryPlugin {
   }
 
   /** `GET /<app>.json` — the app manifest assembled from the latest live version. */
-  private async manifest(
-    appRaw: string,
-    req: Request,
-    ctx: RegistryRequestContext,
-  ): Promise<Response> {
+  async manifest(appRaw: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     if (!appRaw.toLowerCase().endsWith(".json")) throw Errors.notFound();
     const app = parseAppName(appRaw.slice(0, -".json".length));
     const pkg = await ctx.data.packages.findByName(app);
@@ -176,7 +106,7 @@ export class ScoopAdapter implements RegistryPlugin {
   }
 
   /** `GET /download/<app>/<version>/<filename>` — serve the hosted artifact blob. */
-  private async download(
+  async download(
     appRaw: string,
     versionRaw: string,
     filenameRaw: string,
@@ -205,17 +135,13 @@ export class ScoopAdapter implements RegistryPlugin {
     });
   }
 
-  private async publish(
-    appRaw: string,
-    req: Request,
-    ctx: RegistryRequestContext,
-  ): Promise<Response> {
+  async publish(appRaw: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const app = parseAppName(appRaw);
     return handleScoopPublish(app, req, ctx);
   }
 
   /** Latest live version's stored metadata (versions ordered by creation). */
-  private async latestMeta(
+  async latestMeta(
     ctx: RegistryRequestContext,
     pkg: { id: string; orgId: string; repositoryId: string; name: string },
   ) {
@@ -232,4 +158,35 @@ function isValidName(name: string): boolean {
   return ScoopAppNameSchema.safeParse(name).success;
 }
 
+const scoopDefinition = registryAdapter("scoop")
+  .stateClass(ScoopAdapterState)
+  .module((module) =>
+    module
+      .displayName("Scoop")
+      .mount("scoop")
+      .capabilities("virtualizable")
+      .errorResponseKind("singleError")
+      .compressibleHandlers("index", "manifest"),
+  )
+  .scan((scan) => scan.referencedDigestPaths("blobDigest"))
+  .basicAuth()
+  .fromState((state) => state.defaultPermission("requiredPermission"))
+  .routes((route) => [
+    // `/index.json` is a literal segment declared before `/:app` so it cannot be
+    // shadowed by the app-manifest route (route-matcher tries routes in order).
+    route.get("/index.json", "index").calls((state, { req, ctx }) => state.index(req, ctx)),
+    route
+      .get("/download/:app/:version/:filename", "download")
+      .calls((state, { params, req, ctx }) =>
+        state.download(params.app, params.version, params.filename, req, ctx),
+      ),
+    route
+      .get("/:app", "manifest")
+      .calls((state, { params, req, ctx }) => state.manifest(params.app, req, ctx)),
+    route
+      .put("/:app", "publish")
+      .calls((state, { params, req, ctx }) => state.publish(params.app, req, ctx)),
+  ]);
+
+export class ScoopAdapter extends scoopDefinition.adapterClass() {}
 export const scoopRegistryPlugin: RegistryPlugin = new ScoopAdapter();
