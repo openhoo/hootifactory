@@ -256,6 +256,13 @@
         "@hootifactory/registry": "workspace:*",
       },
     },
+    "packages/registry-cran": {
+      "name": "@hootifactory/registry-cran",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/registry": "workspace:*",
+      },
+    },
     "packages/registry-go": {
       "name": "@hootifactory/registry-go",
       "version": "0.0.0",
@@ -336,6 +343,7 @@
         "@hootifactory/registry-cargo": "workspace:*",
         "@hootifactory/registry-chocolatey": "workspace:*",
         "@hootifactory/registry-composer": "workspace:*",
+        "@hootifactory/registry-cran": "workspace:*",
         "@hootifactory/registry-go": "workspace:*",
         "@hootifactory/registry-homebrew": "workspace:*",
         "@hootifactory/registry-maven": "workspace:*",
@@ -660,6 +668,8 @@
     "@hootifactory/registry-chocolatey": ["@hootifactory/registry-chocolatey@workspace:packages/registry-chocolatey"],
 
     "@hootifactory/registry-composer": ["@hootifactory/registry-composer@workspace:packages/registry-composer"],
+
+    "@hootifactory/registry-cran": ["@hootifactory/registry-cran@workspace:packages/registry-cran"],
 
     "@hootifactory/registry-go": ["@hootifactory/registry-go@workspace:packages/registry-go"],
 
