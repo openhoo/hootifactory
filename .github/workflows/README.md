@@ -9,7 +9,7 @@ must pass before a PR can merge. It enforces these checks:
 | `lint`         | `biome check .` is clean (lint + format)  | `bun run lint`            |
 | `typecheck`    | `tsc --noEmit` across every package        | `bun run typecheck`       |
 | `architecture` | Plugin/package import boundaries hold      | `bun run check:boundaries` |
-| `coverage`     | Unit tests pass **and** line coverage ≥ the ratchet (60%, → 80%) | `bun run test:coverage`   |
+| `coverage`     | Unit tests pass **and** every package's line coverage ≥ 80% (per-package floor) | `bun run test:coverage`   |
 
 A final job, **`gate`**, simply waits on the five above and fails if any did not
 pass. Point branch protection at `gate` (see below) so you have a single, stable
@@ -65,42 +65,47 @@ which fails if a package imports across a forbidden boundary (e.g. the app core
 reaching into a concrete registry/scanner plugin). It reads the workspace
 manifests directly and needs no `bun install`.
 
-## 5. Coverage Ratchet
+## 5. Per-package Coverage Floor
 
-`bun run test:unit` already emits a per-package `coverage/lcov.info`.
-[`scripts/coverage-gate.ts`](../../scripts/coverage-gate.ts) turns those into one
-repo-wide **line** coverage number and fails if it's below the threshold. Two
-details keep that number honest:
+`bun run test:unit` runs each package's tests with `cwd` set to that package, so
+every package emits its **own** `coverage/lcov.info`.
+[`scripts/coverage-gate.ts`](../../scripts/coverage-gate.ts) measures **each
+package independently** on its own `src/` **line** coverage and fails if **any**
+package is below the floor — there is no repo-wide aggregate, so each package
+must test itself. Two details keep each package's number honest:
 
-- **Merged by source file.** A file imported across packages (e.g.
-  `packages/types/src/index.ts`) is counted once, with its line hits unioned — a
-  line is covered if any package's tests hit it.
+- **Only the package's own `src/`.** When a package's tests load code from
+  another package (e.g. `packages/types/src/index.ts`), Bun records it in that
+  package's lcov; the gate discards those cross-package records so a package can't
+  borrow coverage from code it merely imports.
 - **Untested files count as 0%.** Bun's lcov only lists files a test actually
-  loaded, so the gate also enumerates every source file under `apps/*/src` and
-  `packages/*/src` and counts any that never appear in coverage as fully
-  uncovered. Without this, brand-new untested code would be invisible to the
-  gate.
+  loaded, so the gate also enumerates every source file under the package's
+  `src/` and counts any that never appear in its coverage as fully uncovered.
+  Without this, brand-new untested code would be invisible to the gate.
 
-**Excluded** from the denominator: tests, generated code (`*.gen.ts`, `*.d.ts`),
-migrations, `dist`/`node_modules`, and **`apps/web`** (the web UI is covered by
-Playwright e2e, not unit tests). Add more exclusions via `COVERAGE_EXCLUDE`
-(comma-separated regex fragments matched against the repo-relative path).
+**Excluded** from every package's denominator: tests, generated code
+(`*.gen.ts`, `*.d.ts`), migrations, `dist`/`node_modules`. Whole packages can be
+excluded via the script's `EXCLUDED_PACKAGES` set — **`apps/web`** is excluded
+(the web UI is covered by Playwright e2e, not unit tests). Add path-level
+exclusions via `COVERAGE_EXCLUDE` (comma-separated regex fragments matched
+against the repo-relative path). A package with no measurable runtime lines
+(pure type/barrel package) passes automatically.
 
 ```bash
-bun run test:coverage                       # run unit tests, then enforce the ratchet
+bun run test:coverage                       # run unit tests, then enforce the floor
 COVERAGE_THRESHOLD=85 bun run scripts/coverage-gate.ts   # different floor
-COVERAGE_EXCLUDE='^apps/scan-worker/,/legacy/' bun run scripts/coverage-gate.ts
+COVERAGE_EXCLUDE='/legacy/' bun run scripts/coverage-gate.ts
 bun run scripts/coverage-gate.ts --metric=functions      # functions instead (see note)
 ```
 
 > The gated metric is **lines** — it's the one that counts untested files as 0%.
 > `--metric=functions` is informational and reflects only files that tests loaded.
 
-### Ratchet
+### Floor
 
-`COVERAGE_THRESHOLD` in `ci.yml` is a **ratchet**, currently **`60`** — just under
-the repo's hermetic baseline (~60.7%). It blocks coverage regressions today; raise
-it as coverage improves and never lower it. Target: **80%**.
+`COVERAGE_THRESHOLD` in `ci.yml` is the **per-package floor**, currently **`80`**.
+Every package must meet it on its own `src/`; the gate fails listing any package
+below it. Never lower it.
 
 The `coverage` job runs only `test:unit`, which is **hermetic** — no database or
 object storage. Tests that need Postgres/S3 are named `*.integration.test.ts` and
@@ -108,8 +113,9 @@ run via `bun run test:integration` (with the compose services up), not in this
 gate. If you add a test that opens a DB/S3 connection, name it
 `*.integration.test.ts` so the unit gate stays service-free.
 
-The gate prints the lowest-covered files (and how many untested files were counted
-as 0%) and writes a summary to the GitHub job summary.
+The gate prints a per-package table (worst-first) with each package's coverage and
+PASS/FAIL, lists the lowest-covered files for every failing package, and writes
+the same summary to the GitHub job summary.
 
 ## Branch protection
 

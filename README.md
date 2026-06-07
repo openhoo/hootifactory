@@ -631,7 +631,7 @@ bun run test:e2e:clients # real-client specs only — drives npm/docker/oras/pip
 
 **Docker is the integration boundary for external CLIs** — the real-client specs run actual package managers, and the optional scanner CLIs (Grype/Trivy/ClamAV) default to Docker images. Name service-backed tests `*.integration.test.ts` so the default unit pass stays fast and hermetic.
 
-**CI gate** ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) — a single aggregating `PR gate` status check fans out to five jobs: **commit-lint** (Conventional Commits on every commit + the PR title), **lint** (`biome check`), **typecheck** (`tsc --noEmit`), **architecture** (`check:boundaries`), and **coverage** (a ratchet that sits just under the current baseline and climbs toward 80% — never lowered).
+**CI gate** ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) — a single aggregating `PR gate` status check fans out to five jobs: **commit-lint** (Conventional Commits on every commit + the PR title), **lint** (`biome check`), **typecheck** (`tsc --noEmit`), **architecture** (`check:boundaries`), and **coverage** (a per-package line-coverage floor — every package must hit 80% on its own `src/`, never lowered).
 
 ## Contributing
 
