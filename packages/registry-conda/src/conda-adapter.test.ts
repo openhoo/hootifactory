@@ -83,7 +83,13 @@ describe("Conda adapter", () => {
         metadataMergeable: true,
         packageParam: "subdir",
       },
-      { method: "GET", pattern: "/:subdir/repodata.json.zst", handlerId: "repodataZst" },
+      {
+        method: "GET",
+        pattern: "/:subdir/repodata.json.zst",
+        handlerId: "repodataZst",
+        proxyRefreshTrigger: true,
+        packageParam: "subdir",
+      },
       { method: "GET", pattern: "/:subdir/:filename", handlerId: "download" },
       { method: "PUT", pattern: "/:subdir/:filename", handlerId: "publish" },
     ]);
@@ -270,6 +276,32 @@ describe("Conda adapter", () => {
     expect(res.status).toBe(404);
   });
 
+  test("GET /<subdir>/<index-variant> 404s (not 400) so conda falls back to repodata.json", async () => {
+    // Stock conda probes `current_repodata.json{,.zst}` and `repodata.json.bz2`
+    // FIRST through the `/:subdir/:filename` route and only falls back to the
+    // working `repodata.json` on a 404 — a 400 would surface as a hard
+    // CondaHTTPError. These filenames are not package files, so the download
+    // handler must answer 404, not 400.
+    const adapter = new CondaAdapter();
+    for (const filename of [
+      "current_repodata.json",
+      "current_repodata.json.zst",
+      "repodata.json.bz2",
+    ]) {
+      const ctx = condaContext();
+      const res = await adapter.handle(
+        {
+          entry: { method: "GET", pattern: "/:subdir/:filename", handlerId: "download" },
+          params: { subdir: "linux-64", filename },
+          path: `/linux-64/${filename}`,
+        },
+        new Request(`https://registry.test/linux-64/${filename}`),
+        ctx,
+      );
+      expect(res.status).toBe(404);
+    }
+  });
+
   test("download with an invalid subdir throws NAME_INVALID", async () => {
     const ctx = condaContext();
     await expect(
@@ -320,7 +352,8 @@ describe("Conda adapter", () => {
       {
         name: "artifact",
         filename: "numpy-1.21.0-py39_0.conda",
-        data: new Uint8Array([1, 2, 3, 4]),
+        // `.conda` is a zip: lead with the ZIP local-file magic (PK\x03\x04).
+        data: new Uint8Array([0x50, 0x4b, 0x03, 0x04]),
       },
     ]);
 
@@ -433,7 +466,8 @@ describe("Conda adapter", () => {
       {
         name: "artifact",
         filename: "numpy-1.21.0-py39_0.conda",
-        data: new Uint8Array([1, 2, 3, 4]),
+        // `.conda` is a zip: lead with the ZIP local-file magic (PK\x03\x04).
+        data: new Uint8Array([0x50, 0x4b, 0x03, 0x04]),
       },
     ]);
 
@@ -470,6 +504,189 @@ describe("Conda adapter", () => {
       ctx,
     );
     expect(res.status).toBe(400);
+  });
+
+  test("PUT rejects an artifact whose bytes are not the declared archive format", async () => {
+    const ctx = condaContext();
+    let committed = false;
+    ctx.data.packages.findOrCreate = async ({ name }) => pkgRow(name);
+    ctx.data.versions.exists = async () => false;
+    ctx.data.versions.commitOrReleaseBlob = async () => {
+      committed = true;
+      return { versionId: "ver_1" };
+    };
+    // A `.conda` file must be a zip (PK\x03\x04); these bytes are not, so the
+    // blob must be refused before it is stored/indexed as a real package.
+    const body = buildMultipartBody("BOUND", [
+      {
+        name: "index",
+        data: new TextEncoder().encode(
+          JSON.stringify({ name: "numpy", version: "1.21.0", build: "py39_0" }),
+        ),
+      },
+      {
+        name: "artifact",
+        filename: "numpy-1.21.0-py39_0.conda",
+        data: new TextEncoder().encode("not a zip"),
+      },
+    ]);
+    const res = await new CondaAdapter().handle(
+      {
+        entry: { method: "PUT", pattern: "/:subdir/:filename", handlerId: "publish" },
+        params: { subdir: "linux-64", filename: "numpy-1.21.0-py39_0.conda" },
+        path: "/linux-64/numpy-1.21.0-py39_0.conda",
+      },
+      new Request("https://registry.test/linux-64/numpy-1.21.0-py39_0.conda", {
+        method: "PUT",
+        headers: { "content-type": "multipart/form-data; boundary=BOUND" },
+        body,
+      }),
+      ctx,
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: "artifact is not a valid Conda package archive",
+    });
+    expect(committed).toBe(false);
+  });
+
+  test("publish -> repodata.json{,.zst} -> download round-trips bytes and checksums", async () => {
+    // A package-level round-trip over a shared in-memory data fake: PUT a real
+    // (zip-magic) `.conda`, then read the regenerated `repodata.json` and its
+    // `.zst` variant and assert the advertised sha256/md5/size, then download
+    // the blob and assert the served bytes hash back to that sha256/md5. This
+    // locks the publish <-> index <-> download contract end to end.
+    const artifactBytes = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0x09, 0x08, 0x07]);
+    const expectedSha256 = new Bun.CryptoHasher("sha256").update(artifactBytes).digest("hex");
+    const expectedMd5 = new Bun.CryptoHasher("md5").update(artifactBytes).digest("hex");
+    const digest = `sha256:${expectedSha256}`;
+
+    // Shared store: capture the version committed by publish, replay it to reads.
+    const store: { pkg?: RegistryPackageRow; version?: RegistryPackageVersionRow } = {};
+    const ctx = condaContext();
+    ctx.data.packages.findByName = async (name) =>
+      store.pkg && store.pkg.name === name ? store.pkg : null;
+    ctx.data.packages.findOrCreate = async ({ name }) => {
+      store.pkg = pkgRow(name);
+      return store.pkg;
+    };
+    ctx.data.packages.listNames = async () => (store.pkg ? [{ name: store.pkg.name }] : []);
+    ctx.data.versions.exists = async () => Boolean(store.version);
+    ctx.data.versions.listLive = async () => (store.version ? [store.version] : []);
+    ctx.data.versions.findLive = async () => store.version ?? null;
+    ctx.data.content.storeBlobWithRef = async (): Promise<RegistryStoredBlob> => ({
+      digest,
+      size: artifactBytes.length,
+      deduped: false,
+      refCreated: true,
+      blobRefId: "ref_1",
+    });
+    ctx.data.versions.commitOrReleaseBlob = async (input) => {
+      store.version = versionRow(input.metadata);
+      return { versionId: "ver_1" };
+    };
+    ctx.data.content.blobRefExists = async () => true;
+    ctx.data.content.serveBlobIfClean = async ({ contentType }) =>
+      new Response(artifactBytes, { headers: { "content-type": contentType } });
+
+    const adapter = new CondaAdapter();
+    const filename = "numpy-1.21.0-py39_0.conda";
+
+    const publishBody = buildMultipartBody("BOUND", [
+      {
+        name: "index",
+        data: new TextEncoder().encode(
+          JSON.stringify({
+            name: "numpy",
+            version: "1.21.0",
+            build: "py39_0",
+            build_number: 0,
+            depends: ["python >=3.9"],
+            subdir: "linux-64",
+          }),
+        ),
+      },
+      { name: "artifact", filename, data: artifactBytes },
+    ]);
+    const published = await adapter.handle(
+      {
+        entry: { method: "PUT", pattern: "/:subdir/:filename", handlerId: "publish" },
+        params: { subdir: "linux-64", filename },
+        path: `/linux-64/${filename}`,
+      },
+      new Request(`https://registry.test/linux-64/${filename}`, {
+        method: "PUT",
+        headers: { "content-type": "multipart/form-data; boundary=BOUND" },
+        body: publishBody,
+      }),
+      ctx,
+    );
+    expect(published.status).toBe(201);
+
+    // repodata.json reflects the published package with the real checksums.
+    const repodataRes = await adapter.handle(
+      {
+        entry: {
+          method: "GET",
+          pattern: "/:subdir/repodata.json",
+          handlerId: "repodata",
+          packageParam: "subdir",
+        },
+        params: { subdir: "linux-64" },
+        path: "/linux-64/repodata.json",
+      },
+      new Request("https://registry.test/linux-64/repodata.json"),
+      ctx,
+    );
+    expect(repodataRes.status).toBe(200);
+    const repodata = (await repodataRes.json()) as {
+      "packages.conda": Record<string, { sha256: string; md5: string; size: number }>;
+    };
+    const record = repodata["packages.conda"][filename];
+    if (!record) throw new Error("expected the published package in repodata");
+    expect(record).toMatchObject({
+      sha256: expectedSha256,
+      md5: expectedMd5,
+      size: artifactBytes.length,
+    });
+
+    // The `.zst` variant decodes to the same index (and is real zstd).
+    const zstRes = await adapter.handle(
+      {
+        entry: {
+          method: "GET",
+          pattern: "/:subdir/repodata.json.zst",
+          handlerId: "repodataZst",
+          proxyRefreshTrigger: true,
+          packageParam: "subdir",
+        },
+        params: { subdir: "linux-64" },
+        path: "/linux-64/repodata.json.zst",
+      },
+      new Request("https://registry.test/linux-64/repodata.json.zst"),
+      ctx,
+    );
+    expect(zstRes.status).toBe(200);
+    expect(zstRes.headers.get("content-type")).toBe("application/zstd");
+    const decoded = JSON.parse(
+      new TextDecoder().decode(Bun.zstdDecompressSync(new Uint8Array(await zstRes.arrayBuffer()))),
+    );
+    expect(decoded["packages.conda"][filename]).toMatchObject({ sha256: expectedSha256 });
+
+    // The download serves bytes that hash back to the advertised checksums.
+    const downloadRes = await adapter.handle(
+      {
+        entry: { method: "GET", pattern: "/:subdir/:filename", handlerId: "download" },
+        params: { subdir: "linux-64", filename },
+        path: `/linux-64/${filename}`,
+      },
+      new Request(`https://registry.test/linux-64/${filename}`),
+      ctx,
+    );
+    expect(downloadRes.status).toBe(200);
+    const servedBytes = new Uint8Array(await downloadRes.arrayBuffer());
+    expect(new Bun.CryptoHasher("sha256").update(servedBytes).digest("hex")).toBe(record.sha256);
+    expect(new Bun.CryptoHasher("md5").update(servedBytes).digest("hex")).toBe(record.md5);
   });
 
   test("generateMetadata produces a subdir repodata document", async () => {

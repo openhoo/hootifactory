@@ -7,6 +7,7 @@ import {
   CondaIndexJsonSchema,
   condaFilenameStem,
   condaPackageKind,
+  hasCondaArchiveMagic,
   isValidCondaSubdir,
   isValidCondaVersion,
   parseCondaFilename,
@@ -27,6 +28,19 @@ describe("Conda validation", () => {
     expect(isValidCondaSubdir("..")).toBe(false);
     expect(isValidCondaSubdir("sub/dir")).toBe(false);
     expect(isValidCondaSubdir("")).toBe(false);
+  });
+
+  test("sniffs the declared archive format from the blob's magic bytes", () => {
+    const zip = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0xff]);
+    const bzip2 = new Uint8Array([0x42, 0x5a, 0x68, 0x39, 0xff]);
+    // `.conda` must be a zip; `.tar.bz2` must be a bzip2 stream.
+    expect(hasCondaArchiveMagic("conda", zip)).toBe(true);
+    expect(hasCondaArchiveMagic("tarbz2", bzip2)).toBe(true);
+    // Wrong magic for the declared kind, or a non-archive payload, is rejected.
+    expect(hasCondaArchiveMagic("conda", bzip2)).toBe(false);
+    expect(hasCondaArchiveMagic("tarbz2", zip)).toBe(false);
+    expect(hasCondaArchiveMagic("conda", new TextEncoder().encode("{}"))).toBe(false);
+    expect(hasCondaArchiveMagic("conda", new Uint8Array([0x50, 0x4b]))).toBe(false);
   });
 
   test("accepts permissive conda versions and rejects path-y ones", () => {

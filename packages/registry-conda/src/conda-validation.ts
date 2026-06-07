@@ -56,6 +56,24 @@ export const CondaFilenameSchema = z
   .refine((value) => !value.includes("/") && !value.includes("\\"), "invalid filename")
   .refine((value) => PACKAGE_EXT_RE.test(value), "unsupported package extension");
 
+/**
+ * Cheap archive-format sniff for an uploaded package blob. The `index.json`
+ * metadata in a publish is publisher-asserted and never cross-checked against
+ * the archive contents, so at minimum the stored blob must be the archive its
+ * filename claims: a `.conda` file is a zip (`PK\x03\x04` local-file header) and
+ * a legacy `.tar.bz2` is a bzip2 stream (`BZh` magic). This rejects a blob whose
+ * bytes are not the declared archive format (e.g. a JSON or text payload smuggled
+ * under a package filename) without unpacking the archive.
+ */
+export function hasCondaArchiveMagic(kind: CondaPackageKind, bytes: Uint8Array): boolean {
+  if (kind === "conda") {
+    // ZIP local-file header: "PK\x03\x04".
+    return bytes[0] === 0x50 && bytes[1] === 0x4b && bytes[2] === 0x03 && bytes[3] === 0x04;
+  }
+  // bzip2 stream header: "BZh".
+  return bytes[0] === 0x42 && bytes[1] === 0x5a && bytes[2] === 0x68;
+}
+
 /** `"packages.conda"` holds `.conda` files; `"packages"` holds legacy `.tar.bz2`. */
 export type CondaPackageKind = "conda" | "tarbz2";
 

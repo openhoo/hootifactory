@@ -87,8 +87,22 @@ export class CondaAdapter implements RegistryPlugin {
         ({ params, req, ctx }) => this.repodata(params.subdir, req, ctx),
         { proxyRefreshTrigger: true, metadataMergeable: true, packageParam: "subdir" },
       ),
-      route.get("/:subdir/repodata.json.zst", "repodataZst", ({ params, req, ctx }) =>
-        this.repodataCompressed(params.subdir, req, ctx),
+      route.get(
+        "/:subdir/repodata.json.zst",
+        "repodataZst",
+        ({ params, req, ctx }) => this.repodataCompressed(params.subdir, req, ctx),
+        // Modern conda/mamba fetch the `.zst` index FIRST and only fall back to
+        // plain `repodata.json` on a non-200. Carry the same proxy-refresh flags
+        // as the `.json` route so a proxy GET of the compressed index mirrors
+        // upstream before the local handler rebuilds the index from the now-
+        // mirrored versions; without this a proxy channel serves an empty 200
+        // and never mirrors. `packageParam: "subdir"` is required so the proxy
+        // dispatcher reads the subdir (not the absent `pkg` param) as the
+        // refresh key. The virtual-merge flag (`metadataMergeable`) is
+        // deliberately NOT set: the runtime's virtual-merge path emits a text
+        // body, so a `.zst` URL would serve undecodable JSON — virtual channels
+        // rely on the mergeable plain `repodata.json` instead.
+        { proxyRefreshTrigger: true, packageParam: "subdir" },
       ),
       route.get("/:subdir/:filename", "download", ({ params, req, ctx }) =>
         this.download(params.subdir, params.filename, req, ctx),
@@ -208,6 +222,16 @@ export class CondaAdapter implements RegistryPlugin {
     ctx: RegistryRequestContext,
   ): Promise<Response> {
     const subdir = parseSubdir(subdirRaw);
+    // A download path that is not a `.conda`/`.tar.bz2` package filename is a
+    // miss, not a malformed request: stock conda probes index variants conda
+    // does not serve here — `current_repodata.json`, `current_repodata.json.zst`,
+    // `repodata.json.bz2` — through this same `/:subdir/:filename` route, then
+    // falls back to `repodata.json` ONLY on a 404. Returning 400 (NAME_INVALID)
+    // would surface as a hard CondaHTTPError and abort the install before the
+    // working `repodata.json` is ever requested, so answer these with 404.
+    if (!CondaFilenameSchema.safeParse(filenameRaw).success) {
+      return new Response("Not Found", { status: 404 });
+    }
     const filename = parseRegistryInput(CondaFilenameSchema, filenameRaw, {
       code: "NAME_INVALID",
       message: "invalid package filename",

@@ -241,6 +241,45 @@ describe("Conda proxy ingest", () => {
     expect(upserted).toBe(false);
   });
 
+  test("aborts ingest when the upstream repodata exceeds the upload byte cap", async () => {
+    const ctx = createTestRegistryContext();
+    ctx.limits = { ...ctx.limits, maxUploadBytes: 16 };
+    let stored = false;
+    ctx.data.packages.findByName = async () => null;
+    ctx.data.packages.findOrCreate = async ({ name }) => pkgRow(name);
+    ctx.data.versions.exists = async () => false;
+    ctx.data.versions.upsertWithBlobRef = async () => {
+      stored = true;
+      return {
+        stored: {
+          digest: `sha256:${PACKAGE_SHA256}`,
+          size: 0,
+          deduped: false,
+          refCreated: true,
+          blobRefId: "ref_1",
+        },
+        versionId: "ver_1",
+      };
+    };
+
+    // The upstream repodata declares a content-length far over the cap; the
+    // bounded reader must refuse to buffer it and ingest must abort with no
+    // packages stored.
+    globalThis.fetch = (async (_input: string | URL | Request) =>
+      new Response(JSON.stringify({ info: { subdir: "linux-64" }, packages: {} }), {
+        status: 200,
+        headers: { "content-type": "application/json", "content-length": "1048576" },
+      })) as typeof fetch;
+
+    const ok = await handleCondaProxyIngest(
+      "linux-64",
+      "https://conda.anaconda.org/conda-forge",
+      ctx,
+    );
+    expect(ok).toBe(false);
+    expect(stored).toBe(false);
+  });
+
   test("returns false for an invalid subdir or unparseable upstream", async () => {
     const ctx = createTestRegistryContext();
     expect(await handleCondaProxyIngest("bad/sub", "https://conda.anaconda.org/x", ctx)).toBe(

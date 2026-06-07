@@ -4,6 +4,7 @@ import {
   CondaIndexJsonSchema,
   CondaPackageNameSchema,
   condaPackageKind,
+  hasCondaArchiveMagic,
   parseCondaFilename,
 } from "./conda-validation";
 
@@ -100,8 +101,20 @@ export async function parseCondaPublishRequest(
   }
 
   const coords = parseCondaFilename(filename);
-  if (!coords || condaPackageKind(filename) === null) {
+  const kind = condaPackageKind(filename);
+  if (!coords || kind === null) {
     return { ok: false, error: { error: "unsupported package filename", status: 400 } };
+  }
+
+  // The stored blob must actually be the archive its filename claims. The
+  // `index.json` metadata is publisher-asserted, so without this a non-archive
+  // payload (or a `.tar.bz2` mislabeled `.conda`) would be hosted and indexed as
+  // a real package; conda would then fail to open it at install time.
+  if (!hasCondaArchiveMagic(kind, artifactPart.data)) {
+    return {
+      ok: false,
+      error: { error: "artifact is not a valid Conda package archive", status: 400 },
+    };
   }
 
   // The filename's name/version/build must agree with the supplied index.json so
