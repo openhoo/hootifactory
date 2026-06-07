@@ -1,11 +1,9 @@
 import {
   basicAuthChallenge,
   delegateRegistryPlugin,
-  Errors,
   type HttpMethod,
   InvalidDigestError,
   type Permission,
-  parseRegistryInput,
   type RegistryPlugin,
   type RegistryRequestContext,
   type RouteMatch,
@@ -60,11 +58,16 @@ async function mapWithConcurrency<T, R>(
   return results;
 }
 
-function parseOid(oid: string): string {
-  return parseRegistryInput(LfsOidSchema, oid, {
-    code: "DIGEST_INVALID",
-    message: "invalid LFS object id",
-  });
+/**
+ * Validate a path `:oid`. On success returns the oid; on failure returns an
+ * LFS-shaped `{message}` error response (content-type `application/vnd.git-lfs+json`,
+ * 422 Validation error) rather than throwing a generic RegistryError that the
+ * framework would render in the non-LFS `singleError` shape.
+ */
+function parseOid(oid: string): string | Response {
+  const parsed = LfsOidSchema.safeParse(oid);
+  if (parsed.success) return parsed.data;
+  return lfsJson({ message: "invalid LFS object id" }, 422);
 }
 
 function lfsJson(body: unknown, status = 200): Response {
@@ -80,7 +83,7 @@ function lfsJson(body: unknown, status = 200): Response {
  * actions, then `PUT`/`GET`s each object at `/objects/:oid` where `:oid` is the
  * object's sha256. Objects are flat and content-addressable, so they live directly
  * in the shared CAS keyed by `sha256:<oid>` — there is no version/tag aggregation.
- * The `/locks` endpoints satisfy the file-locking API with empty results.
+ * The optional `/locks` file-locking endpoints are uniformly unsupported (404).
  */
 export class GitLfsAdapter implements RegistryPlugin {
   readonly id = "gitlfs" as const;
@@ -107,11 +110,13 @@ export class GitLfsAdapter implements RegistryPlugin {
     .authChallenge(this.authChallenge)
     .routes((route) => [
       // Literal/static routes declared before the `/objects/:oid` catch-all so the
-      // matcher (which tries routes in order) cannot shadow them.
+      // matcher (which tries routes in order) cannot shadow them. The `/locks/:id/unlock`
+      // and `/locks/verify` literals precede the bare `/locks` routes for the same reason.
       route.post("/objects/batch", "batch", ({ req, ctx }) => this.batch(req, ctx)),
-      route.post("/locks/verify", "locksVerify", () => this.locksVerify()),
-      route.post("/locks", "locksCreate", () => this.locksCreate()),
-      route.get("/locks", "locksList", () => this.locksList()),
+      route.post("/locks/verify", "locksVerify", () => this.locksUnsupported()),
+      route.post("/locks/:id/unlock", "locksUnlock", () => this.locksUnsupported()),
+      route.post("/locks", "locksCreate", () => this.locksUnsupported()),
+      route.get("/locks", "locksList", () => this.locksUnsupported()),
       route.head("/objects/:oid", "headObject", ({ params, req, ctx }) =>
         this.getObject(params.oid, req, ctx, true),
       ),
@@ -159,9 +164,16 @@ export class GitLfsAdapter implements RegistryPlugin {
   routes = this.delegate.routes;
 
   requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
-    // GET/HEAD read, PUT/POST write. The batch operation (upload vs download) lives
-    // in the request body, not the route, so a pure (method, route) mapping cannot
-    // tell them apart — POST therefore takes the safe write permission.
+    // GET/HEAD read, PUT write. The batch operation (upload vs download) lives in the
+    // request body, not the route, so a pure (method, route) mapping cannot tell them
+    // apart. `POST /objects/batch` is the read/pull negotiation path for downloads
+    // (`git lfs pull`, `git clone`) as well as the push path for uploads — gating it on
+    // write at the route level would lock read-only tokens and anonymous public-repo
+    // pulls out entirely. So the route-level requirement is `read`; `batch()` then
+    // re-authorizes `write` in-handler when `operation === "upload"`.
+    if (match?.entry.handlerId === "batch") {
+      return { action: "read" };
+    }
     const permission = readWritePermission(method);
     const oid = match?.params.oid;
     if (oid) return { ...permission, resource: { type: "artifact", artifactRef: oid } };
@@ -177,13 +189,29 @@ export class GitLfsAdapter implements RegistryPlugin {
     try {
       raw = await req.json();
     } catch {
-      return lfsJson({ message: "request body is not valid JSON" }, 400);
+      // A malformed/unparseable body is a validation error (422), consistent with
+      // the schema-invalid case below and the Git LFS Batch API's 422 for validation.
+      return lfsJson({ message: "request body is not valid JSON" }, 422);
     }
     const parsed = LfsBatchRequestSchema.safeParse(raw);
     if (!parsed.success) {
       return lfsJson({ message: "invalid batch request" }, 422);
     }
     const { operation, objects } = parsed.data;
+
+    // The route-level permission is `read` (so downloads/pulls work for read-only and
+    // anonymous principals). An upload batch is the push path, so re-authorize `write`
+    // here now that the body's operation is known.
+    if (operation === "upload") {
+      const decision = await ctx.authorize("write", { repositoryName: ctx.repo.name });
+      if (!decision.allowed) {
+        const status = decision.code === "unauthenticated" ? 401 : 403;
+        return lfsJson(
+          { message: decision.reason ?? "write permission is required to upload objects" },
+          status,
+        );
+      }
+    }
 
     // Probe the CAS once per object so the response can flag what is present.
     // Bound the fan-out (a batch may name up to 1000 objects) so a single request
@@ -217,6 +245,7 @@ export class GitLfsAdapter implements RegistryPlugin {
     headOnly: boolean,
   ): Promise<Response> {
     const oid = parseOid(oidRaw);
+    if (oid instanceof Response) return oid;
     return serveRegistryBlob(ctx, {
       digest: oidToDigest(oid),
       kind: LFS_BLOB_KIND,
@@ -235,12 +264,17 @@ export class GitLfsAdapter implements RegistryPlugin {
     ctx: RegistryRequestContext,
   ): Promise<Response> {
     const oid = parseOid(oidRaw);
+    if (oid instanceof Response) return oid;
     const digest = oidToDigest(oid);
     // Stream the body straight into the CAS rather than buffering it in memory:
     // LFS objects can be many gigabytes, so `expectedDigest` lets the store hash
     // and verify the bytes as they flow (content addressing is only sound if the
     // uploaded bytes hash to the claimed oid). A mismatch surfaces as
-    // `InvalidDigestError`, which we translate into the registry DIGEST_INVALID.
+    // `InvalidDigestError`. We render it as an LFS-shaped `{message}` body (422
+    // Validation error) with the `application/vnd.git-lfs+json` media type rather
+    // than throwing a RegistryError that the framework would serialize in the
+    // non-LFS `singleError` shape — the git-lfs client decodes error bodies into a
+    // struct keyed on `message`, so the diagnostic must live there.
     try {
       await ctx.data.content.storeBlobStreamWithRef({
         data: req.body ?? emptyStream(),
@@ -259,7 +293,7 @@ export class GitLfsAdapter implements RegistryPlugin {
       });
     } catch (err) {
       if (err instanceof InvalidDigestError) {
-        throw Errors.digestInvalid({ expected: oid, error: err.message });
+        return lfsJson({ message: "uploaded content does not match the object id" }, 422);
       }
       throw err;
     }
@@ -269,24 +303,17 @@ export class GitLfsAdapter implements RegistryPlugin {
   }
 
   // ── locks ──────────────────────────────────────────────────────────────────
-  // The file-locking API is optional; we implement it as a no-op so `git lfs`
-  // clients that probe it succeed instead of erroring.
-  /** `GET /locks` — list locks (always empty). */
-  private locksList(): Response {
-    return lfsJson({ locks: [], next_cursor: "" });
-  }
-
-  /** `POST /locks/verify` — the locks this client owns vs. others (always empty). */
-  private locksVerify(): Response {
-    return lfsJson({ ours: [], theirs: [], next_cursor: "" });
-  }
-
   /**
-   * `POST /locks` — create a lock. Locking is not backed by storage here, so we
-   * report the feature as unavailable (501) rather than fabricate a lock id.
+   * The file-locking API (`POST /locks`, `GET /locks`, `POST /locks/verify`,
+   * `POST /locks/:id/unlock`) is optional and not backed by storage here. Per the
+   * Git LFS locking spec, "an LFS server that doesn't implement any locking endpoints
+   * should return 404. This response will not halt any Git pushes." So every locking
+   * verb presents one coherent posture: a 404 with the LFS-shaped `{message}` body.
+   * This cleanly disables locking client-side (and `lfs.<url>.locksverify`) without
+   * the contradictory mix of verify-200/create-501 that a partial implementation gives.
    */
-  private locksCreate(): Response {
-    return lfsJson({ message: "locking is not supported by this registry" }, 501);
+  private locksUnsupported(): Response {
+    return lfsJson({ message: "locking is not supported by this registry" }, 404);
   }
 }
 

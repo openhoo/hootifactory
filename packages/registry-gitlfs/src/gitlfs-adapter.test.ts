@@ -43,6 +43,7 @@ describe("Git LFS adapter", () => {
     expect(new GitLfsAdapter().routes()).toEqual([
       { method: "POST", pattern: "/objects/batch", handlerId: "batch" },
       { method: "POST", pattern: "/locks/verify", handlerId: "locksVerify" },
+      { method: "POST", pattern: "/locks/:id/unlock", handlerId: "locksUnlock" },
       { method: "POST", pattern: "/locks", handlerId: "locksCreate" },
       { method: "GET", pattern: "/locks", handlerId: "locksList" },
       { method: "HEAD", pattern: "/objects/:oid", handlerId: "headObject" },
@@ -60,8 +61,9 @@ describe("Git LFS adapter", () => {
     const adapter = new GitLfsAdapter();
     expect(adapter.requiredPermission("GET")).toEqual({ action: "read" });
     expect(adapter.requiredPermission("PUT")).toEqual({ action: "write" });
-    // POST batch cannot read the operation from the route, so it is a write.
-    expect(adapter.requiredPermission("POST")).toEqual({ action: "write" });
+    // The batch route is the pull-negotiation path too, so it is read at the route
+    // level; batch() re-authorizes write in-handler only for upload operations.
+    expect(adapter.requiredPermission("POST", match(BATCH_ENTRY))).toEqual({ action: "read" });
     expect(adapter.authChallenge().header).toBe('Basic realm="hootifactory"');
   });
 
@@ -100,6 +102,7 @@ describe("Git LFS adapter", () => {
     expect(res.headers.get("content-type")).toBe("application/vnd.git-lfs+json");
     expect(await res.json()).toEqual({
       transfer: "basic",
+      hash_algo: "sha256",
       objects: [
         {
           oid: HELLO_OID,
@@ -127,6 +130,7 @@ describe("Git LFS adapter", () => {
     );
     expect(await res.json()).toEqual({
       transfer: "basic",
+      hash_algo: "sha256",
       objects: [{ oid: HELLO_OID, size: HELLO.length, authenticated: true }],
     });
   });
@@ -149,6 +153,7 @@ describe("Git LFS adapter", () => {
     );
     expect(await res.json()).toEqual({
       transfer: "basic",
+      hash_algo: "sha256",
       objects: [
         {
           oid: HELLO_OID,
@@ -167,17 +172,58 @@ describe("Git LFS adapter", () => {
     });
   });
 
-  test("batch rejects an invalid body with 422", async () => {
+  test("batch rejects an invalid operation enum with 422", async () => {
     const ctx = lfsContext();
+    // A valid objects array but an unknown operation isolates the enum guard.
     const res = await new GitLfsAdapter().handle(
       match(BATCH_ENTRY),
-      batchRequest({ operation: "sideways", objects: [] }),
+      batchRequest({ operation: "sideways", objects: [{ oid: HELLO_OID, size: 1 }] }),
+      ctx,
+    );
+    expect(res.status).toBe(422);
+    expect(res.headers.get("content-type")).toBe("application/vnd.git-lfs+json");
+    expect(await res.json()).toEqual({ message: "invalid batch request" });
+  });
+
+  test("batch rejects an empty objects array with 422", async () => {
+    const ctx = lfsContext();
+    // Valid operation, empty objects: isolates the objects.min(1) guard.
+    const res = await new GitLfsAdapter().handle(
+      match(BATCH_ENTRY),
+      batchRequest({ operation: "download", objects: [] }),
       ctx,
     );
     expect(res.status).toBe(422);
   });
 
-  test("batch rejects a non-JSON body with 400", async () => {
+  test("batch rejects more than 1000 objects with 422", async () => {
+    const ctx = lfsContext();
+    // 1001 objects: isolates the objects.max(1000) DoS guard.
+    const objects = Array.from({ length: 1001 }, (_, i) => ({
+      oid: i.toString(16).padStart(64, "0"),
+      size: 1,
+    }));
+    const res = await new GitLfsAdapter().handle(
+      match(BATCH_ENTRY),
+      batchRequest({ operation: "download", objects }),
+      ctx,
+    );
+    expect(res.status).toBe(422);
+  });
+
+  test("batch rejects negative and non-integer object sizes with 422", async () => {
+    const ctx = lfsContext();
+    for (const size of [-1, 1.5]) {
+      const res = await new GitLfsAdapter().handle(
+        match(BATCH_ENTRY),
+        batchRequest({ operation: "download", objects: [{ oid: HELLO_OID, size }] }),
+        ctx,
+      );
+      expect(res.status).toBe(422);
+    }
+  });
+
+  test("batch rejects a non-JSON body with 422", async () => {
     const ctx = lfsContext();
     const res = await new GitLfsAdapter().handle(
       match(BATCH_ENTRY),
@@ -188,7 +234,9 @@ describe("Git LFS adapter", () => {
       }),
       ctx,
     );
-    expect(res.status).toBe(400);
+    // A malformed body is a validation error, consistent with the schema-invalid case.
+    expect(res.status).toBe(422);
+    expect(res.headers.get("content-type")).toBe("application/vnd.git-lfs+json");
   });
 
   test("batch rejects an object with a malformed oid", async () => {
@@ -199,6 +247,90 @@ describe("Git LFS adapter", () => {
       ctx,
     );
     expect(res.status).toBe(422);
+  });
+
+  // ── batch authz: download is read, upload re-authorizes write ────────────────
+  test("download batch needs only read permission (never asks to authorize write)", async () => {
+    const ctx = lfsContext();
+    ctx.data.content.blobRefExists = async () => true;
+    // A read-only principal: any write authorization is denied. A download batch must
+    // not trigger one, so the request still succeeds.
+    const authorized: string[] = [];
+    ctx.authorize = async (action) => {
+      authorized.push(action);
+      return action === "write"
+        ? { allowed: false, code: "forbidden", reason: "read-only" }
+        : { allowed: true };
+    };
+
+    const res = await new GitLfsAdapter().handle(
+      match(BATCH_ENTRY),
+      batchRequest({ operation: "download", objects: [{ oid: HELLO_OID, size: HELLO.length }] }),
+      ctx,
+    );
+    expect(res.status).toBe(200);
+    // The download path issues no write authorization at all.
+    expect(authorized).not.toContain("write");
+    const body = (await res.json()) as { objects: { actions?: { download?: unknown } }[] };
+    expect(body.objects[0]?.actions?.download).toBeDefined();
+  });
+
+  test("upload batch re-authorizes write and is denied for a read-only principal", async () => {
+    const ctx = lfsContext();
+    // blobRefExists must never be probed once the write authorization fails.
+    let probed = false;
+    ctx.data.content.blobRefExists = async () => {
+      probed = true;
+      return false;
+    };
+    ctx.authorize = async (action) =>
+      action === "write"
+        ? { allowed: false, code: "forbidden", reason: "read-only token" }
+        : { allowed: true };
+
+    const res = await new GitLfsAdapter().handle(
+      match(BATCH_ENTRY),
+      batchRequest({ operation: "upload", objects: [{ oid: HELLO_OID, size: HELLO.length }] }),
+      ctx,
+    );
+    expect(res.status).toBe(403);
+    expect(res.headers.get("content-type")).toBe("application/vnd.git-lfs+json");
+    expect(await res.json()).toEqual({ message: "read-only token" });
+    expect(probed).toBe(false);
+  });
+
+  test("upload batch returns 401 (not 403) for an unauthenticated principal", async () => {
+    const ctx = lfsContext();
+    ctx.authorize = async (action) =>
+      action === "write" ? { allowed: false, code: "unauthenticated" } : { allowed: true };
+
+    const res = await new GitLfsAdapter().handle(
+      match(BATCH_ENTRY),
+      batchRequest({ operation: "upload", objects: [{ oid: HELLO_OID, size: HELLO.length }] }),
+      ctx,
+    );
+    expect(res.status).toBe(401);
+    expect(res.headers.get("content-type")).toBe("application/vnd.git-lfs+json");
+  });
+
+  test("upload batch proceeds when write is authorized", async () => {
+    const ctx = lfsContext();
+    ctx.data.content.blobRefExists = async () => false;
+    const authorized: string[] = [];
+    ctx.authorize = async (action) => {
+      authorized.push(action);
+      return { allowed: true };
+    };
+
+    const res = await new GitLfsAdapter().handle(
+      match(BATCH_ENTRY),
+      batchRequest({ operation: "upload", objects: [{ oid: HELLO_OID, size: HELLO.length }] }),
+      ctx,
+    );
+    expect(res.status).toBe(200);
+    expect(authorized).toContain("write");
+    const body = (await res.json()) as { objects: { actions?: { upload?: unknown } }[] };
+    expect(body.objects[0]?.actions?.upload).toBeDefined();
   });
 
   test("batch bounds the number of concurrent existence probes", async () => {
@@ -290,37 +422,53 @@ describe("Git LFS adapter", () => {
     expect(new Uint8Array(await getRes.arrayBuffer())).toEqual(HELLO);
   });
 
-  test("PUT maps the CAS digest mismatch to DIGEST_INVALID", async () => {
+  test("PUT renders a CAS digest mismatch as an LFS-shaped 422", async () => {
     const ctx = lfsContext();
     // The streaming store hashes the body and rejects when it does not match the
-    // oid; the adapter must translate that into the registry DIGEST_INVALID error.
+    // oid; the adapter must surface that as the Git LFS error body {message} with the
+    // vnd.git-lfs+json media type (422 Validation error) — the git-lfs client decodes
+    // error bodies into a struct keyed on `message`.
     ctx.data.content.storeBlobStreamWithRef = async (input: StoreBlobStreamWithRefInput) => {
       throw new InvalidDigestError(input.expectedDigest ?? "");
     };
-    await expect(
-      new GitLfsAdapter().handle(
-        match(PUT_ENTRY, { oid: OTHER_OID }),
-        new Request(`https://registry.test/lfs/private/objects/${OTHER_OID}`, {
-          method: "PUT",
-          body: HELLO,
-        }),
-        ctx,
-      ),
-    ).rejects.toMatchObject({ status: 400, code: "DIGEST_INVALID" });
+    const res = await new GitLfsAdapter().handle(
+      match(PUT_ENTRY, { oid: OTHER_OID }),
+      new Request(`https://registry.test/lfs/private/objects/${OTHER_OID}`, {
+        method: "PUT",
+        body: HELLO,
+      }),
+      ctx,
+    );
+    expect(res.status).toBe(422);
+    expect(res.headers.get("content-type")).toBe("application/vnd.git-lfs+json");
+    expect(await res.json()).toEqual({ message: "uploaded content does not match the object id" });
   });
 
-  test("PUT rejects a malformed oid with DIGEST_INVALID", async () => {
+  test("PUT rejects a malformed oid with an LFS-shaped 422", async () => {
     const ctx = lfsContext();
-    await expect(
-      new GitLfsAdapter().handle(
-        match(PUT_ENTRY, { oid: "nothex" }),
-        new Request("https://registry.test/lfs/private/objects/nothex", {
-          method: "PUT",
-          body: HELLO,
-        }),
-        ctx,
-      ),
-    ).rejects.toMatchObject({ status: 400, code: "DIGEST_INVALID" });
+    const res = await new GitLfsAdapter().handle(
+      match(PUT_ENTRY, { oid: "nothex" }),
+      new Request("https://registry.test/lfs/private/objects/nothex", {
+        method: "PUT",
+        body: HELLO,
+      }),
+      ctx,
+    );
+    expect(res.status).toBe(422);
+    expect(res.headers.get("content-type")).toBe("application/vnd.git-lfs+json");
+    expect(await res.json()).toEqual({ message: "invalid LFS object id" });
+  });
+
+  test("GET rejects a malformed oid with an LFS-shaped 422", async () => {
+    const ctx = lfsContext();
+    const res = await new GitLfsAdapter().handle(
+      match(GET_ENTRY, { oid: "nothex" }),
+      new Request("https://registry.test/lfs/private/objects/nothex"),
+      ctx,
+    );
+    expect(res.status).toBe(422);
+    expect(res.headers.get("content-type")).toBe("application/vnd.git-lfs+json");
+    expect(await res.json()).toEqual({ message: "invalid LFS object id" });
   });
 
   test("GET 404s when the object is not stored", async () => {
@@ -351,37 +499,92 @@ describe("Git LFS adapter", () => {
     expect(seen.redirect).toBe(false);
   });
 
+  test("an object stored in one repo is not visible from a different repo", async () => {
+    // The real data layer scopes blobRefExists/serveBlobIfClean to ctx.repo.id, so an
+    // oid PUT into repo A must 404 on GET from repo B. Model that with a per-request
+    // data service whose existence is keyed by repo id over a shared backing store.
+    const stored = new Map<string, Set<string>>(); // repoId -> set of digests
+    function repoContext(repoId: string) {
+      const ctx = lfsContext();
+      ctx.repo = { ...ctx.repo, id: repoId };
+      ctx.data.content.storeBlobStreamWithRef = async (input: StoreBlobStreamWithRefInput) => {
+        // Drain the stream so the request body is consumed like the real store does.
+        await new Response(input.data).arrayBuffer();
+        const set = stored.get(repoId) ?? new Set<string>();
+        set.add(input.expectedDigest ?? "");
+        stored.set(repoId, set);
+        return {
+          digest: input.expectedDigest ?? "",
+          size: HELLO.length,
+          deduped: false,
+          refCreated: true,
+          blobRefId: `ref_${repoId}`,
+        };
+      };
+      ctx.data.content.blobRefExists = async ({ digest }: RegistryBlobRefInput) =>
+        stored.get(repoId)?.has(digest) ?? false;
+      ctx.data.content.serveBlobIfClean = async ({ contentType }) =>
+        new Response(HELLO, { headers: { "content-type": contentType } });
+      return ctx;
+    }
+
+    const repoA = repoContext("repo_a");
+    const repoB = repoContext("repo_b");
+
+    // PUT the object into repo A.
+    const putRes = await new GitLfsAdapter().handle(
+      match(PUT_ENTRY, { oid: HELLO_OID }),
+      new Request(`https://registry.test/lfs/private/objects/${HELLO_OID}`, {
+        method: "PUT",
+        body: HELLO,
+      }),
+      repoA,
+    );
+    expect(putRes.status).toBe(200);
+
+    // It is visible in repo A...
+    const getA = await new GitLfsAdapter().handle(
+      match(GET_ENTRY, { oid: HELLO_OID }),
+      new Request(`https://registry.test/lfs/private/objects/${HELLO_OID}`),
+      repoA,
+    );
+    expect(getA.status).toBe(200);
+
+    // ...but NOT in repo B.
+    const getB = await new GitLfsAdapter().handle(
+      match(GET_ENTRY, { oid: HELLO_OID }),
+      new Request(`https://registry.test/lfs/private/objects/${HELLO_OID}`),
+      repoB,
+    );
+    expect(getB.status).toBe(404);
+  });
+
   // ── locks ──────────────────────────────────────────────────────────────────
-  test("GET /locks returns an empty list", async () => {
+  // Locking is optional and unsupported here; per the Git LFS spec every locking
+  // endpoint returns 404 (LFS-shaped {message}) so locking is cleanly disabled
+  // client-side without halting pushes — one coherent posture across all four verbs.
+  test.each([
+    ["GET", "/locks", "locksList", "https://registry.test/lfs/private/locks"],
+    ["POST", "/locks", "locksCreate", "https://registry.test/lfs/private/locks"],
+    ["POST", "/locks/verify", "locksVerify", "https://registry.test/lfs/private/locks/verify"],
+    [
+      "POST",
+      "/locks/:id/unlock",
+      "locksUnlock",
+      "https://registry.test/lfs/private/locks/abc/unlock",
+    ],
+  ] as const)("%s %s returns an LFS-shaped 404 (locking unsupported)", async (method, pattern, handlerId, url) => {
     const ctx = lfsContext();
     const res = await new GitLfsAdapter().handle(
-      match({ method: "GET", pattern: "/locks", handlerId: "locksList" }),
-      new Request("https://registry.test/lfs/private/locks"),
+      match({ method, pattern, handlerId }),
+      new Request(url, { method }),
       ctx,
     );
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ locks: [], next_cursor: "" });
-  });
-
-  test("POST /locks/verify returns empty ours/theirs", async () => {
-    const ctx = lfsContext();
-    const res = await new GitLfsAdapter().handle(
-      match({ method: "POST", pattern: "/locks/verify", handlerId: "locksVerify" }),
-      new Request("https://registry.test/lfs/private/locks/verify", { method: "POST" }),
-      ctx,
-    );
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ours: [], theirs: [], next_cursor: "" });
-  });
-
-  test("POST /locks reports locking unsupported (501)", async () => {
-    const ctx = lfsContext();
-    const res = await new GitLfsAdapter().handle(
-      match({ method: "POST", pattern: "/locks", handlerId: "locksCreate" }),
-      new Request("https://registry.test/lfs/private/locks", { method: "POST" }),
-      ctx,
-    );
-    expect(res.status).toBe(501);
+    expect(res.status).toBe(404);
+    expect(res.headers.get("content-type")).toBe("application/vnd.git-lfs+json");
+    expect(await res.json()).toEqual({
+      message: "locking is not supported by this registry",
+    });
   });
 
   test("declares no version-retention scan provider (flat CAS, no package_versions)", () => {

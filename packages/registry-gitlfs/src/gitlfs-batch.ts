@@ -19,6 +19,8 @@ export interface LfsBatchResponseObject {
 export interface LfsBatchResponse {
   transfer: "basic";
   objects: LfsBatchResponseObject[];
+  /** OID hash algorithm. Clients default to sha256 when absent; we declare it explicitly. */
+  hash_algo: "sha256";
 }
 
 export type LfsOperation = "upload" | "download";
@@ -74,5 +76,5 @@ export function buildBatchResponse(input: BuildBatchResponseInput): LfsBatchResp
       actions: { download: { href } },
     };
   });
-  return { transfer: "basic", objects };
+  return { transfer: "basic", objects, hash_algo: "sha256" };
 }
