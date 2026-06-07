@@ -102,8 +102,8 @@ describe("Hex adapter", () => {
     expect(challenge.header).toContain("Bearer");
   });
 
-  test("advertises the authorization api-key header", () => {
-    expect([...new HexAdapter().apiKeyHeaders]).toEqual(["authorization"]);
+  test("declares no api-key headers (auth flows through the authorization header)", () => {
+    expect([...new HexAdapter().apiKeyHeaders]).toEqual([]);
   });
 
   test("download permission targets the tarball artifact ref", () => {
@@ -225,6 +225,64 @@ describe("Hex adapter", () => {
         {
           version: "1.2.3",
           url: "https://registry.example.test/hex/private/api/packages/demo/releases/1.2.3",
+          has_docs: false,
+        },
+      ],
+    });
+  });
+
+  test("GET /api/packages/:name keeps meta from the newest release that carries it", async () => {
+    const olderMeta = buildHexVersionMeta(
+      HexReleaseMetadataSchema.parse({
+        name: "demo",
+        version: "1.0.0",
+        app: "demo",
+        description: "a demo package",
+        licenses: ["MIT"],
+        build_tools: ["mix"],
+      }),
+      { digest: DIGEST, outerChecksum: OUTER, innerChecksum: INNER },
+    );
+    // The newer release omits description/licenses; they must not disappear.
+    const newerMeta = buildHexVersionMeta(
+      HexReleaseMetadataSchema.parse({
+        name: "demo",
+        version: "1.1.0",
+        app: "demo",
+        build_tools: ["mix"],
+      }),
+      { digest: DIGEST, outerChecksum: OUTER, innerChecksum: INNER },
+    );
+    const ctx = hexContext();
+    ctx.data.packages.findByName = async () => pkgRow("demo");
+    // `listLive` is asc (oldest-first): 1.0.0 then 1.1.0.
+    ctx.data.versions.listLive = async () => [
+      versionRow(olderMeta, "1.0.0"),
+      versionRow(newerMeta, "1.1.0"),
+    ];
+    const res = await new HexAdapter().handle(
+      match(
+        { method: "GET", pattern: "/api/packages/:name", handlerId: "apiPackage" },
+        { name: "demo" },
+        "/api/packages/demo",
+      ),
+      new Request("https://registry.test/api/packages/demo"),
+      ctx,
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      name: "demo",
+      repository: "private",
+      meta: { description: "a demo package", licenses: ["MIT"] },
+      releases: [
+        {
+          version: "1.0.0",
+          url: "https://registry.example.test/hex/private/api/packages/demo/releases/1.0.0",
+          has_docs: false,
+        },
+        {
+          version: "1.1.0",
+          url: "https://registry.example.test/hex/private/api/packages/demo/releases/1.1.0",
           has_docs: false,
         },
       ],

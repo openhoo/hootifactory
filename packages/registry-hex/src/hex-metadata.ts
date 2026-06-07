@@ -67,14 +67,24 @@ export function buildHexApiPackage(input: {
   repoName: string;
 }): HexApiPackage {
   const { name, releases, baseUrl, mountPath, repoName } = input;
-  // Pick the descriptive meta from the newest release that carries it.
-  const latest = releases[releases.length - 1]?.meta.metadata;
+  // Pick each descriptive field from the newest release that actually carries
+  // it: `releases` is oldest-first, so scan from the end. A later publish that
+  // omits `description`/`licenses` must not erase a value an earlier one set.
+  let description: string | undefined;
+  let licenses: string[] | undefined;
+  for (let i = releases.length - 1; i >= 0; i--) {
+    const meta = releases[i]?.meta.metadata;
+    if (description === undefined && meta?.description !== undefined)
+      description = meta.description;
+    if (licenses === undefined && meta?.licenses !== undefined) licenses = meta.licenses;
+    if (description !== undefined && licenses !== undefined) break;
+  }
   return {
     name,
     repository: repoName,
     meta: {
-      ...(latest?.description !== undefined ? { description: latest.description } : {}),
-      licenses: latest?.licenses ?? [],
+      ...(description !== undefined ? { description } : {}),
+      licenses: licenses ?? [],
     },
     releases: releases.map((r) => ({
       version: r.version,

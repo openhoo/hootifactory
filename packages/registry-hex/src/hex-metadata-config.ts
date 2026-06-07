@@ -119,7 +119,12 @@ function parseList(c: Cursor): Term[] | null {
   }
 }
 
-/** Parse a 2-tuple `{Key, Value}` as a proplist pair, or a longer tuple's pairs. */
+/**
+ * Parse a tuple `{Key, Value, ...}` into a single-pair proplist of `{Key: Value}`.
+ * Only the first `{Key, Value}` pair is recorded; any further tuple elements are
+ * consumed (for forward progress) but discarded. This single-pair shape is what
+ * `mergeProplist` relies on when collapsing a proplist literal into one map.
+ */
 function parseTuple(c: Cursor): { proplist: Map<string, Term> } | null {
   if (c.peek() !== "{") return null;
   c.pos++;

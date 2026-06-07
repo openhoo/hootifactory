@@ -9,6 +9,7 @@ import {
   readWritePermission,
   registryBearerAuthChallenge,
   registryCapabilities,
+  registryErrorResponseForKind,
   registryPlugin,
   serveRegistryBlob,
   textResponseWithEtag,
@@ -46,7 +47,9 @@ function parseHexVersion(version: string): string {
 }
 
 function jsonNotFound(message: string): Response {
-  return Response.json({ message }, { status: 404 });
+  // Match the plugin's `singleError` envelope (`{ error }`) so 404s stay
+  // consistent with publish errors and the registry error renderer.
+  return registryErrorResponseForKind("singleError", { status: 404, message });
 }
 
 /**
@@ -62,7 +65,9 @@ function jsonNotFound(message: string): Response {
 export class HexAdapter implements RegistryPlugin {
   readonly id = "hex" as const;
   readonly capabilities = registryCapabilities("proxyable", "virtualizable");
-  // Hex uses an `authorization` api-key header; advertise a bearer challenge.
+  // Hex authenticates with a bearer/bare token in the `authorization` header,
+  // which the platform auth middleware handles directly; advertise a bearer
+  // challenge for the 401 path.
   authChallenge = (permission: Permission, ctx: RegistryRequestContext) =>
     registryBearerAuthChallenge({ ctx, permission });
 
@@ -71,7 +76,6 @@ export class HexAdapter implements RegistryPlugin {
       displayName: "Hex",
       mountSegment: "hex",
       errorResponseKind: "singleError",
-      apiKeyHeaders: ["authorization"],
       compressibleHandlers: ["names", "versions", "packageResource", "apiPackage", "apiRelease"],
       scan: {
         defaultOsvEcosystem: "Hex",
