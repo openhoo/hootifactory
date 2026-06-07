@@ -24,6 +24,7 @@ import { nugetRegistryPlugin } from "@hootifactory/registry-nuget";
 import { dockerRegistryPlugin } from "@hootifactory/registry-oci";
 import { p2RegistryPlugin } from "@hootifactory/registry-p2";
 import { pubRegistryPlugin } from "@hootifactory/registry-pub";
+import { puppetRegistryPlugin } from "@hootifactory/registry-puppet";
 import { pypiRegistryPlugin } from "@hootifactory/registry-pypi";
 import { rpmRegistryPlugin } from "@hootifactory/registry-rpm";
 import { rubygemsRegistryPlugin } from "@hootifactory/registry-rubygems";
@@ -81,4 +82,5 @@ export const REGISTRY_PLUGIN_MANIFEST: RegistryPluginEntry[] = [
   { plugin: nixRegistryPlugin },
   { plugin: archRegistryPlugin, aliases: ["pacman"] },
   { plugin: hackageRegistryPlugin },
+  { plugin: puppetRegistryPlugin, aliases: ["forge"] },
 ];

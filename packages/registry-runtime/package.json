@@ -28,6 +28,7 @@
     "@hootifactory/registry-cargo": "workspace:*",
     "@hootifactory/registry-gitlfs": "workspace:*",
     "@hootifactory/registry-pub": "workspace:*",
+    "@hootifactory/registry-puppet": "workspace:*",
     "@hootifactory/registry-go": "workspace:*",
     "@hootifactory/registry-hex": "workspace:*",
     "@hootifactory/registry-homebrew": "workspace:*",

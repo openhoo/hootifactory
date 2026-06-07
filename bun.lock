@@ -403,6 +403,13 @@
         "@hootifactory/registry": "workspace:*",
       },
     },
+    "packages/registry-puppet": {
+      "name": "@hootifactory/registry-puppet",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/registry": "workspace:*",
+      },
+    },
     "packages/registry-pypi": {
       "name": "@hootifactory/registry-pypi",
       "version": "0.0.0",
@@ -455,6 +462,7 @@
         "@hootifactory/registry-oci": "workspace:*",
         "@hootifactory/registry-p2": "workspace:*",
         "@hootifactory/registry-pub": "workspace:*",
+        "@hootifactory/registry-puppet": "workspace:*",
         "@hootifactory/registry-pypi": "workspace:*",
         "@hootifactory/registry-rpm": "workspace:*",
         "@hootifactory/registry-rubygems": "workspace:*",
@@ -822,6 +830,8 @@
     "@hootifactory/registry-p2": ["@hootifactory/registry-p2@workspace:packages/registry-p2"],
 
     "@hootifactory/registry-pub": ["@hootifactory/registry-pub@workspace:packages/registry-pub"],
+
+    "@hootifactory/registry-puppet": ["@hootifactory/registry-puppet@workspace:packages/registry-puppet"],
 
     "@hootifactory/registry-pypi": ["@hootifactory/registry-pypi@workspace:packages/registry-pypi"],
 
