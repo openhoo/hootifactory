@@ -96,4 +96,104 @@ describe("Hootifactory API client", () => {
 
     await expect(client.logout()).resolves.toBeUndefined();
   });
+
+  test("issues each endpoint against its method, path, headers, and body", async () => {
+    const calls: Array<{
+      path: string;
+      method?: string;
+      headers: Record<string, string>;
+      body?: unknown;
+    }> = [];
+    const client = createHootifactoryClient(async (path, init) => {
+      const headers: Record<string, string> = {};
+      new Headers(init?.headers).forEach((value, key) => {
+        headers[key] = value;
+      });
+      calls.push({
+        path,
+        method: init?.method,
+        headers,
+        body: typeof init?.body === "string" ? JSON.parse(init.body) : init?.body,
+      });
+      return Response.json({ ok: true });
+    });
+
+    await client.me();
+    await client.authMethods();
+    await client.login("alice", "pw");
+    await client.register("alice", "a@test", "pw");
+    await client.requestPasswordReset("a@test");
+    await client.confirmPasswordReset("tok", "newpw");
+    await client.logout();
+    await client.orgs();
+    await client.createOrg("acme", "Acme");
+    await client.repos("org-1");
+    await client.registryModules();
+    await client.createRepo("org-1", { name: "lib" });
+    await client.repo("repo-1");
+    await client.tokens("org-1");
+    await client.createToken("org-1", { name: "ci" });
+    await client.revokeToken("org-1", "tok-1");
+
+    expect(calls.map((c) => `${c.method} ${c.path}`)).toEqual([
+      "GET /api/me",
+      "GET /api/auth/methods",
+      "POST /api/auth/login",
+      "POST /api/auth/register",
+      "POST /api/auth/password-reset/request",
+      "POST /api/auth/password-reset/confirm",
+      "POST /api/auth/logout",
+      "GET /api/orgs",
+      "POST /api/orgs",
+      "GET /api/orgs/org-1/repositories",
+      "GET /api/registry-modules",
+      "POST /api/orgs/org-1/repositories",
+      "GET /api/repositories/repo-1",
+      "GET /api/orgs/org-1/tokens",
+      "POST /api/orgs/org-1/tokens",
+      "DELETE /api/orgs/org-1/tokens/tok-1",
+    ]);
+
+    const login = calls.find((c) => c.path === "/api/auth/login");
+    expect(login?.headers["content-type"]).toBe("application/json");
+    expect(login?.body).toEqual({ username: "alice", password: "pw" });
+
+    const logout = calls.find((c) => c.path === "/api/auth/logout");
+    expect(logout?.headers["content-type"]).toBeUndefined();
+    expect(logout?.body).toBeUndefined();
+  });
+
+  test("omits the query suffix when no pagination is provided", async () => {
+    const paths: string[] = [];
+    const client = createHootifactoryClient(async (path) => {
+      paths.push(path);
+      return Response.json({ data: [], pagination: { limit: 100, offset: 0, total: 0 } });
+    });
+
+    await client.packages("repo-1");
+    await client.versions("pkg-1");
+    await client.assets("repo-1");
+
+    expect(paths).toEqual([
+      "/api/repositories/repo-1/packages",
+      "/api/packages/pkg-1/versions",
+      "/api/v1/repositories/repo-1/assets",
+    ]);
+  });
+
+  test("defaults to the global fetch when no fetch function is supplied", async () => {
+    const originalFetch = globalThis.fetch;
+    const seen: string[] = [];
+    globalThis.fetch = (async (input: string) => {
+      seen.push(String(input));
+      return Response.json({ orgs: [] });
+    }) as typeof fetch;
+    try {
+      const client = createHootifactoryClient();
+      await expect(client.orgs()).resolves.toEqual({ orgs: [] });
+      expect(seen).toEqual(["/api/orgs"]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });

@@ -119,3 +119,85 @@ describe("safeFetch redirect re-validation (loopback test server)", () => {
     expect(await res.text()).toBe("ok");
   });
 });
+
+describe("assertPublicHttpUrl invalid URL", () => {
+  test("wraps an unparseable URL in an invalid-URL error", () => {
+    expect(() => assertPublicHttpUrl("http://")).toThrow("invalid URL");
+    expect(() => assertPublicHttpUrl("not a url")).toThrow("invalid URL");
+  });
+});
+
+describe("assertPublicResolvedUrl enforcement toggle", () => {
+  test("short-circuits without resolving when enforcement is disabled", async () => {
+    let resolved = false;
+    await expect(
+      assertPublicResolvedUrl(new URL("https://anything.test"), {
+        enforce: false,
+        lookupHost: async () => {
+          resolved = true;
+          return [{ address: "10.0.0.1" }];
+        },
+      }),
+    ).resolves.toBeUndefined();
+    expect(resolved).toBe(false);
+  });
+
+  test("rejects when DNS returns no addresses", async () => {
+    await expect(
+      assertPublicResolvedUrl(new URL("https://unresolvable.test"), {
+        enforce: true,
+        lookupHost: async () => [],
+      }),
+    ).rejects.toThrow("could not resolve upstream host");
+  });
+
+  test("rejects an IPv6-literal host that is private", async () => {
+    await expect(
+      assertPublicResolvedUrl(new URL("https://[::1]/"), { enforce: true }),
+    ).rejects.toThrow("private/loopback/metadata");
+  });
+});
+
+describe("safeFetch redirect budget and 3xx handling", () => {
+  test("rejects after exhausting the redirect budget", async () => {
+    const server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch() {
+        return new Response(null, { status: 302, headers: { location: "/again" } });
+      },
+    });
+    const host = `127.0.0.1:${server.port}`;
+    try {
+      await expect(
+        safeFetch(`http://${host}/start`, {
+          enforcePublicNetwork: false,
+          allowedHosts: [host],
+          maxHops: 1,
+        }),
+      ).rejects.toThrow("too many redirects");
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("returns a 3xx with no Location header instead of following", async () => {
+    const server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch() {
+        return new Response("see other", { status: 303 });
+      },
+    });
+    const host = `127.0.0.1:${server.port}`;
+    try {
+      const res = await safeFetch(`http://${host}/x`, {
+        enforcePublicNetwork: false,
+        allowedHosts: [host],
+      });
+      expect(res.status).toBe(303);
+    } finally {
+      server.stop(true);
+    }
+  });
+});
