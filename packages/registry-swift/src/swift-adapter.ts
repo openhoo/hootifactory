@@ -169,7 +169,9 @@ class SwiftAdapterState {
         },
       ],
       metadata: meta.metadata,
-      publishedAt: row.createdAt.toISOString(),
+      // Second precision: SwiftPM's ISO-8601 decoder rejects fractional seconds, so
+      // a millisecond `.SSSZ` suffix breaks `swift package resolve` deserialization.
+      publishedAt: row.createdAt.toISOString().replace(/\.\d{3}Z$/, "Z"),
       _links: {
         latest: { url: base },
         "source-archive": { url: `${base}/${version}.zip` },

@@ -83,14 +83,21 @@ export interface PuppetUrlContext {
   mountPath: string;
 }
 
-/** Absolute Forge `file_uri` for a release tarball: `/v3/files/<file>.tar.gz`. */
+/**
+ * Forge `file_uri` for a release tarball, RELATIVE to the forge base URL, e.g.
+ * `/v3/files/<file>.tar.gz` (matching the public Forge v3 API). The real
+ * `puppet module install` client appends this onto the configured
+ * `--module_repository` (which already includes our mount path), so it must NOT
+ * repeat the mount path (that yields a doubled-path 404) nor be absolute (puppet
+ * rejects that with "Path must start with forward slash").
+ */
 export function puppetFileUri(
-  { baseUrl, mountPath }: PuppetUrlContext,
+  _ctx: PuppetUrlContext,
   owner: string,
   name: string,
   version: string,
 ): string {
-  return `${baseUrl}/${mountPath}/v3/files/${puppetReleaseFileName(owner, name, version)}`;
+  return `/v3/files/${puppetReleaseFileName(owner, name, version)}`;
 }
 
 function moduleRef(

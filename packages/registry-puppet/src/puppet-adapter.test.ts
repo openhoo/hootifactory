@@ -215,9 +215,7 @@ describe("Puppet adapter", () => {
     expect(body.name).toBe("apache");
     expect(body.owner.username).toBe("puppetlabs");
     expect(body.current_release.version).toBe("2.0.0");
-    expect(body.current_release.file_uri).toBe(
-      "https://registry.example.test/puppet/private/v3/files/puppetlabs-apache-2.0.0.tar.gz",
-    );
+    expect(body.current_release.file_uri).toBe("/v3/files/puppetlabs-apache-2.0.0.tar.gz");
     expect(body.current_release.file_sha256).toBe(HEX);
     // Releases are newest-first.
     expect(body.releases.map((r) => r.version)).toEqual(["2.0.0", "1.2.3"]);
@@ -272,9 +270,7 @@ describe("Puppet adapter", () => {
     };
     expect(body.slug).toBe("puppetlabs-apache-1.2.3");
     expect(body.version).toBe("1.2.3");
-    expect(body.file_uri).toBe(
-      "https://registry.example.test/puppet/private/v3/files/puppetlabs-apache-1.2.3.tar.gz",
-    );
+    expect(body.file_uri).toBe("/v3/files/puppetlabs-apache-1.2.3.tar.gz");
     expect(body.file_md5).toBe(MD5);
     expect(body.file_sha256).toBe(HEX);
     expect(body.metadata.name).toBe("puppetlabs-apache");

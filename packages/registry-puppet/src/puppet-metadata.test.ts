@@ -25,9 +25,9 @@ function releaseMeta(version: string, published: string, extra = {}): PuppetRele
 }
 
 describe("puppetFileUri", () => {
-  test("builds an absolute file URI under the mount path", () => {
+  test("builds a forge-base-relative file URI (no mount path, no host)", () => {
     expect(puppetFileUri(URL_CTX, "puppetlabs", "apache", "1.2.3")).toBe(
-      "https://registry.test/acme/puppet/v3/files/puppetlabs-apache-1.2.3.tar.gz",
+      "/v3/files/puppetlabs-apache-1.2.3.tar.gz",
     );
   });
 });
