@@ -1,14 +1,11 @@
 import {
-  bearerAuthChallenge,
-  delegateRegistryPlugin,
   type HttpMethod,
   type Permission,
   type RegistryPlugin,
   type RegistryRequestContext,
   type RouteMatch,
   readWritePermission,
-  registryCapabilities,
-  registryPlugin,
+  registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
 } from "@hootifactory/registry";
@@ -61,97 +58,7 @@ function parsePositiveInt(value: string | null, fallback: number, max?: number):
  * single-version detail, the artifact download, and the multipart publish
  * (`POST /api/v3/artifacts/collections/`).
  */
-export class AnsibleAdapter implements RegistryPlugin {
-  readonly id = "ansible" as const;
-  // Only `virtualizable`: virtual repos resolve a collection from the first member
-  // that hosts it. `proxyable` is intentionally NOT declared — proxy support gates
-  // on a `proxyIngest` hook (which this adapter does not implement), so advertising
-  // it would let the UI offer proxy repos that every create call then rejects.
-  readonly capabilities = registryCapabilities("virtualizable");
-  authChallenge = () => bearerAuthChallenge();
-
-  private readonly plugin = registryPlugin(this.id)
-    .module({
-      displayName: "Ansible Galaxy",
-      mountSegment: "ansible",
-      errorResponseKind: "errorsDetail",
-      compressibleHandlers: ["root", "v3Root", "summary", "versions", "version", "import"],
-      compressibleContentTypes: ["application/json"],
-      scan: {
-        defaultOsvEcosystem: undefined,
-        referencedDigests: (metadata) =>
-          typeof metadata.artifactDigest === "string" ? [metadata.artifactDigest] : [],
-      },
-    })
-    .capabilities(this.capabilities)
-    .authChallenge(this.authChallenge)
-    .routes((route) => [
-      // Discovery prelude.
-      route.get("/api/", "root", () => this.root()),
-      route.get("/api/v3/", "v3Root", ({ ctx }) => this.v3Root(ctx)),
-      // Literal `artifacts`/`download` segments declared before the `:namespace`
-      // catch-alls so they cannot be shadowed (the matcher tries routes in order).
-      route.post("/api/v3/artifacts/collections/", "publish", ({ req, ctx }) =>
-        this.publish(req, ctx),
-      ),
-      route.get("/api/v3/collections/download/:filename", "download", ({ params, req, ctx }) =>
-        this.download(params.filename, req, ctx),
-      ),
-      // Import-task polling: `ansible-galaxy collection publish` (without
-      // `--no-wait`) reads `task` off the publish response and polls this URL
-      // until the body reports a terminal `finished_at`. Imports are synchronous
-      // here, so a stored version resolves to an immediately-completed task.
-      route.get("/api/v3/imports/collections/:id/", "import", ({ params, req, ctx }) =>
-        this.importTask(params.id, req, ctx),
-      ),
-      route.get(
-        "/api/v3/collections/:namespace/:name/versions/:version/",
-        "version",
-        ({ params, req, ctx }) =>
-          this.version(params.namespace, params.name, params.version, req, ctx),
-      ),
-      route.get(
-        "/api/v3/collections/:namespace/:name/versions/",
-        "versions",
-        ({ params, req, ctx }) => this.versions(params.namespace, params.name, req, ctx),
-      ),
-      route.get("/api/v3/collections/:namespace/:name/", "summary", ({ params, req, ctx }) =>
-        this.summary(params.namespace, params.name, req, ctx),
-      ),
-    ])
-    .build();
-  private readonly delegate = delegateRegistryPlugin(this.plugin);
-
-  get displayName() {
-    return this.plugin.displayName;
-  }
-  get mountSegment() {
-    return this.plugin.mountSegment;
-  }
-  get repositoryNamePolicy() {
-    return this.plugin.repositoryNamePolicy;
-  }
-  get acceptsRegistryBearerToken() {
-    return this.plugin.acceptsRegistryBearerToken;
-  }
-  get apiKeyHeaders() {
-    return this.plugin.apiKeyHeaders;
-  }
-  get errorResponseKind() {
-    return this.plugin.errorResponseKind;
-  }
-  get compressibleHandlers() {
-    return this.plugin.compressibleHandlers;
-  }
-  get compressibleContentTypes() {
-    return this.plugin.compressibleContentTypes;
-  }
-  get scan() {
-    return this.plugin.scan;
-  }
-
-  routes = this.delegate.routes;
-
+class AnsibleAdapterState {
   requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
     const permission = readWritePermission(method);
     const namespace = match?.params.namespace;
@@ -185,10 +92,8 @@ export class AnsibleAdapter implements RegistryPlugin {
     return permission;
   }
 
-  handle = this.delegate.handle;
-
   /** `GET /api/` — the discovery document advertising the available API versions. */
-  private root(): Response {
+  root(): Response {
     return Response.json({
       description: "hootifactory Ansible Galaxy registry",
       current_version: "v3",
@@ -198,7 +103,7 @@ export class AnsibleAdapter implements RegistryPlugin {
   }
 
   /** `GET /api/v3/` — the v3 discovery document linking the collections endpoints. */
-  private v3Root(ctx: RegistryRequestContext): Response {
+  v3Root(ctx: RegistryRequestContext): Response {
     const base = `/${ctx.repo.mountPath}/api/v3`;
     return Response.json({
       published: { collections: { index: `${base}/collections/` } },
@@ -220,7 +125,7 @@ export class AnsibleAdapter implements RegistryPlugin {
   }
 
   /** `GET /api/v3/collections/:namespace/:name/` — the collection summary. */
-  private async summary(
+  async summary(
     namespaceRaw: string,
     nameRaw: string,
     req: Request,
@@ -246,7 +151,7 @@ export class AnsibleAdapter implements RegistryPlugin {
   }
 
   /** `GET /api/v3/collections/:namespace/:name/versions/` — the paginated version list. */
-  private async versions(
+  async versions(
     namespaceRaw: string,
     nameRaw: string,
     req: Request,
@@ -280,7 +185,7 @@ export class AnsibleAdapter implements RegistryPlugin {
   }
 
   /** `GET /api/v3/collections/:namespace/:name/versions/:version/` — version detail. */
-  private async version(
+  async version(
     namespaceRaw: string,
     nameRaw: string,
     versionRaw: string,
@@ -323,11 +228,7 @@ export class AnsibleAdapter implements RegistryPlugin {
    * resolves to a stored version we report a terminal `completed` task so the
    * client's `wait_import_task` loop exits successfully; an unknown id 404s.
    */
-  private async importTask(
-    idRaw: string,
-    req: Request,
-    ctx: RegistryRequestContext,
-  ): Promise<Response> {
+  async importTask(idRaw: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const parsed = parseImportTaskId(idRaw);
     if (!parsed) return ansibleBadRequest("invalid import task id");
     const { fqcn, version } = parsed;
@@ -353,7 +254,7 @@ export class AnsibleAdapter implements RegistryPlugin {
   }
 
   /** `GET /api/v3/collections/download/:filename` — serve the hosted artifact blob. */
-  private async download(
+  async download(
     filenameRaw: string,
     req: Request,
     ctx: RegistryRequestContext,
@@ -385,7 +286,7 @@ export class AnsibleAdapter implements RegistryPlugin {
     });
   }
 
-  private publish(req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  publish(req: Request, ctx: RegistryRequestContext): Promise<Response> {
     return handleAnsiblePublish(req, ctx);
   }
 }
@@ -430,4 +331,58 @@ function parseImportTaskId(id: string): { fqcn: string; version: string } | null
   return { fqcn, version };
 }
 
+const ansibleDefinition = registryAdapter("ansible")
+  .stateClass(AnsibleAdapterState)
+  .module((module) =>
+    module
+      .displayName("Ansible Galaxy")
+      .mount("ansible")
+      // Only `virtualizable`: no proxyIngest/upstream mirror is implemented.
+      .capabilities("virtualizable")
+      .errorResponseKind("errorsDetail")
+      .compressible({
+        handlers: ["root", "v3Root", "summary", "versions", "version", "import"],
+        contentTypes: ["application/json"],
+      }),
+  )
+  .scan({
+    defaultOsvEcosystem: undefined,
+    referencedDigests: (metadata) =>
+      typeof metadata.artifactDigest === "string" ? [metadata.artifactDigest] : [],
+  })
+  .bearerAuth()
+  .fromState((state) => state.defaultPermission("requiredPermission"))
+  .routes((route) => [
+    // Discovery prelude.
+    route.get("/api/", "root").calls((state) => state.root()),
+    route.get("/api/v3/", "v3Root").calls((state, { ctx }) => state.v3Root(ctx)),
+    // Literal `artifacts`/`download` segments declared before the `:namespace`
+    // catch-alls so they cannot be shadowed.
+    route
+      .post("/api/v3/artifacts/collections/", "publish")
+      .calls((state, { req, ctx }) => state.publish(req, ctx)),
+    route
+      .get("/api/v3/collections/download/:filename", "download")
+      .calls((state, { params, req, ctx }) => state.download(params.filename, req, ctx)),
+    route
+      .get("/api/v3/imports/collections/:id/", "import")
+      .calls((state, { params, req, ctx }) => state.importTask(params.id, req, ctx)),
+    route
+      .get("/api/v3/collections/:namespace/:name/versions/:version/", "version")
+      .calls((state, { params, req, ctx }) =>
+        state.version(params.namespace, params.name, params.version, req, ctx),
+      ),
+    route
+      .get("/api/v3/collections/:namespace/:name/versions/", "versions")
+      .calls((state, { params, req, ctx }) =>
+        state.versions(params.namespace, params.name, req, ctx),
+      ),
+    route
+      .get("/api/v3/collections/:namespace/:name/", "summary")
+      .calls((state, { params, req, ctx }) =>
+        state.summary(params.namespace, params.name, req, ctx),
+      ),
+  ]);
+
+export class AnsibleAdapter extends ansibleDefinition.adapterClass() {}
 export const ansibleRegistryPlugin: RegistryPlugin = new AnsibleAdapter();

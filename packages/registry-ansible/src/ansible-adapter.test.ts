@@ -703,7 +703,7 @@ describe("Ansible adapter", () => {
   test("declares virtualizable but not proxyable (no proxyIngest hook)", () => {
     const adapter = new AnsibleAdapter();
     expect(adapter.capabilities).toMatchObject({ proxyable: false, virtualizable: true });
-    expect("proxyIngest" in adapter).toBe(false);
+    expect(adapter.proxyIngest).toBeUndefined();
   });
 
   test("publish output round-trips through version-detail + download + import", async () => {
