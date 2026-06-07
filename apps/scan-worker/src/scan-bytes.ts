@@ -29,11 +29,19 @@ export interface StoredByteScanResult {
   findings: NormalizedFinding[];
 }
 
+/** Byte store seam: the subset of `blobStore` the scan reads through. */
+export type BlobByteStore = Pick<typeof blobStore, "get" | "stat">;
+
 export interface StoredByteScanInput {
   digest: string;
   scannerRuntime: ScannerRuntime;
   scannedBlobDigests: Set<string>;
   allowMissing?: boolean;
+  /**
+   * Storage seam, defaulting to the real `@hootifactory/storage` `blobStore`. Tests
+   * inject a fake so they never open a real S3 connection; production omits it.
+   */
+  blobStore?: BlobByteStore;
 }
 
 /**
@@ -43,11 +51,12 @@ export interface StoredByteScanInput {
  * written and the blob is never buffered.
  */
 async function scanStoredByteStream(
+  store: BlobByteStore,
   digest: string,
   consumers: ScannerStreamConsumer[],
   path?: string,
 ): Promise<NormalizedFinding[]> {
-  const reader = blobStore.get(digest).getReader();
+  const reader = store.get(digest).getReader();
   const out = path ? createWriteStream(path, { flags: "wx" }) : null;
   let size = 0;
   try {
@@ -82,12 +91,13 @@ async function scanStoredByteStream(
 
 export async function scanStoredBytes(input: StoredByteScanInput): Promise<StoredByteScanResult> {
   const { digest, scannerRuntime, scannedBlobDigests } = input;
+  const store = input.blobStore ?? blobStore;
   if (scannedBlobDigests.has(digest)) {
     return { available: true, scannedPayload: false, findings: [] };
   }
   scannedBlobDigests.add(digest);
   return withSpan("scan.bytes", { "artifact.digest": digest }, async (span) => {
-    const stat = await blobStore.stat(digest);
+    const stat = await store.stat(digest);
     if (!stat) {
       span.setAttribute("scan.bytes.available", false);
       addSpanEvent("scan.bytes_missing", { "artifact.digest": digest });
@@ -139,6 +149,7 @@ export async function scanStoredBytes(input: StoredByteScanInput): Promise<Store
       let streamFindings: NormalizedFinding[];
       try {
         streamFindings = await scanStoredByteStream(
+          store,
           digest,
           streamConsumers.map((entry) => entry.consumer),
           path,

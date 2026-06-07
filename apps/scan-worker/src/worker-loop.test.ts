@@ -1,12 +1,14 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import type { ScannerRuntime } from "@hootifactory/scanner";
-import type { ScanWorkerConfig } from "./worker-loop";
+import type { ScanLoopDeps, ScanWorkerConfig } from "./worker-loop";
 
 /**
  * Unit tests for the scan-worker claim/process/maintenance logic, isolated from the
- * process entrypoint. The DB handle, pipeline collaborators, and content
- * maintenance helpers are stubbed so each function is driven without a database or
- * real scanners.
+ * process entrypoint. The DB handle and the pipeline collaborators (processScan /
+ * recordScanFailure) are injected through each function's seam — never by mocking the
+ * process-global @hootifactory/db module, which raced the real handle in CI. The
+ * content maintenance helpers (reap/sweep) are the only collaborators still stubbed at
+ * the module level, and they touch no real DB/S3 once stubbed.
  */
 
 interface DbCapture {
@@ -16,7 +18,7 @@ interface DbCapture {
   updateRejects: boolean;
 }
 
-function makeDb(capture: DbCapture): unknown {
+function makeDb(capture: DbCapture): typeof import("@hootifactory/db").db {
   function updateChain(): unknown {
     const record = { set: {} as Record<string, unknown>, sawReturning: false };
     let pushed = false;
@@ -47,7 +49,7 @@ function makeDb(capture: DbCapture): unknown {
   return {
     execute: async () => capture.executeResult,
     update: () => updateChain(),
-  };
+  } as unknown as typeof import("@hootifactory/db").db;
 }
 
 const baseConfig: ScanWorkerConfig = {
@@ -72,6 +74,10 @@ interface Collaborators {
   failures: { artifactId: string; err: unknown }[];
   reapCalls: number[];
   sweepCalls: { batch: number; grace: number }[];
+  /** Fake db to pass into worker-loop functions that take a `dbClient` seam. */
+  db: typeof import("@hootifactory/db").db;
+  /** Loop deps (db + pipeline collaborators) for processClaimedIntent/runScanCycle. */
+  deps: ScanLoopDeps;
 }
 
 async function loadModule(opts: {
@@ -82,33 +88,39 @@ async function loadModule(opts: {
   reapThrows?: boolean;
   sweepThrows?: boolean;
 }): Promise<{ mod: typeof import("./worker-loop"); collab: Collaborators }> {
+  const capture: DbCapture = {
+    executeResult: opts.executeResult ?? { rows: [] },
+    updates: [],
+    reclaimRows: opts.reclaimRows ?? [],
+    updateRejects: opts.updateRejects ?? false,
+  };
+  const db = makeDb(capture);
   const collab: Collaborators = {
-    capture: {
-      executeResult: opts.executeResult ?? { rows: [] },
-      updates: [],
-      reclaimRows: opts.reclaimRows ?? [],
-      updateRejects: opts.updateRejects ?? false,
-    },
+    capture,
     processed: [],
     failures: [],
     reapCalls: [],
     sweepCalls: [],
+    db,
+    deps: {
+      db,
+      processScan: (async (artifactId: string) => {
+        collab.processed.push(artifactId);
+        await opts.processScan?.(artifactId);
+      }) as ScanLoopDeps["processScan"],
+      recordScanFailure: (async (artifactId: string, err: unknown) => {
+        collab.failures.push({ artifactId, err });
+      }) as ScanLoopDeps["recordScanFailure"],
+    },
   };
 
-  const realDb = await import("@hootifactory/db");
-  await mock.module("@hootifactory/db", () => ({ ...realDb, db: makeDb(collab.capture) }));
-
-  await mock.module("./pipeline", () => ({
-    processScan: async (artifactId: string) => {
-      collab.processed.push(artifactId);
-      await opts.processScan?.(artifactId);
-    },
-    recordScanFailure: async (artifactId: string, err: unknown) => {
-      collab.failures.push({ artifactId, err });
-    },
-  }));
-
+  // The reap/sweep helpers delegate to content maintenance functions that would
+  // touch a real DB; stub just those two functions (not the @hootifactory/db handle)
+  // while preserving the rest of the module surface (e.g. loadContentAddressableManifestRaw,
+  // which the real ./pipeline still imports through this module).
+  const realContent = await import("@hootifactory/registry-application/content");
   await mock.module("@hootifactory/registry-application/content", () => ({
+    ...realContent,
     reapExpiredContentUploadSessions: async ({ limit }: { limit: number }) => {
       collab.reapCalls.push(limit);
       if (opts.reapThrows) throw new Error("reap failed");
@@ -131,10 +143,10 @@ afterEach(() => {
 
 describe("claimScanIntents", () => {
   test("normalizes the claim query's rows into scan intents", async () => {
-    const { mod } = await loadModule({
+    const { mod, collab } = await loadModule({
       executeResult: { rows: [{ id: "a", artifactId: "art-a", attempts: 1 }] },
     });
-    const intents = await mod.claimScanIntents(16);
+    const intents = await mod.claimScanIntents(16, collab.db);
     expect(intents).toEqual([{ id: "a", artifactId: "art-a", attempts: 1 }]);
   });
 });
@@ -142,27 +154,37 @@ describe("claimScanIntents", () => {
 describe("markSucceeded / markFailed", () => {
   test("markSucceeded writes the succeeded terminal status", async () => {
     const { mod, collab } = await loadModule({});
-    await mod.markSucceeded({ id: "a", artifactId: "art-a", attempts: 1 });
+    await mod.markSucceeded({ id: "a", artifactId: "art-a", attempts: 1 }, collab.db);
     expect(collab.capture.updates[0]?.set.status).toBe("succeeded");
     expect(collab.capture.updates[0]?.set.lastError).toBeNull();
   });
 
   test("markFailed re-queues as pending below the attempts cap", async () => {
     const { mod, collab } = await loadModule({});
-    await mod.markFailed({ id: "a", artifactId: "art-a", attempts: 2 }, new Error("x"), 5);
+    await mod.markFailed(
+      { id: "a", artifactId: "art-a", attempts: 2 },
+      new Error("x"),
+      5,
+      collab.db,
+    );
     expect(collab.capture.updates[0]?.set.status).toBe("pending");
     expect(collab.capture.updates[0]?.set.lastError).toBe("x");
   });
 
   test("markFailed terminally fails once the attempts cap is reached", async () => {
     const { mod, collab } = await loadModule({});
-    await mod.markFailed({ id: "a", artifactId: "art-a", attempts: 5 }, "boom", 5);
+    await mod.markFailed({ id: "a", artifactId: "art-a", attempts: 5 }, "boom", 5, collab.db);
     expect(collab.capture.updates[0]?.set.status).toBe("failed");
   });
 
   test("markFailed truncates long error messages", async () => {
     const { mod, collab } = await loadModule({});
-    await mod.markFailed({ id: "a", artifactId: "art-a", attempts: 1 }, "x".repeat(5000), 5);
+    await mod.markFailed(
+      { id: "a", artifactId: "art-a", attempts: 1 },
+      "x".repeat(5000),
+      5,
+      collab.db,
+    );
     expect((collab.capture.updates[0]?.set.lastError as string).length).toBe(2000);
   });
 });
@@ -198,21 +220,26 @@ describe("maintenance tasks", () => {
 
   test("reclaimStuckScans issues the reclaim update and logs when rows are reclaimed", async () => {
     const { mod, collab } = await loadModule({ reclaimRows: [{ id: "stuck-1" }] });
-    await mod.reclaimStuckScans(900, 5);
+    await mod.reclaimStuckScans(900, 5, collab.db);
     const reclaim = collab.capture.updates.find((u) => u.sawReturning);
     expect(reclaim?.set.lastError).toBe("reclaimed: worker stopped while processing");
   });
 
   test("reclaimStuckScans tolerates a failing update", async () => {
-    const { mod } = await loadModule({ updateRejects: true });
-    await expect(mod.reclaimStuckScans(900, 5)).resolves.toBeUndefined();
+    const { mod, collab } = await loadModule({ updateRejects: true });
+    await expect(mod.reclaimStuckScans(900, 5, collab.db)).resolves.toBeUndefined();
   });
 });
 
 describe("processClaimedIntent", () => {
   test("marks succeeded when the pipeline completes", async () => {
     const { mod, collab } = await loadModule({});
-    await mod.processClaimedIntent({ id: "a", artifactId: "art-a", attempts: 1 }, runtime, 5);
+    await mod.processClaimedIntent(
+      { id: "a", artifactId: "art-a", attempts: 1 },
+      runtime,
+      5,
+      collab.deps,
+    );
     expect(collab.processed).toEqual(["art-a"]);
     expect(collab.capture.updates[0]?.set.status).toBe("succeeded");
     expect(collab.failures).toEqual([]);
@@ -224,7 +251,12 @@ describe("processClaimedIntent", () => {
         throw new Error("scan exploded");
       },
     });
-    await mod.processClaimedIntent({ id: "a", artifactId: "art-a", attempts: 5 }, runtime, 5);
+    await mod.processClaimedIntent(
+      { id: "a", artifactId: "art-a", attempts: 5 },
+      runtime,
+      5,
+      collab.deps,
+    );
     expect(collab.failures.map((f) => f.artifactId)).toEqual(["art-a"]);
     expect(collab.capture.updates[0]?.set.status).toBe("failed");
   });
@@ -233,7 +265,7 @@ describe("processClaimedIntent", () => {
 describe("runScanCycle", () => {
   test("returns 0 and sleeps when nothing is claimed", async () => {
     const { mod, collab } = await loadModule({ executeResult: { rows: [] } });
-    const processed = await mod.runScanCycle(baseConfig, runtime);
+    const processed = await mod.runScanCycle(baseConfig, runtime, collab.deps);
     expect(processed).toBe(0);
     expect(collab.processed).toEqual([]);
   });
@@ -247,7 +279,7 @@ describe("runScanCycle", () => {
         ],
       },
     });
-    const processed = await mod.runScanCycle(baseConfig, runtime);
+    const processed = await mod.runScanCycle(baseConfig, runtime, collab.deps);
     expect(processed).toBe(2);
     expect(collab.processed.sort()).toEqual(["art-a", "art-b"]);
     // both intents were finalized (two terminal writes)

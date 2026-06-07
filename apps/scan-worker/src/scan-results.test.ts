@@ -1,12 +1,19 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import type { NormalizedFinding } from "@hootifactory/scan-core";
+import {
+  applyPolicyDecision,
+  markSkippedClean,
+  persistScanResult,
+  recordScanFailure,
+} from "./scan-results";
 
 /**
  * scan-results.ts is the persistence layer for the scan pipeline. It is exercised
- * here without a database by stubbing `@hootifactory/db`'s `db` handle with a
- * chainable, awaitable recorder that captures every builder call and the row
- * payloads, while keeping the real table objects + operators (`eq`, `sql`) so the
- * production WHERE/INSERT wiring runs unmodified.
+ * here without a database by injecting a fake `db` through each function's `dbClient`
+ * seam (a chainable, awaitable recorder that captures every builder call and the row
+ * payloads) — never by mocking the process-global @hootifactory/db module, which raced
+ * the real handle in CI. The real table objects + operators (`eq`, `sql`) keep the
+ * production WHERE/INSERT wiring running unmodified.
  */
 
 interface BuilderCall {
@@ -26,8 +33,10 @@ interface DbRecorder {
  * chains resolve to `selectResult`; chains that end in `.returning(...)` resolve
  * to `insertReturning`; every other awaited chain resolves to an empty array.
  */
+type FakeDb = typeof import("@hootifactory/db").db;
+
 function makeDb(opts: { selectResult?: unknown[]; insertReturning?: unknown[] } = {}): {
-  db: unknown;
+  db: FakeDb;
   recorder: DbRecorder;
 } {
   const recorder: DbRecorder = {
@@ -80,13 +89,7 @@ function makeDb(opts: { selectResult?: unknown[]; insertReturning?: unknown[] } 
       return chain("select");
     },
   };
-  return { db, recorder };
-}
-
-async function loadModule(dbStub: unknown) {
-  const real = await import("@hootifactory/db");
-  await mock.module("@hootifactory/db", () => ({ ...real, db: dbStub }));
-  return import("./scan-results");
+  return { db: db as FakeDb, recorder };
 }
 
 const artifact = {
@@ -106,7 +109,6 @@ afterEach(() => {
 describe("persistScanResult", () => {
   test("upserts the scan row, deletes old findings, and inserts new findings", async () => {
     const { db, recorder } = makeDb({ insertReturning: [{ id: "scan-1" }] });
-    const { persistScanResult } = await loadModule(db);
 
     const findings: NormalizedFinding[] = [
       {
@@ -118,7 +120,7 @@ describe("persistScanResult", () => {
         cvssScore: 7.1,
       },
     ];
-    await persistScanResult(artifact, findings, ["grype", "osv"]);
+    await persistScanResult(artifact, findings, ["grype", "osv"], db);
 
     const methods = recorder.calls.map((c) => c.method);
     expect(methods).toContain("insert");
@@ -149,9 +151,8 @@ describe("persistScanResult", () => {
 
   test("skips the findings insert when there are no findings", async () => {
     const { db, recorder } = makeDb({ insertReturning: [{ id: "scan-2" }] });
-    const { persistScanResult } = await loadModule(db);
 
-    await persistScanResult(artifact, [], ["grype"]);
+    await persistScanResult(artifact, [], ["grype"], db);
     // only the scan upsert inserts; no second values() for findings
     expect(recorder.insertValues).toHaveLength(1);
     expect(recorder.calls.map((c) => c.method)).toContain("delete");
@@ -159,9 +160,8 @@ describe("persistScanResult", () => {
 
   test("does not touch findings when the upsert returns no scan id", async () => {
     const { db, recorder } = makeDb({ insertReturning: [] });
-    const { persistScanResult } = await loadModule(db);
 
-    await persistScanResult(artifact, [{ type: "vuln", severity: "low" }], ["grype"]);
+    await persistScanResult(artifact, [{ type: "vuln", severity: "low" }], ["grype"], db);
     // no delete/insert of findings without a scan id
     expect(recorder.calls.map((c) => c.method)).not.toContain("delete");
     expect(recorder.insertValues).toHaveLength(1);
@@ -176,9 +176,13 @@ describe("applyPolicyDecision", () => {
       ...realApp,
       resolveRegistryScanPolicy: async () => ({ mode: "enforce", blockOnSeverity: "medium" }),
     }));
-    const { applyPolicyDecision } = await loadModule(db);
 
-    await applyPolicyDecision(artifact, repo, [{ type: "vuln", severity: "high", cvssScore: 8 }]);
+    await applyPolicyDecision(
+      artifact,
+      repo,
+      [{ type: "vuln", severity: "high", cvssScore: 8 }],
+      db,
+    );
 
     const update = recorder.calls.find((c) => c.method === "set");
     const payload = update?.args[0] as { state: string; policyDecision: Record<string, unknown> };
@@ -195,9 +199,8 @@ describe("applyPolicyDecision", () => {
       ...realApp,
       resolveRegistryScanPolicy: async () => null,
     }));
-    const { applyPolicyDecision } = await loadModule(db);
 
-    await applyPolicyDecision(artifact, repo, []);
+    await applyPolicyDecision(artifact, repo, [], db);
     const update = recorder.calls.find((c) => c.method === "set");
     const payload = update?.args[0] as { state: string };
     expect(payload.state).toBe("clean");
@@ -207,9 +210,8 @@ describe("applyPolicyDecision", () => {
 describe("markSkippedClean", () => {
   test("sets the artifact clean with the skip reason", async () => {
     const { db, recorder } = makeDb();
-    const { markSkippedClean } = await loadModule(db);
 
-    await markSkippedClean(artifact, "package_version_deleted");
+    await markSkippedClean(artifact, "package_version_deleted", db);
     const update = recorder.calls.find((c) => c.method === "set");
     const payload = update?.args[0] as { state: string; policyDecision: Record<string, unknown> };
     expect(payload.state).toBe("clean");
@@ -221,18 +223,16 @@ describe("markSkippedClean", () => {
 describe("recordScanFailure", () => {
   test("no-ops when the artifact no longer exists", async () => {
     const { db, recorder } = makeDb({ selectResult: [] });
-    const { recordScanFailure } = await loadModule(db);
 
-    await recordScanFailure("missing-art", new Error("boom"));
+    await recordScanFailure("missing-art", new Error("boom"), db);
     // only the lookup select ran; no failed-scan insert/update
     expect(recorder.calls.map((c) => c.method)).toEqual(["select", "from", "where", "limit"]);
   });
 
   test("upserts a failed scan row and records the failure on the artifact", async () => {
     const { db, recorder } = makeDb({ selectResult: [artifact] });
-    const { recordScanFailure } = await loadModule(db);
 
-    await recordScanFailure("art-1", new Error("scanner crashed"));
+    await recordScanFailure("art-1", new Error("scanner crashed"), db);
     const methods = recorder.calls.map((c) => c.method);
     expect(methods).toContain("insert");
     expect(methods).toContain("onConflictDoUpdate");
@@ -251,10 +251,9 @@ describe("recordScanFailure", () => {
 
   test("stringifies and truncates non-Error failures", async () => {
     const { db, recorder } = makeDb({ selectResult: [artifact] });
-    const { recordScanFailure } = await loadModule(db);
 
     const long = "x".repeat(5000);
-    await recordScanFailure("art-1", long);
+    await recordScanFailure("art-1", long, db);
     const failedScan = recorder.insertValues[0] as unknown as Record<string, unknown>;
     expect((failedScan.error as string).length).toBe(2000);
   });

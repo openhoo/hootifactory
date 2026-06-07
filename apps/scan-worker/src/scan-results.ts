@@ -20,6 +20,13 @@ import {
 } from "@hootifactory/scan-core";
 import { evaluateScanPolicy, loadPolicy } from "./scan-policy";
 
+/**
+ * Database seam for the persistence helpers, defaulting to the real
+ * `@hootifactory/db` `db`. Tests inject a fake so no real connection is opened;
+ * production call sites omit it and use the real handle.
+ */
+export type ScanResultsDb = typeof db;
+
 // Shared pg unique-key for the scans table so the success upsert and the
 // failure upsert stay byte-for-byte aligned (drift would break idempotency).
 const SCAN_CONFLICT_TARGET = [
@@ -42,6 +49,7 @@ export async function persistScanResult(
   art: typeof artifacts.$inferSelect,
   results: NormalizedFinding[],
   scannersRun: readonly string[],
+  dbClient: ScanResultsDb = db,
 ): Promise<void> {
   const dedupKey = {
     artifactId: art.id,
@@ -59,7 +67,7 @@ export async function persistScanResult(
       "scan.findings.count": results.length,
     },
     () =>
-      db
+      dbClient
         .insert(scans)
         .values({
           ...dedupKey,
@@ -84,9 +92,9 @@ export async function persistScanResult(
       "scan.persist_findings",
       { "scan.id": scanId, "scan.findings.count": results.length },
       async () => {
-        await db.delete(findingsTable).where(eq(findingsTable.artifactId, art.id));
+        await dbClient.delete(findingsTable).where(eq(findingsTable.artifactId, art.id));
         if (results.length) {
-          await db.insert(findingsTable).values(
+          await dbClient.insert(findingsTable).values(
             results.map((f) => ({
               scanId,
               artifactId: art.id,
@@ -115,13 +123,14 @@ export async function applyPolicyDecision(
   art: typeof artifacts.$inferSelect,
   repo: typeof repositories.$inferSelect,
   results: NormalizedFinding[],
+  dbClient: ScanResultsDb = db,
 ): Promise<void> {
   const policy = await withSpan("scan.load_policy", { "registry.repository.name": repo.name }, () =>
     loadPolicy(repo.orgId, repo.name),
   );
   const policyEvaluation = evaluateScanPolicy(results, policy);
 
-  await db
+  await dbClient
     .update(artifacts)
     .set({
       state: policyEvaluation.state,
@@ -153,9 +162,10 @@ export async function applyPolicyDecision(
 export async function markSkippedClean(
   art: typeof artifacts.$inferSelect,
   reason: string,
+  dbClient: ScanResultsDb = db,
 ): Promise<void> {
   addSpanEvent("scan.skipped", { "scan.skip_reason": reason });
-  await db
+  await dbClient
     .update(artifacts)
     .set({
       state: ARTIFACT_STATE.clean,
@@ -174,13 +184,17 @@ export async function markSkippedClean(
  * scan failure is observable (and recoverable on retry) instead of silently
  * leaving the artifact 'pending'.
  */
-export async function recordScanFailure(artifactId: string, err: unknown): Promise<void> {
+export async function recordScanFailure(
+  artifactId: string,
+  err: unknown,
+  dbClient: ScanResultsDb = db,
+): Promise<void> {
   const [art] = await withSpan("scan.record_failure", { "artifact.id": artifactId }, () =>
-    db.select().from(artifacts).where(eq(artifacts.id, artifactId)).limit(1),
+    dbClient.select().from(artifacts).where(eq(artifacts.id, artifactId)).limit(1),
   );
   if (!art) return;
   const message = (err instanceof Error ? err.message : String(err)).slice(0, 2000);
-  await db
+  await dbClient
     .insert(scans)
     .values({
       artifactId: art.id,
@@ -194,7 +208,7 @@ export async function recordScanFailure(artifactId: string, err: unknown): Promi
       target: SCAN_CONFLICT_TARGET,
       set: { status: SCAN_STATUS.failed, error: message, finishedAt: new Date() },
     });
-  await db
+  await dbClient
     .update(artifacts)
     .set({
       policyDecision: {

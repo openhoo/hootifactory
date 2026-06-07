@@ -14,6 +14,17 @@ import {
   claimedScanIntentsFromExecute,
 } from "./scan-outbox-rows";
 
+/**
+ * Backend seams for the claim/process loop, all defaulting to the real
+ * `@hootifactory/db` `db` and `./pipeline` helpers so production behavior is
+ * unchanged. Tests inject fakes so no function ever opens a real connection.
+ */
+export interface ScanLoopDeps {
+  db?: typeof db;
+  processScan?: typeof processScan;
+  recordScanFailure?: typeof recordScanFailure;
+}
+
 /** Tunables for the scan-worker claim/process loop and its maintenance sweeps. */
 export interface ScanWorkerConfig {
   batchSize: number;
@@ -34,8 +45,11 @@ export interface ScanWorkerConfig {
  * SKIP LOCKED, stamping each with an incremented attempts count that doubles as the
  * optimistic-concurrency token for the terminal write.
  */
-export async function claimScanIntents(limit: number): Promise<ClaimedScanIntent[]> {
-  const result = await db.execute(sql`
+export async function claimScanIntents(
+  limit: number,
+  dbClient: typeof db = db,
+): Promise<ClaimedScanIntent[]> {
+  const result = await dbClient.execute(sql`
     with claimed as (
       select id
       from scan_outbox
@@ -61,8 +75,11 @@ export async function claimScanIntents(limit: number): Promise<ClaimedScanIntent
 // to 'pending' and another worker re-claimed it (advancing attempts), or a reclaim
 // moved it out of 'processing', the filter no longer matches, the UPDATE is a no-op,
 // and a stale worker cannot clobber the newer attempt or a re-requested rescan.
-export async function markSucceeded(intent: ClaimedScanIntent): Promise<void> {
-  await db
+export async function markSucceeded(
+  intent: ClaimedScanIntent,
+  dbClient: typeof db = db,
+): Promise<void> {
+  await dbClient
     .update(scanOutbox)
     .set({
       status: SCAN_OUTBOX_STATUS.succeeded,
@@ -77,10 +94,11 @@ export async function markFailed(
   intent: ClaimedScanIntent,
   err: unknown,
   maxAttempts: number,
+  dbClient: typeof db = db,
 ): Promise<void> {
   const error = err instanceof Error ? err.message : String(err);
   const retry = intent.attempts < maxAttempts;
-  await db
+  await dbClient
     .update(scanOutbox)
     .set({
       status: retry ? SCAN_OUTBOX_STATUS.pending : SCAN_OUTBOX_STATUS.failed,
@@ -136,13 +154,14 @@ export async function sweepBlobs(batchSize: number, graceSeconds: number): Promi
 export async function reclaimStuckScans(
   timeoutSeconds: number,
   maxAttempts: number,
+  dbClient: typeof db = db,
 ): Promise<void> {
   try {
     const reclaimed = await withSpan(
       "scan.outbox.reclaim_stuck",
       { "scan.reclaim.timeout_seconds": timeoutSeconds },
       () =>
-        db
+        dbClient
           .update(scanOutbox)
           .set({
             // attempts was already incremented at claim time, so mirror markFailed:
@@ -179,7 +198,11 @@ export async function processClaimedIntent(
   intent: ClaimedScanIntent,
   scannerRuntime: ScannerRuntime,
   maxAttempts: number,
+  deps: ScanLoopDeps = {},
 ): Promise<void> {
+  const dbClient = deps.db ?? db;
+  const runScan = deps.processScan ?? processScan;
+  const recordFailure = deps.recordScanFailure ?? recordScanFailure;
   return withSpan(
     "scan.outbox.process",
     {
@@ -189,22 +212,22 @@ export async function processClaimedIntent(
     },
     async () => {
       try {
-        await processScan(intent.artifactId, scannerRuntime);
-        await markSucceeded(intent);
+        await runScan(intent.artifactId, scannerRuntime);
+        await markSucceeded(intent, dbClient);
       } catch (err) {
         logger.error("scan job failed", {
           artifactId: intent.artifactId,
           attempt: intent.attempts,
           error: err,
         });
-        await recordScanFailure(intent.artifactId, err).catch((recordErr) => {
+        await recordFailure(intent.artifactId, err).catch((recordErr) => {
           logger.error("scan failure recording failed", {
             artifactId: intent.artifactId,
             originalError: err instanceof Error ? err.message : String(err),
             error: recordErr,
           });
         });
-        await markFailed(intent, err, maxAttempts);
+        await markFailed(intent, err, maxAttempts, dbClient);
       }
     },
   );
@@ -214,18 +237,20 @@ export async function processClaimedIntent(
 export async function runScanCycle(
   config: ScanWorkerConfig,
   scannerRuntime: ScannerRuntime,
+  deps: ScanLoopDeps = {},
 ): Promise<number> {
+  const dbClient = deps.db ?? db;
   const intents = await withSpan(
     "scan.outbox.claim",
     { "worker.batch_size": config.batchSize },
-    () => claimScanIntents(config.batchSize),
+    () => claimScanIntents(config.batchSize, dbClient),
   );
   if (intents.length === 0) {
     await sleep(config.pollingIntervalSeconds * 1000);
     return 0;
   }
   await mapWithBoundedConcurrency(intents, config.concurrency, (intent) =>
-    processClaimedIntent(intent, scannerRuntime, config.maxAttempts),
+    processClaimedIntent(intent, scannerRuntime, config.maxAttempts, deps),
   );
   return intents.length;
 }

@@ -11,7 +11,7 @@ import { type RegistryPlugin, registryPlugins } from "@hootifactory/registry";
 import { loadContentAddressableManifestRaw } from "@hootifactory/registry-application/content";
 import type { NormalizedFinding } from "@hootifactory/scan-core";
 import { runDependencyScanners, type ScannerRuntime } from "@hootifactory/scanner";
-import { scanStoredBytes } from "./scan-bytes";
+import { type BlobByteStore, scanStoredBytes } from "./scan-bytes";
 import { collectPackageDependencies } from "./scan-dependencies";
 import { dedupeFindings } from "./scan-policy";
 import { applyPolicyDecision, markSkippedClean, persistScanResult } from "./scan-results";
@@ -28,14 +28,36 @@ export { mapWithBoundedConcurrency };
 
 const MANIFEST_REFERENCE_SCAN_CONCURRENCY = 3;
 
+/**
+ * Backend + collaborator seams for the scan pipeline. Every field defaults to the
+ * real implementation (the `@hootifactory/db` `db` / `@hootifactory/storage`
+ * `blobStore`, the registry-plugin lookup, the CAS manifest loader, and the
+ * worker's own scan-bytes/scan-dependencies/scan-results collaborators), so
+ * production behavior is unchanged. Tests inject fakes so the orchestration never
+ * opens a real connection — and, just as importantly, without process-global
+ * `mock.module`, which leaks across the package's parallel test files.
+ */
+export interface ScanPipelineDeps {
+  db?: typeof db;
+  blobStore?: BlobByteStore;
+  lookupRegistryPlugin?: (moduleId: string) => RegistryPlugin | undefined;
+  loadContentAddressableManifestRaw?: typeof loadContentAddressableManifestRaw;
+  scanStoredBytes?: typeof scanStoredBytes;
+  collectPackageDependencies?: typeof collectPackageDependencies;
+  persistScanResult?: typeof persistScanResult;
+  applyPolicyDecision?: typeof applyPolicyDecision;
+  markSkippedClean?: typeof markSkippedClean;
+}
+
 /** Run the scan pipeline for one artifact and apply the policy decision. */
 export async function processScan(
   artifactId: string,
   scannerRuntime: ScannerRuntime = scannerRuntimeFromEnv(),
+  deps: ScanPipelineDeps = {},
 ): Promise<void> {
   await withLogAttributes({ "artifact.id": artifactId }, async () => {
     await withSpan("scan.process_artifact", { "artifact.id": artifactId }, async () => {
-      await processScanInner(artifactId, scannerRuntime);
+      await processScanInner(artifactId, scannerRuntime, deps);
     });
   });
 }
@@ -47,9 +69,13 @@ interface ScanContext {
 }
 
 /** Load and validate the artifact + repository, recording span/log state. */
-async function loadScanContext(artifactId: string): Promise<ScanContext | null> {
+async function loadScanContext(
+  artifactId: string,
+  dbClient: typeof db,
+  lookupRegistryPlugin: (moduleId: string) => RegistryPlugin | undefined,
+): Promise<ScanContext | null> {
   const [art] = await withSpan("scan.load_artifact", { "artifact.id": artifactId }, () =>
-    db.select().from(artifacts).where(eq(artifacts.id, artifactId)).limit(1),
+    dbClient.select().from(artifacts).where(eq(artifacts.id, artifactId)).limit(1),
   );
   if (!art) {
     addSpanEvent("scan.artifact_missing", { "artifact.id": artifactId });
@@ -64,7 +90,8 @@ async function loadScanContext(artifactId: string): Promise<ScanContext | null> 
   const [repo] = await withSpan(
     "scan.load_repository",
     { "registry.repository.id": art.repositoryId },
-    () => db.select().from(repositories).where(eq(repositories.id, art.repositoryId)).limit(1),
+    () =>
+      dbClient.select().from(repositories).where(eq(repositories.id, art.repositoryId)).limit(1),
   );
   if (!repo) {
     addSpanEvent("scan.repository_missing", { "registry.repository.id": art.repositoryId });
@@ -76,7 +103,7 @@ async function loadScanContext(artifactId: string): Promise<ScanContext | null> 
     "registry.repository.id": repo.id,
     "registry.repository.name": repo.name,
   });
-  const module = registryPlugins.lookup(repo.moduleId);
+  const module = lookupRegistryPlugin(repo.moduleId);
   if (!module) {
     addSpanEvent("scan.registry_module_missing", { "registry.module.id": repo.moduleId });
     throw new Error(`registry module is not registered: ${repo.moduleId}`);
@@ -90,19 +117,36 @@ async function loadScanContext(artifactId: string): Promise<ScanContext | null> 
   return { art, repo, module };
 }
 
-async function processScanInner(artifactId: string, scannerRuntime: ScannerRuntime): Promise<void> {
-  const context = await loadScanContext(artifactId);
+async function processScanInner(
+  artifactId: string,
+  scannerRuntime: ScannerRuntime,
+  pipelineDeps: ScanPipelineDeps,
+): Promise<void> {
+  const dbClient = pipelineDeps.db ?? db;
+  const store = pipelineDeps.blobStore;
+  const lookupRegistryPlugin =
+    pipelineDeps.lookupRegistryPlugin ?? ((moduleId) => registryPlugins.lookup(moduleId));
+  const loadManifestRaw =
+    pipelineDeps.loadContentAddressableManifestRaw ?? loadContentAddressableManifestRaw;
+  const scanBytes = pipelineDeps.scanStoredBytes ?? scanStoredBytes;
+  const collectDeps = pipelineDeps.collectPackageDependencies ?? collectPackageDependencies;
+  const persist = pipelineDeps.persistScanResult ?? persistScanResult;
+  const applyPolicy = pipelineDeps.applyPolicyDecision ?? applyPolicyDecision;
+  const markSkipped = pipelineDeps.markSkippedClean ?? markSkippedClean;
+
+  const context = await loadScanContext(artifactId, dbClient, lookupRegistryPlugin);
   if (!context) return;
   const { art, repo, module } = context;
   const artName = art.name;
   const artVersion = art.version;
   const repoId = repo.id;
 
-  const { deps, osvEcosystem, purlType } = await collectPackageDependencies({
+  const { deps, osvEcosystem, purlType } = await collectDeps({
     repositoryId: repo.id,
     module,
     artifactName: art.name,
     artifactVersion: art.version,
+    db: pipelineDeps.db,
   });
 
   const found: NormalizedFinding[] = [];
@@ -116,11 +160,12 @@ async function processScanInner(artifactId: string, scannerRuntime: ScannerRunti
     digest: string,
     opts: { allowMissing?: boolean } = {},
   ): Promise<boolean> {
-    const result = await scanStoredBytes({
+    const result = await scanBytes({
       digest,
       scannerRuntime,
       scannedBlobDigests,
       allowMissing: opts.allowMissing,
+      blobStore: store,
     });
     found.push(...result.findings);
     if (result.scannedPayload) scannedBytePayload = true;
@@ -147,7 +192,7 @@ async function processScanInner(artifactId: string, scannerRuntime: ScannerRunti
             return;
           }
           seen.add(manifestDigest);
-          const manifest = await loadContentAddressableManifestRaw({
+          const manifest = await loadManifestRaw({
             repositoryId: repoId,
             digest: manifestDigest,
           });
@@ -204,7 +249,7 @@ async function processScanInner(artifactId: string, scannerRuntime: ScannerRunti
 
   async function isDeletedPackageVersion(): Promise<boolean> {
     if (!artName || !artVersion) return false;
-    const [version] = await db
+    const [version] = await dbClient
       .select({ deletedAt: packageVersions.deletedAt })
       .from(packages)
       .innerJoin(packageVersions, eq(packageVersions.packageId, packages.id))
@@ -232,13 +277,14 @@ async function processScanInner(artifactId: string, scannerRuntime: ScannerRunti
   }
   if (!scannedBytePayload && Object.keys(deps).length === 0) {
     if (await isDeletedPackageVersion()) {
-      await markSkippedClean(art, "package_version_deleted");
+      await markSkipped(art, "package_version_deleted", dbClient);
       return;
     }
     if (scannedManifestGraph && manifestReferenceCount === 0) {
-      await markSkippedClean(
+      await markSkipped(
         art,
         manifestGraph?.noPayloadReason ?? "manifest_graph_no_scannable_payload",
+        dbClient,
       );
       return;
     }
@@ -276,12 +322,13 @@ async function processScanInner(artifactId: string, scannerRuntime: ScannerRunti
   const results = dedupeFindings(found);
   setActiveSpanAttributes({ "scan.findings.count": results.length });
 
-  await persistScanResult(
+  await persist(
     art,
     results,
     scannerRuntime.scanners
       .filter((scanner) => scanner.available)
       .map((scanner) => scanner.plugin.id),
+    dbClient,
   );
-  await applyPolicyDecision(art, repo, results);
+  await applyPolicy(art, repo, results, dbClient);
 }

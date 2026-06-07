@@ -1,13 +1,17 @@
 import { afterAll, describe, expect, mock, test } from "bun:test";
+import type { ScannerRuntime } from "@hootifactory/scanner";
 
 /**
  * worker.ts is the thin scan-worker entrypoint: read config, wire the health
  * server + shutdown lifecycle + maintenance scheduler, then drive the claim/process
- * loop from worker-loop.ts. It has no exports and its top-level loop runs only on
- * first module evaluation, so it is covered by importing it ONCE with every boundary
- * stubbed and the shutdown controller rigged to permit a single loop iteration. The
- * loop body's real work lives in worker-loop.ts (unit-tested separately); here we
- * only assert the entrypoint wires config + scheduler + cycle correctly.
+ * loop from worker-loop.ts. Its auto-start is guarded by import.meta.main, so the
+ * test imports the exported runScanWorker and invokes it ONCE with its loop
+ * collaborators INJECTED (not via process-global mock.module of ./pipeline /
+ * ./worker-loop, which leaked into the sibling suites) and the shutdown controller
+ * rigged to permit a single loop iteration. Only the genuinely external boundaries
+ * (queue / observability / plugin loaders) are stubbed at the module level. The loop
+ * body's real work lives in worker-loop.ts (unit-tested separately); here we only
+ * assert the entrypoint wires config + scheduler + cycle correctly.
  */
 
 interface Captured {
@@ -76,30 +80,39 @@ await (async () => {
     },
   }));
 
+  // Spread the real modules so overriding the loader entrypoints never strips
+  // other exports (e.g. createScannerRuntime) that sibling test files load through
+  // the same process-global module registry.
+  const realRegistryRuntime = await import("@hootifactory/registry-runtime");
   await mock.module("@hootifactory/registry-runtime", () => ({
+    ...realRegistryRuntime,
     loadConfiguredRegistryPlugins: () => {},
   }));
+  const realScannerRuntime = await import("@hootifactory/scanner-runtime");
   await mock.module("@hootifactory/scanner-runtime", () => ({
+    ...realScannerRuntime,
     loadConfiguredScanners: () => ({ registered: [], unknown: ["typo-scanner"] }),
   }));
-  await mock.module("./pipeline", () => ({
-    scannerRuntimeFromEnv: () => ({
-      options: {},
-      scanners: [{ plugin: { id: "heuristic" }, available: true, config: null }],
-    }),
-  }));
-  await mock.module("./worker-loop", () => ({
+
+  // Inject the loop collaborators rather than mock.module-ing ./pipeline /
+  // ./worker-loop (process-global; leaked into the sibling suites). worker.ts's
+  // auto-start is guarded by import.meta.main, so importing it here is inert.
+  const { runScanWorker } = await import("./worker");
+  await runScanWorker({
+    scannerRuntimeFromEnv: () =>
+      ({
+        options: {},
+        scanners: [{ plugin: { id: "heuristic" }, available: true, config: null }],
+      }) as unknown as ScannerRuntime,
     reapExpiredUploads: async () => {},
     sweepBlobs: async () => {},
     reclaimStuckScans: async () => {},
-    runScanCycle: async (config: unknown) => {
+    runScanCycle: (async (config: unknown) => {
       captured.cycleCount += 1;
       captured.cycleConfig = config;
       return 0;
-    },
-  }));
-
-  await import("./worker");
+    }) as typeof import("./worker-loop").runScanCycle,
+  });
 })();
 
 afterAll(() => {

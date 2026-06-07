@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, mock, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import type { RegistryPlugin } from "@hootifactory/registry";
+import { collectPackageDependencies } from "./scan-dependencies";
 
 function moduleWithScan(scan: RegistryPlugin["scan"]): RegistryPlugin {
   return {
@@ -24,11 +25,13 @@ function moduleWithScan(scan: RegistryPlugin["scan"]): RegistryPlugin {
 }
 
 /**
- * Stub the `@hootifactory/db` `db` handle with a chainable select builder whose
- * awaited result is taken from a queue, so collectPackageDependencies can be driven
- * through the package + version metadata lookups without a database.
+ * Build a fake `db` handle (injected through collectPackageDependencies' `db`
+ * seam — never via process-global `mock.module`, which raced the real handle in
+ * CI) with a chainable select builder whose awaited result is taken from a queue,
+ * so collectPackageDependencies can be driven through the package + version
+ * metadata lookups without a database.
  */
-function makeDb(selectResults: unknown[][]): unknown {
+function makeDb(selectResults: unknown[][]): typeof import("@hootifactory/db").db {
   let call = 0;
   function chain(): unknown {
     const proxy: unknown = new Proxy(
@@ -46,28 +49,18 @@ function makeDb(selectResults: unknown[][]): unknown {
     );
     return proxy;
   }
-  return { select: () => chain() };
+  return { select: () => chain() } as unknown as typeof import("@hootifactory/db").db;
 }
-
-async function loadModule(dbStub: unknown) {
-  const real = await import("@hootifactory/db");
-  await mock.module("@hootifactory/db", () => ({ ...real, db: dbStub }));
-  return import("./scan-dependencies");
-}
-
-afterEach(() => {
-  mock.restore();
-});
 
 describe("scan dependency collection", () => {
   test("returns module default ecosystem when there is no version payload to inspect", async () => {
-    const { collectPackageDependencies } = await loadModule(makeDb([]));
     await expect(
       collectPackageDependencies({
         repositoryId: "repo_1",
         module: moduleWithScan({ defaultOsvEcosystem: "Example" }),
         artifactName: null,
         artifactVersion: null,
+        db: makeDb([]),
       }),
     ).resolves.toEqual({
       deps: {},
@@ -76,13 +69,13 @@ describe("scan dependency collection", () => {
   });
 
   test("stays generic when a module has no scan provider", async () => {
-    const { collectPackageDependencies } = await loadModule(makeDb([]));
     await expect(
       collectPackageDependencies({
         repositoryId: "repo_1",
         module: moduleWithScan(undefined),
         artifactName: "package",
         artifactVersion: "1.0.0",
+        db: makeDb([]),
       }),
     ).resolves.toEqual({
       deps: {},
@@ -91,11 +84,6 @@ describe("scan dependency collection", () => {
   });
 
   test("resolves dependency graph from stored version metadata", async () => {
-    // First select returns the package row, second returns the version metadata.
-    const { collectPackageDependencies } = await loadModule(
-      makeDb([[{ id: "pkg_1" }], [{ metadata: { dependencies: { leftpad: "1.2.3" } } }]]),
-    );
-
     const scan: RegistryPlugin["scan"] = {
       defaultOsvEcosystem: "npm",
       dependencyGraph: ({ metadata }) => {
@@ -110,6 +98,8 @@ describe("scan dependency collection", () => {
         module: moduleWithScan(scan),
         artifactName: "package",
         artifactVersion: "1.0.0",
+        // First select returns the package row, second the version metadata.
+        db: makeDb([[{ id: "pkg_1" }], [{ metadata: { dependencies: { leftpad: "1.2.3" } } }]]),
       }),
     ).resolves.toEqual({
       deps: { leftpad: "1.2.3" },
@@ -119,10 +109,6 @@ describe("scan dependency collection", () => {
   });
 
   test("falls back to the module default ecosystem when the graph omits one", async () => {
-    const { collectPackageDependencies } = await loadModule(
-      makeDb([[{ id: "pkg_1" }], [{ metadata: {} }]]),
-    );
-
     const scan: RegistryPlugin["scan"] = {
       defaultOsvEcosystem: "Packagist",
       dependencyGraph: () => ({ deps: { acme: "^1" } }),
@@ -134,6 +120,7 @@ describe("scan dependency collection", () => {
         module: moduleWithScan(scan),
         artifactName: "package",
         artifactVersion: "2.0.0",
+        db: makeDb([[{ id: "pkg_1" }], [{ metadata: {} }]]),
       }),
     ).resolves.toEqual({
       deps: { acme: "^1" },
@@ -143,9 +130,6 @@ describe("scan dependency collection", () => {
   });
 
   test("returns defaults when the package row is missing", async () => {
-    // No package row → loadPackageVersionMetadata returns null, graph never runs.
-    const { collectPackageDependencies } = await loadModule(makeDb([[]]));
-
     const scan: RegistryPlugin["scan"] = {
       defaultOsvEcosystem: "npm",
       dependencyGraph: () => ({ deps: { should: "not-run" } }),
@@ -157,6 +141,8 @@ describe("scan dependency collection", () => {
         module: moduleWithScan(scan),
         artifactName: "package",
         artifactVersion: "1.0.0",
+        // No package row → loadPackageVersionMetadata returns null, graph never runs.
+        db: makeDb([[]]),
       }),
     ).resolves.toEqual({
       deps: {},
@@ -165,12 +151,6 @@ describe("scan dependency collection", () => {
   });
 
   test("treats invalid version metadata as an empty record", async () => {
-    // Package found, but the version row has non-object metadata: the safeParse
-    // fallback yields {} so the graph sees an empty metadata object.
-    const { collectPackageDependencies } = await loadModule(
-      makeDb([[{ id: "pkg_1" }], [{ metadata: "not-an-object" }]]),
-    );
-
     const seen: unknown[] = [];
     const scan: RegistryPlugin["scan"] = {
       defaultOsvEcosystem: "npm",
@@ -180,11 +160,14 @@ describe("scan dependency collection", () => {
       },
     };
 
+    // Package found, but the version row has non-object metadata: the safeParse
+    // fallback yields {} so the graph sees an empty metadata object.
     await collectPackageDependencies({
       repositoryId: "repo_1",
       module: moduleWithScan(scan),
       artifactName: "package",
       artifactVersion: "1.0.0",
+      db: makeDb([[{ id: "pkg_1" }], [{ metadata: "not-an-object" }]]),
     });
     expect(seen).toEqual([{}]);
   });

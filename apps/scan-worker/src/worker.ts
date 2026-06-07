@@ -7,16 +7,30 @@ import {
 } from "@hootifactory/queue";
 import { loadConfiguredRegistryPlugins } from "@hootifactory/registry-runtime";
 import { loadConfiguredScanners } from "@hootifactory/scanner-runtime";
-import { scannerRuntimeFromEnv } from "./pipeline";
+import { scannerRuntimeFromEnv as defaultScannerRuntimeFromEnv } from "./pipeline";
 import {
-  reapExpiredUploads,
-  reclaimStuckScans,
-  runScanCycle,
+  reapExpiredUploads as defaultReapExpiredUploads,
+  reclaimStuckScans as defaultReclaimStuckScans,
+  runScanCycle as defaultRunScanCycle,
+  sweepBlobs as defaultSweepBlobs,
   type ScanWorkerConfig,
-  sweepBlobs,
 } from "./worker-loop";
 
 const workerRole = "scan-worker";
+
+/**
+ * Loop collaborators, all defaulting to the real `./pipeline` / `./worker-loop`
+ * implementations so production behavior is unchanged. The unit test injects fakes
+ * here instead of mutating the process-global module registry with `mock.module`,
+ * which leaked into the sibling pipeline/worker-loop suites and made them flaky.
+ */
+export interface ScanWorkerDeps {
+  scannerRuntimeFromEnv?: typeof defaultScannerRuntimeFromEnv;
+  reapExpiredUploads?: typeof defaultReapExpiredUploads;
+  sweepBlobs?: typeof defaultSweepBlobs;
+  reclaimStuckScans?: typeof defaultReclaimStuckScans;
+  runScanCycle?: typeof defaultRunScanCycle;
+}
 
 /**
  * Bootstrap and drive the scan-worker: initialize observability + plugins, resolve
@@ -29,7 +43,13 @@ const workerRole = "scan-worker";
  * import-time side effects do not interleave reliably with `mock.module` under
  * `bun test --isolate`.
  */
-export async function runScanWorker(): Promise<void> {
+export async function runScanWorker(deps: ScanWorkerDeps = {}): Promise<void> {
+  const scannerRuntimeFromEnv = deps.scannerRuntimeFromEnv ?? defaultScannerRuntimeFromEnv;
+  const reapExpiredUploads = deps.reapExpiredUploads ?? defaultReapExpiredUploads;
+  const sweepBlobs = deps.sweepBlobs ?? defaultSweepBlobs;
+  const reclaimStuckScans = deps.reclaimStuckScans ?? defaultReclaimStuckScans;
+  const runScanCycle = deps.runScanCycle ?? defaultRunScanCycle;
+
   initializeObservability({ serviceRole: workerRole });
   loadConfiguredRegistryPlugins();
   const loadedScanners = loadConfiguredScanners();
@@ -124,4 +144,10 @@ export async function runScanWorker(): Promise<void> {
   }
 }
 
-await runScanWorker();
+// Auto-start only when run as the process entrypoint. Under `bun test` the file is
+// imported (not the main module), so the unit test can drive a single, deterministic
+// loop iteration by calling runScanWorker() directly with injected collaborators —
+// without the import-time loop racing the test's setup.
+if (import.meta.main) {
+  await runScanWorker();
+}

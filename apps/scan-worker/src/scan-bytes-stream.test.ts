@@ -8,9 +8,12 @@ import type {
 
 /**
  * Exercises scanStoredBytes — the per-blob streaming + content-scanner fanout — by
- * stubbing the byte store (`@hootifactory/storage`), config env (`@hootifactory/config`)
- * and node fs so no real I/O happens. The real scanner orchestration helpers
- * (streamConsumersFor / runContentScanners) run unmodified against in-memory plugins.
+ * injecting a fake byte store through scanStoredBytes' `blobStore` seam (so no real
+ * `@hootifactory/storage`/S3 connection is ever opened — `mock.module` of storage
+ * is process-global and raced the real handle in CI), and stubbing config env
+ * (`@hootifactory/config`) and node fs so no real disk I/O happens. The real scanner
+ * orchestration helpers (streamConsumersFor / runContentScanners) run unmodified
+ * against in-memory plugins.
  */
 
 interface BlobStub {
@@ -73,17 +76,29 @@ function runtime(scanners: ResolvedScanner[], options: ScannerRuntimeOptions = {
 
 const writtenChunks: Uint8Array[] = [];
 
-async function loadModule(blob: BlobStub, maxBytes = 1024) {
+/** scanStoredBytes bound to the test's fake blob store so no real S3 is reached. */
+type BoundScanStoredBytes = (
+  input: Omit<import("./scan-bytes").StoredByteScanInput, "blobStore">,
+) => ReturnType<typeof import("./scan-bytes").scanStoredBytes>;
+
+async function loadModule(
+  blob: BlobStub,
+  maxBytes = 1024,
+): Promise<{ scanStoredBytes: BoundScanStoredBytes }> {
   writtenChunks.length = 0;
-  const realStorage = await import("@hootifactory/storage");
-  await mock.module("@hootifactory/storage", () => ({ ...realStorage, blobStore: blob }));
+  // The byte store is injected (below), never mocked at the module level.
+  const fakeStore = blob as unknown as import("./scan-bytes").BlobByteStore;
   const realConfig = await import("@hootifactory/config");
   await mock.module("@hootifactory/config", () => ({
     ...realConfig,
     env: { ...realConfig.env, SCAN_MAX_BYTES: maxBytes, SCAN_SCRATCH_DIR: "/tmp/scan-scratch" },
   }));
-  // Keep the content-scanner branch off real disk.
+  // Keep the content-scanner branch off real disk. Spread the real node modules so
+  // overriding a few functions never strips other exports (e.g. `unlink`) that
+  // sibling test files load through the same process-global module registry.
+  const realFs = await import("node:fs");
   await mock.module("node:fs", () => ({
+    ...realFs,
     createWriteStream: () => ({
       write: (chunk: Uint8Array, cb: (err?: Error | null) => void) => {
         writtenChunks.push(chunk);
@@ -93,12 +108,17 @@ async function loadModule(blob: BlobStub, maxBytes = 1024) {
       destroy: () => {},
     }),
   }));
+  const realFsPromises = await import("node:fs/promises");
   await mock.module("node:fs/promises", () => ({
+    ...realFsPromises,
     mkdir: async () => undefined,
     mkdtemp: async (prefix: string) => `${prefix}xxxxxx`,
     rm: async () => undefined,
   }));
-  return import("./scan-bytes");
+  const mod = await import("./scan-bytes");
+  return {
+    scanStoredBytes: (input) => mod.scanStoredBytes({ ...input, blobStore: fakeStore }),
+  };
 }
 
 afterEach(() => {

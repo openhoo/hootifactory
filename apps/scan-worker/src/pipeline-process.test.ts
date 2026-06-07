@@ -1,13 +1,17 @@
-import { afterEach, describe, expect, mock, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import type { NormalizedFinding } from "@hootifactory/scan-core";
 import type { ScannerRuntime } from "@hootifactory/scanner";
 
 /**
  * Drives processScan (and its private processScanInner) end-to-end without a
- * database or real scanners by stubbing the DB selects, the registry-plugin
- * lookup, the CAS manifest loader, and the worker's own collaborator modules
- * (scan-bytes / scan-dependencies / scan-results). Each test asserts which
- * persistence path the orchestration drives for a given artifact shape.
+ * database or real scanners. The DB is supplied through processScan's injectable
+ * `db` seam (a fake select builder) so the orchestration never opens a real
+ * connection — rather than mocking the process-global @hootifactory/db module,
+ * which raced the real handle in CI. The registry-plugin lookup, the CAS manifest
+ * loader, and the worker's own collaborator modules (scan-bytes /
+ * scan-dependencies / scan-results) are stubbed because they are pure in-memory
+ * fakes that touch no real backend. Each test asserts which persistence path the
+ * orchestration drives for a given artifact shape.
  */
 
 interface Recorded {
@@ -89,9 +93,12 @@ interface SetupOpts {
   manifest?: (digest: string) => Promise<{ raw: string } | null>;
 }
 
+/** processScan bound to the test's fully-injected collaborators (no module mocks). */
+type BoundProcessScan = (artifactId: string, scannerRuntime: ScannerRuntime) => Promise<void>;
+
 async function setup(
   opts: SetupOpts,
-): Promise<{ recorded: Recorded; processScan: typeof import("./pipeline").processScan }> {
+): Promise<{ recorded: Recorded; processScan: BoundProcessScan }> {
   const recorded: Recorded = {
     scanStoredBytesCalls: [],
     dependencyTargets: [],
@@ -101,28 +108,20 @@ async function setup(
     skipped: null,
   };
 
-  const realDb = await import("@hootifactory/db");
-  await mock.module("@hootifactory/db", () => ({ ...realDb, db: makeDb(opts.selectResults) }));
-
-  const realRegistry = await import("@hootifactory/registry");
-  await mock.module("@hootifactory/registry", () => ({
-    ...realRegistry,
-    registryPlugins: { lookup: () => opts.module },
-  }));
-
-  const realContent = await import("@hootifactory/registry-application/content");
-  await mock.module("@hootifactory/registry-application/content", () => ({
-    ...realContent,
-    loadContentAddressableManifestRaw: async ({ digest }: { digest: string }) => {
+  // Every backend + collaborator is injected through processScan's `deps` seam, so
+  // the orchestration touches no real DB/S3 and no process-global module mock can
+  // leak into (or out of) this file's parallel siblings.
+  const deps: import("./pipeline").ScanPipelineDeps = {
+    db: makeDb(opts.selectResults) as typeof import("@hootifactory/db").db,
+    lookupRegistryPlugin: () =>
+      opts.module as ReturnType<
+        NonNullable<import("./pipeline").ScanPipelineDeps["lookupRegistryPlugin"]>
+      >,
+    loadContentAddressableManifestRaw: (async ({ digest }: { digest: string }) => {
       recorded.manifestLoads.push(digest);
       return opts.manifest ? opts.manifest(digest) : null;
-    },
-  }));
-
-  await mock.module("./scan-bytes", () => ({
-    GATING_FINDING_TYPES: new Set(["malware"]),
-    uncoveredGatingFindingTypes: () => [],
-    scanStoredBytes: async (input: { digest: string }) => {
+    }) as import("./pipeline").ScanPipelineDeps["loadContentAddressableManifestRaw"],
+    scanStoredBytes: (async (input: { digest: string }) => {
       recorded.scanStoredBytesCalls.push(input.digest);
       return (
         opts.scanStoredBytes?.(input.digest) ?? {
@@ -131,48 +130,36 @@ async function setup(
           findings: [],
         }
       );
-    },
-  }));
-
-  await mock.module("./scan-dependencies", () => ({
-    collectPackageDependencies: async (target: unknown) => {
+    }) as import("./pipeline").ScanPipelineDeps["scanStoredBytes"],
+    collectPackageDependencies: (async (target: unknown) => {
       recorded.dependencyTargets.push(target);
       return opts.deps ?? { deps: {}, osvEcosystem: "" };
-    },
-  }));
-
-  const realPolicy = await import("./scan-policy");
-  await mock.module("./scan-results", () => ({
-    persistScanResult: async (
+    }) as import("./pipeline").ScanPipelineDeps["collectPackageDependencies"],
+    persistScanResult: (async (
       _art: unknown,
       findings: NormalizedFinding[],
       scanners: readonly string[],
     ) => {
       recorded.persisted = { findings, scanners };
-    },
-    applyPolicyDecision: async (_art: unknown, _repo: unknown, findings: NormalizedFinding[]) => {
+    }) as import("./pipeline").ScanPipelineDeps["persistScanResult"],
+    applyPolicyDecision: (async (_art: unknown, _repo: unknown, findings: NormalizedFinding[]) => {
       recorded.policyApplied = { findings };
-    },
-    markSkippedClean: async (_art: unknown, reason: string) => {
+    }) as import("./pipeline").ScanPipelineDeps["applyPolicyDecision"],
+    markSkippedClean: (async (_art: unknown, reason: string) => {
       recorded.skipped = reason;
-    },
-    recordScanFailure: async () => {},
-  }));
-  // keep dedupeFindings real
-  void realPolicy;
+    }) as import("./pipeline").ScanPipelineDeps["markSkippedClean"],
+  };
 
   const { processScan } = await import("./pipeline");
-  return { recorded, processScan };
+  const boundProcessScan: BoundProcessScan = (artifactId, scannerRuntime) =>
+    processScan(artifactId, scannerRuntime, deps);
+  return { recorded, processScan: boundProcessScan };
 }
 
 const moduleNoScan = {
   id: "test",
   scan: undefined,
 };
-
-afterEach(() => {
-  mock.restore();
-});
 
 describe("processScan orchestration", () => {
   test("returns early when the artifact does not exist", async () => {
