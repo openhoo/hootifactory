@@ -1,6 +1,4 @@
 import {
-  basicAuthChallenge,
-  delegateRegistryPlugin,
   Errors,
   type HttpMethod,
   ifNoneMatch,
@@ -10,8 +8,7 @@ import {
   type RegistryRequestContext,
   type RouteMatch,
   readWritePermission,
-  registryCapabilities,
-  registryPlugin,
+  registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
 } from "@hootifactory/registry";
@@ -37,98 +34,8 @@ interface IndexCacheEntry {
  * `<pkg>_<version>.tar.gz`, whose DESCRIPTION we parse for the index. Binary
  * paths under `/bin/...` 404 (no compiled binaries are hosted).
  */
-export class CranAdapter implements RegistryPlugin {
-  readonly id = "cran" as const;
-  readonly capabilities = registryCapabilities("virtualizable");
-  authChallenge = basicAuthChallenge;
+class CranAdapterState {
   private readonly indexCache = new Map<string, IndexCacheEntry>();
-
-  private readonly plugin = registryPlugin(this.id)
-    .module({
-      displayName: "CRAN",
-      mountSegment: "cran",
-      errorResponseKind: "singleError",
-      compressibleHandlers: ["packages"],
-      scan: {
-        defaultOsvEcosystem: "CRAN",
-        dependencyGraph: ({ metadata }) => ({
-          deps: cranDependencyGraph(metadata),
-          osvEcosystem: "CRAN",
-          purlType: "cran",
-        }),
-        referencedDigests: (metadata) =>
-          typeof metadata.blobDigest === "string" ? [metadata.blobDigest] : [],
-      },
-    })
-    .capabilities(this.capabilities)
-    .authChallenge(this.authChallenge)
-    .routes((route) => [
-      // Literal index routes are declared before the `/:filename` catch-all so
-      // they cannot be shadowed (the matcher tries routes in order).
-      route.get("/src/contrib/PACKAGES", "packages", ({ req, ctx }) =>
-        this.packages(false, req, ctx),
-      ),
-      route.get("/src/contrib/PACKAGES.gz", "packagesGz", ({ req, ctx }) =>
-        this.packages(true, req, ctx),
-      ),
-      // R's available.packages()/install.packages() probes PACKAGES.rds FIRST
-      // (preferred over PACKAGES.gz/PACKAGES). This server serves no RDS index,
-      // so the route is registered explicitly to return a deterministic 404 —
-      // documenting the intentional omission and keeping the well-known probe off
-      // the `/:filename` catch-all. R falls back .rds -> .gz -> plain on a clean
-      // 404, so the absence is graceful (mirrors apt's InRelease/Release.gpg 404s).
-      route.get("/src/contrib/PACKAGES.rds", "packagesRds", () => {
-        throw Errors.notFound();
-      }),
-      // Superseded versions are fetched by R tooling (remotes::install_version,
-      // renv, pak) only under `Archive/<pkg>/`. Declared before the
-      // `/src/contrib/:filename` catch-all so the literal `Archive` segment wins.
-      route.get("/src/contrib/Archive/:pkg/:filename", "archiveDownload", ({ params, req, ctx }) =>
-        this.archiveDownload(params.pkg, params.filename, req, ctx),
-      ),
-      route.get("/src/contrib/:filename", "download", ({ params, req, ctx }) =>
-        this.download(params.filename, req, ctx),
-      ),
-      route.put("/src/contrib/:filename", "publish", ({ params, req, ctx }) =>
-        this.publish(params.filename, req, ctx),
-      ),
-      // Binary packages are not hosted; any /bin/... path 404s.
-      route.get("/bin/:path+", "binary", () => {
-        throw Errors.notFound();
-      }),
-    ])
-    .build();
-  private readonly delegate = delegateRegistryPlugin(this.plugin);
-
-  get displayName() {
-    return this.plugin.displayName;
-  }
-  get mountSegment() {
-    return this.plugin.mountSegment;
-  }
-  get repositoryNamePolicy() {
-    return this.plugin.repositoryNamePolicy;
-  }
-  get acceptsRegistryBearerToken() {
-    return this.plugin.acceptsRegistryBearerToken;
-  }
-  get apiKeyHeaders() {
-    return this.plugin.apiKeyHeaders;
-  }
-  get errorResponseKind() {
-    return this.plugin.errorResponseKind;
-  }
-  get compressibleHandlers() {
-    return this.plugin.compressibleHandlers;
-  }
-  get compressibleContentTypes() {
-    return this.plugin.compressibleContentTypes;
-  }
-  get scan() {
-    return this.plugin.scan;
-  }
-
-  routes = this.delegate.routes;
 
   requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
     const permission = readWritePermission(method);
@@ -152,8 +59,6 @@ export class CranAdapter implements RegistryPlugin {
     }
     return permission;
   }
-
-  handle = this.delegate.handle;
 
   /** Build (or reuse a cached) `{ text, gz }` PACKAGES index for this repo. */
   private async index(ctx: RegistryRequestContext): Promise<IndexCacheEntry> {
@@ -184,11 +89,7 @@ export class CranAdapter implements RegistryPlugin {
   }
 
   /** `GET /src/contrib/PACKAGES[.gz]` — the regenerated control-stanza index. */
-  private async packages(
-    gz: boolean,
-    req: Request,
-    ctx: RegistryRequestContext,
-  ): Promise<Response> {
+  async packages(gz: boolean, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const index = await this.index(ctx);
     if (!gz) return textResponseWithEtag(req, index.text, TEXT_PLAIN);
     const etag = `"${new Bun.CryptoHasher("md5").update(index.gz).digest("hex")}"`;
@@ -197,11 +98,7 @@ export class CranAdapter implements RegistryPlugin {
   }
 
   /** `GET /src/contrib/<pkg>_<version>.tar.gz` — serve the stored source tarball. */
-  private download(
-    filenameRaw: string,
-    req: Request,
-    ctx: RegistryRequestContext,
-  ): Promise<Response> {
+  download(filenameRaw: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const parts = parseCranTarballFilename(filenameRaw);
     if (!parts) throw Errors.notFound();
     return this.serveTarball(parts.name, parts.version, req, ctx);
@@ -214,7 +111,7 @@ export class CranAdapter implements RegistryPlugin {
    * the same stored blob the flat download route would. The `<pkg>` path segment
    * must agree with the filename's encoded package name.
    */
-  private archiveDownload(
+  archiveDownload(
     pkgSegment: string,
     filenameRaw: string,
     req: Request,
@@ -248,11 +145,7 @@ export class CranAdapter implements RegistryPlugin {
     });
   }
 
-  private async publish(
-    filenameRaw: string,
-    req: Request,
-    ctx: RegistryRequestContext,
-  ): Promise<Response> {
+  async publish(filenameRaw: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const parts = parseCranTarballFilename(filenameRaw);
     if (!parts) throw Errors.nameInvalid("invalid CRAN tarball filename");
     const res = await handleCranPublish(parts, req, ctx);
@@ -281,4 +174,61 @@ function cranDependencyGraph(metadata: Record<string, unknown>): Record<string, 
   return out;
 }
 
+const cranDefinition = registryAdapter("cran")
+  .stateClass(CranAdapterState)
+  .module((module) =>
+    module
+      .displayName("CRAN")
+      .mount("cran")
+      .capabilities("virtualizable")
+      .errorResponseKind("singleError")
+      .compressibleHandlers("packages"),
+  )
+  .scan({
+    defaultOsvEcosystem: "CRAN",
+    dependencyGraph: ({ metadata }) => ({
+      deps: cranDependencyGraph(metadata),
+      osvEcosystem: "CRAN",
+      purlType: "cran",
+    }),
+    referencedDigests: (metadata) =>
+      typeof metadata.blobDigest === "string" ? [metadata.blobDigest] : [],
+  })
+  .basicAuth()
+  .fromState((state) => state.defaultPermission("requiredPermission"))
+  .routes((route) => [
+    // Literal index routes are declared before the `/:filename` catch-all so
+    // they cannot be shadowed (the matcher tries routes in order).
+    route
+      .get("/src/contrib/PACKAGES", "packages")
+      .calls((state, { req, ctx }) => state.packages(false, req, ctx)),
+    route
+      .get("/src/contrib/PACKAGES.gz", "packagesGz")
+      .calls((state, { req, ctx }) => state.packages(true, req, ctx)),
+    // R's available.packages()/install.packages() probes PACKAGES.rds FIRST
+    // (preferred over PACKAGES.gz/PACKAGES). This server serves no RDS index,
+    // so the route is registered explicitly to return a deterministic 404.
+    route.get("/src/contrib/PACKAGES.rds", "packagesRds").handle(() => {
+      throw Errors.notFound();
+    }),
+    // Superseded versions are fetched by R tooling only under `Archive/<pkg>/`.
+    // Declared before the `/src/contrib/:filename` catch-all.
+    route
+      .get("/src/contrib/Archive/:pkg/:filename", "archiveDownload")
+      .calls((state, { params, req, ctx }) =>
+        state.archiveDownload(params.pkg, params.filename, req, ctx),
+      ),
+    route
+      .get("/src/contrib/:filename", "download")
+      .calls((state, { params, req, ctx }) => state.download(params.filename, req, ctx)),
+    route
+      .put("/src/contrib/:filename", "publish")
+      .calls((state, { params, req, ctx }) => state.publish(params.filename, req, ctx)),
+    // Binary packages are not hosted; any /bin/... path 404s.
+    route.get("/bin/:path+", "binary").handle(() => {
+      throw Errors.notFound();
+    }),
+  ]);
+
+export class CranAdapter extends cranDefinition.adapterClass() {}
 export const cranRegistryPlugin: RegistryPlugin = new CranAdapter();
