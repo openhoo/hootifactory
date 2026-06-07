@@ -1,6 +1,4 @@
 import {
-  basicAuthChallenge,
-  delegateRegistryPlugin,
   Errors,
   type HttpMethod,
   type Permission,
@@ -9,8 +7,7 @@ import {
   type RegistryRequestContext,
   type RouteMatch,
   readWritePermission,
-  registryCapabilities,
-  registryPlugin,
+  registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
 } from "@hootifactory/registry";
@@ -70,84 +67,7 @@ function parseFileHash(hash: string): string {
  * blobs are stored content-addressably; narinfos are assembled on read from the
  * stored metadata.
  */
-export class NixAdapter implements RegistryPlugin {
-  readonly id = "nix" as const;
-  // No `proxyable`: this adapter implements no pull-through ingestion
-  // (`proxyIngest`), so advertising it would be a dishonest capability the host
-  // gates and dispatch would never satisfy. Content-addressed + virtualizable
-  // are genuinely implemented.
-  readonly capabilities = registryCapabilities("contentAddressable", "virtualizable");
-  authChallenge = basicAuthChallenge;
-
-  private readonly plugin = registryPlugin(this.id)
-    .module({
-      displayName: "Nix",
-      mountSegment: "nix",
-      errorResponseKind: "singleError",
-      compressibleHandlers: ["cacheInfo", "narinfo"],
-      scan: {
-        defaultOsvEcosystem: undefined,
-        referencedDigests: (metadata) =>
-          typeof metadata.blobDigest === "string" ? [metadata.blobDigest] : [],
-      },
-    })
-    .capabilities(this.capabilities)
-    .authChallenge(this.authChallenge)
-    .routes((route) => [
-      // Literal/static routes BEFORE the `:storehash.narinfo` catch-all so they
-      // are not shadowed (the matcher tries routes in declared order). HEAD is
-      // served by the application's GET-fallback (it matches the GET route and
-      // strips the body), so no explicit HEAD routes are needed here.
-      route.get("/nix-cache-info", "cacheInfo", ({ req }) => this.cacheInfo(req)),
-      route.get(
-        "/nar/:filename",
-        "nar",
-        ({ params, req, ctx }) => this.serveNar(params.filename, req, ctx),
-        { immutableContentAddressed: true },
-      ),
-      route.put("/nar/:filename", "putNar", ({ params, req, ctx }) =>
-        this.putNar(params.filename, req, ctx),
-      ),
-      route.get("/:narinfo", "narinfo", ({ params, req, ctx }) =>
-        this.narinfo(params.narinfo, req, ctx),
-      ),
-      route.put("/:narinfo", "putNarinfo", ({ params, req, ctx }) =>
-        this.putNarinfo(params.narinfo, req, ctx),
-      ),
-    ])
-    .build();
-  private readonly delegate = delegateRegistryPlugin(this.plugin);
-
-  get displayName() {
-    return this.plugin.displayName;
-  }
-  get mountSegment() {
-    return this.plugin.mountSegment;
-  }
-  get repositoryNamePolicy() {
-    return this.plugin.repositoryNamePolicy;
-  }
-  get acceptsRegistryBearerToken() {
-    return this.plugin.acceptsRegistryBearerToken;
-  }
-  get apiKeyHeaders() {
-    return this.plugin.apiKeyHeaders;
-  }
-  get errorResponseKind() {
-    return this.plugin.errorResponseKind;
-  }
-  get compressibleHandlers() {
-    return this.plugin.compressibleHandlers;
-  }
-  get compressibleContentTypes() {
-    return this.plugin.compressibleContentTypes;
-  }
-  get scan() {
-    return this.plugin.scan;
-  }
-
-  routes = this.delegate.routes;
-
+class NixAdapterState {
   requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
     const permission = readWritePermission(method);
     const handlerId = match?.entry?.handlerId;
@@ -173,21 +93,15 @@ export class NixAdapter implements RegistryPlugin {
     return permission;
   }
 
-  handle = this.delegate.handle;
-
   /** `GET /nix-cache-info` — the static cache descriptor. */
-  private cacheInfo(req: Request): Response {
+  cacheInfo(req: Request): Response {
     return textResponseWithEtag(req, NIX_CACHE_INFO, {
       "content-type": "text/x-nix-cache-info",
     });
   }
 
   /** `GET|HEAD /<storehash>.narinfo` — assemble the narinfo text from stored metadata. */
-  private async narinfo(
-    param: string,
-    req: Request,
-    ctx: RegistryRequestContext,
-  ): Promise<Response> {
+  async narinfo(param: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const rawHash = storeHashFromNarInfoParam(param);
     if (!rawHash) throw Errors.notFound();
     const storeHash = parseStoreHash(rawHash);
@@ -199,11 +113,7 @@ export class NixAdapter implements RegistryPlugin {
   }
 
   /** `GET /nar/<filehash>.nar[.ext]` — serve the content-addressed NAR blob. */
-  private async serveNar(
-    filename: string,
-    req: Request,
-    ctx: RegistryRequestContext,
-  ): Promise<Response> {
+  async serveNar(filename: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const rawHash = fileHashFromNarParam(filename);
     if (!rawHash) throw Errors.notFound();
     const fileHash = parseFileHash(rawHash);
@@ -224,7 +134,7 @@ export class NixAdapter implements RegistryPlugin {
   }
 
   /** `PUT /nar/<filehash>.nar[.ext]` — store the NAR blob content-addressably. */
-  private putNar(filename: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  putNar(filename: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const rawHash = fileHashFromNarParam(filename);
     if (!rawHash) throw Errors.notFound();
     const fileHash = parseFileHash(rawHash);
@@ -232,7 +142,7 @@ export class NixAdapter implements RegistryPlugin {
   }
 
   /** `PUT /<storehash>.narinfo` — persist the narinfo metadata keyed by store hash. */
-  private putNarinfo(param: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  putNarinfo(param: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const rawHash = storeHashFromNarInfoParam(param);
     if (!rawHash) throw Errors.notFound();
     const storeHash = parseStoreHash(rawHash);
@@ -258,4 +168,40 @@ function narBlobDigest(metadata: unknown): string | null {
   return typeof digest === "string" && /^sha256:[a-f0-9]{64}$/.test(digest) ? digest : null;
 }
 
+const nixDefinition = registryAdapter("nix")
+  .stateClass(NixAdapterState)
+  .module((module) =>
+    module
+      .displayName("Nix")
+      .mount("nix")
+      // No proxyable: no pull-through ingestion is implemented.
+      .capabilities("contentAddressable", "virtualizable")
+      .errorResponseKind("singleError")
+      .compressibleHandlers("cacheInfo", "narinfo"),
+  )
+  .scan({
+    defaultOsvEcosystem: undefined,
+    referencedDigests: (metadata) =>
+      typeof metadata.blobDigest === "string" ? [metadata.blobDigest] : [],
+  })
+  .basicAuth()
+  .fromState((state) => state.defaultPermission("requiredPermission"))
+  .routes((route) => [
+    // Literal/static routes before the `:storehash.narinfo` catch-all.
+    route.get("/nix-cache-info", "cacheInfo").calls((state, { req }) => state.cacheInfo(req)),
+    route
+      .immutableGet("/nar/:filename", "nar")
+      .calls((state, { params, req, ctx }) => state.serveNar(params.filename, req, ctx)),
+    route
+      .put("/nar/:filename", "putNar")
+      .calls((state, { params, req, ctx }) => state.putNar(params.filename, req, ctx)),
+    route
+      .get("/:narinfo", "narinfo")
+      .calls((state, { params, req, ctx }) => state.narinfo(params.narinfo, req, ctx)),
+    route
+      .put("/:narinfo", "putNarinfo")
+      .calls((state, { params, req, ctx }) => state.putNarinfo(params.narinfo, req, ctx)),
+  ]);
+
+export class NixAdapter extends nixDefinition.adapterClass() {}
 export const nixRegistryPlugin: RegistryPlugin = new NixAdapter();
