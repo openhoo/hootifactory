@@ -3,6 +3,7 @@ import { aptRegistryPlugin } from "@hootifactory/registry-apt";
 import { cargoRegistryPlugin } from "@hootifactory/registry-cargo";
 import { chocolateyRegistryPlugin } from "@hootifactory/registry-chocolatey";
 import { composerRegistryPlugin } from "@hootifactory/registry-composer";
+import { gitlfsRegistryPlugin } from "@hootifactory/registry-gitlfs";
 import { goRegistryPlugin } from "@hootifactory/registry-go";
 import { homebrewRegistryPlugin } from "@hootifactory/registry-homebrew";
 import { mavenRegistryPlugin } from "@hootifactory/registry-maven";
@@ -49,4 +50,5 @@ export const REGISTRY_PLUGIN_MANIFEST: RegistryPluginEntry[] = [
   { plugin: homebrewRegistryPlugin },
   { plugin: scoopRegistryPlugin },
   { plugin: rpmRegistryPlugin, aliases: ["yum", "dnf"] },
+  { plugin: gitlfsRegistryPlugin, aliases: ["lfs"] },
 ];
