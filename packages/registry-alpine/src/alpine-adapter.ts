@@ -1,6 +1,4 @@
 import {
-  basicAuthChallenge,
-  delegateRegistryPlugin,
   type HttpMethod,
   ifNoneMatch,
   type Permission,
@@ -9,8 +7,7 @@ import {
   type RegistryRequestContext,
   type RouteMatch,
   readWritePermission,
-  registryCapabilities,
-  registryPlugin,
+  registryAdapter,
   serveRegistryBlob,
 } from "@hootifactory/registry";
 import { type AlpineVersionMeta, parseAlpineVersionMeta } from "./alpine-meta";
@@ -42,72 +39,7 @@ function parseApkFilename(filename: string): string {
  * is virtualizable; like registry-apt/registry-maven it does not implement a
  * proxy ingest, so it does not advertise the proxyable capability.
  */
-export class AlpineAdapter implements RegistryPlugin {
-  readonly id = "alpine" as const;
-  readonly capabilities = registryCapabilities("virtualizable");
-  authChallenge = basicAuthChallenge;
-
-  private readonly plugin = registryPlugin(this.id)
-    .module({
-      displayName: "Alpine",
-      mountSegment: "alpine",
-      errorResponseKind: "singleError",
-      compressibleHandlers: [],
-      scan: {
-        defaultOsvEcosystem: "Alpine",
-        referencedDigests: (metadata) =>
-          typeof metadata.blobDigest === "string" ? [metadata.blobDigest] : [],
-      },
-    })
-    .capabilities(this.capabilities)
-    .authChallenge(this.authChallenge)
-    .routes((route) => [
-      // `APKINDEX.tar.gz` is a literal second segment declared before `/:arch/:filename`
-      // so the catch-all download route cannot shadow it (matcher tries in order).
-      route.get(`/:arch/${APKINDEX_NAME}`, "index", ({ params, req, ctx }) =>
-        this.index(params.arch, req, ctx),
-      ),
-      route.get("/:arch/:filename", "download", ({ params, req, ctx }) =>
-        this.download(params.arch, params.filename, req, ctx),
-      ),
-      route.put("/:arch/:filename", "publishNamed", ({ params, req, ctx }) =>
-        this.publish(params.arch, req, ctx, params.filename),
-      ),
-      route.put("/:arch", "publish", ({ params, req, ctx }) => this.publish(params.arch, req, ctx)),
-    ])
-    .build();
-  private readonly delegate = delegateRegistryPlugin(this.plugin);
-
-  get displayName() {
-    return this.plugin.displayName;
-  }
-  get mountSegment() {
-    return this.plugin.mountSegment;
-  }
-  get repositoryNamePolicy() {
-    return this.plugin.repositoryNamePolicy;
-  }
-  get acceptsRegistryBearerToken() {
-    return this.plugin.acceptsRegistryBearerToken;
-  }
-  get apiKeyHeaders() {
-    return this.plugin.apiKeyHeaders;
-  }
-  get errorResponseKind() {
-    return this.plugin.errorResponseKind;
-  }
-  get compressibleHandlers() {
-    return this.plugin.compressibleHandlers;
-  }
-  get compressibleContentTypes() {
-    return this.plugin.compressibleContentTypes;
-  }
-  get scan() {
-    return this.plugin.scan;
-  }
-
-  routes = this.delegate.routes;
-
+class AlpineAdapterState {
   requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
     const permission = readWritePermission(method);
     const arch = match?.params.arch;
@@ -124,14 +56,8 @@ export class AlpineAdapter implements RegistryPlugin {
     return permission;
   }
 
-  handle = this.delegate.handle;
-
   /** `GET /<arch>/APKINDEX.tar.gz` — regenerate the index over the arch's live versions. */
-  private async index(
-    archRaw: string,
-    req: Request,
-    ctx: RegistryRequestContext,
-  ): Promise<Response> {
+  async index(archRaw: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const arch = parseArch(archRaw);
     const entries = await this.indexEntries(ctx, arch);
     const tarGz = buildApkIndexTarGz(entries);
@@ -143,7 +69,7 @@ export class AlpineAdapter implements RegistryPlugin {
   }
 
   /** `GET /<arch>/<name>-<version>.apk` — serve the stored package blob. */
-  private async download(
+  async download(
     archRaw: string,
     filenameRaw: string,
     req: Request,
@@ -163,7 +89,7 @@ export class AlpineAdapter implements RegistryPlugin {
     });
   }
 
-  private async publish(
+  async publish(
     archRaw: string,
     req: Request,
     ctx: RegistryRequestContext,
@@ -230,4 +156,42 @@ export class AlpineAdapter implements RegistryPlugin {
   }
 }
 
+const alpineDefinition = registryAdapter("alpine")
+  .stateClass(AlpineAdapterState)
+  .module((module) =>
+    module
+      .displayName("Alpine")
+      .mount("alpine")
+      // Virtualizable only: no proxyIngest/upstream mirror is implemented.
+      .capabilities("virtualizable")
+      .errorResponseKind("singleError"),
+  )
+  .scan({
+    defaultOsvEcosystem: "Alpine",
+    referencedDigests: (metadata) =>
+      typeof metadata.blobDigest === "string" ? [metadata.blobDigest] : [],
+  })
+  .basicAuth()
+  .fromState((state) => state.defaultPermission("requiredPermission"))
+  .routes((route) => [
+    // `APKINDEX.tar.gz` is a literal second segment declared before `/:arch/:filename`.
+    route
+      .get(`/:arch/${APKINDEX_NAME}`, "index")
+      .calls((state, { params, req, ctx }) => state.index(params.arch, req, ctx)),
+    route
+      .get("/:arch/:filename", "download")
+      .calls((state, { params, req, ctx }) =>
+        state.download(params.arch, params.filename, req, ctx),
+      ),
+    route
+      .put("/:arch/:filename", "publishNamed")
+      .calls((state, { params, req, ctx }) =>
+        state.publish(params.arch, req, ctx, params.filename),
+      ),
+    route
+      .put("/:arch", "publish")
+      .calls((state, { params, req, ctx }) => state.publish(params.arch, req, ctx)),
+  ]);
+
+export class AlpineAdapter extends alpineDefinition.adapterClass() {}
 export const alpineRegistryPlugin: RegistryPlugin = new AlpineAdapter();
