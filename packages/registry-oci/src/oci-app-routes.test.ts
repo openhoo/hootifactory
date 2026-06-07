@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type {
   Action,
+  RegistryAccess,
   RegistryAppRouteContext,
   RegistryPrincipal,
   ResolvedRepo,
@@ -27,6 +28,31 @@ function parseOne(raw: string) {
   const parsed = parseDockerScopes([raw]);
   if (!parsed.success) throw new Error("test scope failed to parse");
   return parsed.data[0]!;
+}
+
+function tokenRoute() {
+  const route = ociAppRoutes().find((r) => r.method === "GET" && r.pattern === "/token");
+  if (!route) throw new Error("token route not found");
+  return route;
+}
+
+function tokenCtx(
+  url: string,
+  overrides: Partial<RegistryAppRouteContext> = {},
+): RegistryAppRouteContext {
+  return {
+    req: new Request(url),
+    url: new URL(url),
+    principal: { kind: "anonymous" },
+    baseUrl: "https://registry.test",
+    registryServiceName: "hootifactory",
+    bearerTokenTtlSeconds: 300,
+    resolveRepository: async () => ({ repo }),
+    authorize: async () => ({ allowed: true }),
+    issueBearerToken: async () => "minted-token",
+    log: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} },
+    ...overrides,
+  } as RegistryAppRouteContext;
 }
 
 describe("OCI v2 version route", () => {
@@ -147,5 +173,115 @@ describe("OCI token scope helpers", () => {
       repositoryResolved: false,
       access: { type: "repository", name: "missing/app", actions: [] },
     });
+  });
+});
+
+describe("OCI token endpoint handler", () => {
+  test("mints a bearer token audienced to the registry service for granted scopes", async () => {
+    let issuedSubject = "";
+    let issuedAudience = "";
+    let issuedTtl: number | undefined;
+    let issuedAccess: RegistryAccess[] = [];
+    const ctx = tokenCtx(
+      "https://registry.test/token?service=hootifactory&scope=repository:acme/app:pull,push",
+      {
+        principal: { kind: "user", userId: "user_1", username: "alice" } as RegistryPrincipal,
+        authorize: async (_principal, action) => ({ allowed: action === "read" }),
+        issueBearerToken: async (input) => {
+          issuedSubject = input.subject;
+          issuedAudience = input.audience;
+          issuedTtl = input.ttlSeconds;
+          issuedAccess = input.access;
+          return "minted-token";
+        },
+      },
+    );
+
+    const response = await tokenRoute().handler(ctx);
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      token: string;
+      access_token: string;
+      expires_in: number;
+    };
+    expect(body.token).toBe("minted-token");
+    expect(body.access_token).toBe("minted-token");
+    expect(body.expires_in).toBe(300);
+    expect(issuedSubject).toBe("alice");
+    // The audience is always the configured service name, never the client query param.
+    expect(issuedAudience).toBe("hootifactory");
+    expect(issuedAccess).toEqual([{ type: "repository", name: "acme/app", actions: ["read"] }]);
+    expect(issuedTtl).toBe(300);
+  });
+
+  test("derives a token: subject for token principals", async () => {
+    let subject = "";
+    const ctx = tokenCtx(
+      "https://registry.test/token?service=hootifactory&scope=repository:acme/app:pull",
+      {
+        principal: {
+          kind: "token",
+          tokenId: "tok_42",
+          orgId: "org_1",
+          ownerUserId: "user_1",
+          grants: [],
+          role: null,
+          isRobot: false,
+        } as RegistryPrincipal,
+        issueBearerToken: async (input) => {
+          subject = input.subject;
+          return "minted-token";
+        },
+      },
+    );
+
+    const response = await tokenRoute().handler(ctx);
+
+    expect(response.status).toBe(200);
+    expect(subject).toBe("token:tok_42");
+  });
+
+  test("rejects a no-scope login probe from an anonymous principal", async () => {
+    const ctx = tokenCtx("https://registry.test/token", {
+      issueBearerToken: async () => {
+        throw new Error("anonymous login probe should not mint a token");
+      },
+    });
+
+    const response = await tokenRoute().handler(ctx);
+
+    expect(response.status).toBe(401);
+    expect(response.headers.get("www-authenticate")).toContain("Basic");
+    const body = (await response.json()) as { errors: Array<{ code: string }> };
+    expect(body.errors[0]?.code).toBe("UNAUTHORIZED");
+  });
+
+  test("rejects scopes requested against a foreign service", async () => {
+    const ctx = tokenCtx(
+      "https://registry.test/token?service=other&scope=repository:acme/app:pull",
+      {
+        issueBearerToken: async () => {
+          throw new Error("token should not be minted for a foreign service");
+        },
+      },
+    );
+
+    const response = await tokenRoute().handler(ctx);
+
+    expect(response.status).toBe(401);
+    const body = (await response.json()) as { errors: Array<{ code: string; message: string }> };
+    expect(body.errors[0]?.code).toBe("UNAUTHORIZED");
+    expect(body.errors[0]?.message).toContain("invalid token service");
+  });
+
+  test("returns a 400 for an unparseable token query", async () => {
+    const ctx = tokenCtx("https://registry.test/token?service=one&service=two");
+
+    const response = await tokenRoute().handler(ctx);
+
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { errors: Array<{ code: string; message: string }> };
+    expect(body.errors[0]?.message).toBe("service may only be supplied once");
   });
 });
