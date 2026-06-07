@@ -4,6 +4,7 @@ import { cargoRegistryPlugin } from "@hootifactory/registry-cargo";
 import { chocolateyRegistryPlugin } from "@hootifactory/registry-chocolatey";
 import { composerRegistryPlugin } from "@hootifactory/registry-composer";
 import { goRegistryPlugin } from "@hootifactory/registry-go";
+import { hackageRegistryPlugin } from "@hootifactory/registry-hackage";
 import { homebrewRegistryPlugin } from "@hootifactory/registry-homebrew";
 import { mavenRegistryPlugin } from "@hootifactory/registry-maven";
 import { npmRegistryPlugin } from "@hootifactory/registry-npm";
@@ -47,6 +48,7 @@ export const REGISTRY_PLUGIN_MANIFEST: RegistryPluginEntry[] = [
   { plugin: chocolateyRegistryPlugin },
   { plugin: wingetRegistryPlugin },
   { plugin: homebrewRegistryPlugin },
+  { plugin: hackageRegistryPlugin },
   { plugin: scoopRegistryPlugin },
   { plugin: rpmRegistryPlugin, aliases: ["yum", "dnf"] },
 ];
