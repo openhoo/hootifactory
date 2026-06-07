@@ -57,6 +57,7 @@ describe("loadConfiguredRegistryPlugins", () => {
       "homebrew",
       "scoop",
       "rpm",
+      "nix",
       "oci",
       "helm",
       "yum",
