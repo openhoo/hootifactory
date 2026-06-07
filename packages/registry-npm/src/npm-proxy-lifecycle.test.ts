@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { RegistryPackageRow, RegistryPackageVersionRow } from "@hootifactory/registry";
+import { computeDigest } from "@hootifactory/registry";
 import { createTestRegistryContext } from "@hootifactory/registry/testing";
 import { computeNpmTarballDigests } from "./npm-integrity";
 import { handleNpmProxyIngest, resolveNpmProxyDistTags } from "./npm-proxy-lifecycle";
@@ -180,7 +181,7 @@ describe("handleNpmProxyIngest mirroring", () => {
     const ctx = createTestRegistryContext();
     const created = pkgRow("pkg_1", "pkg");
     let findOrCreateCalls = 0;
-    const upsertWithBlobRef: Array<{ version: string; digest: string }> = [];
+    const upsertWithBlobRef: Array<{ version: string; blobDigest: string }> = [];
     const scanned: Array<{ digest: string; version?: string }> = [];
     const replacedTags: Array<Map<string, { version: string }>> = [];
 
@@ -192,9 +193,11 @@ describe("handleNpmProxyIngest mirroring", () => {
     };
     ctx.data.versions.listLive = async () => [];
     ctx.data.versions.upsertWithBlobRef = async (input) => {
+      // Record the sha256 digest computed from the stored bytes so we can
+      // assert the blob handed to the data layer is exactly the mirrored tarball.
       upsertWithBlobRef.push({
         version: input.version,
-        digest: input.blob.data.byteLength.toString(),
+        blobDigest: computeDigest(input.blob.data),
       });
       expect(input.blob.kind).toBe("npm_tarball");
       expect(input.blob.scope).toBe("pkg@1.0.0");
@@ -220,9 +223,7 @@ describe("handleNpmProxyIngest mirroring", () => {
 
     expect(result).toBe(true);
     expect(findOrCreateCalls).toBe(1);
-    expect(upsertWithBlobRef).toEqual([
-      { version: "1.0.0", digest: String(tarball.byteLength) },
-    ]);
+    expect(upsertWithBlobRef).toEqual([{ version: "1.0.0", blobDigest: digests.blobDigest }]);
     expect(scanned[0]).toMatchObject({ digest: digests.blobDigest, version: "1.0.0" });
     expect([...(replacedTags[0]?.keys() ?? [])]).toEqual(["latest"]);
   });
