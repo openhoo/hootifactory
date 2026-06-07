@@ -1,8 +1,6 @@
 import {
   asJsonRecord,
   BoundedLruCache,
-  basicAuthChallenge,
-  delegateRegistryPlugin,
   type HttpMethod,
   type Permission,
   parseRegistryInput,
@@ -13,8 +11,7 @@ import {
   type RegistryRequestContext,
   type RegistryVirtualSearchInput,
   type RouteMatch,
-  registryCapabilities,
-  registryPlugin,
+  registryAdapter,
   type SearchQuery,
   type SearchResult,
   serveRegistryBlob,
@@ -63,114 +60,16 @@ interface CachedPackument {
   etag: string;
 }
 
-export class NpmAdapter implements RegistryPlugin {
-  readonly id = "npm" as const;
-  readonly capabilities = registryCapabilities("proxyable", "virtualizable");
-  authChallenge = basicAuthChallenge;
-
-  private readonly plugin = registryPlugin(this.id)
-    .module({
-      displayName: "npm",
-      mountSegment: "npm",
-      errorResponseKind: "singleError",
-      compressibleHandlers: COMPRESSIBLE_HANDLERS,
-      scan: {
-        defaultOsvEcosystem: "npm",
-        dependencyGraph: ({ metadata }) => ({
-          deps: npmDependencyGraph(metadata),
-          osvEcosystem: "npm",
-          purlType: "npm",
-        }),
-        referencedDigests: (metadata) => {
-          const dist = metadata.dist as { blobDigest?: unknown } | undefined;
-          return typeof dist?.blobDigest === "string" ? [dist.blobDigest] : [];
-        },
-      },
-    })
-    .capabilities(this.capabilities)
-    .authChallenge(this.authChallenge)
-    .defaultPermission(({ method, match }) => this.requiredRoutePermission(method, match))
-    .generateMetadata((name, ctx) => this.generateMetadata(name, ctx))
-    .mergeMetadata((parts) => this.mergeMetadata(parts))
-    .search((query, ctx) => this.search(query, ctx))
-    .virtualSearch((input) => this.handleVirtualSearch(input))
-    .proxyIngest((name, upstreamBase, ctx) => this.proxyIngest(name, upstreamBase, ctx))
-    .routes((route) => [
-      route.get("/-/ping", "ping", () => Response.json({})),
-      route.get("/-/whoami", "whoami", ({ ctx }) =>
-        Response.json({ username: this.whoamiUsername(ctx) }),
-      ),
-      route.get("/-/v1/search", "search", ({ req, ctx }) => this.searchHandler(req, ctx), {
-        searchable: true,
-      }),
-      route.post("/-/npm/v1/security/advisories/bulk", "auditBulk", () => Response.json({})),
-      route.post("/-/npm/v1/security/audits/quick", "auditQuick", () =>
-        Response.json({ advisories: {}, vulnerabilities: {}, metadata: {} }),
-      ),
-      route.get("/-/package/:pkg+/dist-tags", "distTagsList", ({ params, ctx }) =>
-        this.distTagsList(params.pkg, ctx),
-      ),
-      route.put("/-/package/:pkg+/dist-tags/:tag", "distTagSet", ({ params, req, ctx }) =>
-        this.distTagSet(params.pkg, params.tag, req, ctx),
-      ),
-      route.delete("/-/package/:pkg+/dist-tags/:tag", "distTagDelete", ({ params, ctx }) =>
-        this.distTagDelete(params.pkg, params.tag, ctx),
-      ),
-      route.get("/:pkg+/-/:filename", "tarball", ({ params, req, ctx }) =>
-        this.tarball(params.pkg, params.filename, req, ctx),
-      ),
-      route.put("/:pkg+", "publish", ({ params, req, ctx }) => this.publish(params.pkg, req, ctx)),
-      route.get(
-        "/:pkg+",
-        "packument",
-        ({ params, req, ctx }) => this.packument(params.pkg, req, ctx),
-        { proxyRefreshTrigger: true, metadataMergeable: true, packageParam: "pkg" },
-      ),
-    ])
-    .build();
-  private readonly delegate = delegateRegistryPlugin(this.plugin);
-  private readonly packumentCache = new BoundedLruCache<string, CachedPackument>(
+class NpmAdapterState {
+  readonly packumentCache = new BoundedLruCache<string, CachedPackument>(
     PACKUMENT_CACHE_MAX_ENTRIES,
   );
-
-  get displayName() {
-    return this.plugin.displayName;
-  }
-  get mountSegment() {
-    return this.plugin.mountSegment;
-  }
-  get repositoryNamePolicy() {
-    return this.plugin.repositoryNamePolicy;
-  }
-  get acceptsRegistryBearerToken() {
-    return this.plugin.acceptsRegistryBearerToken;
-  }
-  get apiKeyHeaders() {
-    return this.plugin.apiKeyHeaders;
-  }
-  get errorResponseKind() {
-    return this.plugin.errorResponseKind;
-  }
-  get compressibleHandlers() {
-    return this.plugin.compressibleHandlers;
-  }
-  get compressibleContentTypes() {
-    return this.plugin.compressibleContentTypes;
-  }
-  get scan() {
-    return this.plugin.scan;
-  }
-  get virtualSearch() {
-    return this.plugin.virtualSearch;
-  }
-
-  routes = this.delegate.routes;
 
   requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
     return this.requiredRoutePermission(method, match);
   }
 
-  private requiredRoutePermission(method: HttpMethod, match?: RouteMatch): Permission {
+  requiredRoutePermission(method: HttpMethod, match?: RouteMatch): Permission {
     const action =
       method === "GET" || method === "HEAD" || match?.entry.handlerId.startsWith("audit")
         ? "read"
@@ -189,13 +88,11 @@ export class NpmAdapter implements RegistryPlugin {
     };
   }
 
-  handle = this.delegate.handle;
-
-  private async findPackage(ctx: RegistryRequestContext, name: string) {
+  async findPackage(ctx: RegistryRequestContext, name: string) {
     return ctx.data.packages.findByName(name);
   }
 
-  private async liveVersionsFor(
+  async liveVersionsFor(
     ctx: RegistryRequestContext,
     pkg: RegistryPackageHandle,
     opts?: { orderByCreated?: "asc" | "desc" },
@@ -203,14 +100,14 @@ export class NpmAdapter implements RegistryPlugin {
     return ctx.data.versions.listLive(pkg, opts);
   }
 
-  private async distTags(
+  async distTags(
     ctx: RegistryRequestContext,
     pkg: RegistryPackageHandle,
   ): Promise<Record<string, string>> {
     return ctx.data.tags.listLive(pkg);
   }
 
-  private async packumentToken(
+  async packumentToken(
     ctx: RegistryRequestContext,
     pkg: RegistryPackageHandle,
     tags: Record<string, string>,
@@ -222,11 +119,11 @@ export class NpmAdapter implements RegistryPlugin {
     });
   }
 
-  private packumentCacheKey(ctx: RegistryRequestContext, pkg: RegistryPackageHandle): string {
+  packumentCacheKey(ctx: RegistryRequestContext, pkg: RegistryPackageHandle): string {
     return `${ctx.repo.id}:${pkg.id}`;
   }
 
-  private cachedPackument(
+  cachedPackument(
     ctx: RegistryRequestContext,
     pkg: RegistryPackageHandle,
     token: string,
@@ -235,7 +132,7 @@ export class NpmAdapter implements RegistryPlugin {
     return cached?.token === token ? cached : null;
   }
 
-  private cachePackument(
+  cachePackument(
     ctx: RegistryRequestContext,
     pkg: RegistryPackageHandle,
     token: string,
@@ -249,7 +146,7 @@ export class NpmAdapter implements RegistryPlugin {
     return cached;
   }
 
-  private whoamiUsername(ctx: RegistryRequestContext): string {
+  whoamiUsername(ctx: RegistryRequestContext): string {
     const principal = ctx.principal;
     if (principal.kind === "user") return principal.username;
     if (principal.kind === "registryToken") return principal.subject;
@@ -304,11 +201,7 @@ export class NpmAdapter implements RegistryPlugin {
     };
   }
 
-  private async packument(
-    name: string,
-    req: Request,
-    ctx: RegistryRequestContext,
-  ): Promise<Response> {
+  async packument(name: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     name = parseNpmName(name);
     const pkg = await this.findPackage(ctx, name);
     if (!pkg) return Response.json({ error: "Not found" }, { status: 404 });
@@ -332,7 +225,7 @@ export class NpmAdapter implements RegistryPlugin {
     );
   }
 
-  private async tarball(
+  async tarball(
     name: string,
     filename: string,
     req: Request,
@@ -367,30 +260,22 @@ export class NpmAdapter implements RegistryPlugin {
     });
   }
 
-  private async publish(
-    name: string,
-    req: Request,
-    ctx: RegistryRequestContext,
-  ): Promise<Response> {
+  async publish(name: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     return handleNpmPublish(name, req, ctx);
   }
 
-  private async versionRow(
-    ctx: RegistryRequestContext,
-    pkg: RegistryPackageHandle,
-    version: string,
-  ) {
+  async versionRow(ctx: RegistryRequestContext, pkg: RegistryPackageHandle, version: string) {
     return ctx.data.versions.findLive(pkg, version);
   }
 
-  private async distTagsList(name: string, ctx: RegistryRequestContext): Promise<Response> {
+  async distTagsList(name: string, ctx: RegistryRequestContext): Promise<Response> {
     name = parseNpmName(name);
     const pkg = await this.findPackage(ctx, name);
     if (!pkg) return Response.json({}, { status: 404 });
     return Response.json(await this.distTags(ctx, pkg));
   }
 
-  private async distTagSet(
+  async distTagSet(
     name: string,
     tag: string,
     req: Request,
@@ -410,11 +295,7 @@ export class NpmAdapter implements RegistryPlugin {
     return Response.json({ ok: true });
   }
 
-  private async distTagDelete(
-    name: string,
-    tag: string,
-    ctx: RegistryRequestContext,
-  ): Promise<Response> {
+  async distTagDelete(name: string, tag: string, ctx: RegistryRequestContext): Promise<Response> {
     name = parseNpmName(name);
     const pkg = await this.findPackage(ctx, name);
     if (!pkg) return Response.json({ error: "Not found" }, { status: 404 });
@@ -435,7 +316,7 @@ export class NpmAdapter implements RegistryPlugin {
     return handleNpmProxyIngest(pkgName, upstreamBase, ctx);
   }
 
-  private async searchHandler(req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  async searchHandler(req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const { text, from, size } = parseNpmSearchQuery(req.url);
     const { packages: rows, total } = await ctx.data.packages.search({ text, from, size });
     const tagsByPackageId = await ctx.data.tags.listLiveForPackages(rows);
@@ -467,7 +348,7 @@ export class NpmAdapter implements RegistryPlugin {
     return Response.json(buildNpmSearchResponse({ objects, total }));
   }
 
-  private async handleVirtualSearch(input: RegistryVirtualSearchInput): Promise<Response> {
+  async handleVirtualSearch(input: RegistryVirtualSearchInput): Promise<Response> {
     const bodies = await input.collectMemberResponses(({ req }) => allNpmSearchResultsRequest(req));
     const result = mergeNpmSearchBodies(
       await Promise.all(
@@ -504,4 +385,66 @@ function npmDependencyGraph(metadata: Record<string, unknown>): Record<string, s
   };
 }
 
+const npmDefinition = registryAdapter("npm")
+  .stateClass(NpmAdapterState)
+  .module((module) =>
+    module
+      .displayName("npm")
+      .mount("npm")
+      .capabilities("proxyable", "virtualizable")
+      .errorResponseKind("singleError")
+      .compressibleHandlers(...COMPRESSIBLE_HANDLERS),
+  )
+  .scan((scan) =>
+    scan
+      .osvEcosystem("npm")
+      .purlType("npm")
+      .dependencies(npmDependencyGraph)
+      .referencedDigestPaths("dist.blobDigest"),
+  )
+  .basicAuth()
+  .fromState((state) =>
+    state
+      .defaultPermission("requiredRoutePermission")
+      .metadata({ generate: "generateMetadata", merge: "mergeMetadata" })
+      .search("search")
+      .virtualSearch("handleVirtualSearch")
+      .proxyIngest("proxyIngest"),
+  )
+  .routes((route) => [
+    route.get("/-/ping", "ping").json({}),
+    route.get("/-/whoami", "whoami").json(({ ctx, state }) => ({
+      username: state.whoamiUsername(ctx),
+    })),
+    route
+      .searchGet("/-/v1/search", "search")
+      .calls((state, { req, ctx }) => state.searchHandler(req, ctx)),
+    route.post("/-/npm/v1/security/advisories/bulk", "auditBulk").json({}),
+    route.post("/-/npm/v1/security/audits/quick", "auditQuick").json({
+      advisories: {},
+      vulnerabilities: {},
+      metadata: {},
+    }),
+    route
+      .get("/-/package/:pkg+/dist-tags", "distTagsList")
+      .calls((state, { params, ctx }) => state.distTagsList(params.pkg, ctx)),
+    route
+      .put("/-/package/:pkg+/dist-tags/:tag", "distTagSet")
+      .calls((state, { params, req, ctx }) => state.distTagSet(params.pkg, params.tag, req, ctx)),
+    route
+      .delete("/-/package/:pkg+/dist-tags/:tag", "distTagDelete")
+      .calls((state, { params, ctx }) => state.distTagDelete(params.pkg, params.tag, ctx)),
+    route
+      .get("/:pkg+/-/:filename", "tarball")
+      .calls((state, { params, req, ctx }) => state.tarball(params.pkg, params.filename, req, ctx)),
+    route
+      .put("/:pkg+", "publish")
+      .calls((state, { params, req, ctx }) => state.publish(params.pkg, req, ctx)),
+    route
+      .metadataGet("/:pkg+", "packument")
+      .metadata("pkg", { proxyRefresh: true })
+      .calls((state, { params, req, ctx }) => state.packument(params.pkg, req, ctx)),
+  ]);
+
+export class NpmAdapter extends npmDefinition.adapterClass() {}
 export const npmRegistryPlugin: RegistryPlugin = new NpmAdapter();

@@ -1,6 +1,4 @@
 import {
-  basicAuthChallenge,
-  delegateRegistryPlugin,
   Errors,
   type HttpMethod,
   ifNoneMatch,
@@ -10,8 +8,7 @@ import {
   type RegistryRequestContext,
   type RouteMatch,
   readWritePermission,
-  registryCapabilities,
-  registryPlugin,
+  registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
 } from "@hootifactory/registry";
@@ -32,72 +29,7 @@ const REPODATA_XML = "application/xml";
  * blobs, and accepts publish via PUT/POST of an `.rpm` (identity from its header
  * with a filename fallback). One plugin backs the `rpm`, `yum`, and `dnf` ids.
  */
-export class RpmAdapter implements RegistryPlugin {
-  readonly id = "rpm" as const;
-  readonly capabilities = registryCapabilities("virtualizable");
-  authChallenge = basicAuthChallenge;
-
-  private readonly plugin = registryPlugin(this.id)
-    .module({
-      displayName: "RPM",
-      mountSegment: "rpm",
-      errorResponseKind: "singleError",
-      compressibleHandlers: ["repomd"],
-      scan: {
-        defaultOsvEcosystem: "Red Hat",
-        referencedDigests: (metadata) =>
-          typeof metadata.rpmDigest === "string" ? [metadata.rpmDigest] : [],
-      },
-    })
-    .capabilities(this.capabilities)
-    .authChallenge(this.authChallenge)
-    .routes((route) => [
-      route.get("/repodata/repomd.xml", "repomd", ({ req, ctx }) => this.repomd(req, ctx)),
-      route.get("/repodata/primary.xml.gz", "primary", ({ req, ctx }) => this.primary(req, ctx)),
-      route.get("/packages/:file", "download", ({ params, req, ctx }) =>
-        this.download(params.file, req, ctx),
-      ),
-      route.put("/packages/:file", "publish", ({ params, req, ctx }) =>
-        this.publish(params.file, req, ctx),
-      ),
-      route.post("/packages/:file", "publish", ({ params, req, ctx }) =>
-        this.publish(params.file, req, ctx),
-      ),
-      route.post("/", "publishRoot", ({ req, ctx }) => this.publish(undefined, req, ctx)),
-    ])
-    .build();
-  private readonly delegate = delegateRegistryPlugin(this.plugin);
-
-  get displayName() {
-    return this.plugin.displayName;
-  }
-  get mountSegment() {
-    return this.plugin.mountSegment;
-  }
-  get repositoryNamePolicy() {
-    return this.plugin.repositoryNamePolicy;
-  }
-  get acceptsRegistryBearerToken() {
-    return this.plugin.acceptsRegistryBearerToken;
-  }
-  get apiKeyHeaders() {
-    return this.plugin.apiKeyHeaders;
-  }
-  get errorResponseKind() {
-    return this.plugin.errorResponseKind;
-  }
-  get compressibleHandlers() {
-    return this.plugin.compressibleHandlers;
-  }
-  get compressibleContentTypes() {
-    return this.plugin.compressibleContentTypes;
-  }
-  get scan() {
-    return this.plugin.scan;
-  }
-
-  routes = this.delegate.routes;
-
+class RpmAdapterState {
   requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
     const permission = readWritePermission(method);
     const file = match?.params.file;
@@ -107,10 +39,8 @@ export class RpmAdapter implements RegistryPlugin {
     return permission;
   }
 
-  handle = this.delegate.handle;
-
   /** Collect every live RPM version across all packages as primary entries. */
-  private async collectPackages(ctx: RegistryRequestContext): Promise<RpmPrimaryPackage[]> {
+  async collectPackages(ctx: RegistryRequestContext): Promise<RpmPrimaryPackage[]> {
     const pkgs: RegistryPackageHandle[] = await ctx.data.packages.list();
     if (pkgs.length === 0) return [];
     const byPackage = await ctx.data.versions.listLiveForPackages(pkgs, {
@@ -132,16 +62,16 @@ export class RpmAdapter implements RegistryPlugin {
   }
 
   /** Build the deterministic primary metadata for the current repo state. */
-  private async buildRepoPrimary(ctx: RegistryRequestContext): Promise<BuiltPrimary> {
+  async buildRepoPrimary(ctx: RegistryRequestContext): Promise<BuiltPrimary> {
     return buildPrimary(await this.collectPackages(ctx));
   }
 
-  private async repomd(req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  async repomd(req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const primary = await this.buildRepoPrimary(ctx);
     return textResponseWithEtag(req, buildRepomd(primary), { "content-type": REPODATA_XML });
   }
 
-  private async primary(req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  async primary(req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const primary = await this.buildRepoPrimary(ctx);
     const etag = `"${primary.sha256Gz}"`;
     // The gz bytes are a pure function of the repo state, so the sha256-derived
@@ -155,11 +85,7 @@ export class RpmAdapter implements RegistryPlugin {
     });
   }
 
-  private async download(
-    file: string,
-    req: Request,
-    ctx: RegistryRequestContext,
-  ): Promise<Response> {
+  async download(file: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     file = parseRpmFile(file);
     const asset = await ctx.data.assets.findByScope({ role: "rpm_package", scope: file });
     if (!asset) throw Errors.notFound();
@@ -173,7 +99,7 @@ export class RpmAdapter implements RegistryPlugin {
     });
   }
 
-  private async publish(
+  async publish(
     file: string | undefined,
     req: Request,
     ctx: RegistryRequestContext,
@@ -188,4 +114,45 @@ function parseRpmFile(file: string): string {
   return parsed.data;
 }
 
+const rpmDefinition = registryAdapter("rpm")
+  .stateClass(RpmAdapterState)
+  .module((module) =>
+    module
+      .displayName("RPM")
+      .mount("rpm")
+      .capabilities("virtualizable")
+      .errorResponseKind("singleError")
+      .compressibleHandlers("repomd"),
+  )
+  .scan((scan) =>
+    scan
+      .osvEcosystem("Red Hat")
+      .referencedDigests((metadata) =>
+        typeof metadata.rpmDigest === "string" ? [metadata.rpmDigest] : [],
+      ),
+  )
+  .basicAuth()
+  .fromState((state) => state.defaultPermission("requiredPermission"))
+  .routes((route) => [
+    route
+      .get("/repodata/repomd.xml", "repomd")
+      .calls((state, { req, ctx }) => state.repomd(req, ctx)),
+    route
+      .get("/repodata/primary.xml.gz", "primary")
+      .calls((state, { req, ctx }) => state.primary(req, ctx)),
+    route
+      .get("/packages/:file", "download")
+      .calls((state, { params, req, ctx }) => state.download(params.file, req, ctx)),
+    route
+      .put("/packages/:file", "publish")
+      .calls((state, { params, req, ctx }) => state.publish(params.file, req, ctx)),
+    route
+      .post("/packages/:file", "publish")
+      .calls((state, { params, req, ctx }) => state.publish(params.file, req, ctx)),
+    route
+      .post("/", "publishRoot")
+      .calls((state, { req, ctx }) => state.publish(undefined, req, ctx)),
+  ]);
+
+export class RpmAdapter extends rpmDefinition.adapterClass() {}
 export const rpmRegistryPlugin: RegistryPlugin = new RpmAdapter();
