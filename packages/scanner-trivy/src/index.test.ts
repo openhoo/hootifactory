@@ -65,6 +65,25 @@ describe("trivy scanner", () => {
     ).toBe(false);
   });
 
+  test("omits server args when no server URL is configured and tolerates sparse JSON", () => {
+    expect(trivyFsArgs("/tmp/pkg")).toEqual(["fs", "--quiet", "--format", "json", "/tmp/pkg"]);
+    // No Results key, a result with no Vulnerabilities, and a vuln missing fields.
+    expect(parseTrivyFindings({})).toEqual([]);
+    expect(parseTrivyFindings({ Results: [{}, { Vulnerabilities: [{}] }] })).toEqual([
+      {
+        type: "vuln",
+        vulnId: undefined,
+        severity: "unknown",
+        packageName: undefined,
+        packageVersion: undefined,
+        fixedVersion: undefined,
+        title: undefined,
+        description: undefined,
+        purl: undefined,
+      },
+    ]);
+  });
+
   test("rejects an unpinned image under the production Docker runtime", () => {
     expect(() =>
       trivyScanner.configFromEnv({
@@ -73,5 +92,11 @@ describe("trivy scanner", () => {
         isProduction: true,
       }),
     ).toThrow(/TRIVY_IMAGE must be pinned/);
+  });
+
+  test("declares a digest-pinned default image and is unavailable on the disabled runtime", () => {
+    const resolved = resolveTestScanner(trivyScanner, { runtime: { cliRuntime: "disabled" } });
+    expect(resolved.config.image).toMatch(/@sha256:[a-f0-9]{64}$/);
+    expect(resolved.available).toBe(false);
   });
 });

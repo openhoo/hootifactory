@@ -77,7 +77,7 @@ export function parseClamAvRestFindings(data: unknown): NormalizedFinding[] {
   return [...names].map(clamAvFinding);
 }
 
-function parseClamAvCliFindings(output: string): NormalizedFinding[] {
+export function parseClamAvCliFindings(output: string): NormalizedFinding[] {
   const names = new Set<string>();
   for (const line of output.split(/\r?\n/)) {
     const match = /:\s*(.+?)\s+FOUND\s*$/.exec(line);

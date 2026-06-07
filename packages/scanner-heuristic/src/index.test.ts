@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import type { NormalizedFinding } from "@hootifactory/scanner";
+import { createTestDependencyTarget } from "@hootifactory/scanner/testing";
 import {
   createMalwareStreamConsumer,
+  heuristicDependencyScanner,
+  heuristicMalwareScanner,
   scanDependenciesAgainstAdvisories,
   scanForMalware,
 } from "./index";
@@ -64,5 +67,37 @@ describe("heuristic malware signature", () => {
     expect(consumer.findings()).toEqual([]);
     consumer.update(new TextEncoder().encode(`${EICAR.slice(split)} suffix`));
     expect(consumer.findings()).toEqual([EICAR_FINDING]);
+  });
+});
+
+describe("heuristic baseline scanner plugins", () => {
+  test("the dependency scanner is an always-on offline baseline", async () => {
+    expect(heuristicDependencyScanner.baseline).toBe(true);
+    expect(heuristicDependencyScanner.capabilities.inputKind).toBe("dependencies");
+    expect(
+      heuristicDependencyScanner.configFromEnv({
+        env: {},
+        runtime: { cliRuntime: "host" },
+        isProduction: false,
+      }),
+    ).toBeNull();
+    expect(heuristicDependencyScanner.available(null, { runtime: {} })).toBe(true);
+
+    const findings = await heuristicDependencyScanner.scanDependencies?.(
+      createTestDependencyTarget({ "evil-dep": "1.0.0" }, { purlType: "npm" }),
+      null,
+      { runtime: {} },
+    );
+    expect(findings?.map((f) => f.vulnId)).toEqual(["HOOT-2024-0001"]);
+    expect(findings?.[0]?.purl).toBe("pkg:npm/evil-dep@1.0.0");
+  });
+
+  test("the malware scanner is an always-on streamed baseline", () => {
+    expect(heuristicMalwareScanner.baseline).toBe(true);
+    expect(heuristicMalwareScanner.capabilities.inputKind).toBe("stream");
+    expect(heuristicMalwareScanner.available(null, { runtime: {} })).toBe(true);
+    const consumer = heuristicMalwareScanner.createStreamConsumer?.(null);
+    consumer?.update(new TextEncoder().encode(`x ${EICAR} y`));
+    expect(consumer?.findings()).toEqual([EICAR_FINDING]);
   });
 });

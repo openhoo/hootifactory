@@ -94,4 +94,72 @@ describe("osvScanDependencies", () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  test("prefers a CVSS severity score over database_specific when both are present", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (...args: Parameters<typeof fetch>) => {
+      if (String(args[0]).includes("/v1/vulns/")) {
+        return Response.json({
+          database_specific: { severity: "low" },
+          severity: [{ score: "CRITICAL" }],
+        });
+      }
+      return Response.json({ results: [{ vulns: [{ id: "GHSA-cvss" }] }] });
+    }) as unknown as typeof fetch;
+    try {
+      const { findings } = await osvScanDependencies("npm", { pkg: "1.0.0" }, "https://osv.test");
+      expect(findings.map((f) => [f.vulnId, f.severity])).toEqual([["GHSA-cvss", "critical"]]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("defaults to high severity when the vuln detail lookup itself fails", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (...args: Parameters<typeof fetch>) => {
+      if (String(args[0]).includes("/v1/vulns/")) throw new Error("detail unreachable");
+      return Response.json({ results: [{ vulns: [{ id: "GHSA-nodetail" }] }] });
+    }) as unknown as typeof fetch;
+    try {
+      const { findings, error } = await osvScanDependencies(
+        "npm",
+        { pkg: "1.0.0" },
+        "https://osv.test",
+      );
+      expect(error).toBeUndefined();
+      expect(findings.map((f) => [f.vulnId, f.severity])).toEqual([["GHSA-nodetail", "high"]]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("returns the error when the batch request throws (network failure)", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      throw new Error("connection refused");
+    }) as unknown as typeof fetch;
+    try {
+      const result = await osvScanDependencies("npm", { a: "1.0.0" }, "https://osv.test");
+      expect(result.findings).toEqual([]);
+      expect((result.error as Error).message).toBe("connection refused");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("returns no findings without a network call for an empty dependency set", async () => {
+    const originalFetch = globalThis.fetch;
+    let called = false;
+    globalThis.fetch = (async () => {
+      called = true;
+      return Response.json({});
+    }) as unknown as typeof fetch;
+    try {
+      expect(await osvScanDependencies("npm", {})).toEqual({ findings: [] });
+      expect(await osvScanDependencies("npm", undefined)).toEqual({ findings: [] });
+      expect(called).toBe(false);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });
