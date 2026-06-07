@@ -1,7 +1,5 @@
 import {
   BoundedLruCache,
-  basicAuthChallenge,
-  delegateRegistryPlugin,
   Errors,
   type HttpMethod,
   ifNoneMatch,
@@ -15,8 +13,7 @@ import {
   type RegistryVirtualSearchInput,
   type RouteMatch,
   readWritePermission,
-  registryCapabilities,
-  registryPlugin,
+  registryAdapter,
   serveRegistryBlob,
   textEtag,
   textResponseWithEtag,
@@ -91,108 +88,10 @@ function registrationResponse(
  * spec-compliant. Push accepts the .nupkg via PUT and derives id/version from
  * the nuspec when clients do not provide query parameters.
  */
-export class NugetAdapter implements RegistryPlugin {
-  readonly id = "nuget" as const;
-  readonly capabilities = registryCapabilities("virtualizable");
-  authChallenge = basicAuthChallenge;
-
-  private readonly plugin = registryPlugin(this.id)
-    .module({
-      displayName: "NuGet",
-      mountSegment: "nuget",
-      errorResponseKind: "singleError",
-      apiKeyHeaders: ["x-nuget-apikey"],
-      compressibleHandlers: [
-        "serviceIndex",
-        "search",
-        "versions",
-        "registration",
-        "registrationLeaf",
-      ],
-      scan: {
-        defaultOsvEcosystem: "NuGet",
-        dependencyGraph: ({ metadata }) => ({
-          deps: nugetDependencyGraph(metadata),
-          osvEcosystem: "NuGet",
-          purlType: "nuget",
-        }),
-        referencedDigests: (metadata) =>
-          typeof metadata.nupkgDigest === "string" ? [metadata.nupkgDigest] : [],
-      },
-    })
-    .capabilities(this.capabilities)
-    .authChallenge(this.authChallenge)
-    .virtualSearch((input) => this.handleVirtualSearch(input))
-    .routes((route) => [
-      route.get("/v3/index.json", "serviceIndex", ({ req, ctx }) => this.serviceIndex(req, ctx), {
-        serviceIndex: true,
-      }),
-      route.get(
-        "/v3/query",
-        "search",
-        ({ req, ctx }) => this.nugetSearch(req, this.base(ctx), ctx),
-        {
-          searchable: true,
-        },
-      ),
-      route.put("/v3/package", "publish", ({ req, ctx }) => this.publish(req, ctx)),
-      route.delete("/v3/package/:id/:version", "delete", ({ params, ctx }) =>
-        this.setListed(params.id, params.version, false, ctx),
-      ),
-      route.post("/v3/package/:id/:version", "relist", ({ params, ctx }) =>
-        this.setListed(params.id, params.version, true, ctx),
-      ),
-      route.get("/v3-flatcontainer/:id/index.json", "versions", ({ params, req, ctx }) =>
-        this.versions(params.id, req, ctx),
-      ),
-      route.get("/v3-flatcontainer/:id/:version/:file", "download", ({ params, req, ctx }) =>
-        this.download(params.id, params.version, params.file, req, ctx),
-      ),
-      route.get("/v3/registrations/:id/index.json", "registration", ({ params, req, ctx }) =>
-        this.registration(params.id, req, this.base(ctx), ctx),
-      ),
-      route.get("/v3/registrations/:id/:file", "registrationLeaf", ({ params, req, ctx }) =>
-        this.registrationLeaf(params.id, params.file, req, this.base(ctx), ctx),
-      ),
-    ])
-    .build();
-  private readonly delegate = delegateRegistryPlugin(this.plugin);
-  private readonly registrationCache = new BoundedLruCache<string, NugetRegistrationCacheEntry>(
+class NugetAdapterState {
+  readonly registrationCache = new BoundedLruCache<string, NugetRegistrationCacheEntry>(
     NUGET_REGISTRATION_CACHE_LIMIT,
   );
-
-  get displayName() {
-    return this.plugin.displayName;
-  }
-  get mountSegment() {
-    return this.plugin.mountSegment;
-  }
-  get repositoryNamePolicy() {
-    return this.plugin.repositoryNamePolicy;
-  }
-  get acceptsRegistryBearerToken() {
-    return this.plugin.acceptsRegistryBearerToken;
-  }
-  get apiKeyHeaders() {
-    return this.plugin.apiKeyHeaders;
-  }
-  get errorResponseKind() {
-    return this.plugin.errorResponseKind;
-  }
-  get compressibleHandlers() {
-    return this.plugin.compressibleHandlers;
-  }
-  get compressibleContentTypes() {
-    return this.plugin.compressibleContentTypes;
-  }
-  get scan() {
-    return this.plugin.scan;
-  }
-  get virtualSearch() {
-    return this.plugin.virtualSearch;
-  }
-
-  routes = this.delegate.routes;
 
   requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
     const permission = readWritePermission(method);
@@ -209,13 +108,11 @@ export class NugetAdapter implements RegistryPlugin {
     return permission;
   }
 
-  handle = this.delegate.handle;
-
-  private base(ctx: RegistryRequestContext): string {
+  base(ctx: RegistryRequestContext): string {
     return `${ctx.baseUrl}/${ctx.repo.mountPath}`;
   }
 
-  private serviceIndex(req: Request, ctx: RegistryRequestContext): Response {
+  serviceIndex(req: Request, ctx: RegistryRequestContext): Response {
     const base = this.base(ctx);
     return textResponseWithEtag(
       req,
@@ -232,11 +129,11 @@ export class NugetAdapter implements RegistryPlugin {
     );
   }
 
-  private async findPkg(ctx: RegistryRequestContext, id: string) {
+  async findPkg(ctx: RegistryRequestContext, id: string) {
     return ctx.data.packages.findByName(id.toLowerCase());
   }
 
-  private async listVersions(
+  async listVersions(
     ctx: RegistryRequestContext,
     pkg: RegistryPackageHandle,
     opts: { includeUnlisted?: boolean } = {},
@@ -253,7 +150,7 @@ export class NugetAdapter implements RegistryPlugin {
       .sort((a, b) => compareNugetVersions(a.version, b.version));
   }
 
-  private async versions(id: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  async versions(id: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     id = parseNugetId(id);
     const pkg = await this.findPkg(ctx, id);
     if (!pkg) return new Response("Not Found", { status: 404 });
@@ -266,7 +163,7 @@ export class NugetAdapter implements RegistryPlugin {
     });
   }
 
-  private async registration(
+  async registration(
     id: string,
     req: Request,
     base: string,
@@ -296,7 +193,7 @@ export class NugetAdapter implements RegistryPlugin {
     return registrationResponse(req, entry);
   }
 
-  private async registrationLeaf(
+  async registrationLeaf(
     id: string,
     file: string,
     req: Request,
@@ -331,11 +228,7 @@ export class NugetAdapter implements RegistryPlugin {
     );
   }
 
-  private async nugetSearch(
-    req: Request,
-    base: string,
-    ctx: RegistryRequestContext,
-  ): Promise<Response> {
+  async nugetSearch(req: Request, base: string, ctx: RegistryRequestContext): Promise<Response> {
     const query = parseNugetSearchQuery(req.url);
     const data = [];
     let totalHits = 0;
@@ -374,7 +267,7 @@ export class NugetAdapter implements RegistryPlugin {
     });
   }
 
-  private async download(
+  async download(
     id: string,
     version: string,
     file: string,
@@ -414,7 +307,7 @@ export class NugetAdapter implements RegistryPlugin {
     });
   }
 
-  private async setListed(
+  async setListed(
     id: string,
     version: string,
     listed: boolean,
@@ -435,11 +328,11 @@ export class NugetAdapter implements RegistryPlugin {
     return new Response(null, { status: listed ? 200 : 204 });
   }
 
-  private async publish(req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  async publish(req: Request, ctx: RegistryRequestContext): Promise<Response> {
     return handleNugetPublish(req, ctx);
   }
 
-  private async handleVirtualSearch(input: RegistryVirtualSearchInput): Promise<Response> {
+  async handleVirtualSearch(input: RegistryVirtualSearchInput): Promise<Response> {
     const bodies = await input.collectMemberResponses(({ req }) =>
       allNugetSearchResultsRequest(req),
     );
@@ -453,15 +346,15 @@ export class NugetAdapter implements RegistryPlugin {
     return Response.json(mergeNugetSearchBodies(parsed, nugetSearchWindow(input.req)));
   }
 
-  private registrationCacheKey(pkg: RegistryPackageHandle, base: string): string {
+  registrationCacheKey(pkg: RegistryPackageHandle, base: string): string {
     return `${pkg.id}\0${base}`;
   }
 
-  private putRegistrationCache(cacheKey: string, entry: NugetRegistrationCacheEntry): void {
+  putRegistrationCache(cacheKey: string, entry: NugetRegistrationCacheEntry): void {
     this.registrationCache.set(cacheKey, entry);
   }
 
-  private clearRegistrationCacheForPackage(packageId: string): void {
+  clearRegistrationCacheForPackage(packageId: string): void {
     const prefix = `${packageId}\0`;
     this.registrationCache.deleteWhere((key) => key.startsWith(prefix));
   }
@@ -558,4 +451,67 @@ function nugetDependencyGraph(metadata: Record<string, unknown>): Record<string,
   return Object.fromEntries(entries);
 }
 
+const nugetDefinition = registryAdapter("nuget")
+  .stateClass(NugetAdapterState)
+  .module((module) =>
+    module
+      .displayName("NuGet")
+      .mount("nuget")
+      .capabilities("virtualizable")
+      .errorResponseKind("singleError")
+      .apiKeyHeaders("x-nuget-apikey")
+      .compressibleHandlers(
+        "serviceIndex",
+        "search",
+        "versions",
+        "registration",
+        "registrationLeaf",
+      ),
+  )
+  .scan((scan) =>
+    scan
+      .osvEcosystem("NuGet")
+      .purlType("nuget")
+      .dependencies(nugetDependencyGraph)
+      .referencedDigestPaths("nupkgDigest"),
+  )
+  .basicAuth()
+  .fromState((state) =>
+    state.virtualSearch("handleVirtualSearch").defaultPermission("requiredPermission"),
+  )
+  .routes((route) => [
+    route
+      .serviceIndex("/v3/index.json", "serviceIndex")
+      .calls((state, { req, ctx }) => state.serviceIndex(req, ctx)),
+    route
+      .searchGet("/v3/query", "search")
+      .calls((state, { req, ctx }) => state.nugetSearch(req, state.base(ctx), ctx)),
+    route.put("/v3/package", "publish").calls((state, { req, ctx }) => state.publish(req, ctx)),
+    route
+      .delete("/v3/package/:id/:version", "delete")
+      .calls((state, { params, ctx }) => state.setListed(params.id, params.version, false, ctx)),
+    route
+      .post("/v3/package/:id/:version", "relist")
+      .calls((state, { params, ctx }) => state.setListed(params.id, params.version, true, ctx)),
+    route
+      .get("/v3-flatcontainer/:id/index.json", "versions")
+      .calls((state, { params, req, ctx }) => state.versions(params.id, req, ctx)),
+    route
+      .get("/v3-flatcontainer/:id/:version/:file", "download")
+      .calls((state, { params, req, ctx }) =>
+        state.download(params.id, params.version, params.file, req, ctx),
+      ),
+    route
+      .get("/v3/registrations/:id/index.json", "registration")
+      .calls((state, { params, req, ctx }) =>
+        state.registration(params.id, req, state.base(ctx), ctx),
+      ),
+    route
+      .get("/v3/registrations/:id/:file", "registrationLeaf")
+      .calls((state, { params, req, ctx }) =>
+        state.registrationLeaf(params.id, params.file, req, state.base(ctx), ctx),
+      ),
+  ]);
+
+export class NugetAdapter extends nugetDefinition.adapterClass() {}
 export const nugetRegistryPlugin: RegistryPlugin = new NugetAdapter();

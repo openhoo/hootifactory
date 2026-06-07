@@ -1,6 +1,4 @@
 import {
-  basicAuthChallenge,
-  delegateRegistryPlugin,
   Errors,
   type HttpMethod,
   type Permission,
@@ -11,8 +9,7 @@ import {
   type RegistryRequestContext,
   type RouteMatch,
   readWritePermission,
-  registryCapabilities,
-  registryPlugin,
+  registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
 } from "@hootifactory/registry";
@@ -67,98 +64,7 @@ function parseChocolateyVersion(version: string): string {
  * `choco` CLI speaks. Reads return Atom feeds/entries; push accepts a .nupkg
  * (multipart or raw) and derives id/version from the embedded nuspec.
  */
-export class ChocolateyAdapter implements RegistryPlugin {
-  readonly id = "chocolatey" as const;
-  readonly capabilities = registryCapabilities("virtualizable");
-  authChallenge = basicAuthChallenge;
-
-  private readonly plugin = registryPlugin(this.id)
-    .module({
-      displayName: "Chocolatey",
-      mountSegment: "chocolatey",
-      errorResponseKind: "singleError",
-      apiKeyHeaders: ["x-nuget-apikey"],
-      compressibleHandlers: [
-        "serviceDoc",
-        "metadata",
-        "packages",
-        "packageEntry",
-        "findById",
-        "search",
-      ],
-      compressibleContentTypes: [ATOM_FEED_CONTENT_TYPE, ATOM_ENTRY_CONTENT_TYPE, XML_CONTENT_TYPE],
-      scan: {
-        defaultOsvEcosystem: "NuGet",
-        dependencyGraph: ({ metadata }) => ({
-          deps: chocolateyDependencyGraph(metadata),
-          osvEcosystem: "NuGet",
-          purlType: "nuget",
-        }),
-        referencedDigests: (metadata) =>
-          typeof metadata.nupkgDigest === "string" ? [metadata.nupkgDigest] : [],
-      },
-    })
-    .capabilities(this.capabilities)
-    .authChallenge(this.authChallenge)
-    .routes((route) => [
-      route.get("/api/v2", "serviceDoc", ({ ctx }) => this.serviceDoc(ctx)),
-      route.get("/api/v2/", "serviceDoc", ({ ctx }) => this.serviceDoc(ctx)),
-      route.get("/api/v2/$metadata", "metadata", () => this.metadata()),
-      route.get("/api/v2/Packages()", "packages", ({ req, ctx }) => this.packages(req, ctx)),
-      route.get("/api/v2/Packages", "packages", ({ req, ctx }) => this.packages(req, ctx)),
-      route.get("/api/v2/FindPackagesById()", "findById", ({ req, ctx }) =>
-        this.findById(req, ctx),
-      ),
-      route.get("/api/v2/Search()", "search", ({ req, ctx }) => this.chocolateySearch(req, ctx), {
-        searchable: true,
-      }),
-      route.get("/api/v2/package/:id/:version", "download", ({ params, req, ctx }) =>
-        this.download(params.id, params.version, req, ctx),
-      ),
-      route.put("/api/v2/package", "publish", ({ req, ctx }) => this.publish(req, ctx)),
-      route.delete("/api/v2/package/:id/:version", "unlist", ({ params, ctx }) =>
-        this.unlist(params.id, params.version, ctx),
-      ),
-      // The OData key segment `Packages(Id='X',Version='Y')` is one path segment;
-      // the matcher only extracts params that are a whole segment, so this catch-all
-      // (declared after the literal Packages routes) handles single-entry reads.
-      route.get("/api/v2/:resource", "packageEntry", ({ params, ctx }) =>
-        this.packageEntry(params.resource, ctx),
-      ),
-    ])
-    .build();
-  private readonly delegate = delegateRegistryPlugin(this.plugin);
-
-  get displayName() {
-    return this.plugin.displayName;
-  }
-  get mountSegment() {
-    return this.plugin.mountSegment;
-  }
-  get repositoryNamePolicy() {
-    return this.plugin.repositoryNamePolicy;
-  }
-  get acceptsRegistryBearerToken() {
-    return this.plugin.acceptsRegistryBearerToken;
-  }
-  get apiKeyHeaders() {
-    return this.plugin.apiKeyHeaders;
-  }
-  get errorResponseKind() {
-    return this.plugin.errorResponseKind;
-  }
-  get compressibleHandlers() {
-    return this.plugin.compressibleHandlers;
-  }
-  get compressibleContentTypes() {
-    return this.plugin.compressibleContentTypes;
-  }
-  get scan() {
-    return this.plugin.scan;
-  }
-
-  routes = this.delegate.routes;
-
+class ChocolateyAdapterState {
   requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
     const permission = readWritePermission(method);
     const id = match?.params.id?.toLowerCase();
@@ -184,30 +90,28 @@ export class ChocolateyAdapter implements RegistryPlugin {
     return permission;
   }
 
-  handle = this.delegate.handle;
-
-  private base(ctx: RegistryRequestContext): string {
+  base(ctx: RegistryRequestContext): string {
     return `${ctx.baseUrl}/${ctx.repo.mountPath}`;
   }
 
-  private serviceDoc(ctx: RegistryRequestContext): Response {
+  serviceDoc(ctx: RegistryRequestContext): Response {
     return new Response(buildServiceDocument(this.base(ctx)), {
       headers: { "content-type": XML_CONTENT_TYPE },
     });
   }
 
-  private metadata(): Response {
+  metadata(): Response {
     return new Response(buildMetadataDocument(), {
       headers: { "content-type": XML_CONTENT_TYPE },
     });
   }
 
-  private async findPkg(ctx: RegistryRequestContext, id: string) {
+  async findPkg(ctx: RegistryRequestContext, id: string) {
     return ctx.data.packages.findByName(id.toLowerCase());
   }
 
   /** Parse + filter raw version rows into stored rows, sorted ascending by version. */
-  private storedVersions(
+  storedVersions(
     rows: RegistryPackageVersionRow[],
     opts: { includeUnlisted?: boolean } = {},
   ): StoredChocolateyVersionRow[] {
@@ -222,7 +126,7 @@ export class ChocolateyAdapter implements RegistryPlugin {
   }
 
   /** Live versions for a package, newest-version metadata parsed + sorted ascending. */
-  private async listVersions(
+  async listVersions(
     ctx: RegistryRequestContext,
     pkg: RegistryPackageHandle,
     opts: { includeUnlisted?: boolean } = {},
@@ -230,7 +134,7 @@ export class ChocolateyAdapter implements RegistryPlugin {
     return this.storedVersions(await ctx.data.versions.listLive(pkg), opts);
   }
 
-  private entryInput(
+  entryInput(
     rows: StoredChocolateyVersionRow[],
     row: StoredChocolateyVersionRow,
   ): ChocolateyEntryInput {
@@ -252,7 +156,7 @@ export class ChocolateyAdapter implements RegistryPlugin {
    * Fetch + group live versions for every package in one batch (avoids the N+1
    * per-package `listLive` calls). Returns one stored-row list per package id.
    */
-  private async listVersionsForAll(
+  async listVersionsForAll(
     ctx: RegistryRequestContext,
     pkgs: RegistryPackageHandle[],
   ): Promise<Map<string, StoredChocolateyVersionRow[]>> {
@@ -265,7 +169,7 @@ export class ChocolateyAdapter implements RegistryPlugin {
   }
 
   /** `Packages()` — a feed of the latest (absolute-latest) version per package. */
-  private async packages(req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  async packages(req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const base = this.base(ctx);
     const summaries = await ctx.data.packages.list();
     const byPackage = await this.listVersionsForAll(ctx, summaries);
@@ -281,7 +185,7 @@ export class ChocolateyAdapter implements RegistryPlugin {
   }
 
   /** `Packages(Id='X',Version='Y')` — a single entry for one exact version. */
-  private async packageEntry(key: string, ctx: RegistryRequestContext): Promise<Response> {
+  async packageEntry(key: string, ctx: RegistryRequestContext): Promise<Response> {
     const parsedKey = parseODataKey(key);
     if (!parsedKey) throw Errors.notFound();
     const id = parseChocolateyId(parsedKey.id);
@@ -299,7 +203,7 @@ export class ChocolateyAdapter implements RegistryPlugin {
   }
 
   /** `FindPackagesById()?id='X'` — a feed of ALL versions of X. */
-  private async findById(req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  async findById(req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const base = this.base(ctx);
     const rawId = unquoteODataLiteral(new URL(req.url).searchParams.get("id"));
     if (!rawId) return textResponseWithEtag(req, buildFeed(base, []), feedHeaders());
@@ -312,7 +216,7 @@ export class ChocolateyAdapter implements RegistryPlugin {
   }
 
   /** `Search()` — a feed of the latest matching version per package. */
-  private async chocolateySearch(req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  async chocolateySearch(req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const base = this.base(ctx);
     const query = parseChocolateySearchQuery(req.url);
     const summaries = await ctx.data.packages.list();
@@ -338,7 +242,7 @@ export class ChocolateyAdapter implements RegistryPlugin {
     return textResponseWithEtag(req, buildFeed(base, matched), feedHeaders());
   }
 
-  private async download(
+  async download(
     id: string,
     version: string,
     req: Request,
@@ -363,11 +267,7 @@ export class ChocolateyAdapter implements RegistryPlugin {
     });
   }
 
-  private async unlist(
-    id: string,
-    version: string,
-    ctx: RegistryRequestContext,
-  ): Promise<Response> {
+  async unlist(id: string, version: string, ctx: RegistryRequestContext): Promise<Response> {
     id = parseChocolateyId(id);
     version = parseChocolateyVersion(version);
     const norm = normalizeChocolateyVersion(version);
@@ -382,7 +282,7 @@ export class ChocolateyAdapter implements RegistryPlugin {
     return new Response(null, { status: 204 });
   }
 
-  private async publish(req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  async publish(req: Request, ctx: RegistryRequestContext): Promise<Response> {
     return handleChocolateyPublish(req, ctx);
   }
 }
@@ -404,4 +304,64 @@ function chocolateyDependencyGraph(metadata: Record<string, unknown>): Record<st
   return Object.fromEntries(parsed.dependencies.map((dep) => [dep.id, dep.range]));
 }
 
+const chocolateyDefinition = registryAdapter("chocolatey")
+  .stateClass(ChocolateyAdapterState)
+  .module((module) =>
+    module
+      .displayName("Chocolatey")
+      .mount("chocolatey")
+      .capabilities("virtualizable")
+      .errorResponseKind("singleError")
+      .apiKeyHeaders("x-nuget-apikey")
+      .compressibleHandlers(
+        "serviceDoc",
+        "metadata",
+        "packages",
+        "packageEntry",
+        "findById",
+        "search",
+      )
+      .compressibleContentTypes(ATOM_FEED_CONTENT_TYPE, ATOM_ENTRY_CONTENT_TYPE, XML_CONTENT_TYPE),
+  )
+  .scan((scan) =>
+    scan
+      .osvEcosystem("NuGet")
+      .purlType("nuget")
+      .dependencies(chocolateyDependencyGraph)
+      .referencedDigestPaths("nupkgDigest"),
+  )
+  .basicAuth()
+  .fromState((state) => state.defaultPermission("requiredPermission"))
+  .routes((route) => [
+    route.get("/api/v2", "serviceDoc").calls((state, { ctx }) => state.serviceDoc(ctx)),
+    route.get("/api/v2/", "serviceDoc").calls((state, { ctx }) => state.serviceDoc(ctx)),
+    route.get("/api/v2/$metadata", "metadata").calls((state) => state.metadata()),
+    route
+      .get("/api/v2/Packages()", "packages")
+      .calls((state, { req, ctx }) => state.packages(req, ctx)),
+    route
+      .get("/api/v2/Packages", "packages")
+      .calls((state, { req, ctx }) => state.packages(req, ctx)),
+    route
+      .get("/api/v2/FindPackagesById()", "findById")
+      .calls((state, { req, ctx }) => state.findById(req, ctx)),
+    route
+      .searchGet("/api/v2/Search()", "search")
+      .calls((state, { req, ctx }) => state.chocolateySearch(req, ctx)),
+    route
+      .get("/api/v2/package/:id/:version", "download")
+      .calls((state, { params, req, ctx }) => state.download(params.id, params.version, req, ctx)),
+    route.put("/api/v2/package", "publish").calls((state, { req, ctx }) => state.publish(req, ctx)),
+    route
+      .delete("/api/v2/package/:id/:version", "unlist")
+      .calls((state, { params, ctx }) => state.unlist(params.id, params.version, ctx)),
+    // The OData key segment `Packages(Id='X',Version='Y')` is one path segment;
+    // the matcher only extracts params that are a whole segment, so this catch-all
+    // (declared after the literal Packages routes) handles single-entry reads.
+    route
+      .get("/api/v2/:resource", "packageEntry")
+      .calls((state, { params, ctx }) => state.packageEntry(params.resource, ctx)),
+  ]);
+
+export class ChocolateyAdapter extends chocolateyDefinition.adapterClass() {}
 export const chocolateyRegistryPlugin: RegistryPlugin = new ChocolateyAdapter();

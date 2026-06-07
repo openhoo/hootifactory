@@ -1,7 +1,5 @@
 import {
   asJsonRecord,
-  basicAuthChallenge,
-  delegateRegistryPlugin,
   Errors,
   type HttpMethod,
   type Permission,
@@ -10,76 +8,14 @@ import {
   type RegistryRequestContext,
   type RouteMatch,
   readWritePermission,
-  registryCapabilities,
-  registryPlugin,
+  registryAdapter,
   serveRegistryBlob,
 } from "@hootifactory/registry";
 import { handleMavenUpload, MAVEN_FILE_KIND } from "./maven-upload-lifecycle";
 import { contentTypeForPath, MavenPathSchema, mavenPackageForPath } from "./maven-validation";
 
 /** Maven: a coordinate-addressed file store with POM-driven package projection. */
-export class MavenAdapter implements RegistryPlugin {
-  readonly id = "maven" as const;
-  readonly capabilities = registryCapabilities("virtualizable");
-  authChallenge = basicAuthChallenge;
-
-  private readonly plugin = registryPlugin(this.id)
-    .module({
-      displayName: "Maven",
-      mountSegment: "maven",
-      errorResponseKind: "singleError",
-      compressibleHandlers: [],
-      scan: {
-        defaultOsvEcosystem: "Maven",
-        dependencyGraph: ({ metadata }) => ({
-          deps: mavenDependencyGraph(metadata),
-          osvEcosystem: "Maven",
-          purlType: "maven",
-        }),
-        referencedDigests: (metadata) => mavenReferencedDigests(metadata),
-      },
-    })
-    .capabilities(this.capabilities)
-    .authChallenge(this.authChallenge)
-    .routes((route) => [
-      route.put("/:path+", "upload", ({ params, req, ctx }) => this.upload(params.path, req, ctx)),
-      route.get("/:path+", "download", ({ params, req, ctx }) =>
-        this.download(params.path, req, ctx),
-      ),
-    ])
-    .build();
-  private readonly delegate = delegateRegistryPlugin(this.plugin);
-
-  get displayName() {
-    return this.plugin.displayName;
-  }
-  get mountSegment() {
-    return this.plugin.mountSegment;
-  }
-  get repositoryNamePolicy() {
-    return this.plugin.repositoryNamePolicy;
-  }
-  get acceptsRegistryBearerToken() {
-    return this.plugin.acceptsRegistryBearerToken;
-  }
-  get apiKeyHeaders() {
-    return this.plugin.apiKeyHeaders;
-  }
-  get errorResponseKind() {
-    return this.plugin.errorResponseKind;
-  }
-  get compressibleHandlers() {
-    return this.plugin.compressibleHandlers;
-  }
-  get compressibleContentTypes() {
-    return this.plugin.compressibleContentTypes;
-  }
-  get scan() {
-    return this.plugin.scan;
-  }
-
-  routes = this.delegate.routes;
-
+class MavenAdapterState {
   requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
     const permission = readWritePermission(method);
     const path = match?.params.path;
@@ -91,9 +27,7 @@ export class MavenAdapter implements RegistryPlugin {
     return { ...permission, resource: { type: "artifact", artifactRef: path } };
   }
 
-  handle = this.delegate.handle;
-
-  private upload(path: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  upload(path: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const safePath = parseRegistryInput(MavenPathSchema, path, {
       code: "NAME_INVALID",
       message: "invalid maven path",
@@ -101,11 +35,7 @@ export class MavenAdapter implements RegistryPlugin {
     return handleMavenUpload(safePath, req, ctx);
   }
 
-  private async download(
-    path: string,
-    req: Request,
-    ctx: RegistryRequestContext,
-  ): Promise<Response> {
+  async download(path: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const safePath = parseRegistryInput(MavenPathSchema, path, {
       code: "NAME_INVALID",
       message: "invalid maven path",
@@ -143,4 +73,33 @@ function mavenDependencyGraph(metadata: Record<string, unknown>): Record<string,
   return out;
 }
 
+const mavenDefinition = registryAdapter("maven")
+  .stateClass(MavenAdapterState)
+  .module((module) =>
+    module
+      .displayName("Maven")
+      .mount("maven")
+      .capabilities("virtualizable")
+      .errorResponseKind("singleError")
+      .compressibleHandlers(),
+  )
+  .scan((scan) =>
+    scan
+      .osvEcosystem("Maven")
+      .purlType("maven")
+      .dependencies(mavenDependencyGraph)
+      .referencedDigests((metadata) => mavenReferencedDigests(metadata)),
+  )
+  .basicAuth()
+  .fromState((state) => state.defaultPermission("requiredPermission"))
+  .routes((route) => [
+    route
+      .put("/:path+", "upload")
+      .calls((state, { params, req, ctx }) => state.upload(params.path, req, ctx)),
+    route
+      .get("/:path+", "download")
+      .calls((state, { params, req, ctx }) => state.download(params.path, req, ctx)),
+  ]);
+
+export class MavenAdapter extends mavenDefinition.adapterClass() {}
 export const mavenRegistryPlugin: RegistryPlugin = new MavenAdapter();
