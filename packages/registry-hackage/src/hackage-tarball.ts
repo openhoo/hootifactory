@@ -78,12 +78,15 @@ function* tarMembers(tar: Uint8Array): Generator<TarMember> {
  * inside that directory (`<name>-<version>/<pkg>.cabal`). We return the first
  * `.cabal` at that single-nested depth.
  */
-export function extractCabalFromSdist(archive: Uint8Array): string | null {
+export function extractCabalFromSdist(
+  archive: Uint8Array,
+  options: { readonly maxTarBytes?: number } = {},
+): string | null {
   let tar: Uint8Array;
   try {
     // node:zlib enforces `maxOutputLength` (Bun.gunzipSync ignores it), so a
     // decompression bomb is rejected here rather than allocating unbounded.
-    tar = gunzipSync(archive, { maxOutputLength: MAX_SDIST_TAR_BYTES });
+    tar = gunzipSync(archive, { maxOutputLength: options.maxTarBytes ?? MAX_SDIST_TAR_BYTES });
   } catch {
     return null;
   }
