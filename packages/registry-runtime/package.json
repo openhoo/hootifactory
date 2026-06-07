@@ -16,6 +16,7 @@
     "@hootifactory/config": "workspace:*",
     "@hootifactory/registry": "workspace:*",
     "@hootifactory/registry-apt": "workspace:*",
+    "@hootifactory/registry-chef": "workspace:*",
     "@hootifactory/registry-chocolatey": "workspace:*",
     "@hootifactory/registry-winget": "workspace:*",
     "@hootifactory/registry-maven": "workspace:*",

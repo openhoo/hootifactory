@@ -1,6 +1,7 @@
 import type { RegistryPlugin } from "@hootifactory/registry";
 import { aptRegistryPlugin } from "@hootifactory/registry-apt";
 import { cargoRegistryPlugin } from "@hootifactory/registry-cargo";
+import { chefRegistryPlugin } from "@hootifactory/registry-chef";
 import { chocolateyRegistryPlugin } from "@hootifactory/registry-chocolatey";
 import { composerRegistryPlugin } from "@hootifactory/registry-composer";
 import { goRegistryPlugin } from "@hootifactory/registry-go";
@@ -49,4 +50,5 @@ export const REGISTRY_PLUGIN_MANIFEST: RegistryPluginEntry[] = [
   { plugin: homebrewRegistryPlugin },
   { plugin: scoopRegistryPlugin },
   { plugin: rpmRegistryPlugin, aliases: ["yum", "dnf"] },
+  { plugin: chefRegistryPlugin, aliases: ["supermarket"] },
 ];
