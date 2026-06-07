@@ -1,6 +1,4 @@
 import {
-  basicAuthChallenge,
-  delegateRegistryPlugin,
   type HttpMethod,
   ifNoneMatch,
   type Permission,
@@ -10,8 +8,7 @@ import {
   type RegistryRequestContext,
   type RouteMatch,
   readWritePermission,
-  registryCapabilities,
-  registryPlugin,
+  registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
 } from "@hootifactory/registry";
@@ -56,94 +53,7 @@ function parseSubdir(subdir: string): string {
  * `index.json` metadata + the blob and host it ourselves, regenerating the
  * subdir's `repodata.json` from the live versions.
  */
-export class CondaAdapter implements RegistryPlugin {
-  readonly id = "conda" as const;
-  readonly capabilities = registryCapabilities("proxyable", "virtualizable");
-  authChallenge = basicAuthChallenge;
-
-  private readonly plugin = registryPlugin(this.id)
-    .module({
-      displayName: "Conda",
-      mountSegment: "conda",
-      errorResponseKind: "singleError",
-      compressibleHandlers: ["repodata"],
-      scan: {
-        defaultOsvEcosystem: undefined,
-        referencedDigests: (metadata) =>
-          typeof metadata.blobDigest === "string" ? [metadata.blobDigest] : [],
-      },
-    })
-    .capabilities(this.capabilities)
-    .authChallenge(this.authChallenge)
-    .generateMetadata((name, ctx) => this.generateMetadata(name, ctx))
-    .mergeMetadata((parts, ctx) => this.mergeMetadata(parts, ctx))
-    .proxyIngest((name, upstreamBase, ctx) => handleCondaProxyIngest(name, upstreamBase, ctx))
-    .routes((route) => [
-      // Literal index routes declared before the `/:subdir/:filename` catch-all
-      // (the matcher tries routes in order).
-      route.get(
-        "/:subdir/repodata.json",
-        "repodata",
-        ({ params, req, ctx }) => this.repodata(params.subdir, req, ctx),
-        { proxyRefreshTrigger: true, metadataMergeable: true, packageParam: "subdir" },
-      ),
-      route.get(
-        "/:subdir/repodata.json.zst",
-        "repodataZst",
-        ({ params, req, ctx }) => this.repodataCompressed(params.subdir, req, ctx),
-        // Modern conda/mamba fetch the `.zst` index FIRST and only fall back to
-        // plain `repodata.json` on a non-200. Carry the same proxy-refresh flags
-        // as the `.json` route so a proxy GET of the compressed index mirrors
-        // upstream before the local handler rebuilds the index from the now-
-        // mirrored versions; without this a proxy channel serves an empty 200
-        // and never mirrors. `packageParam: "subdir"` is required so the proxy
-        // dispatcher reads the subdir (not the absent `pkg` param) as the
-        // refresh key. The virtual-merge flag (`metadataMergeable`) is
-        // deliberately NOT set: the runtime's virtual-merge path emits a text
-        // body, so a `.zst` URL would serve undecodable JSON — virtual channels
-        // rely on the mergeable plain `repodata.json` instead.
-        { proxyRefreshTrigger: true, packageParam: "subdir" },
-      ),
-      route.get("/:subdir/:filename", "download", ({ params, req, ctx }) =>
-        this.download(params.subdir, params.filename, req, ctx),
-      ),
-      route.put("/:subdir/:filename", "publish", ({ params, req, ctx }) =>
-        this.publish(params.subdir, params.filename, req, ctx),
-      ),
-    ])
-    .build();
-  private readonly delegate = delegateRegistryPlugin(this.plugin);
-
-  get displayName() {
-    return this.plugin.displayName;
-  }
-  get mountSegment() {
-    return this.plugin.mountSegment;
-  }
-  get repositoryNamePolicy() {
-    return this.plugin.repositoryNamePolicy;
-  }
-  get acceptsRegistryBearerToken() {
-    return this.plugin.acceptsRegistryBearerToken;
-  }
-  get apiKeyHeaders() {
-    return this.plugin.apiKeyHeaders;
-  }
-  get errorResponseKind() {
-    return this.plugin.errorResponseKind;
-  }
-  get compressibleHandlers() {
-    return this.plugin.compressibleHandlers;
-  }
-  get compressibleContentTypes() {
-    return this.plugin.compressibleContentTypes;
-  }
-  get scan() {
-    return this.plugin.scan;
-  }
-
-  routes = this.delegate.routes;
-
+class CondaAdapterState {
   requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
     const permission = readWritePermission(method);
     const subdir = match?.params.subdir;
@@ -156,8 +66,6 @@ export class CondaAdapter implements RegistryPlugin {
     }
     return permission;
   }
-
-  handle = this.delegate.handle;
 
   /** Collect a subdir's live version metadata across the repo's packages. */
   private async subdirMetas(
@@ -185,11 +93,7 @@ export class CondaAdapter implements RegistryPlugin {
   }
 
   /** `GET /<subdir>/repodata.json` — the channel index for one subdir. */
-  private async repodata(
-    subdirRaw: string,
-    req: Request,
-    ctx: RegistryRequestContext,
-  ): Promise<Response> {
+  async repodata(subdirRaw: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const subdir = parseSubdir(subdirRaw);
     const doc = await this.buildSubdirRepodata(ctx, subdir);
     return textResponseWithEtag(req, serializeCondaRepodata(doc), REPODATA_CONTENT_TYPE);
@@ -200,7 +104,7 @@ export class CondaAdapter implements RegistryPlugin {
    * Modern conda/mamba clients fetch the compressed index by name and decode it
    * by its suffix, so the bytes must be real zstd (`application/zstd`), not gzip.
    */
-  private async repodataCompressed(
+  async repodataCompressed(
     subdirRaw: string,
     req: Request,
     ctx: RegistryRequestContext,
@@ -215,7 +119,7 @@ export class CondaAdapter implements RegistryPlugin {
   }
 
   /** `GET /<subdir>/<filename>` — serve the hosted package blob. */
-  private async download(
+  async download(
     subdirRaw: string,
     filenameRaw: string,
     req: Request,
@@ -273,7 +177,7 @@ export class CondaAdapter implements RegistryPlugin {
     return meta;
   }
 
-  private async publish(
+  async publish(
     subdirRaw: string,
     filenameRaw: string,
     req: Request,
@@ -344,4 +248,52 @@ function normalizeDoc(doc: CondaRepodataDocument): CondaRepodataDocument {
   };
 }
 
+const condaDefinition = registryAdapter("conda")
+  .stateClass(CondaAdapterState)
+  .module((module) =>
+    module
+      .displayName("Conda")
+      .mount("conda")
+      .capabilities("proxyable", "virtualizable")
+      .errorResponseKind("singleError")
+      .compressibleHandlers("repodata"),
+  )
+  .scan({
+    defaultOsvEcosystem: undefined,
+    referencedDigests: (metadata) =>
+      typeof metadata.blobDigest === "string" ? [metadata.blobDigest] : [],
+  })
+  .basicAuth()
+  .fromState((state) =>
+    state
+      .defaultPermission("requiredPermission")
+      .metadata({ generate: "generateMetadata", merge: "mergeMetadata" })
+      .proxyIngest("proxyIngest"),
+  )
+  .routes((route) => [
+    // Literal index routes declared before the `/:subdir/:filename` catch-all.
+    route
+      .get("/:subdir/repodata.json", "repodata")
+      .metadata("subdir", { proxyRefresh: true })
+      .calls((state, { params, req, ctx }) => state.repodata(params.subdir, req, ctx)),
+    // Modern conda/mamba fetch the `.zst` index FIRST and only fall back to
+    // plain `repodata.json` on a non-200. It refreshes proxy state but is not
+    // marked mergeable because virtual metadata returns plain JSON text.
+    route
+      .get("/:subdir/repodata.json.zst", "repodataZst")
+      .proxyRefresh("subdir")
+      .calls((state, { params, req, ctx }) => state.repodataCompressed(params.subdir, req, ctx)),
+    route
+      .get("/:subdir/:filename", "download")
+      .calls((state, { params, req, ctx }) =>
+        state.download(params.subdir, params.filename, req, ctx),
+      ),
+    route
+      .put("/:subdir/:filename", "publish")
+      .calls((state, { params, req, ctx }) =>
+        state.publish(params.subdir, params.filename, req, ctx),
+      ),
+  ]);
+
+export class CondaAdapter extends condaDefinition.adapterClass() {}
 export const condaRegistryPlugin: RegistryPlugin = new CondaAdapter();
