@@ -1,14 +1,11 @@
 import {
-  bearerAuthChallenge,
-  delegateRegistryPlugin,
   type HttpMethod,
   type Permission,
   type RegistryPlugin,
   type RegistryRequestContext,
   type RouteMatch,
   readWritePermission,
-  registryCapabilities,
-  registryPlugin,
+  registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
 } from "@hootifactory/registry";
@@ -47,82 +44,7 @@ function parsePubParam<T>(
  * listing + single-version metadata, the archive download, and the pub 3-step
  * publish flow.
  */
-export class PubAdapter implements RegistryPlugin {
-  readonly id = "pub" as const;
-  readonly capabilities = registryCapabilities("virtualizable");
-  authChallenge = () => bearerAuthChallenge();
-
-  private readonly plugin = registryPlugin(this.id)
-    .module({
-      displayName: "Pub",
-      mountSegment: "pub",
-      errorResponseKind: "singleError",
-      compressibleHandlers: ["listing", "version"],
-      compressibleContentTypes: [PUB_JSON_CONTENT_TYPE],
-      scan: {
-        defaultOsvEcosystem: "Pub",
-        dependencyGraph: ({ metadata }) => ({
-          deps: pubDependencyGraph(metadata),
-          osvEcosystem: "Pub",
-          purlType: "pub",
-        }),
-        referencedDigests: (metadata) =>
-          typeof metadata.archiveDigest === "string" ? [metadata.archiveDigest] : [],
-      },
-    })
-    .capabilities(this.capabilities)
-    .authChallenge(this.authChallenge)
-    .routes((route) => [
-      route.get("/api/packages/versions/new", "publishNew", ({ ctx }) => this.publishNew(ctx)),
-      route.post("/api/packages/versions/newUpload", "publishUpload", ({ req, ctx }) =>
-        this.publishUpload(req, ctx),
-      ),
-      route.get("/api/packages/versions/newUploadFinish", "publishFinish", () =>
-        this.publishFinish(),
-      ),
-      route.get("/api/packages/:package/versions/:version", "version", ({ params, req, ctx }) =>
-        this.version(params.package, params.version, req, ctx),
-      ),
-      route.get("/api/packages/:package", "listing", ({ params, req, ctx }) =>
-        this.listing(params.package, req, ctx),
-      ),
-      route.get("/api/archives/:file", "download", ({ params, req, ctx }) =>
-        this.download(params.file, req, ctx),
-      ),
-    ])
-    .build();
-  private readonly delegate = delegateRegistryPlugin(this.plugin);
-
-  get displayName() {
-    return this.plugin.displayName;
-  }
-  get mountSegment() {
-    return this.plugin.mountSegment;
-  }
-  get repositoryNamePolicy() {
-    return this.plugin.repositoryNamePolicy;
-  }
-  get acceptsRegistryBearerToken() {
-    return this.plugin.acceptsRegistryBearerToken;
-  }
-  get apiKeyHeaders() {
-    return this.plugin.apiKeyHeaders;
-  }
-  get errorResponseKind() {
-    return this.plugin.errorResponseKind;
-  }
-  get compressibleHandlers() {
-    return this.plugin.compressibleHandlers;
-  }
-  get compressibleContentTypes() {
-    return this.plugin.compressibleContentTypes;
-  }
-  get scan() {
-    return this.plugin.scan;
-  }
-
-  routes = this.delegate.routes;
-
+class PubAdapterState {
   requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
     const permission = readWritePermission(method);
     const pkg = match?.params.package;
@@ -149,13 +71,11 @@ export class PubAdapter implements RegistryPlugin {
     return permission;
   }
 
-  handle = this.delegate.handle;
-
-  private archiveUrlContext(ctx: RegistryRequestContext): { baseUrl: string; mountPath: string } {
+  archiveUrlContext(ctx: RegistryRequestContext): { baseUrl: string; mountPath: string } {
     return { baseUrl: ctx.baseUrl, mountPath: ctx.repo.mountPath };
   }
 
-  private async storedEntries(
+  async storedEntries(
     packageName: string,
     ctx: RegistryRequestContext,
   ): Promise<PubVersionEntry[]> {
@@ -178,11 +98,7 @@ export class PubAdapter implements RegistryPlugin {
     });
   }
 
-  private async listing(
-    pkgRaw: string,
-    req: Request,
-    ctx: RegistryRequestContext,
-  ): Promise<Response> {
+  async listing(pkgRaw: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const name = parsePubParam(PubPackageNameSchema, pkgRaw, "invalid Pub package name");
     if (!name.ok) return name.response;
     const packageName = name.value;
@@ -194,7 +110,7 @@ export class PubAdapter implements RegistryPlugin {
     });
   }
 
-  private async version(
+  async version(
     pkgRaw: string,
     versionRaw: string,
     req: Request,
@@ -219,11 +135,7 @@ export class PubAdapter implements RegistryPlugin {
     );
   }
 
-  private async download(
-    fileRaw: string,
-    req: Request,
-    ctx: RegistryRequestContext,
-  ): Promise<Response> {
+  async download(fileRaw: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const parsed = parsePubParam(PubArchiveFileSchema, fileRaw, "invalid archive filename");
     if (!parsed.ok) return parsed.response;
     const file = parsed.value;
@@ -244,16 +156,16 @@ export class PubAdapter implements RegistryPlugin {
     });
   }
 
-  private publishNew(ctx: RegistryRequestContext): Response {
+  publishNew(ctx: RegistryRequestContext): Response {
     const url = `${ctx.baseUrl}/${ctx.repo.mountPath}/api/packages/versions/newUpload`;
     return pubJson({ url, fields: {} });
   }
 
-  private publishUpload(req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  publishUpload(req: Request, ctx: RegistryRequestContext): Promise<Response> {
     return handlePubUpload(req, ctx);
   }
 
-  private publishFinish(): Response {
+  publishFinish(): Response {
     return pubJson({ success: { message: "package published" } });
   }
 }
@@ -277,4 +189,48 @@ function pubDependencyGraph(metadata: Record<string, unknown>): Record<string, s
   return Object.fromEntries(Object.entries(deps).map(([name, range]) => [name, String(range)]));
 }
 
+const pubDefinition = registryAdapter("pub")
+  .stateClass(PubAdapterState)
+  .module((module) =>
+    module
+      .displayName("Pub")
+      .mount("pub")
+      .capabilities("virtualizable")
+      .errorResponseKind("singleError")
+      .compressibleHandlers("listing", "version")
+      .compressibleContentTypes(PUB_JSON_CONTENT_TYPE),
+  )
+  .scan((scan) =>
+    scan
+      .osvEcosystem("Pub")
+      .purlType("pub")
+      .dependencies(pubDependencyGraph)
+      .referencedDigestPaths("archiveDigest"),
+  )
+  .bearerAuth()
+  .fromState((state) => state.defaultPermission("requiredPermission"))
+  .routes((route) => [
+    route
+      .get("/api/packages/versions/new", "publishNew")
+      .calls((state, { ctx }) => state.publishNew(ctx)),
+    route
+      .post("/api/packages/versions/newUpload", "publishUpload")
+      .calls((state, { req, ctx }) => state.publishUpload(req, ctx)),
+    route
+      .get("/api/packages/versions/newUploadFinish", "publishFinish")
+      .calls((state) => state.publishFinish()),
+    route
+      .get("/api/packages/:package/versions/:version", "version")
+      .calls((state, { params, req, ctx }) =>
+        state.version(params.package, params.version, req, ctx),
+      ),
+    route
+      .get("/api/packages/:package", "listing")
+      .calls((state, { params, req, ctx }) => state.listing(params.package, req, ctx)),
+    route
+      .get("/api/archives/:file", "download")
+      .calls((state, { params, req, ctx }) => state.download(params.file, req, ctx)),
+  ]);
+
+export class PubAdapter extends pubDefinition.adapterClass() {}
 export const pubRegistryPlugin: RegistryPlugin = new PubAdapter();
