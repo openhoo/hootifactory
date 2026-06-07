@@ -8,6 +8,11 @@ export interface DependencyTarget {
   module: RegistryPlugin;
   artifactName: string | null;
   artifactVersion: string | null;
+  /**
+   * Database seam, defaulting to the real `@hootifactory/db` `db`. Tests inject a
+   * fake so the metadata lookups never open a real connection; production omits it.
+   */
+  db?: typeof db;
 }
 
 type VersionedDependencyTarget = DependencyTarget & {
@@ -59,7 +64,8 @@ export async function collectPackageDependencies(
 async function loadPackageVersionMetadata(
   target: VersionedDependencyTarget,
 ): Promise<Record<string, unknown> | null> {
-  const [pkg] = await db
+  const dbClient = target.db ?? db;
+  const [pkg] = await dbClient
     .select({ id: packages.id })
     .from(packages)
     .where(
@@ -68,7 +74,7 @@ async function loadPackageVersionMetadata(
     .limit(1);
   if (!pkg) return null;
 
-  const [version] = await db
+  const [version] = await dbClient
     .select({ metadata: packageVersions.metadata })
     .from(packageVersions)
     .where(

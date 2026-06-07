@@ -1,274 +1,153 @@
-import { mapWithBoundedConcurrency } from "@hootifactory/core";
-import { and, db, eq, scanOutbox, sql } from "@hootifactory/db";
-import { initializeObservability, logger, withSpan } from "@hootifactory/observability";
+import { initializeObservability, logger } from "@hootifactory/observability";
 import {
   createMaintenanceScheduler,
   installShutdownHandlers,
   intEnv,
   startHealthServer,
 } from "@hootifactory/queue";
-import {
-  reapExpiredContentUploadSessions,
-  sweepUnreferencedCasBlobs,
-} from "@hootifactory/registry-application/content";
 import { loadConfiguredRegistryPlugins } from "@hootifactory/registry-runtime";
-import { SCAN_OUTBOX_STATUS } from "@hootifactory/scan-core";
 import { loadConfiguredScanners } from "@hootifactory/scanner-runtime";
-import { processScan, recordScanFailure, scannerRuntimeFromEnv } from "./pipeline";
+import { scannerRuntimeFromEnv as defaultScannerRuntimeFromEnv } from "./pipeline";
 import {
-  type ClaimedScanIntent,
-  claimedAttemptFilter,
-  claimedScanIntentsFromExecute,
-} from "./scan-outbox-rows";
+  reapExpiredUploads as defaultReapExpiredUploads,
+  reclaimStuckScans as defaultReclaimStuckScans,
+  runScanCycle as defaultRunScanCycle,
+  sweepBlobs as defaultSweepBlobs,
+  type ScanWorkerConfig,
+} from "./worker-loop";
 
 const workerRole = "scan-worker";
 
-initializeObservability({ serviceRole: workerRole });
-loadConfiguredRegistryPlugins();
-const loadedScanners = loadConfiguredScanners();
-if (loadedScanners.unknown.length > 0) {
-  logger.warn("ignoring unknown scanners in SCANNERS", { unknown: loadedScanners.unknown });
+/**
+ * Loop collaborators, all defaulting to the real `./pipeline` / `./worker-loop`
+ * implementations so production behavior is unchanged. The unit test injects fakes
+ * here instead of mutating the process-global module registry with `mock.module`,
+ * which leaked into the sibling pipeline/worker-loop suites and made them flaky.
+ */
+export interface ScanWorkerDeps {
+  scannerRuntimeFromEnv?: typeof defaultScannerRuntimeFromEnv;
+  reapExpiredUploads?: typeof defaultReapExpiredUploads;
+  sweepBlobs?: typeof defaultSweepBlobs;
+  reclaimStuckScans?: typeof defaultReclaimStuckScans;
+  runScanCycle?: typeof defaultRunScanCycle;
 }
 
-const workerBatchSize = intEnv("SCAN_WORKER_BATCH_SIZE", 16, 1);
-const workerConcurrency = Math.min(workerBatchSize, intEnv("SCAN_WORKER_CONCURRENCY", 4, 1));
-const pollingIntervalSeconds = intEnv("SCAN_WORKER_POLL_INTERVAL_SECONDS", 0.5, 0.5);
-const maxAttempts = intEnv("SCAN_WORKER_MAX_ATTEMPTS", 5, 1);
-const uploadReaperIntervalSeconds = intEnv("UPLOAD_REAPER_INTERVAL_SECONDS", 300, 1);
-const uploadReaperBatchSize = intEnv("UPLOAD_REAPER_BATCH_SIZE", 100, 1);
-const blobGcIntervalSeconds = intEnv("BLOB_GC_INTERVAL_SECONDS", 300, 1);
-const blobGcBatchSize = intEnv("BLOB_GC_BATCH_SIZE", 100, 1);
-const blobGcGraceSeconds = intEnv("BLOB_GC_GRACE_SECONDS", 60, 0);
-// A claimed row whose worker died never reaches markSucceeded/markFailed and is
-// stranded in 'processing', permanently blocking its artifact under enforce-mode
-// policy. Reclaim such rows once they exceed a generous multiple of the worst-
-// case per-artifact scan time (manifest-graph traversal + OSV, each bounded by
-// SCANNER_TIMEOUT_MS, default 120s) so a live worker is never reclaimed mid-scan.
-const scanReclaimIntervalSeconds = intEnv("SCAN_RECLAIM_INTERVAL_SECONDS", 300, 1);
-const scanReclaimTimeoutSeconds = intEnv("SCAN_RECLAIM_TIMEOUT_SECONDS", 900, 60);
+/**
+ * Bootstrap and drive the scan-worker: initialize observability + plugins, resolve
+ * the loop config, wire the health server / shutdown lifecycle / maintenance
+ * scheduler, then run the claim/process loop until shutdown.
+ *
+ * This is an exported async function (invoked once at module load below) rather
+ * than top-level statements so the unit test can drive a single, deterministic loop
+ * iteration by calling it directly with collaborators stubbed — top-level
+ * import-time side effects do not interleave reliably with `mock.module` under
+ * `bun test --isolate`.
+ */
+export async function runScanWorker(deps: ScanWorkerDeps = {}): Promise<void> {
+  const scannerRuntimeFromEnv = deps.scannerRuntimeFromEnv ?? defaultScannerRuntimeFromEnv;
+  const reapExpiredUploads = deps.reapExpiredUploads ?? defaultReapExpiredUploads;
+  const sweepBlobs = deps.sweepBlobs ?? defaultSweepBlobs;
+  const reclaimStuckScans = deps.reclaimStuckScans ?? defaultReclaimStuckScans;
+  const runScanCycle = deps.runScanCycle ?? defaultRunScanCycle;
 
-const scannerRuntime = scannerRuntimeFromEnv();
-
-async function claimScanIntents(limit: number): Promise<ClaimedScanIntent[]> {
-  const result = await db.execute(sql`
-    with claimed as (
-      select id
-      from scan_outbox
-      where status = ${SCAN_OUTBOX_STATUS.pending} and next_attempt_at <= now()
-      order by next_attempt_at asc, created_at asc
-      limit ${limit}
-      for update skip locked
-    )
-    update scan_outbox so
-       set status = ${SCAN_OUTBOX_STATUS.processing},
-           attempts = so.attempts + 1,
-           locked_at = now(),
-           updated_at = now()
-      from claimed
-     where so.id = claimed.id
-    returning so.id, so.artifact_id as "artifactId", so.attempts
-  `);
-  return claimedScanIntentsFromExecute(result);
-}
-
-// Terminal writes are gated by claimedAttemptFilter (optimistic concurrency): a
-// worker finalizes only the exact attempt it claimed. If a re-publish reset the row
-// to 'pending' and another worker re-claimed it (advancing attempts), or a reclaim
-// moved it out of 'processing', the filter no longer matches, the UPDATE is a no-op,
-// and a stale worker cannot clobber the newer attempt or a re-requested rescan.
-async function markSucceeded(intent: ClaimedScanIntent): Promise<void> {
-  await db
-    .update(scanOutbox)
-    .set({
-      status: SCAN_OUTBOX_STATUS.succeeded,
-      lockedAt: null,
-      lastError: null,
-      updatedAt: new Date(),
-    })
-    .where(claimedAttemptFilter(intent));
-}
-
-async function markFailed(intent: ClaimedScanIntent, err: unknown): Promise<void> {
-  const error = err instanceof Error ? err.message : String(err);
-  const retry = intent.attempts < maxAttempts;
-  await db
-    .update(scanOutbox)
-    .set({
-      status: retry ? SCAN_OUTBOX_STATUS.pending : SCAN_OUTBOX_STATUS.failed,
-      lockedAt: null,
-      lastError: error.slice(0, 2000),
-      nextAttemptAt: new Date(Date.now() + Math.min(60_000, 1_000 * 2 ** intent.attempts)),
-      updatedAt: new Date(),
-    })
-    .where(claimedAttemptFilter(intent));
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-// This worker runs its own claim/process loop (not pg-boss), so it can't use
-// runWorker, but the readiness endpoint and signal/shutdown lifecycle are shared.
-const health = startHealthServer(workerRole);
-const lifecycle = installShutdownHandlers({
-  logLabel: "scan worker",
-  cleanup: async () => {
-    health.setReady(false);
-    await health.server?.stop();
-  },
-});
-
-logger.info("scan worker starting", {
-  batchSize: workerBatchSize,
-  concurrency: workerConcurrency,
-  pollingIntervalSeconds,
-  maxAttempts,
-  uploadReaperBatchSize,
-  uploadReaperIntervalSeconds,
-  blobGcBatchSize,
-  blobGcGraceSeconds,
-  blobGcIntervalSeconds,
-  scanReclaimIntervalSeconds,
-  scanReclaimTimeoutSeconds,
-  workerPort: process.env.WORKER_PORT,
-  scanners: scannerRuntime.scanners
-    .filter((scanner) => scanner.available)
-    .map((scanner) => scanner.plugin.id),
-});
-health.setReady(true);
-
-async function reapExpiredUploads(): Promise<void> {
-  try {
-    const result = await withSpan(
-      "upload_sessions.reap_expired",
-      { "upload_reaper.batch_size": uploadReaperBatchSize },
-      () => reapExpiredContentUploadSessions({ limit: uploadReaperBatchSize }),
-    );
-    if (result.aborted > 0) {
-      logger.info("expired upload sessions reaped", { aborted: result.aborted });
-    }
-  } catch (err) {
-    logger.error("expired upload session reaper failed", { error: err });
+  initializeObservability({ serviceRole: workerRole });
+  loadConfiguredRegistryPlugins();
+  const loadedScanners = loadConfiguredScanners();
+  if (loadedScanners.unknown.length > 0) {
+    logger.warn("ignoring unknown scanners in SCANNERS", { unknown: loadedScanners.unknown });
   }
-}
 
-async function sweepBlobs(): Promise<void> {
-  try {
-    const result = await withSpan(
-      "blob_gc.sweep",
-      {
-        "blob_gc.batch_size": blobGcBatchSize,
-        "blob_gc.grace_seconds": blobGcGraceSeconds,
-      },
-      () =>
-        sweepUnreferencedCasBlobs({
-          limit: blobGcBatchSize,
-          graceMs: blobGcGraceSeconds * 1000,
-        }),
-    );
-    if (result.candidates > 0 || result.reclaimed > 0) {
-      logger.info("unreferenced CAS blobs swept", result);
-    }
-  } catch (err) {
-    logger.error("unreferenced CAS blob sweeper failed", { error: err });
-  }
-}
+  const workerBatchSize = intEnv("SCAN_WORKER_BATCH_SIZE", 16, 1);
+  const workerConcurrency = Math.min(workerBatchSize, intEnv("SCAN_WORKER_CONCURRENCY", 4, 1));
+  const pollingIntervalSeconds = intEnv("SCAN_WORKER_POLL_INTERVAL_SECONDS", 0.5, 0.5);
+  const maxAttempts = intEnv("SCAN_WORKER_MAX_ATTEMPTS", 5, 1);
+  const uploadReaperIntervalSeconds = intEnv("UPLOAD_REAPER_INTERVAL_SECONDS", 300, 1);
+  const uploadReaperBatchSize = intEnv("UPLOAD_REAPER_BATCH_SIZE", 100, 1);
+  const blobGcIntervalSeconds = intEnv("BLOB_GC_INTERVAL_SECONDS", 300, 1);
+  const blobGcBatchSize = intEnv("BLOB_GC_BATCH_SIZE", 100, 1);
+  const blobGcGraceSeconds = intEnv("BLOB_GC_GRACE_SECONDS", 60, 0);
+  // A claimed row whose worker died never reaches markSucceeded/markFailed and is
+  // stranded in 'processing', permanently blocking its artifact under enforce-mode
+  // policy. Reclaim such rows once they exceed a generous multiple of the worst-
+  // case per-artifact scan time (manifest-graph traversal + OSV, each bounded by
+  // SCANNER_TIMEOUT_MS, default 120s) so a live worker is never reclaimed mid-scan.
+  const scanReclaimIntervalSeconds = intEnv("SCAN_RECLAIM_INTERVAL_SECONDS", 300, 1);
+  const scanReclaimTimeoutSeconds = intEnv("SCAN_RECLAIM_TIMEOUT_SECONDS", 900, 60);
 
-async function reclaimStuckScans(): Promise<void> {
-  try {
-    const reclaimed = await withSpan(
-      "scan.outbox.reclaim_stuck",
-      { "scan.reclaim.timeout_seconds": scanReclaimTimeoutSeconds },
-      () =>
-        db
-          .update(scanOutbox)
-          .set({
-            // attempts was already incremented at claim time, so mirror markFailed:
-            // exhaust to 'failed' once attempts reach the cap, otherwise retry.
-            status: sql`case when ${scanOutbox.attempts} >= ${maxAttempts}
-                             then ${SCAN_OUTBOX_STATUS.failed}
-                             else ${SCAN_OUTBOX_STATUS.pending} end`,
-            lockedAt: null,
-            nextAttemptAt: new Date(),
-            lastError: "reclaimed: worker stopped while processing",
-            updatedAt: new Date(),
-          })
-          .where(
-            and(
-              eq(scanOutbox.status, SCAN_OUTBOX_STATUS.processing),
-              sql`${scanOutbox.lockedAt} < now() - make_interval(secs => ${scanReclaimTimeoutSeconds})`,
-            ),
-          )
-          .returning({ id: scanOutbox.id }),
-    );
-    if (reclaimed.length > 0) {
-      logger.warn("reclaimed stuck scan_outbox rows", {
-        reclaimed: reclaimed.length,
-        timeoutSeconds: scanReclaimTimeoutSeconds,
-      });
-    }
-  } catch (err) {
-    logger.error("stuck scan reclaim failed", { error: err });
-  }
-}
+  const scannerRuntime = scannerRuntimeFromEnv();
 
-const maintenance = createMaintenanceScheduler([
-  {
-    name: "upload_sessions.reap_expired",
-    intervalMs: uploadReaperIntervalSeconds * 1000,
-    run: reapExpiredUploads,
-  },
-  {
-    name: "blob_gc.sweep",
-    intervalMs: blobGcIntervalSeconds * 1000,
-    run: sweepBlobs,
-  },
-  {
-    name: "scan.outbox.reclaim_stuck",
-    intervalMs: scanReclaimIntervalSeconds * 1000,
-    run: reclaimStuckScans,
-  },
-]);
+  const config: ScanWorkerConfig = {
+    batchSize: workerBatchSize,
+    concurrency: workerConcurrency,
+    pollingIntervalSeconds,
+    maxAttempts,
+    uploadReaperBatchSize,
+    uploadReaperIntervalSeconds,
+    blobGcBatchSize,
+    blobGcGraceSeconds,
+    blobGcIntervalSeconds,
+    scanReclaimIntervalSeconds,
+    scanReclaimTimeoutSeconds,
+  };
 
-while (!lifecycle.isShuttingDown()) {
-  await maintenance.runDue();
-  const intents = await withSpan(
-    "scan.outbox.claim",
-    { "worker.batch_size": workerBatchSize },
-    () => claimScanIntents(workerBatchSize),
-  );
-  if (intents.length === 0) {
-    await sleep(pollingIntervalSeconds * 1000);
-    continue;
-  }
-  await mapWithBoundedConcurrency(intents, workerConcurrency, async (intent) => {
-    return withSpan(
-      "scan.outbox.process",
-      {
-        "scan.outbox.id": intent.id,
-        "artifact.id": intent.artifactId,
-        "scan.outbox.attempts": intent.attempts,
-      },
-      async () => {
-        try {
-          await processScan(intent.artifactId, scannerRuntime);
-          await markSucceeded(intent);
-        } catch (err) {
-          logger.error("scan job failed", {
-            artifactId: intent.artifactId,
-            attempt: intent.attempts,
-            error: err,
-          });
-          await recordScanFailure(intent.artifactId, err).catch((recordErr) => {
-            logger.error("scan failure recording failed", {
-              artifactId: intent.artifactId,
-              originalError: err instanceof Error ? err.message : String(err),
-              error: recordErr,
-            });
-          });
-          await markFailed(intent, err);
-        }
-      },
-    );
+  // This worker runs its own claim/process loop (not pg-boss), so it can't use
+  // runWorker, but the readiness endpoint and signal/shutdown lifecycle are shared.
+  const health = startHealthServer(workerRole);
+  const lifecycle = installShutdownHandlers({
+    logLabel: "scan worker",
+    cleanup: async () => {
+      health.setReady(false);
+      await health.server?.stop();
+    },
   });
+
+  logger.info("scan worker starting", {
+    batchSize: workerBatchSize,
+    concurrency: workerConcurrency,
+    pollingIntervalSeconds,
+    maxAttempts,
+    uploadReaperBatchSize,
+    uploadReaperIntervalSeconds,
+    blobGcBatchSize,
+    blobGcGraceSeconds,
+    blobGcIntervalSeconds,
+    scanReclaimIntervalSeconds,
+    scanReclaimTimeoutSeconds,
+    workerPort: process.env.WORKER_PORT,
+    scanners: scannerRuntime.scanners
+      .filter((scanner) => scanner.available)
+      .map((scanner) => scanner.plugin.id),
+  });
+  health.setReady(true);
+
+  const maintenance = createMaintenanceScheduler([
+    {
+      name: "upload_sessions.reap_expired",
+      intervalMs: uploadReaperIntervalSeconds * 1000,
+      run: () => reapExpiredUploads(uploadReaperBatchSize),
+    },
+    {
+      name: "blob_gc.sweep",
+      intervalMs: blobGcIntervalSeconds * 1000,
+      run: () => sweepBlobs(blobGcBatchSize, blobGcGraceSeconds),
+    },
+    {
+      name: "scan.outbox.reclaim_stuck",
+      intervalMs: scanReclaimIntervalSeconds * 1000,
+      run: () => reclaimStuckScans(scanReclaimTimeoutSeconds, maxAttempts),
+    },
+  ]);
+
+  while (!lifecycle.isShuttingDown()) {
+    await maintenance.runDue();
+    await runScanCycle(config, scannerRuntime);
+  }
+}
+
+// Auto-start only when run as the process entrypoint. Under `bun test` the file is
+// imported (not the main module), so the unit test can drive a single, deterministic
+// loop iteration by calling runScanWorker() directly with injected collaborators —
+// without the import-time loop racing the test's setup.
+if (import.meta.main) {
+  await runScanWorker();
 }
