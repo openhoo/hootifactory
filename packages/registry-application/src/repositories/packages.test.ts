@@ -46,7 +46,7 @@ describe("findOrCreatePackage", () => {
       expect(values?.args[0]).toMatchObject({ name: "demo", namespace: null });
       return r;
     });
-    expect(row).toEqual({ id: "pkg_1", name: "demo" });
+    expect(row as unknown).toEqual({ id: "pkg_1", name: "demo" });
   });
 
   test("throws when the upsert returns no row", async () => {
@@ -68,7 +68,7 @@ describe("package version reads", () => {
       const { findPackageByName } = await import("./packages");
       return findPackageByName(ctx, "demo");
     });
-    expect(found).toEqual({ id: "pkg_1" });
+    expect(found as unknown).toEqual({ id: "pkg_1" });
 
     const none = await withFakeDb([[]], async () => {
       const { findPackageByName } = await import("./packages");

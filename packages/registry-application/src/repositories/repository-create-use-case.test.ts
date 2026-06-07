@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeAll, describe, expect, mock, test } from "bun:test";
 
 /**
  * createRepositoryForPrincipal orchestrates auth → validation → org lookup →
@@ -51,6 +51,18 @@ const body = { name: "packages", moduleId: "npm" as const };
 const principal = { kind: "user", userId: "u1" } as any;
 
 describe("createRepositoryForPrincipal", () => {
+  // Warm the heavy workspace module graph once so the first test's cold-start
+  // import cost (auth + core + registry + repository-create) does not blow the
+  // default per-test timeout on a loaded CI runner.
+  beforeAll(async () => {
+    await Promise.all([
+      import("@hootifactory/auth"),
+      import("@hootifactory/core"),
+      import("@hootifactory/registry"),
+      import("./repository-create"),
+    ]);
+  });
+
   afterEach(() => mock.restore());
 
   test("denies unauthenticated callers with a 401 contract", async () => {

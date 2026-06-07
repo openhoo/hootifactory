@@ -87,7 +87,7 @@ describe("repository reads", () => {
       const { getRepositoryById } = await import("./repositories");
       return getRepositoryById("r1");
     });
-    expect(found).toEqual({ id: "r1" });
+    expect(found as unknown).toEqual({ id: "r1" });
 
     const none = await withFakeDb([[]], async () => {
       const { getRepositoryById } = await import("./repositories");

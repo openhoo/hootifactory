@@ -54,7 +54,7 @@ describe("loadVirtualMembers", () => {
         return r;
       },
     );
-    expect(repos).toEqual([{ id: "m1" }, { id: "m2" }]);
+    expect(repos as unknown).toEqual([{ id: "m1" }, { id: "m2" }]);
   });
 });
 

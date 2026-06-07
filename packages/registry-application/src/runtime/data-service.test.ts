@@ -205,18 +205,18 @@ describe("createRegistryDataService wiring", () => {
     const pkg = { id: "pkg_1", orgId: ctx.repo.orgId, repositoryId: ctx.repo.id };
     const p = pkg as any;
 
-    expect(data.packages.findByName("demo")).toBe("ret:findByName");
+    expect(data.packages.findByName("demo") as unknown).toBe("ret:findByName");
     data.packages.findOrCreate({ name: "demo" });
-    expect(data.packages.listNames()).toBe("ret:listNames");
-    expect(data.packages.list()).toBe("ret:list");
-    expect(data.packages.search({ text: "a", from: 0, size: 1 })).toBe("ret:search");
+    expect(data.packages.listNames() as unknown).toBe("ret:listNames");
+    expect(data.packages.list() as unknown).toBe("ret:list");
+    expect(data.packages.search({ text: "a", from: 0, size: 1 }) as unknown).toBe("ret:search");
 
-    expect(data.versions.find(p, "1.0.0")).toBe("ret:find");
-    expect(data.versions.findLive(p, "1.0.0")).toBe("ret:findLive");
-    expect(data.versions.exists(p, "1.0.0")).toBe("ret:exists");
-    expect(data.versions.listLive(p, {})).toBe("ret:listLive");
-    expect(data.tags.listLive(p)).toBe("ret:tagsListLive");
-    expect(data.tags.delete(p, "beta")).toBe("ret:deleteDistTag");
+    expect(data.versions.find(p, "1.0.0") as unknown).toBe("ret:find");
+    expect(data.versions.findLive(p, "1.0.0") as unknown).toBe("ret:findLive");
+    expect(data.versions.exists(p, "1.0.0") as unknown).toBe("ret:exists");
+    expect(data.versions.listLive(p, {}) as unknown).toBe("ret:listLive");
+    expect(data.tags.listLive(p) as unknown).toBe("ret:tagsListLive");
+    expect(data.tags.delete(p, "beta") as unknown).toBe("ret:deleteDistTag");
 
     // packageId() translation hands the helper the bare id, not the handle.
     expect(calls.find).toEqual(["pkg_1", "1.0.0"]);
@@ -245,16 +245,16 @@ describe("createRegistryDataService wiring", () => {
     const pkg = { id: "pkg_1", orgId: ctx.repo.orgId, repositoryId: ctx.repo.id };
     const p = pkg as any;
 
-    expect(data.content.isArtifactBlocked("sha256:x")).toBe("ret:isArtifactBlocked");
-    expect(data.content.blobRefExists({ digest: "sha256:x", kind: "k", scope: "s" })).toBe(
-      "ret:blobRefExists",
-    );
-    expect(data.contentStore.listTags(p, {})).toBe("ret:listTags");
-    expect(data.contentStore.resolveManifest({ package: p, reference: "latest" })).toBe(
+    expect(data.content.isArtifactBlocked("sha256:x") as unknown).toBe("ret:isArtifactBlocked");
+    expect(
+      data.content.blobRefExists({ digest: "sha256:x", kind: "k", scope: "s" }) as unknown,
+    ).toBe("ret:blobRefExists");
+    expect(data.contentStore.listTags(p, {}) as unknown).toBe("ret:listTags");
+    expect(data.contentStore.resolveManifest({ package: p, reference: "latest" }) as unknown).toBe(
       "ret:resolveManifest",
     );
     expect(calls.listTags?.[0]).toBe("pkg_1");
-    expect(data.contentStore.listMountSources("sha256:x")).toBe("ret:listMountSources");
+    expect(data.contentStore.listMountSources("sha256:x") as unknown).toBe("ret:listMountSources");
   });
 
   test("blob-backed version writes store the blob then upsert the derived asset", async () => {

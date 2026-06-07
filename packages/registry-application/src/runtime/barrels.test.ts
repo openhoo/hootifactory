@@ -7,7 +7,7 @@ import { describe, expect, test } from "bun:test";
  */
 describe("package barrels", () => {
   test("root index re-exports routing + runtime + the upload reaper", async () => {
-    const mod = await import("./index");
+    const mod = await import("../index");
     expect(typeof mod.reapExpiredContentUploadSessions).toBe("function");
     expect(typeof mod.resolveRepository).toBe("function");
     expect(typeof mod.resolveRegistryRouteMatch).toBe("function");
@@ -16,7 +16,7 @@ describe("package barrels", () => {
   });
 
   test("assets barrel exposes the asset reads/writes", async () => {
-    const mod = await import("./assets");
+    const mod = await import("../assets");
     expect(typeof mod.upsertRegistryAsset).toBe("function");
     expect(typeof mod.listRegistryAssets).toBe("function");
     expect(typeof mod.listRegistryAssetsForRepository).toBe("function");
@@ -25,7 +25,7 @@ describe("package barrels", () => {
   });
 
   test("content barrel exposes the artifact + blob + upload helpers", async () => {
-    const mod = await import("./content");
+    const mod = await import("../content");
     expect(mod.REGISTRY_TOKEN_SERVICE).toBe("hootifactory");
     expect(typeof mod.serveBlobIfClean).toBe("function");
     expect(typeof mod.storeBlobWithRef).toBe("function");
@@ -33,7 +33,7 @@ describe("package barrels", () => {
   });
 
   test("governance barrel exposes quota + scan policy helpers", async () => {
-    const mod = await import("./governance");
+    const mod = await import("../governance");
     expect(typeof mod.getOrgQuota).toBe("function");
     expect(typeof mod.setOrgQuota).toBe("function");
     expect(typeof mod.upsertScanPolicy).toBe("function");
@@ -41,13 +41,13 @@ describe("package barrels", () => {
   });
 
   test("inventory barrel exposes the read models", async () => {
-    const mod = await import("./inventory");
+    const mod = await import("../inventory");
     expect(typeof mod.countRepositoryPackages).toBe("function");
     expect(typeof mod.listArtifactFindings).toBe("function");
   });
 
   test("packages barrel exposes the queries + version writers", async () => {
-    const mod = await import("./packages");
+    const mod = await import("../packages");
     expect(typeof mod.searchRepositoryPackages).toBe("function");
     expect(typeof mod.replaceDistTags).toBe("function");
     expect(typeof mod.upsertPackageVersion).toBe("function");
@@ -55,7 +55,7 @@ describe("package barrels", () => {
   });
 
   test("repositories barrel exposes paths + create + retention + upstreams", async () => {
-    const mod = await import("./repositories");
+    const mod = await import("../repositories");
     expect(typeof mod.createRepository).toBe("function");
     expect(typeof mod.resolveCreateRepositoryRequest).toBe("function");
     expect(typeof mod.applyRetention).toBe("function");
@@ -65,14 +65,14 @@ describe("package barrels", () => {
   });
 
   test("routing barrel exposes the resolvers", async () => {
-    const mod = await import("./routing");
+    const mod = await import("../routing");
     expect(typeof mod.resolveRepository).toBe("function");
     expect(typeof mod.resolveRegistryRouteMatch).toBe("function");
     expect(typeof mod.registryHttpRouteTemplate).toBe("function");
   });
 
   test("runtime barrel exposes the dispatch + readiness + context helpers", async () => {
-    const mod = await import("./runtime");
+    const mod = await import("../runtime");
     expect(typeof mod.adapterResponse).toBe("function");
     expect(typeof mod.dispatchByRepoKind).toBe("function");
     expect(typeof mod.buildRegistryRequestContext).toBe("function");

@@ -70,7 +70,7 @@ describe("repository package list reads", () => {
       const { listRepositoryPackages } = await import("./queries");
       return listRepositoryPackages(ctx());
     });
-    expect(rows).toEqual([{ id: "p1", name: "a" }]);
+    expect(rows as unknown).toEqual([{ id: "p1", name: "a" }]);
   });
 });
 

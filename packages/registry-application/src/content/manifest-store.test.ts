@@ -208,7 +208,7 @@ describe("resolveContentManifest", () => {
         return resolveContentManifest(ctx(), { packageId: "p1", reference: "latest" });
       },
     );
-    expect(result).toEqual({ id: "m1", digest: "sha256:d" });
+    expect(result as unknown).toEqual({ id: "m1", digest: "sha256:d" });
   });
 
   test("resolves a digest reference, preferring the tagged manifest", async () => {
@@ -219,7 +219,7 @@ describe("resolveContentManifest", () => {
         reference: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       });
     });
-    expect(result).toEqual({ id: "m1" });
+    expect(result as unknown).toEqual({ id: "m1" });
   });
 
   test("resolves a digest reference via a pinned version when not tagged", async () => {
@@ -234,7 +234,7 @@ describe("resolveContentManifest", () => {
         });
       },
     );
-    expect(result).toEqual({ id: "m2", digest: "sha256:d" });
+    expect(result as unknown).toEqual({ id: "m2", digest: "sha256:d" });
   });
 
   test("returns null for an unknown digest with no version", async () => {
@@ -390,7 +390,7 @@ describe("listContentSubjectManifests + listContentManifestDigestsReferencingBlo
       const { listContentSubjectManifests } = await import("./manifest-store");
       return listContentSubjectManifests(ctx(), "sha256:subject");
     });
-    expect(rows).toEqual([{ id: "m1" }]);
+    expect(rows as unknown).toEqual([{ id: "m1" }]);
   });
 
   test("listContentManifestDigestsReferencingBlob unions tagged + version reads", async () => {

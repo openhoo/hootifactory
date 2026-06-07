@@ -62,7 +62,7 @@ describe("upsertScanPolicy", () => {
       expect(calls.map((c) => c.op)).toContain("onConflictDoUpdate");
       return r;
     });
-    expect(row).toEqual({ id: "sp_1", mode: "enforce" });
+    expect(row as unknown).toEqual({ id: "sp_1", mode: "enforce" });
     expect(invalidatedOrg).toBe("org_1");
   });
 

@@ -57,7 +57,7 @@ describe("registry asset writes", () => {
       expect(calls.map((c) => c.op)).toContain("returning");
       return result;
     });
-    expect(row).toEqual({ id: "asset_1", role: "npm_tarball" });
+    expect(row as unknown).toEqual({ id: "asset_1", role: "npm_tarball" });
   });
 
   test("upsertRegistryAsset throws when no row is returned", async () => {
@@ -80,7 +80,7 @@ describe("registry asset reads", () => {
       const ctx = createTestRegistryContext();
       return findRegistryAssetByScope(ctx, { role: "r", scope: "s" });
     });
-    expect(found).toEqual({ id: "a1", role: "r", scope: "s" });
+    expect(found as unknown).toEqual({ id: "a1", role: "r", scope: "s" });
 
     const missing = await withFakeDb([[]], async () => {
       const { findRegistryAssetByScope } = await import("./assets");
@@ -108,7 +108,7 @@ describe("registry asset reads", () => {
       expect(calls.filter((c) => c.op === "select")).toHaveLength(1);
       return r;
     });
-    expect(result).toEqual({ assets: [{ id: "a1" }] });
+    expect(result as unknown).toEqual({ assets: [{ id: "a1" }] });
     expect("total" in result).toBe(false);
   });
 

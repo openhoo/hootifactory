@@ -69,7 +69,7 @@ describe("inventory single-row reads", () => {
       const { getPackageWithRepository } = await import("./inventory");
       return getPackageWithRepository("p1");
     });
-    expect(row).toEqual({ pkg: { id: "p1" }, repo: { id: "r1" } });
+    expect(row as unknown).toEqual({ pkg: { id: "p1" }, repo: { id: "r1" } });
 
     const none = await withFakeDb([[]], async () => {
       const { getArtifactWithRepository } = await import("./inventory");

@@ -223,7 +223,9 @@ describe("storeBlobWithRef", () => {
         ).rejects.toThrow();
       },
     );
-    expect(discarded).toBeGreaterThanOrEqual(0);
+    // The transaction failed with no committed ref, so the rollback path must
+    // have deleted the freshly-put (non-deduped, unrecorded) CAS blob exactly once.
+    expect(discarded).toBe(1);
   });
 });
 
@@ -237,8 +239,8 @@ describe("getBlobRef + blobRefExists", () => {
       return getBlobRef(ctx, { digest: "sha256:x", kind: "k", scope: "s" });
     });
     expect(found).toMatchObject({ digest: "sha256:x", size: 10 });
-    expect(found?.get()).toBe("BYTES");
-    expect(found?.getRange(0, 1)).toBe("RANGE");
+    expect(found?.get() as unknown).toBe("BYTES");
+    expect(found?.getRange(0, 1) as unknown).toBe("RANGE");
 
     const none = await withMocks({ rowsByCall: [[]] }, async () => {
       const { getBlobRef } = await import("./blobs");
@@ -439,7 +441,9 @@ describe("storeBlobStreamWithRef", () => {
         ).rejects.toThrow();
       },
     );
-    expect(discarded).toBeGreaterThanOrEqual(0);
+    // stat() returning null means the staged object never landed, so the failure
+    // path must discard the streamed (non-deduped, unrecorded) blob exactly once.
+    expect(discarded).toBe(1);
   });
 });
 
