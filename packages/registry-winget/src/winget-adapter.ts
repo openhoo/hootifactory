@@ -1,6 +1,4 @@
 import {
-  basicAuthChallenge,
-  delegateRegistryPlugin,
   Errors,
   type HttpMethod,
   type Permission,
@@ -9,8 +7,7 @@ import {
   type RegistryRequestContext,
   type RouteMatch,
   readWritePermission,
-  registryCapabilities,
-  registryPlugin,
+  registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
 } from "@hootifactory/registry";
@@ -67,78 +64,7 @@ interface WingetStoredVersion {
  * `PUT /api/packageManifests/:id` is a HOOTIFACTORY EXTENSION — the public
  * winget REST source API has no write path.
  */
-export class WingetAdapter implements RegistryPlugin {
-  readonly id = "winget" as const;
-  readonly capabilities = registryCapabilities("virtualizable");
-  authChallenge = basicAuthChallenge;
-
-  private readonly plugin = registryPlugin(this.id)
-    .module({
-      displayName: "winget",
-      mountSegment: "winget",
-      errorResponseKind: "singleError",
-      compressibleHandlers: ["information", "search", "packageManifests"],
-      scan: {
-        defaultOsvEcosystem: "winget",
-        referencedDigests: (metadata) =>
-          typeof metadata.installerDigest === "string" ? [metadata.installerDigest] : [],
-      },
-    })
-    .capabilities(this.capabilities)
-    .authChallenge(this.authChallenge)
-    .routes((route) => [
-      route.get("/api/information", "information", ({ ctx }) => this.information(ctx)),
-      route.post("/api/manifestSearch", "search", ({ req, ctx }) => this.manifestSearch(req, ctx), {
-        searchable: true,
-      }),
-      route.get(
-        "/api/packageManifests/:packageIdentifier",
-        "packageManifests",
-        ({ params, req, ctx }) => this.packageManifests(params.packageIdentifier, req, ctx),
-      ),
-      route.put("/api/packageManifests/:packageIdentifier", "publish", ({ params, req, ctx }) =>
-        this.publish(params.packageIdentifier, req, ctx),
-      ),
-      route.get(
-        "/api/installers/:packageIdentifier/:version/:filename",
-        "download",
-        ({ params, req, ctx }) =>
-          this.download(params.packageIdentifier, params.version, params.filename, req, ctx),
-      ),
-    ])
-    .build();
-  private readonly delegate = delegateRegistryPlugin(this.plugin);
-
-  get displayName() {
-    return this.plugin.displayName;
-  }
-  get mountSegment() {
-    return this.plugin.mountSegment;
-  }
-  get repositoryNamePolicy() {
-    return this.plugin.repositoryNamePolicy;
-  }
-  get acceptsRegistryBearerToken() {
-    return this.plugin.acceptsRegistryBearerToken;
-  }
-  get apiKeyHeaders() {
-    return this.plugin.apiKeyHeaders;
-  }
-  get errorResponseKind() {
-    return this.plugin.errorResponseKind;
-  }
-  get compressibleHandlers() {
-    return this.plugin.compressibleHandlers;
-  }
-  get compressibleContentTypes() {
-    return this.plugin.compressibleContentTypes;
-  }
-  get scan() {
-    return this.plugin.scan;
-  }
-
-  routes = this.delegate.routes;
-
+class WingetAdapterState {
   requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
     const permission = readWritePermission(method);
     const packageIdentifier = match?.params.packageIdentifier;
@@ -163,13 +89,11 @@ export class WingetAdapter implements RegistryPlugin {
     return permission;
   }
 
-  handle = this.delegate.handle;
-
-  private base(ctx: RegistryRequestContext): { baseUrl: string; mountPath: string } {
+  base(ctx: RegistryRequestContext): { baseUrl: string; mountPath: string } {
     return { baseUrl: ctx.baseUrl, mountPath: ctx.repo.mountPath };
   }
 
-  private information(ctx: RegistryRequestContext): Response {
+  information(ctx: RegistryRequestContext): Response {
     return Response.json(
       wingetData({
         SourceIdentifier: ctx.repo.name,
@@ -178,7 +102,7 @@ export class WingetAdapter implements RegistryPlugin {
     );
   }
 
-  private async storedVersions(
+  async storedVersions(
     ctx: RegistryRequestContext,
     pkg: { id: string; orgId: string; repositoryId: string; name: string },
   ): Promise<WingetStoredVersion[]> {
@@ -189,7 +113,7 @@ export class WingetAdapter implements RegistryPlugin {
     });
   }
 
-  private async packageManifests(
+  async packageManifests(
     packageIdentifierRaw: string,
     req: Request,
     ctx: RegistryRequestContext,
@@ -221,7 +145,7 @@ export class WingetAdapter implements RegistryPlugin {
     });
   }
 
-  private requestedVersion(req: Request): string | null {
+  requestedVersion(req: Request): string | null {
     const raw = new URL(req.url).searchParams.get("Version");
     if (raw === null || raw === "") return null;
     return parseVersion(raw);
@@ -232,11 +156,11 @@ export class WingetAdapter implements RegistryPlugin {
    * ErrorMessage }` (WinGet-1.1.0.yaml). A missing package/version is a 404 with
    * that shape — the same shape every other error path in this source emits.
    */
-  private notFoundEnvelope(): Response {
+  notFoundEnvelope(): Response {
     return wingetErrorResponse(404, "package not found");
   }
 
-  private async manifestSearch(req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  async manifestSearch(req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const body = await this.parseSearchBody(req);
     const { needle, exact } = wingetSearchCriteria(body);
     const limit = body.MaximumResults ?? WINGET_SEARCH_DEFAULT_LIMIT;
@@ -294,12 +218,12 @@ export class WingetAdapter implements RegistryPlugin {
    * lowercased; `Publisher.Package` casing is reconstructed from the version
    * metadata's publisher + packageName when they reproduce the stored name.
    */
-  private identifierFor(storedName: string, metadata: WingetVersionMeta): string {
+  identifierFor(storedName: string, metadata: WingetVersionMeta): string {
     const candidate = `${metadata.publisher}.${metadata.packageName}`;
     return candidate.toLowerCase() === storedName.toLowerCase() ? candidate : storedName;
   }
 
-  private async parseSearchBody(req: Request) {
+  async parseSearchBody(req: Request) {
     let json: unknown = {};
     const text = await req.text();
     if (text.trim()) {
@@ -315,7 +239,7 @@ export class WingetAdapter implements RegistryPlugin {
     });
   }
 
-  private async download(
+  async download(
     packageIdentifierRaw: string,
     versionRaw: string,
     filenameRaw: string,
@@ -344,7 +268,7 @@ export class WingetAdapter implements RegistryPlugin {
     });
   }
 
-  private async publish(
+  async publish(
     packageIdentifierRaw: string,
     req: Request,
     ctx: RegistryRequestContext,
@@ -353,4 +277,38 @@ export class WingetAdapter implements RegistryPlugin {
   }
 }
 
+const wingetDefinition = registryAdapter("winget")
+  .stateClass(WingetAdapterState)
+  .module((module) =>
+    module
+      .displayName("winget")
+      .mount("winget")
+      .capabilities("virtualizable")
+      .errorResponseKind("singleError")
+      .compressibleHandlers("information", "search", "packageManifests"),
+  )
+  .scan((scan) => scan.osvEcosystem("winget").referencedDigestPaths("installerDigest"))
+  .basicAuth()
+  .fromState((state) => state.defaultPermission("requiredPermission"))
+  .routes((route) => [
+    route.get("/api/information", "information").calls((state, { ctx }) => state.information(ctx)),
+    route
+      .searchPost("/api/manifestSearch", "search")
+      .calls((state, { req, ctx }) => state.manifestSearch(req, ctx)),
+    route
+      .get("/api/packageManifests/:packageIdentifier", "packageManifests")
+      .calls((state, { params, req, ctx }) =>
+        state.packageManifests(params.packageIdentifier, req, ctx),
+      ),
+    route
+      .put("/api/packageManifests/:packageIdentifier", "publish")
+      .calls((state, { params, req, ctx }) => state.publish(params.packageIdentifier, req, ctx)),
+    route
+      .get("/api/installers/:packageIdentifier/:version/:filename", "download")
+      .calls((state, { params, req, ctx }) =>
+        state.download(params.packageIdentifier, params.version, params.filename, req, ctx),
+      ),
+  ]);
+
+export class WingetAdapter extends wingetDefinition.adapterClass() {}
 export const wingetRegistryPlugin: RegistryPlugin = new WingetAdapter();
