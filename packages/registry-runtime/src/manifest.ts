@@ -14,6 +14,7 @@ import { mavenRegistryPlugin } from "@hootifactory/registry-maven";
 import { npmRegistryPlugin } from "@hootifactory/registry-npm";
 import { nugetRegistryPlugin } from "@hootifactory/registry-nuget";
 import { dockerRegistryPlugin } from "@hootifactory/registry-oci";
+import { p2RegistryPlugin } from "@hootifactory/registry-p2";
 import { pubRegistryPlugin } from "@hootifactory/registry-pub";
 import { pypiRegistryPlugin } from "@hootifactory/registry-pypi";
 import { rpmRegistryPlugin } from "@hootifactory/registry-rpm";
@@ -50,6 +51,7 @@ export const REGISTRY_PLUGIN_MANIFEST: RegistryPluginEntry[] = [
   { plugin: mavenRegistryPlugin },
   { plugin: ivyRegistryPlugin },
   { plugin: aptRegistryPlugin },
+  { plugin: p2RegistryPlugin },
   { plugin: pubRegistryPlugin },
   { plugin: swiftRegistryPlugin },
   { plugin: chocolateyRegistryPlugin },
