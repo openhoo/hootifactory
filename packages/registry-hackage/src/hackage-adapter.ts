@@ -1,6 +1,4 @@
 import {
-  basicAuthChallenge,
-  delegateRegistryPlugin,
   Errors,
   type HttpMethod,
   type Permission,
@@ -9,8 +7,7 @@ import {
   type RegistryRequestContext,
   type RouteMatch,
   readWritePermission,
-  registryCapabilities,
-  registryPlugin,
+  registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
 } from "@hootifactory/registry";
@@ -57,91 +54,7 @@ function parseName(name: string): string {
  * accepted `.cabal` fields (name, version, build-depends, …) are parsed out of
  * the uploaded sdist and persisted.
  */
-export class HackageAdapter implements RegistryPlugin {
-  readonly id = "hackage" as const;
-  // No `proxyable`: there is no `proxyIngest` implementation, and the runtime
-  // gates proxy-repo creation on the handler existing (not the flag), so
-  // declaring `proxyable` would be dishonest and self-defeating. Virtual repos
-  // work via the per-package routes (first-member-wins).
-  readonly capabilities = registryCapabilities("virtualizable");
-  authChallenge = basicAuthChallenge;
-
-  private readonly plugin = registryPlugin(this.id)
-    .module({
-      displayName: "Hackage",
-      mountSegment: "hackage",
-      errorResponseKind: "singleError",
-      // Only declared handler ids belong here; the version-list response rides
-      // the `summary` handler, so there is no separate `versions` handler.
-      compressibleHandlers: ["summary", "preferredVersions"],
-      scan: {
-        defaultOsvEcosystem: "Hackage",
-        referencedDigests: (metadata) =>
-          typeof metadata.blobDigest === "string" ? [metadata.blobDigest] : [],
-      },
-    })
-    .capabilities(this.capabilities)
-    .authChallenge(this.authChallenge)
-    .routes((route) => [
-      // Literal routes declared before the `/package/:id` catch-alls so they
-      // cannot be shadowed (the matcher tries routes in declared order).
-      route.get(INDEX_PATH, "index", ({ req, ctx }) => this.index(req, ctx)),
-      // Uncompressed index (hackage-security incremental reads) and the legacy
-      // `00-index.tar.gz` alias (`secure: False` repos) so an unconfigured or
-      // legacy cabal client can complete `cabal update`.
-      route.get(INDEX_PATH_PLAIN, "indexPlain", ({ req, ctx }) => this.index(req, ctx, "tar")),
-      route.get(LEGACY_INDEX_PATH, "indexLegacy", ({ req, ctx }) => this.index(req, ctx)),
-      // `cabal upload` POSTs the sdist as multipart to `/packages/`; the
-      // name-version is read from the uploaded `.cabal`, not from the path.
-      route.post("/packages/", "publishUpload", ({ req, ctx }) => this.publishUpload(req, ctx)),
-      // Per-package preferred-versions consulted by cabal's solver. Declared
-      // before `/package/:id/:file` so it is not matched as a `:file` download.
-      route.get("/package/:id/preferred-versions", "preferredVersions", ({ params, req, ctx }) =>
-        this.preferredVersions(params.id, req, ctx),
-      ),
-      route.get("/package/:id/:file", "download", ({ params, req, ctx }) =>
-        this.download(params.id, params.file, req, ctx),
-      ),
-      route.get("/package/:id", "summary", ({ params, req, ctx }) =>
-        this.summaryOrVersions(params.id, req, ctx),
-      ),
-      route.put("/package/:id", "publish", ({ params, req, ctx }) =>
-        this.publish(params.id, req, ctx),
-      ),
-    ])
-    .build();
-  private readonly delegate = delegateRegistryPlugin(this.plugin);
-
-  get displayName() {
-    return this.plugin.displayName;
-  }
-  get mountSegment() {
-    return this.plugin.mountSegment;
-  }
-  get repositoryNamePolicy() {
-    return this.plugin.repositoryNamePolicy;
-  }
-  get acceptsRegistryBearerToken() {
-    return this.plugin.acceptsRegistryBearerToken;
-  }
-  get apiKeyHeaders() {
-    return this.plugin.apiKeyHeaders;
-  }
-  get errorResponseKind() {
-    return this.plugin.errorResponseKind;
-  }
-  get compressibleHandlers() {
-    return this.plugin.compressibleHandlers;
-  }
-  get compressibleContentTypes() {
-    return this.plugin.compressibleContentTypes;
-  }
-  get scan() {
-    return this.plugin.scan;
-  }
-
-  routes = this.delegate.routes;
-
+class HackageAdapterState {
   requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
     const permission = readWritePermission(method);
     const id = match?.params.id;
@@ -169,14 +82,12 @@ export class HackageAdapter implements RegistryPlugin {
     return permission;
   }
 
-  handle = this.delegate.handle;
-
   /**
    * The package index tarball, regenerated from live versions. Served gzipped at
    * `01-index.tar.gz` (secure) and `00-index.tar.gz` (legacy), and uncompressed
    * at `01-index.tar` (hackage-security incremental reads).
    */
-  private async index(
+  async index(
     req: Request,
     ctx: RegistryRequestContext,
     format: "gz" | "tar" = "gz",
@@ -213,7 +124,7 @@ export class HackageAdapter implements RegistryPlugin {
   }
 
   /** `GET /package/:id` — a version summary (id has a version) or a version list (bare name). */
-  private async summaryOrVersions(
+  async summaryOrVersions(
     idRaw: string,
     req: Request,
     ctx: RegistryRequestContext,
@@ -264,7 +175,7 @@ export class HackageAdapter implements RegistryPlugin {
   }
 
   /** `GET /package/:id/:file` — serve the sdist tarball or the stored `.cabal`. */
-  private async download(
+  async download(
     idRaw: string,
     fileRaw: string,
     req: Request,
@@ -300,11 +211,7 @@ export class HackageAdapter implements RegistryPlugin {
     return new Response("Not Found", { status: 404 });
   }
 
-  private async publish(
-    idRaw: string,
-    req: Request,
-    ctx: RegistryRequestContext,
-  ): Promise<Response> {
+  async publish(idRaw: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const split = splitPackageId(idRaw);
     if (!split) throw Errors.nameInvalid("invalid Hackage package id");
     // Re-validate the parts so a malformed name/version surfaces a 400.
@@ -321,7 +228,7 @@ export class HackageAdapter implements RegistryPlugin {
    * a multipart `package` field; the name-version is derived from the uploaded
    * `.cabal` (the path carries no id), then validated like the PUT route.
    */
-  private async publishUpload(req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  async publishUpload(req: Request, ctx: RegistryRequestContext): Promise<Response> {
     return handleHackagePublish(null, req, ctx);
   }
 
@@ -331,7 +238,7 @@ export class HackageAdapter implements RegistryPlugin {
    * permissive (empty) document: all live versions remain eligible. This avoids
    * a 404 that a real client would otherwise hit.
    */
-  private async preferredVersions(
+  async preferredVersions(
     idRaw: string,
     req: Request,
     ctx: RegistryRequestContext,
@@ -373,4 +280,60 @@ function ifNoneMatch(req: Request, etag: string): boolean {
     .some((v) => v === "*" || v === etag || v === `W/${etag}`);
 }
 
+const hackageDefinition = registryAdapter("hackage")
+  .stateClass(HackageAdapterState)
+  .module((module) =>
+    module
+      .displayName("Hackage")
+      .mount("hackage")
+      // No `proxyable`: there is no `proxyIngest` implementation, and proxy
+      // repository creation is gated on that handler existing.
+      .capabilities("virtualizable")
+      .errorResponseKind("singleError")
+      // Only declared handler ids belong here; the version-list response rides
+      // the `summary` handler, so there is no separate `versions` handler.
+      .compressibleHandlers("summary", "preferredVersions"),
+  )
+  .scan({
+    defaultOsvEcosystem: "Hackage",
+    referencedDigests: (metadata) =>
+      typeof metadata.blobDigest === "string" ? [metadata.blobDigest] : [],
+  })
+  .basicAuth()
+  .fromState((state) => state.defaultPermission("requiredPermission"))
+  .routes((route) => [
+    // Literal routes declared before the `/package/:id` catch-alls so they
+    // cannot be shadowed (the matcher tries routes in declared order).
+    route.get(INDEX_PATH, "index").calls((state, { req, ctx }) => state.index(req, ctx)),
+    // Uncompressed index (hackage-security incremental reads) and the legacy
+    // `00-index.tar.gz` alias (`secure: False` repos) so an unconfigured or
+    // legacy cabal client can complete `cabal update`.
+    route
+      .get(INDEX_PATH_PLAIN, "indexPlain")
+      .calls((state, { req, ctx }) => state.index(req, ctx, "tar")),
+    route
+      .get(LEGACY_INDEX_PATH, "indexLegacy")
+      .calls((state, { req, ctx }) => state.index(req, ctx)),
+    // `cabal upload` POSTs the sdist as multipart to `/packages/`; the
+    // name-version is read from the uploaded `.cabal`, not from the path.
+    route
+      .post("/packages/", "publishUpload")
+      .calls((state, { req, ctx }) => state.publishUpload(req, ctx)),
+    // Per-package preferred-versions consulted by cabal's solver. Declared
+    // before `/package/:id/:file` so it is not matched as a `:file` download.
+    route
+      .get("/package/:id/preferred-versions", "preferredVersions")
+      .calls((state, { params, req, ctx }) => state.preferredVersions(params.id, req, ctx)),
+    route
+      .get("/package/:id/:file", "download")
+      .calls((state, { params, req, ctx }) => state.download(params.id, params.file, req, ctx)),
+    route
+      .get("/package/:id", "summary")
+      .calls((state, { params, req, ctx }) => state.summaryOrVersions(params.id, req, ctx)),
+    route
+      .put("/package/:id", "publish")
+      .calls((state, { params, req, ctx }) => state.publish(params.id, req, ctx)),
+  ]);
+
+export class HackageAdapter extends hackageDefinition.adapterClass() {}
 export const hackageRegistryPlugin: RegistryPlugin = new HackageAdapter();
