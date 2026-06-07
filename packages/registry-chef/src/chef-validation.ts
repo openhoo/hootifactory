@@ -26,8 +26,26 @@ export const ChefVersionSchema = z
   .max(64)
   .refine(isValidChefVersion, "invalid Chef cookbook version");
 
+/**
+ * Field length caps, shared by the stored-metadata schema and the proxy-ingest
+ * clamper so a mirrored version stays inside the bounds the read path enforces
+ * (a stored value over a cap parses to null on read -> the version disappears).
+ */
+export const CHEF_FIELD_LIMITS = {
+  description: 4096,
+  license: 512,
+  maintainer: 512,
+  category: 256,
+  url: 2048,
+  dependencyName: 128,
+  dependencyConstraint: 128,
+} as const;
+
 /** A dependency constraint string, e.g. `>= 1.0.0` or `~> 2.1`. */
-const ChefDependencyConstraintSchema = z.string().min(1).max(128);
+const ChefDependencyConstraintSchema = z
+  .string()
+  .min(1)
+  .max(CHEF_FIELD_LIMITS.dependencyConstraint);
 
 /**
  * A dependency map KEY. Kept permissive (any bounded non-empty string) rather
@@ -37,7 +55,7 @@ const ChefDependencyConstraintSchema = z.string().min(1).max(128);
  * drop a proxy-mirrored version from every read (parseChefVersionMeta returns
  * null), making the cookbook unservable.
  */
-const ChefDependencyNameSchema = z.string().min(1).max(128);
+const ChefDependencyNameSchema = z.string().min(1).max(CHEF_FIELD_LIMITS.dependencyName);
 
 /** The dependency map a cookbook version declares (cookbook name -> constraint). */
 export const ChefDependenciesSchema = z.record(
@@ -75,12 +93,12 @@ export type ChefPublishMetadata = z.output<typeof ChefPublishMetadataSchema>;
  */
 export const ChefVersionMetaSchema = z.looseObject({
   version: ChefVersionSchema,
-  description: z.string().max(4096).optional(),
-  maintainer: z.string().max(512).optional(),
-  license: z.string().max(512).optional(),
-  source_url: z.string().max(2048).optional(),
-  issues_url: z.string().max(2048).optional(),
-  category: z.string().max(256).optional(),
+  description: z.string().max(CHEF_FIELD_LIMITS.description).optional(),
+  maintainer: z.string().max(CHEF_FIELD_LIMITS.maintainer).optional(),
+  license: z.string().max(CHEF_FIELD_LIMITS.license).optional(),
+  source_url: z.string().max(CHEF_FIELD_LIMITS.url).optional(),
+  issues_url: z.string().max(CHEF_FIELD_LIMITS.url).optional(),
+  category: z.string().max(CHEF_FIELD_LIMITS.category).optional(),
   dependencies: ChefDependenciesSchema.optional(),
   tarballDigest: Sha256DigestSchema,
   published: z.string().min(1).max(64),
@@ -93,15 +111,20 @@ export function parseChefVersionMeta(value: unknown): ChefVersionMeta | null {
   return parsed.success ? parsed.data : null;
 }
 
-/** Build the stored metadata for a published cookbook version. */
+/**
+ * Build the stored metadata for a cookbook version. `published` defaults to now
+ * (a fresh hosted publish); the proxy path passes the upstream release timestamp
+ * so a mirrored version's `published_at` reflects the real upstream release time.
+ */
 export function buildChefVersionMeta(
   metadata: ChefPublishMetadata,
   blob: { digest: string },
+  options: { published?: string } = {},
 ): ChefVersionMeta & Record<string, unknown> {
   const meta: ChefVersionMeta = {
     version: metadata.version,
     tarballDigest: blob.digest,
-    published: new Date().toISOString(),
+    published: options.published ?? new Date().toISOString(),
   };
   if (metadata.description !== undefined) meta.description = metadata.description;
   if (metadata.maintainer !== undefined) meta.maintainer = metadata.maintainer;

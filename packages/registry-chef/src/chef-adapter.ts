@@ -17,8 +17,11 @@ import {
 } from "@hootifactory/registry";
 import {
   buildChefCookbook,
+  buildChefCookbookList,
+  buildChefCookbookListItem,
   buildChefCookbookVersion,
   buildChefUniverseEntry,
+  type ChefCookbookListItem,
   type ChefStoredVersion,
   type ChefUniverse,
   chefVersionFromSegment,
@@ -80,8 +83,19 @@ export class ChefAdapter implements RegistryPlugin {
     .proxyIngest((name, upstreamBase, ctx) => this.ingestProxy(name, upstreamBase, ctx))
     .routes((route) => [
       // `/universe` is a literal segment declared before the `:name` catch-alls.
+      // Real Supermarket maps the universe document at both `/universe` and the
+      // versioned `/api/v1/universe`; mirror both to the same handler.
       route.get("/universe", "universe", ({ req, ctx }) => this.universe(req, ctx)),
+      route.get("/api/v1/universe", "universeV1", ({ req, ctx }) => this.universe(req, ctx)),
+      // `GET /api/v1/search` (knife supermarket search) precedes the cookbook
+      // catch-alls; it is a distinct path shape so ordering is for clarity only.
+      route.get("/api/v1/search", "search", ({ req, ctx }) => this.searchCookbooks(req, ctx)),
       route.post("/api/v1/cookbooks", "publish", ({ req, ctx }) => this.publish(req, ctx)),
+      // `GET /api/v1/cookbooks` (knife supermarket list) — declared before the
+      // `:name` route; the empty-name shape never matches `/api/v1/cookbooks/:name`.
+      route.get("/api/v1/cookbooks", "cookbookIndex", ({ req, ctx }) =>
+        this.cookbookIndex(req, ctx),
+      ),
       route.get(
         "/api/v1/cookbooks/:name/versions/:version/download",
         "download",
@@ -191,7 +205,11 @@ export class ChefAdapter implements RegistryPlugin {
       const versions = await this.storedVersions(pkg, ctx);
       if (versions.length === 0) continue;
       const entries: Record<string, ReturnType<typeof buildChefUniverseEntry>> = {};
-      for (const { version, metadata } of versions) {
+      // Sort each cookbook's versions newest-first so the serialized key order
+      // (and therefore the body + ETag) is deterministic regardless of the DB
+      // row / proxy-ingest order, matching the buildChefCookbook listing.
+      const sorted = [...versions].sort((a, b) => compareChefVersionsDesc(a.version, b.version));
+      for (const { version, metadata } of sorted) {
         entries[version] = buildChefUniverseEntry({
           baseUrl: ctx.baseUrl,
           mountPath: ctx.repo.mountPath,
@@ -205,6 +223,66 @@ export class ChefAdapter implements RegistryPlugin {
     return textResponseWithEtag(req, JSON.stringify(universe), {
       "content-type": JSON_CONTENT_TYPE,
     });
+  }
+
+  /**
+   * `GET /api/v1/cookbooks` — the paginated cookbook index (`knife supermarket
+   * list`). Returns the `{ start, total, items }` envelope; honors `items`/`start`
+   * pagination and the `order` (alphabetical here) query params.
+   */
+  private async cookbookIndex(req: Request, ctx: RegistryRequestContext): Promise<Response> {
+    const allItems = await this.listItems(ctx);
+    return this.paginatedListResponse(req, allItems);
+  }
+
+  /**
+   * `GET /api/v1/search` — cookbook search (`knife supermarket search`). Same
+   * `{ start, total, items }` envelope as the index, filtered by the `q` query
+   * param (substring match over the cookbook name).
+   */
+  private async searchCookbooks(req: Request, ctx: RegistryRequestContext): Promise<Response> {
+    const allItems = await this.listItems(ctx);
+    const query = new URL(req.url).searchParams.get("q")?.trim().toLowerCase() ?? "";
+    const matched = query
+      ? allItems.filter((item) => item.cookbook_name.toLowerCase().includes(query))
+      : allItems;
+    return this.paginatedListResponse(req, matched);
+  }
+
+  /**
+   * Build one list/search row per cookbook from its newest live version, ordered
+   * alphabetically by cookbook name for a deterministic body + ETag.
+   */
+  private async listItems(ctx: RegistryRequestContext): Promise<ChefCookbookListItem[]> {
+    const names = await ctx.data.packages.listNames();
+    const items: ChefCookbookListItem[] = [];
+    for (const { name } of [...names].sort((a, b) => a.name.localeCompare(b.name))) {
+      const latest = await this.latestVersion(name, ctx);
+      if (!latest) continue;
+      items.push(
+        buildChefCookbookListItem({
+          baseUrl: ctx.baseUrl,
+          mountPath: ctx.repo.mountPath,
+          name,
+          latest: latest.metadata,
+        }),
+      );
+    }
+    return items;
+  }
+
+  /** Window `items` by the `start`/`items` query params and render the envelope. */
+  private paginatedListResponse(req: Request, items: ChefCookbookListItem[]): Response {
+    const params = new URL(req.url).searchParams;
+    const start = clampNonNegativeInt(params.get("start"), 0);
+    // Supermarket defaults to 10 results per page; cap the window so a client
+    // cannot request an unbounded slice.
+    const size = clampPositiveInt(params.get("items"), 10, 100);
+    const window = items.slice(start, start + size);
+    const body = JSON.stringify(
+      buildChefCookbookList({ items: window, total: items.length, start }),
+    );
+    return textResponseWithEtag(req, body, { "content-type": JSON_CONTENT_TYPE });
   }
 
   /** `GET /api/v1/cookbooks/:name` — the cookbook JSON (versions as URLs). */
@@ -241,8 +319,7 @@ export class ChefAdapter implements RegistryPlugin {
     ctx: RegistryRequestContext,
   ): Promise<Response> {
     const name = parseCookbookName(nameRaw);
-    const version = parseCookbookVersion(chefVersionFromSegment(versionRaw));
-    const stored = await this.findVersion(name, version, ctx);
+    const stored = await this.resolveVersion(name, versionRaw, ctx);
     if (!stored) return new Response("Not Found", { status: 404 });
     return textResponseWithEtag(
       req,
@@ -266,17 +343,44 @@ export class ChefAdapter implements RegistryPlugin {
     ctx: RegistryRequestContext,
   ): Promise<Response> {
     const name = parseCookbookName(nameRaw);
-    const version = parseCookbookVersion(chefVersionFromSegment(versionRaw));
-    const stored = await this.findVersion(name, version, ctx);
+    const stored = await this.resolveVersion(name, versionRaw, ctx);
     if (!stored) return new Response("Not Found", { status: 404 });
     return serveRegistryBlob(ctx, {
       digest: stored.metadata.tarballDigest,
       kind: "chef_cookbook",
-      scope: chefBlobScope(name, version),
+      scope: chefBlobScope(name, stored.version),
       contentType: TARBALL_MEDIA_TYPE,
       redirect: req.method === "GET",
       blocked: () => new Response("blocked by scan policy", { status: 403 }),
     });
+  }
+
+  /**
+   * Resolve a `:version` URL segment to a stored version. Supermarket accepts the
+   * literal `latest` (VERSION_PATTERN = /latest|.../); we map it to the newest
+   * live version. A concrete segment is normalized + validated as before. Returns
+   * null (-> 404) when no matching live version exists.
+   */
+  private async resolveVersion(
+    name: string,
+    versionRaw: string,
+    ctx: RegistryRequestContext,
+  ): Promise<ChefStoredVersion | null> {
+    if (versionRaw === "latest") return this.latestVersion(name, ctx);
+    const version = parseCookbookVersion(chefVersionFromSegment(versionRaw));
+    return this.findVersion(name, version, ctx);
+  }
+
+  /** The newest live version of a cookbook, or null when it has none. */
+  private async latestVersion(
+    name: string,
+    ctx: RegistryRequestContext,
+  ): Promise<ChefStoredVersion | null> {
+    const pkg = await ctx.data.packages.findByName(name);
+    if (!pkg) return null;
+    const versions = await this.storedVersions(pkg, ctx);
+    const sorted = [...versions].sort((a, b) => compareChefVersionsDesc(a.version, b.version));
+    return sorted[0] ?? null;
   }
 
   /** A live cookbook version paired with its metadata, or null when not found. */
@@ -368,6 +472,19 @@ function sortVersionUrlsDesc(urls: string[]): string[] {
       return a.index - b.index;
     })
     .map((entry) => entry.url);
+}
+
+/** Parse a query param as a non-negative integer, falling back to `fallback`. */
+function clampNonNegativeInt(raw: string | null, fallback: number): number {
+  const value = Number(raw);
+  return Number.isInteger(value) && value >= 0 ? value : fallback;
+}
+
+/** Parse a query param as a positive integer in `[1, max]`, default `fallback`. */
+function clampPositiveInt(raw: string | null, fallback: number, max: number): number {
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 1) return fallback;
+  return Math.min(value, max);
 }
 
 /** Extract the dotted version from a `.../versions/<segment>` URL, or null. */

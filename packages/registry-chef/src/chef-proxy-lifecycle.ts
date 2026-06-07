@@ -6,6 +6,7 @@ import {
   safeJsonParse,
 } from "@hootifactory/registry";
 import {
+  type ChefUpstreamCookbookMeta,
   type ChefUpstreamVersion,
   chefUpstreamCookbookUrl,
   chefUpstreamHost,
@@ -66,7 +67,7 @@ export async function handleChefProxyIngest(
       const { stored } = await ctx.data.versions.upsertWithBlobRef({
         package: pkg,
         version: detail.version,
-        metadata: buildUpstreamVersionMeta(detail, digest),
+        metadata: buildUpstreamVersionMeta(detail, parsed, digest),
         sizeBytes: tarball.length,
         blob: {
           data: tarball,
@@ -95,16 +96,30 @@ export async function handleChefProxyIngest(
   return Boolean(pkg);
 }
 
-/** Build the stored metadata for a mirrored upstream version against its digest. */
-function buildUpstreamVersionMeta(detail: ChefUpstreamVersion, digest: string) {
+/**
+ * Build the stored metadata for a mirrored upstream version against its digest.
+ * Threads the cookbook-level descriptive fields (maintainer/category/source/issues)
+ * and preserves the upstream release time so a mirrored listing reproduces the
+ * upstream metadata instead of empty placeholders + local ingest timestamps.
+ */
+function buildUpstreamVersionMeta(
+  detail: ChefUpstreamVersion,
+  cookbook: ChefUpstreamCookbookMeta,
+  digest: string,
+) {
   return buildChefVersionMeta(
     {
       version: detail.version,
       description: detail.description,
       license: detail.license,
+      maintainer: cookbook.maintainer,
+      category: cookbook.category,
+      source_url: cookbook.source_url,
+      issues_url: cookbook.issues_url,
       dependencies: detail.dependencies,
     },
     { digest },
+    { published: detail.published },
   );
 }
 

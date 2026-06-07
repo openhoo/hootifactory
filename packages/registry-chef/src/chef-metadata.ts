@@ -43,7 +43,7 @@ export function chefVersionFromSegment(segment: string): string {
 
 /** One entry of the universe document: how a client locates + depends on a version. */
 export interface ChefUniverseEntry {
-  location_type: "opscode";
+  location_type: "supermarket";
   location_path: string;
   download_url: string;
   dependencies: ChefDependencies;
@@ -51,6 +51,12 @@ export interface ChefUniverseEntry {
 
 /** The `/universe` document: `{ <cookbook>: { <version>: UniverseEntry } }`. */
 export type ChefUniverse = Record<string, Record<string, ChefUniverseEntry>>;
+
+/** The `/api/v1` root a universe `location_path` must point at so a berkshelf
+ * client can join `cookbooks/<name>/versions/<version>` onto it. */
+export function chefApiRoot(baseUrl: string, mountPath: string): string {
+  return `${baseUrl}/${mountPath}/api/v1`;
+}
 
 /** Build one universe entry for a stored cookbook version. */
 export function buildChefUniverseEntry(input: {
@@ -61,8 +67,13 @@ export function buildChefUniverseEntry(input: {
   metadata: ChefVersionMeta;
 }): ChefUniverseEntry {
   return {
-    location_type: "opscode",
-    location_path: `${input.baseUrl}/${input.mountPath}/api/v1/cookbooks`,
+    location_type: "supermarket",
+    // berkshelf treats this as the base URI of a Chef::HTTP client and then
+    // requests the RELATIVE path `cookbooks/<name>/versions/<version>` against it
+    // (by concatenation, not last-segment replacement). It must therefore be the
+    // `/api/v1` root, not the `/api/v1/cookbooks` collection, or the join doubles
+    // the `cookbooks` segment and 404s.
+    location_path: chefApiRoot(input.baseUrl, input.mountPath),
     download_url: chefDownloadUrl(input.baseUrl, input.mountPath, input.name, input.version),
     dependencies: input.metadata.dependencies ?? {},
   };
@@ -92,6 +103,7 @@ export interface ChefCookbookVersion {
   cookbook: string;
   file: string;
   dependencies: Record<string, string>;
+  platforms: Record<string, string>;
   tarball_file_size: number;
   published_at: string;
 }
@@ -161,7 +173,52 @@ export function buildChefCookbookVersion(input: {
     cookbook: chefCookbookUrl(input.baseUrl, input.mountPath, input.name),
     file: chefDownloadUrl(input.baseUrl, input.mountPath, input.name, input.version.version),
     dependencies: { ...(metadata.dependencies ?? {}) },
+    // Supermarket version detail always carries a `platforms` map; we have no
+    // platform constraints to surface, so emit an empty object to match the shape.
+    platforms: {},
     tarball_file_size: input.version.sizeBytes,
     published_at: metadata.published,
   };
+}
+
+/** One row of the `GET /api/v1/cookbooks` index / `GET /api/v1/search` results. */
+export interface ChefCookbookListItem {
+  cookbook_name: string;
+  cookbook: string;
+  cookbook_maintainer: string;
+  cookbook_description: string;
+}
+
+/** The paginated `{ start, total, items }` envelope both list + search return. */
+export interface ChefCookbookList {
+  start: number;
+  total: number;
+  items: ChefCookbookListItem[];
+}
+
+/** Build one cookbook list/search row from a cookbook's newest live version. */
+export function buildChefCookbookListItem(input: {
+  baseUrl: string;
+  mountPath: string;
+  name: string;
+  latest: ChefVersionMeta;
+}): ChefCookbookListItem {
+  return {
+    cookbook_name: input.name,
+    cookbook: chefCookbookUrl(input.baseUrl, input.mountPath, input.name),
+    cookbook_maintainer: input.latest.maintainer ?? "",
+    cookbook_description: input.latest.description ?? "",
+  };
+}
+
+/**
+ * Assemble the paginated cookbook list/search envelope from already-built items.
+ * `total` reflects the full match count; `items` is the windowed slice.
+ */
+export function buildChefCookbookList(input: {
+  items: ChefCookbookListItem[];
+  total: number;
+  start: number;
+}): ChefCookbookList {
+  return { start: input.start, total: input.total, items: input.items };
 }

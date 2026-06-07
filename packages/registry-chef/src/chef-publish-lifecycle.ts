@@ -1,4 +1,5 @@
 import { publishImmutableVersionBlob, type RegistryRequestContext } from "@hootifactory/registry";
+import { chefCookbookUrl } from "./chef-metadata";
 import { parseChefPublishRequest } from "./chef-publish";
 import { buildChefVersionMeta } from "./chef-validation";
 
@@ -66,5 +67,9 @@ export async function handleChefPublish(
       409,
     );
   }
-  return Response.json({ uri: `cookbooks/${cookbookName}` }, { status: 201 });
+  // Match Supermarket's `json.uri api_v1_cookbook_url(@cookbook)`: an absolute URL.
+  return Response.json(
+    { uri: chefCookbookUrl(ctx.baseUrl, ctx.repo.mountPath, cookbookName) },
+    { status: 201 },
+  );
 }
