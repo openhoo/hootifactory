@@ -26,19 +26,34 @@ type AddArchResult =
   | { ok: true; versionId: string }
   | { ok: false; reason: "arch_exists" | "version_gone" };
 
+/** Outcome of publishing one artifact, before it is rendered to a `Response`. */
+export type LuarocksPublishResult =
+  | {
+      ok: true;
+      rock: string;
+      version: string;
+      arch: string;
+      filename: string;
+      /** The package row the artifact landed on (for follow-up writes). */
+      package: RegistryPackageHandle;
+      /** The unique package-version row id the artifact was recorded against. */
+      versionRowId: string;
+    }
+  | { ok: false; status: number; error: string };
+
 /**
- * Publish a single `.rock` or `.rockspec` artifact. A rockspec additionally
- * supplies the descriptive fields + dependencies merged into the version row;
- * every artifact records its arch -> blob coordinates so the manifest and
- * download routes can resolve them. Multiple archs accumulate on one version.
+ * Publish a single `.rock` or `.rockspec` artifact (storage + index update),
+ * returning the structured outcome. A rockspec additionally supplies the
+ * descriptive fields + dependencies merged into the version row; every artifact
+ * records its arch -> blob coordinates so the manifest and download routes can
+ * resolve them. Multiple archs accumulate on one version.
  */
-export async function handleLuarocksPublish(
+export async function publishLuarocksArtifact(
   parsed: ParsedArtifactFilename,
   filename: string,
   bytes: Uint8Array,
-  req: Request,
   ctx: RegistryRequestContext,
-): Promise<Response> {
+): Promise<LuarocksPublishResult> {
   const rock = parsed.rock;
   const version = parsed.version;
   const arch = parsed.kind === "rockspec" ? ROCKSPEC_ARCH : parsed.arch;
@@ -49,13 +64,14 @@ export async function handleLuarocksPublish(
   if (parsed.kind === "rockspec") {
     rockspecFields = parseRockspec(new TextDecoder().decode(bytes));
     if (!rockspecFields) {
-      return Response.json({ error: "malformed rockspec" }, { status: 422 });
+      return { ok: false, status: 422, error: "malformed rockspec" };
     }
     if (rockspecFields.package !== rock || rockspecFields.version !== version) {
-      return Response.json(
-        { error: "rockspec package/version does not match filename" },
-        { status: 422 },
-      );
+      return {
+        ok: false,
+        status: 422,
+        error: "rockspec package/version does not match filename",
+      };
     }
   }
 
@@ -85,7 +101,7 @@ export async function handleLuarocksPublish(
     const status = added.reason === "arch_exists" ? 409 : 422;
     const error =
       added.reason === "arch_exists" ? "artifact already exists" : "version unavailable";
-    return Response.json({ error }, { status });
+    return { ok: false, status, error };
   }
 
   await ctx.enqueueScan({
@@ -95,8 +111,29 @@ export async function handleLuarocksPublish(
     mediaType: "application/octet-stream",
   });
 
+  return { ok: true, rock, version, arch, filename, package: pkg, versionRowId: added.versionId };
+}
+
+/**
+ * Publish via the `PUT /<file>` path: render the structured publish outcome to
+ * the hootifactory-native response (`201`/`200` with an `{ ok, rock, ... }` body).
+ */
+export async function handleLuarocksPublish(
+  parsed: ParsedArtifactFilename,
+  filename: string,
+  bytes: Uint8Array,
+  req: Request,
+  ctx: RegistryRequestContext,
+): Promise<Response> {
+  const result = await publishLuarocksArtifact(parsed, filename, bytes, ctx);
+  if (!result.ok) {
+    return Response.json({ error: result.error }, { status: result.status });
+  }
   const status = req.method === "POST" ? 200 : 201;
-  return Response.json({ ok: true, rock, version, arch, filename }, { status });
+  return Response.json(
+    { ok: true, rock: result.rock, version: result.version, arch: result.arch, filename },
+    { status },
+  );
 }
 
 function descriptiveMeta(

@@ -70,14 +70,20 @@ build = { type = "builtin" }
 `;
 
 describe("LuaRocks adapter", () => {
-  test("declares manifest, api-upload, download and publish routes (literals first)", () => {
+  test("declares manifest, upload-api, download and publish routes (literals first)", () => {
     expect(new LuarocksAdapter().routes()).toEqual([
       { method: "GET", pattern: "/manifest", handlerId: "manifest" },
       { method: "GET", pattern: "/manifest-5.1", handlerId: "manifest" },
       { method: "GET", pattern: "/manifest-5.2", handlerId: "manifest" },
       { method: "GET", pattern: "/manifest-5.3", handlerId: "manifest" },
       { method: "GET", pattern: "/manifest-5.4", handlerId: "manifest" },
+      { method: "GET", pattern: "/api/1/:apikey/check_rockspec", handlerId: "apiCheckRockspec" },
       { method: "POST", pattern: "/api/1/:apikey/upload", handlerId: "apiUpload" },
+      {
+        method: "POST",
+        pattern: "/api/1/:apikey/upload_rock/:versionId",
+        handlerId: "apiUploadRock",
+      },
       { method: "GET", pattern: "/:filename", handlerId: "download" },
       { method: "PUT", pattern: "/:filename", handlerId: "publish" },
     ]);
@@ -91,9 +97,9 @@ describe("LuaRocks adapter", () => {
     expect(adapter.authChallenge().header).toBe('Basic realm="hootifactory"');
   });
 
-  test("declares proxyable + virtualizable capabilities", () => {
+  test("declares only virtualizable (no proxy machinery, so proxyable is false)", () => {
     const caps = new LuarocksAdapter().capabilities;
-    expect(caps.proxyable).toBe(true);
+    expect(caps.proxyable).toBe(false);
     expect(caps.virtualizable).toBe(true);
     expect(caps.contentAddressable).toBe(false);
     expect(caps.resumableUploads).toBe(false);
@@ -503,7 +509,7 @@ describe("LuaRocks adapter", () => {
     expect(res.status).toBe(400);
   });
 
-  test("POST /api/1/:key/upload publishes the rockspec from a multipart part", async () => {
+  test("POST /api/1/:key/upload publishes the rockspec and returns a client-parseable body", async () => {
     const ctx = luarocksContext();
     const committed: { metadata?: Record<string, unknown> } = {};
     ctx.data.content.storeBlobWithRef = async (): Promise<RegistryStoredBlob> => ({
@@ -513,6 +519,8 @@ describe("LuaRocks adapter", () => {
       refCreated: true,
       blobRefId: "ref_api",
     });
+    // No prior package => is_new = true.
+    ctx.data.packages.findByName = async () => null;
     ctx.data.packages.findOrCreate = async ({ name }) => pkgRow(name);
     ctx.data.versions.create = async (input) => {
       committed.metadata = input.metadata;
@@ -533,8 +541,243 @@ describe("LuaRocks adapter", () => {
       ctx,
     );
     expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ ok: true, rock: "demo", version: "1.0.0-1" });
+    const body = (await res.json()) as {
+      is_new: boolean;
+      module: string;
+      module_url: string;
+      manifests: unknown[];
+      version: { id: number; version: string };
+    };
+    // The real `luarocks upload` reads exactly these fields; `version.id` must be
+    // a positive integer it can format into the `upload_rock/<id>` path.
+    expect(body.is_new).toBe(true);
+    expect(body.module).toBe("demo");
+    expect(body.module_url).toContain("demo");
+    expect(Array.isArray(body.manifests)).toBe(true);
+    expect(Number.isInteger(body.version.id)).toBe(true);
+    expect(body.version.id).toBeGreaterThan(0);
+    expect(body.version.version).toBe("1.0.0-1");
     expect(committed.metadata).toMatchObject({ rock: "demo", version: "1.0.0-1" });
+  });
+
+  test("GET /api/1/:key/check_rockspec reports module/revision existence", async () => {
+    const ctx = luarocksContext();
+    // demo exists with version 1.0.0-1 published; 2.0.0-1 is not.
+    ctx.data.packages.findByName = async (name) => (name === "demo" ? pkgRow("demo") : null);
+    ctx.data.versions.listLive = async () => [versionRow(storedMeta)];
+    ctx.data.versions.findLive = async (_pkg, version) =>
+      version === "1.0.0-1" ? versionRow(storedMeta) : null;
+
+    async function check(pkg: string, version: string) {
+      const res = await new LuarocksAdapter().handle(
+        {
+          entry: {
+            method: "GET",
+            pattern: "/api/1/:apikey/check_rockspec",
+            handlerId: "apiCheckRockspec",
+          },
+          params: { apikey: "secret" },
+          path: "/api/1/secret/check_rockspec",
+        },
+        new Request(
+          `https://registry.test/api/1/secret/check_rockspec?package=${pkg}&version=${version}`,
+        ),
+        ctx,
+      );
+      return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+    }
+
+    // Existing module + existing revision => both truthy (blocks re-upload).
+    const existing = await check("demo", "1.0.0-1");
+    expect(existing.status).toBe(200);
+    expect(existing.body.module).toBe("demo");
+    expect(existing.body.version).toEqual({ version: "1.0.0-1" });
+
+    // Existing module, new revision => module truthy, version false (free).
+    const newRevision = await check("demo", "2.0.0-1");
+    expect(newRevision.body.module).toBe("demo");
+    expect(newRevision.body.version).toBe(false);
+
+    // Unknown module => both false (is_new).
+    const fresh = await check("brand", "1.0.0-1");
+    expect(fresh.body.module).toBe(false);
+    expect(fresh.body.version).toBe(false);
+  });
+
+  test("GET /api/1/:key/check_rockspec rejects invalid package/version with 422", async () => {
+    const ctx = luarocksContext();
+    const res = await new LuarocksAdapter().handle(
+      {
+        entry: {
+          method: "GET",
+          pattern: "/api/1/:apikey/check_rockspec",
+          handlerId: "apiCheckRockspec",
+        },
+        params: { apikey: "secret" },
+        path: "/api/1/secret/check_rockspec",
+      },
+      new Request("https://registry.test/api/1/secret/check_rockspec?package=bad%2Fname&version=x"),
+      ctx,
+    );
+    expect(res.status).toBe(422);
+  });
+
+  test("POST /api/1/:key/upload then upload_rock/:id attaches the binary rock", async () => {
+    const ctx = luarocksContext();
+    const created: Record<string, unknown>[] = [];
+    let exists = false;
+    ctx.data.content.storeBlobWithRef = async (): Promise<RegistryStoredBlob> => ({
+      digest: DIGEST,
+      size: 8,
+      deduped: false,
+      refCreated: true,
+      blobRefId: "ref_seq",
+    });
+    ctx.data.packages.findByName = async () => (exists ? pkgRow("demo") : null);
+    ctx.data.packages.findOrCreate = async ({ name }) => {
+      exists = true;
+      return pkgRow(name);
+    };
+    // First create succeeds (rockspec), second returns null (version exists) so
+    // the rock merges its arch via patch.
+    ctx.data.versions.create = async (input) => {
+      if (created.length === 0) {
+        created.push(input.metadata);
+        return "ver_seq";
+      }
+      return null;
+    };
+    ctx.data.versions.findLive = async () => null;
+    ctx.data.versions.listLive = async () => [];
+    ctx.data.versions.patch = async (input) => {
+      const existing = LuarocksVersionMetaSchema.parse(created[0]);
+      const result = input.patch({ id: "ver_seq", metadata: existing, deletedAt: null });
+      if (result.update) created.push(result.update.metadata);
+      return result.result;
+    };
+    ctx.data.assets.upsert = async () => ({}) as Awaited<ReturnType<typeof ctx.data.assets.upsert>>;
+
+    const adapter = new LuarocksAdapter();
+    const rockspecForm = new FormData();
+    rockspecForm.append("rockspec_file", new Blob([ROCKSPEC_TEXT]), "demo-1.0.0-1.rockspec");
+    const uploadRes = await adapter.handle(
+      {
+        entry: { method: "POST", pattern: "/api/1/:apikey/upload", handlerId: "apiUpload" },
+        params: { apikey: "secret" },
+        path: "/api/1/secret/upload",
+      },
+      new Request("https://registry.test/api/1/secret/upload", {
+        method: "POST",
+        body: rockspecForm,
+      }),
+      ctx,
+    );
+    const uploadBody = (await uploadRes.json()) as { version: { id: number } };
+    const versionId = uploadBody.version.id;
+    expect(Number.isInteger(versionId)).toBe(true);
+
+    // The same adapter instance bridges the id to the rock-upload step.
+    const rockForm = new FormData();
+    rockForm.append("rock_file", new Blob([new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8])]), "demo.rock");
+    const rockRes = await adapter.handle(
+      {
+        entry: {
+          method: "POST",
+          pattern: "/api/1/:apikey/upload_rock/:versionId",
+          handlerId: "apiUploadRock",
+        },
+        params: { apikey: "secret", versionId: String(versionId) },
+        path: `/api/1/secret/upload_rock/${versionId}`,
+      },
+      new Request(`https://registry.test/api/1/secret/upload_rock/${versionId}`, {
+        method: "POST",
+        body: rockForm,
+      }),
+      ctx,
+    );
+    expect(rockRes.status).toBe(200);
+    // The merged version now carries both the rockspec and the src rock.
+    const merged = created.at(-1) as { blobs: Record<string, { filename: string }> };
+    expect(Object.keys(merged.blobs).sort()).toEqual(["rockspec", "src"]);
+    expect(merged.blobs.src?.filename).toBe("demo-1.0.0-1.src.rock");
+  });
+
+  test("POST upload_rock/:id 404s an unknown version id", async () => {
+    const ctx = luarocksContext();
+    const form = new FormData();
+    form.append("rock_file", new Blob([new Uint8Array([1])]), "x.rock");
+    const res = await new LuarocksAdapter().handle(
+      {
+        entry: {
+          method: "POST",
+          pattern: "/api/1/:apikey/upload_rock/:versionId",
+          handlerId: "apiUploadRock",
+        },
+        params: { apikey: "secret", versionId: "999999" },
+        path: "/api/1/secret/upload_rock/999999",
+      },
+      new Request("https://registry.test/api/1/secret/upload_rock/999999", {
+        method: "POST",
+        body: form,
+      }),
+      ctx,
+    );
+    expect(res.status).toBe(404);
+  });
+
+  test("POST /api upload rejects a non-multipart body with 400", async () => {
+    const ctx = luarocksContext();
+    const res = await new LuarocksAdapter().handle(
+      {
+        entry: { method: "POST", pattern: "/api/1/:apikey/upload", handlerId: "apiUpload" },
+        params: { apikey: "secret" },
+        path: "/api/1/secret/upload",
+      },
+      new Request("https://registry.test/api/1/secret/upload", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ nope: true }),
+      }),
+      ctx,
+    );
+    expect(res.status).toBe(400);
+  });
+
+  test("POST /api upload rejects a malformed rockspec part with 422", async () => {
+    const ctx = luarocksContext();
+    const form = new FormData();
+    // Missing package/version => parseRockspec returns null.
+    form.append("rockspec_file", new Blob(["build = { type = 'builtin' }"]), "x.rockspec");
+    const res = await new LuarocksAdapter().handle(
+      {
+        entry: { method: "POST", pattern: "/api/1/:apikey/upload", handlerId: "apiUpload" },
+        params: { apikey: "secret" },
+        path: "/api/1/secret/upload",
+      },
+      new Request("https://registry.test/api/1/secret/upload", { method: "POST", body: form }),
+      ctx,
+    );
+    expect(res.status).toBe(422);
+  });
+
+  test("POST /api upload rejects a rockspec with an invalid package name with 422", async () => {
+    const ctx = luarocksContext();
+    const form = new FormData();
+    form.append(
+      "rockspec_file",
+      new Blob([`package = "bad/name"\nversion = "1.0-1"\n`]),
+      "x.rockspec",
+    );
+    const res = await new LuarocksAdapter().handle(
+      {
+        entry: { method: "POST", pattern: "/api/1/:apikey/upload", handlerId: "apiUpload" },
+        params: { apikey: "secret" },
+        path: "/api/1/secret/upload",
+      },
+      new Request("https://registry.test/api/1/secret/upload", { method: "POST", body: form }),
+      ctx,
+    );
+    expect(res.status).toBe(422);
   });
 
   test("POST /api upload rejects a missing rockspec_file part", async () => {

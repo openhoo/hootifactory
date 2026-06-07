@@ -18,12 +18,17 @@ export function isValidRockVersion(version: string): boolean {
   return /^[A-Za-z0-9.]+(?:-[0-9]+)?$/.test(version);
 }
 
+/** Upper bound on an arch tag, mirrored by `RockArchSchema.max(64)`. */
+const MAX_ROCK_ARCH_LENGTH = 64;
+
 /**
  * A rock architecture tag: `src` and `all` plus platform tags such as
  * `linux-x86_64` or `macosx-arm64`. Lowercase letters, digits and underscore,
- * with `-` separating platform from machine.
+ * with `-` separating platform from machine. Length is capped so the
+ * filename-parse path enforces the same bound as `RockArchSchema`.
  */
 export function isValidRockArch(arch: string): boolean {
+  if (arch.length > MAX_ROCK_ARCH_LENGTH) return false;
   return /^[a-z0-9]+(?:[._-][a-z0-9]+)*$/.test(arch);
 }
 

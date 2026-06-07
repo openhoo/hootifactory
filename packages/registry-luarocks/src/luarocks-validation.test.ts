@@ -48,6 +48,13 @@ describe("LuaRocks name/version/arch validation", () => {
     expect(isValidRockArch("Linux-X86")).toBe(false);
     expect(isValidRockArch("a/b")).toBe(false);
   });
+
+  test("rejects an over-long arch tag (mirrors RockArchSchema.max(64))", () => {
+    expect(isValidRockArch("a".repeat(64))).toBe(true);
+    expect(isValidRockArch("a".repeat(65))).toBe(false);
+    // The over-long arch also fails the filename parse path.
+    expect(parseArtifactFilename(`demo-1.0.0-1.${"a".repeat(65)}.rock`)).toBeNull();
+  });
 });
 
 describe("LuaRocks artifact filename parsing", () => {
