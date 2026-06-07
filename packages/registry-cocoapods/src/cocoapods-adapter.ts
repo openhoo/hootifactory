@@ -1,6 +1,4 @@
 import {
-  basicAuthChallenge,
-  delegateRegistryPlugin,
   type HttpMethod,
   type Permission,
   parseRegistryInput,
@@ -8,8 +6,7 @@ import {
   type RegistryRequestContext,
   type RouteMatch,
   readWritePermission,
-  registryCapabilities,
-  registryPlugin,
+  registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
 } from "@hootifactory/registry";
@@ -97,85 +94,7 @@ function parseSpecsTail(tail: string): SpecsPathParts | null {
  * client reads to resolve which podspec versions exist, `GET /deprecated_podspecs.txt`,
  * and the newline `GET /all_pods.txt` pod listing.
  */
-export class CocoapodsAdapter implements RegistryPlugin {
-  readonly id = "cocoapods" as const;
-  // Only `virtualizable`: a repo mount can be aggregated into a virtual repo. We do NOT
-  // declare `proxyable` because this adapter implements no `proxyIngest`/upstream mirror
-  // (proxy-repo creation is gated on the implementation, not the flag), so advertising it
-  // would be a dishonest capability. Matches the homebrew/maven index-style reference.
-  readonly capabilities = registryCapabilities("virtualizable");
-  authChallenge = basicAuthChallenge;
-
-  private readonly plugin = registryPlugin(this.id)
-    .module({
-      displayName: "CocoaPods",
-      mountSegment: "cocoapods",
-      errorResponseKind: "singleError",
-      compressibleHandlers: ["index", "podspec", "allPodsText", "shardIndex"],
-      compressibleContentTypes: [JSON_CONTENT_TYPE, TEXT_CONTENT_TYPE, YAML_CONTENT_TYPE],
-      scan: {
-        defaultOsvEcosystem: undefined,
-        referencedDigests: (metadata) =>
-          typeof metadata.blobDigest === "string" ? [metadata.blobDigest] : [],
-      },
-    })
-    .capabilities(this.capabilities)
-    .authChallenge(this.authChallenge)
-    .routes((route) => [
-      // Literal/static routes first so they cannot be shadowed by the single-segment
-      // `/:shardFile` (GET) or `/:pod` (PUT) routes — the route-matcher tries routes
-      // in declared order and returns the first match.
-      route.get("/CocoaPods-version.yml", "cdnVersion", ({ req }) => this.cdnVersion(req)),
-      route.get("/deprecated_podspecs.txt", "deprecated", ({ req }) => this.deprecated(req)),
-      route.get("/all_pods.txt", "allPodsText", ({ req, ctx }) => this.allPodsText(req, ctx)),
-      route.get("/all_pods.json", "index", ({ req, ctx }) => this.index(req, ctx)),
-      route.get("/Specs/:tail+", "podspec", ({ params, req, ctx }) =>
-        this.podspec(params.tail, req, ctx),
-      ),
-      route.get("/pods/:pod/:version/:filename", "download", ({ params, req, ctx }) =>
-        this.download(params.pod, params.version, params.filename, req, ctx),
-      ),
-      // Per-shard versions index `all_pods_versions_<a>_<b>_<c>.txt`. The matcher only
-      // binds whole `:param` segments, so this single-segment route catches the shard
-      // filename and the handler validates the exact `all_pods_versions_*.txt` shape.
-      route.get("/:shardFile", "shardIndex", ({ params, req, ctx }) =>
-        this.shardIndex(params.shardFile, req, ctx),
-      ),
-      route.put("/:pod", "publish", ({ params, req, ctx }) => this.publish(params.pod, req, ctx)),
-    ])
-    .build();
-  private readonly delegate = delegateRegistryPlugin(this.plugin);
-
-  get displayName() {
-    return this.plugin.displayName;
-  }
-  get mountSegment() {
-    return this.plugin.mountSegment;
-  }
-  get repositoryNamePolicy() {
-    return this.plugin.repositoryNamePolicy;
-  }
-  get acceptsRegistryBearerToken() {
-    return this.plugin.acceptsRegistryBearerToken;
-  }
-  get apiKeyHeaders() {
-    return this.plugin.apiKeyHeaders;
-  }
-  get errorResponseKind() {
-    return this.plugin.errorResponseKind;
-  }
-  get compressibleHandlers() {
-    return this.plugin.compressibleHandlers;
-  }
-  get compressibleContentTypes() {
-    return this.plugin.compressibleContentTypes;
-  }
-  get scan() {
-    return this.plugin.scan;
-  }
-
-  routes = this.delegate.routes;
-
+class CocoapodsAdapterState {
   requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
     const permission = readWritePermission(method);
     const handlerId = match?.entry?.handlerId;
@@ -210,8 +129,6 @@ export class CocoapodsAdapter implements RegistryPlugin {
     }
     return permission;
   }
-
-  handle = this.delegate.handle;
 
   private base(ctx: RegistryRequestContext): string {
     return `${ctx.baseUrl}/${ctx.repo.mountPath}`;
@@ -256,7 +173,7 @@ export class CocoapodsAdapter implements RegistryPlugin {
    * fetches FIRST in `refresh_metadata`. It advertises `prefix_lengths`, which drives the
    * shard fragment the client computes for every subsequent index and podspec URL.
    */
-  private cdnVersion(req: Request): Response {
+  cdnVersion(req: Request): Response {
     const [a, b, c] = COCOAPODS_PREFIX_LENGTHS;
     // Hand-rolled YAML (no YAML dependency in this package); a flow-style sequence and
     // scalar string values are all the client parses here. `min`/`last` only feed the
@@ -270,7 +187,7 @@ export class CocoapodsAdapter implements RegistryPlugin {
    * deprecates nothing, so this is a deterministic empty 200 (strict/older clients treat a
    * non-200 here as a failure rather than fall through to the `/:pod` matcher).
    */
-  private deprecated(req: Request): Response {
+  deprecated(req: Request): Response {
     return textResponseWithEtag(req, "", { "content-type": TEXT_CONTENT_TYPE });
   }
 
@@ -278,7 +195,7 @@ export class CocoapodsAdapter implements RegistryPlugin {
    * `GET /all_pods.txt` — the newline-delimited pod listing the CDN exposes (alphabetical,
    * one pod name per line). This is the real CDN index file (vs. the bespoke `all_pods.json`).
    */
-  private async allPodsText(req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  async allPodsText(req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const pods = await this.listPodVersions(ctx);
     const body = pods.map((p) => p.name).join("\n");
     return textResponseWithEtag(req, body, { "content-type": TEXT_CONTENT_TYPE });
@@ -289,7 +206,7 @@ export class CocoapodsAdapter implements RegistryPlugin {
    * reads to resolve which versions of a pod exist. One line per pod in the `md5(name)`
    * shard: `<podName>/<version1>/<version2>/...` (name first, then every live version).
    */
-  private async shardIndex(
+  async shardIndex(
     shardFile: string,
     req: Request,
     ctx: RegistryRequestContext,
@@ -309,7 +226,7 @@ export class CocoapodsAdapter implements RegistryPlugin {
    * published versions. This is a hootifactory/UI convenience listing, not a route the
    * CocoaPods CDN client requests (it reads `all_pods.txt` + the sharded indexes above).
    */
-  private async index(req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  async index(req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const index: Record<string, string[]> = {};
     for (const { name, versions } of await this.listPodVersions(ctx)) {
       index[name] = versions;
@@ -323,11 +240,7 @@ export class CocoapodsAdapter implements RegistryPlugin {
    * `GET /Specs/<a>/<b>/<c>/<pod>/<version>/<pod>.podspec.json` — the stored podspec
    * with `source` rewritten to the hosted download URL.
    */
-  private async podspec(
-    tail: string,
-    req: Request,
-    ctx: RegistryRequestContext,
-  ): Promise<Response> {
+  async podspec(tail: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const parts = parseSpecsTail(tail);
     // A malformed or mis-sharded Specs path resolves to no pod, so 404 like the CDN.
     if (!parts) return new Response("Not Found", { status: 404 });
@@ -343,7 +256,7 @@ export class CocoapodsAdapter implements RegistryPlugin {
   }
 
   /** `GET /pods/<pod>/<version>/<filename>` — serve the hosted source archive blob. */
-  private async download(
+  async download(
     podRaw: string,
     versionRaw: string,
     filenameRaw: string,
@@ -368,14 +281,62 @@ export class CocoapodsAdapter implements RegistryPlugin {
     });
   }
 
-  private async publish(
-    podRaw: string,
-    req: Request,
-    ctx: RegistryRequestContext,
-  ): Promise<Response> {
+  async publish(podRaw: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const pod = parsePodName(podRaw);
     return handleCocoapodsPublish(pod, req, ctx);
   }
 }
 
+const cocoapodsDefinition = registryAdapter("cocoapods")
+  .stateClass(CocoapodsAdapterState)
+  .module((module) =>
+    module
+      .displayName("CocoaPods")
+      .mount("cocoapods")
+      // Only `virtualizable`: no proxyIngest/upstream mirror is implemented.
+      .capabilities("virtualizable")
+      .errorResponseKind("singleError")
+      .compressible({
+        handlers: ["index", "podspec", "allPodsText", "shardIndex"],
+        contentTypes: [JSON_CONTENT_TYPE, TEXT_CONTENT_TYPE, YAML_CONTENT_TYPE],
+      }),
+  )
+  .scan({
+    defaultOsvEcosystem: undefined,
+    referencedDigests: (metadata) =>
+      typeof metadata.blobDigest === "string" ? [metadata.blobDigest] : [],
+  })
+  .basicAuth()
+  .fromState((state) => state.defaultPermission("requiredPermission"))
+  .routes((route) => [
+    // Literal/static routes first so they cannot be shadowed by the single-segment
+    // `/:shardFile` (GET) or `/:pod` (PUT) routes.
+    route
+      .get("/CocoaPods-version.yml", "cdnVersion")
+      .calls((state, { req }) => state.cdnVersion(req)),
+    route
+      .get("/deprecated_podspecs.txt", "deprecated")
+      .calls((state, { req }) => state.deprecated(req)),
+    route
+      .get("/all_pods.txt", "allPodsText")
+      .calls((state, { req, ctx }) => state.allPodsText(req, ctx)),
+    route.get("/all_pods.json", "index").calls((state, { req, ctx }) => state.index(req, ctx)),
+    route
+      .get("/Specs/:tail+", "podspec")
+      .calls((state, { params, req, ctx }) => state.podspec(params.tail, req, ctx)),
+    route
+      .get("/pods/:pod/:version/:filename", "download")
+      .calls((state, { params, req, ctx }) =>
+        state.download(params.pod, params.version, params.filename, req, ctx),
+      ),
+    // Per-shard versions index `all_pods_versions_<a>_<b>_<c>.txt`.
+    route
+      .get("/:shardFile", "shardIndex")
+      .calls((state, { params, req, ctx }) => state.shardIndex(params.shardFile, req, ctx)),
+    route
+      .put("/:pod", "publish")
+      .calls((state, { params, req, ctx }) => state.publish(params.pod, req, ctx)),
+  ]);
+
+export class CocoapodsAdapter extends cocoapodsDefinition.adapterClass() {}
 export const cocoapodsRegistryPlugin: RegistryPlugin = new CocoapodsAdapter();
