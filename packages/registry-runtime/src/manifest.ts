@@ -4,6 +4,7 @@ import { ansibleRegistryPlugin } from "@hootifactory/registry-ansible";
 import { aptRegistryPlugin } from "@hootifactory/registry-apt";
 import { archRegistryPlugin } from "@hootifactory/registry-arch";
 import { cargoRegistryPlugin } from "@hootifactory/registry-cargo";
+import { chefRegistryPlugin } from "@hootifactory/registry-chef";
 import { chocolateyRegistryPlugin } from "@hootifactory/registry-chocolatey";
 import { cocoapodsRegistryPlugin } from "@hootifactory/registry-cocoapods";
 import { composerRegistryPlugin } from "@hootifactory/registry-composer";
@@ -83,4 +84,5 @@ export const REGISTRY_PLUGIN_MANIFEST: RegistryPluginEntry[] = [
   { plugin: archRegistryPlugin, aliases: ["pacman"] },
   { plugin: hackageRegistryPlugin },
   { plugin: puppetRegistryPlugin, aliases: ["forge"] },
+  { plugin: chefRegistryPlugin, aliases: ["supermarket"] },
 ];

@@ -17,6 +17,7 @@
     "@hootifactory/registry": "workspace:*",
     "@hootifactory/registry-ansible": "workspace:*",
     "@hootifactory/registry-apt": "workspace:*",
+    "@hootifactory/registry-chef": "workspace:*",
     "@hootifactory/registry-chocolatey": "workspace:*",
     "@hootifactory/registry-cocoapods": "workspace:*",
     "@hootifactory/registry-winget": "workspace:*",

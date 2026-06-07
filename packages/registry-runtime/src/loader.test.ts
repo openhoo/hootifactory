@@ -48,6 +48,8 @@ describe("loadConfiguredRegistryPlugins", () => {
       "hackage",
       "puppet",
       "forge",
+      "chef",
+      "supermarket",
     ]) {
       expect(registry.has(id)).toBe(true);
     }
@@ -94,6 +96,7 @@ describe("loadConfiguredRegistryPlugins", () => {
       "arch",
       "hackage",
       "puppet",
+      "chef",
       "oci",
       "helm",
       "yum",
@@ -104,6 +107,7 @@ describe("loadConfiguredRegistryPlugins", () => {
       "apk",
       "pacman",
       "forge",
+      "supermarket",
     ]);
   });
 
