@@ -15,6 +15,7 @@
   "dependencies": {
     "@hootifactory/config": "workspace:*",
     "@hootifactory/registry": "workspace:*",
+    "@hootifactory/registry-ansible": "workspace:*",
     "@hootifactory/registry-apt": "workspace:*",
     "@hootifactory/registry-chocolatey": "workspace:*",
     "@hootifactory/registry-winget": "workspace:*",

@@ -1,4 +1,5 @@
 import type { RegistryPlugin } from "@hootifactory/registry";
+import { ansibleRegistryPlugin } from "@hootifactory/registry-ansible";
 import { aptRegistryPlugin } from "@hootifactory/registry-apt";
 import { cargoRegistryPlugin } from "@hootifactory/registry-cargo";
 import { chocolateyRegistryPlugin } from "@hootifactory/registry-chocolatey";
@@ -49,4 +50,5 @@ export const REGISTRY_PLUGIN_MANIFEST: RegistryPluginEntry[] = [
   { plugin: homebrewRegistryPlugin },
   { plugin: scoopRegistryPlugin },
   { plugin: rpmRegistryPlugin, aliases: ["yum", "dnf"] },
+  { plugin: ansibleRegistryPlugin, aliases: ["galaxy"] },
 ];

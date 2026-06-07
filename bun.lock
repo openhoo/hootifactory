@@ -212,6 +212,13 @@
         "@hootifactory/types": "workspace:*",
       },
     },
+    "packages/registry-ansible": {
+      "name": "@hootifactory/registry-ansible",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/registry": "workspace:*",
+      },
+    },
     "packages/registry-application": {
       "name": "@hootifactory/registry-application",
       "version": "0.0.0",
@@ -332,6 +339,7 @@
       "dependencies": {
         "@hootifactory/config": "workspace:*",
         "@hootifactory/registry": "workspace:*",
+        "@hootifactory/registry-ansible": "workspace:*",
         "@hootifactory/registry-apt": "workspace:*",
         "@hootifactory/registry-cargo": "workspace:*",
         "@hootifactory/registry-chocolatey": "workspace:*",
@@ -642,6 +650,8 @@
     "@hootifactory/queue": ["@hootifactory/queue@workspace:packages/queue"],
 
     "@hootifactory/registry": ["@hootifactory/registry@workspace:packages/registry"],
+
+    "@hootifactory/registry-ansible": ["@hootifactory/registry-ansible@workspace:packages/registry-ansible"],
 
     "@hootifactory/registry-application": ["@hootifactory/registry-application@workspace:packages/registry-application"],
 
