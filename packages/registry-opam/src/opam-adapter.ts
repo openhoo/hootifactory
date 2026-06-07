@@ -1,6 +1,4 @@
 import {
-  basicAuthChallenge,
-  delegateRegistryPlugin,
   Errors,
   type HttpMethod,
   ifNoneMatch,
@@ -10,8 +8,7 @@ import {
   type RegistryRequestContext,
   type RouteMatch,
   readWritePermission,
-  registryCapabilities,
-  registryPlugin,
+  registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
 } from "@hootifactory/registry";
@@ -53,74 +50,7 @@ function parseVersion(version: string): string {
  * source archive blob over HTTP. Publish is a hootifactory extension (real opam
  * repos are git repos PR'd by hand): a `PUT` of an opam manifest + source archive.
  */
-export class OpamAdapter implements RegistryPlugin {
-  readonly id = "opam" as const;
-  // Only `virtualizable` is advertised: this adapter hosts opam repos but performs
-  // no upstream fetch, so it wires no `.proxyIngest(...)` and declaring `proxyable`
-  // would be dishonest (proxy creation is gated on `adapter.proxyIngest`, so an
-  // advertised-but-unimplemented proxy capability can never be exercised).
-  readonly capabilities = registryCapabilities("virtualizable");
-  authChallenge = basicAuthChallenge;
-
-  private readonly plugin = registryPlugin(this.id)
-    .module({
-      displayName: "opam",
-      mountSegment: "opam",
-      errorResponseKind: "singleError",
-      compressibleHandlers: ["opamFile"],
-      scan: {
-        defaultOsvEcosystem: undefined,
-        referencedDigests: (metadata) =>
-          typeof metadata.blobDigest === "string" ? [metadata.blobDigest] : [],
-      },
-    })
-    .capabilities(this.capabilities)
-    .authChallenge(this.authChallenge)
-    .routes((route) => [
-      // `/index.tar.gz` is a literal segment declared before the `/packages/...`
-      // and `/archives/...` routes (the route-matcher tries routes in order).
-      route.get("/index.tar.gz", "index", ({ req, ctx }) => this.index(req, ctx)),
-      route.get("/packages/:pkg/:nv/opam", "opamFile", ({ params, req, ctx }) =>
-        this.opamFile(params.pkg, params.nv, req, ctx),
-      ),
-      route.get("/archives/:name/:version/:filename", "archive", ({ params, req, ctx }) =>
-        this.archive(params.name, params.version, params.filename, req, ctx),
-      ),
-      route.put("/upload", "publish", ({ req, ctx }) => this.publish(req, ctx)),
-    ])
-    .build();
-  private readonly delegate = delegateRegistryPlugin(this.plugin);
-
-  get displayName() {
-    return this.plugin.displayName;
-  }
-  get mountSegment() {
-    return this.plugin.mountSegment;
-  }
-  get repositoryNamePolicy() {
-    return this.plugin.repositoryNamePolicy;
-  }
-  get acceptsRegistryBearerToken() {
-    return this.plugin.acceptsRegistryBearerToken;
-  }
-  get apiKeyHeaders() {
-    return this.plugin.apiKeyHeaders;
-  }
-  get errorResponseKind() {
-    return this.plugin.errorResponseKind;
-  }
-  get compressibleHandlers() {
-    return this.plugin.compressibleHandlers;
-  }
-  get compressibleContentTypes() {
-    return this.plugin.compressibleContentTypes;
-  }
-  get scan() {
-    return this.plugin.scan;
-  }
-
-  routes = this.delegate.routes;
-
+class OpamAdapterState {
   requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
     const permission = readWritePermission(method);
     const handlerId = match?.entry?.handlerId;
@@ -148,10 +78,8 @@ export class OpamAdapter implements RegistryPlugin {
     return permission;
   }
 
-  handle = this.delegate.handle;
-
   /** `GET /index.tar.gz` — gzipped tar of the whole repo (repo file + opam files). */
-  private async index(req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  async index(req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const metas = await this.liveMetas(ctx);
     const tarball = buildOpamIndexTarball(metas, (meta) => this.srcUrl(ctx, meta));
     const etag = `"${new Bun.CryptoHasher("sha1").update(tarball).digest("hex")}"`;
@@ -162,7 +90,7 @@ export class OpamAdapter implements RegistryPlugin {
   }
 
   /** `GET /packages/<pkg>/<pkg>.<version>/opam` — the individual opam file. */
-  private async opamFile(
+  async opamFile(
     pkgRaw: string,
     nvRaw: string,
     req: Request,
@@ -184,7 +112,7 @@ export class OpamAdapter implements RegistryPlugin {
   }
 
   /** `GET /archives/<name>/<version>/<filename>` — serve the hosted source archive. */
-  private async archive(
+  async archive(
     nameRaw: string,
     versionRaw: string,
     filenameRaw: string,
@@ -213,7 +141,7 @@ export class OpamAdapter implements RegistryPlugin {
     });
   }
 
-  private async publish(req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  async publish(req: Request, ctx: RegistryRequestContext): Promise<Response> {
     return handleOpamPublish(req, ctx);
   }
 
@@ -253,4 +181,39 @@ function isValidName(name: string): boolean {
   return OpamPackageNameSchema.safeParse(name).success;
 }
 
+const opamDefinition = registryAdapter("opam")
+  .stateClass(OpamAdapterState)
+  .module((module) =>
+    module
+      .displayName("opam")
+      .mount("opam")
+      // Only `virtualizable` is advertised: this adapter hosts opam repos but
+      // performs no upstream fetch, so it wires no `.proxyIngest(...)`.
+      .capabilities("virtualizable")
+      .errorResponseKind("singleError")
+      .compressibleHandlers("opamFile"),
+  )
+  .scan({
+    defaultOsvEcosystem: undefined,
+    referencedDigests: (metadata) =>
+      typeof metadata.blobDigest === "string" ? [metadata.blobDigest] : [],
+  })
+  .basicAuth()
+  .fromState((state) => state.defaultPermission("requiredPermission"))
+  .routes((route) => [
+    // `/index.tar.gz` is a literal segment declared before the `/packages/...`
+    // and `/archives/...` routes (the route-matcher tries routes in order).
+    route.get("/index.tar.gz", "index").calls((state, { req, ctx }) => state.index(req, ctx)),
+    route
+      .get("/packages/:pkg/:nv/opam", "opamFile")
+      .calls((state, { params, req, ctx }) => state.opamFile(params.pkg, params.nv, req, ctx)),
+    route
+      .get("/archives/:name/:version/:filename", "archive")
+      .calls((state, { params, req, ctx }) =>
+        state.archive(params.name, params.version, params.filename, req, ctx),
+      ),
+    route.put("/upload", "publish").calls((state, { req, ctx }) => state.publish(req, ctx)),
+  ]);
+
+export class OpamAdapter extends opamDefinition.adapterClass() {}
 export const opamRegistryPlugin: RegistryPlugin = new OpamAdapter();
