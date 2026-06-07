@@ -12,15 +12,26 @@ export const QUEUES = {
 let bossInstance: PgBoss | null = null;
 let startPromise: Promise<PgBoss> | null = null;
 
-/** Lazily start a shared pg-boss instance and ensure all queues exist. */
-export async function getBoss(): Promise<PgBoss> {
+/** Construct the pg-boss instance from env. Overridable in tests via {@link getBoss}. */
+export type BossFactory = () => PgBoss;
+
+const defaultBossFactory: BossFactory = () =>
+  new PgBoss({
+    connectionString: env.DATABASE_URL,
+    max: env.PG_BOSS_POOL_MAX,
+  });
+
+/**
+ * Lazily start a shared pg-boss instance and ensure all queues exist.
+ *
+ * `factory` is an injection seam (defaults to the env-configured pg-boss) so the
+ * lifecycle can be tested with a fake boss; production callers pass nothing.
+ */
+export async function getBoss(factory: BossFactory = defaultBossFactory): Promise<PgBoss> {
   if (bossInstance) return bossInstance;
   if (!startPromise) {
     startPromise = (async () => {
-      const boss = new PgBoss({
-        connectionString: env.DATABASE_URL,
-        max: env.PG_BOSS_POOL_MAX,
-      });
+      const boss = factory();
       boss.on("error", (err) => logger.error("pg-boss error", { error: err }));
       await withSpan("queue.start", {}, async () => {
         await boss.start();
