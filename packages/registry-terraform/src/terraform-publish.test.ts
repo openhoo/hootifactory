@@ -128,4 +128,19 @@ describe("parseTerraformProviderPublishRequest", () => {
     const result = await parseTerraformProviderPublishRequest(multipartRequest(body));
     expect(result.ok).toBe(false);
   });
+
+  test("rejects os/arch tokens that would corrupt the blob-ref scope", async () => {
+    const body = buildMultipartBody("BOUND", [
+      jsonField("manifest", {
+        version: "2.0.0",
+        protocols: ["5.0"],
+        platforms: [{ os: "linux/evil", arch: "amd64", filename: "p.zip", shasum: SHASUM_HEX }],
+        shasums: "SHASUMS",
+      }),
+      { name: "p.zip", filename: "p.zip", data: new Uint8Array([1]) },
+      { name: "SHASUMS", filename: "SHASUMS", data: new Uint8Array([2]) },
+    ]);
+    const result = await parseTerraformProviderPublishRequest(multipartRequest(body));
+    expect(result.ok).toBe(false);
+  });
 });

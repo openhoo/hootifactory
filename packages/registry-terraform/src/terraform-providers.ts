@@ -289,11 +289,25 @@ export async function publishProviderVersion(
     version,
     metadata,
     sizeBytes: totalBytes,
-    scan: { name: packageName, version, mediaType: "application/zip" },
+    // The committed blob is the SHASUMS file; scan it as text/plain to match its
+    // stored media type. The per-platform zips are scanned via enqueueScan below.
+    scan: { name: packageName, version, mediaType: "text/plain; charset=utf-8" },
   });
   if ("conflict" in result) {
     return Response.json({ error: "version already exists" }, { status: 409 });
   }
+
+  // Scan the actual provider zips: commitOrReleaseBlob only enqueues the SHASUMS
+  // text file, so the executable payloads would otherwise bypass the scan pipeline.
+  for (const platform of platforms) {
+    await ctx.enqueueScan({
+      digest: platform.blobDigest,
+      name: packageName,
+      version,
+      mediaType: "application/zip",
+    });
+  }
+
   return Response.json({ ok: true, namespace, type, version }, { status: 201 });
 }
 

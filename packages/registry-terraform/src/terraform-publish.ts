@@ -1,5 +1,6 @@
 import { parseRegistryInput, z } from "@hootifactory/registry";
 import {
+  TerraformPlatformTokenSchema,
   TerraformProtocolSchema,
   TerraformSigningKeySchema,
   TerraformVersionSchema,
@@ -82,8 +83,11 @@ export type TerraformProviderPublishResult =
   | { ok: false; error: TerraformPublishError };
 
 const ProviderPlatformManifestSchema = z.strictObject({
-  os: z.string().min(1).max(64),
-  arch: z.string().min(1).max(64),
+  // Constrain os/arch to the same token format the download routes enforce
+  // (lowercase letters/digits/underscore): these values build blob-ref scopes
+  // and must round-trip through the route matchers, or the version is unreachable.
+  os: TerraformPlatformTokenSchema,
+  arch: TerraformPlatformTokenSchema,
   filename: z.string().min(1).max(512),
   shasum: z.string().regex(/^[a-f0-9]{64}$/),
 });

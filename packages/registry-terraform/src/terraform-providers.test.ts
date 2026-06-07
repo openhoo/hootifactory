@@ -222,6 +222,10 @@ describe("Terraform provider protocol", () => {
     const ctx = terraformContext();
     const stored: { scope: string; kind: string }[] = [];
     const committed: { metadata?: Record<string, unknown>; scan?: unknown } = {};
+    const scans: { digest: string; mediaType?: string }[] = [];
+    ctx.enqueueScan = async (input) => {
+      scans.push({ digest: input.digest, mediaType: input.mediaType });
+    };
     ctx.data.packages.findOrCreate = async ({ name }) => pkgRow(name);
     ctx.data.versions.exists = async () => false;
     const digestByScope = new Map<string, string>([
@@ -301,11 +305,14 @@ describe("Terraform provider protocol", () => {
       "hashicorp/random@2.0.0/SHASUMS",
       "hashicorp/random@2.0.0/SHASUMS.sig",
     ]);
+    // The committed (SHASUMS) blob is scanned as text; each platform zip is
+    // enqueued for scanning separately as application/zip.
     expect(committed.scan).toEqual({
       name: "provider/hashicorp/random",
       version: "2.0.0",
-      mediaType: "application/zip",
+      mediaType: "text/plain; charset=utf-8",
     });
+    expect(scans).toEqual([{ digest: ZIP_DIGEST, mediaType: "application/zip" }]);
     const meta = parseTerraformProviderVersionMeta(committed.metadata);
     expect(meta).not.toBeNull();
     expect(meta).toMatchObject({
