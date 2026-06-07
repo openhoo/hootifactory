@@ -24,7 +24,7 @@ export interface ConanFileTarget {
 /** The hootifactory version key for the revision a file target belongs to. */
 export function versionKeyForTarget(target: ConanFileTarget): string {
   return target.packageId && target.prev
-    ? packageVersionKey(target.packageId, target.prev)
+    ? packageVersionKey(target.rrev, target.packageId, target.prev)
     : recipeVersionKey(target.rrev);
 }
 
@@ -44,6 +44,13 @@ function mergeFiles(
   }
   out[filename] = entry;
   return out;
+}
+
+/** Total bytes across every stored file in a revision row. */
+function totalFileBytes(files: Record<string, ConanFileEntry>): number {
+  let total = 0;
+  for (const entry of Object.values(files)) total += entry.sizeBytes;
+  return total;
 }
 
 /**
@@ -89,7 +96,7 @@ export async function handleConanFileUpload(
       const metadata = asJsonRecord(row.metadata) ?? {};
       const files = mergeFiles(metadata, target.filename, entry);
       return {
-        update: { metadata: { ...metadata, files } },
+        update: { metadata: { ...metadata, files }, sizeBytes: totalFileBytes(files) },
         result: true,
       };
     },

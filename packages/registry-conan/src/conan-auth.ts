@@ -70,7 +70,8 @@ export function conanAuthenticate(req: Request, ctx: RegistryRequestContext): Re
   if (!token) throw Errors.unauthorized();
   return new Response(token, {
     status: 200,
-    headers: { "content-type": "text/plain; charset=utf-8" },
+    // The body is a credential; never let intermediaries or clients persist it.
+    headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },
   });
 }
 

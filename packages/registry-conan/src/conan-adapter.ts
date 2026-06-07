@@ -323,14 +323,20 @@ export class ConanAdapter implements RegistryPlugin {
     ctx: RegistryRequestContext,
     pkg: RegistryPackageHandle,
     kind: "recipe" | "package",
-    packageId?: string,
+    pkgScope?: { rrev: string; packageId: string },
   ) {
     const rows = await ctx.data.versions.listLive(pkg, { orderByCreated: "desc" });
     const metas = [];
     for (const row of rows) {
       const meta = parseConanRevisionMeta(row.metadata);
       if (!meta || meta.kind !== kind) continue;
-      if (kind === "package" && meta.packageId !== packageId) continue;
+      // Package revisions are scoped to one recipe revision + package id so a
+      // listing never bleeds binaries from other recipe revisions.
+      if (
+        kind === "package" &&
+        (meta.rrev !== pkgScope?.rrev || meta.packageId !== pkgScope?.packageId)
+      )
+        continue;
       metas.push(meta);
     }
     return metas;
@@ -384,11 +390,11 @@ export class ConanAdapter implements RegistryPlugin {
     pkgidRaw: string,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
-    parseRevision(rrevRaw);
+    const rrev = parseRevision(rrevRaw);
     const pkgid = parsePackageId(pkgidRaw);
     const pkg = await this.findRecipe(ctx, reference);
     if (!pkg) return notFound();
-    const metas = await this.revisionsOfKind(ctx, pkg, "package", pkgid);
+    const metas = await this.revisionsOfKind(ctx, pkg, "package", { rrev, packageId: pkgid });
     if (metas.length === 0) return notFound();
     return Response.json({
       revisions: metas.map((meta) => ({ revision: meta.prev, time: meta.time })),
@@ -402,11 +408,11 @@ export class ConanAdapter implements RegistryPlugin {
     pkgidRaw: string,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
-    parseRevision(rrevRaw);
+    const rrev = parseRevision(rrevRaw);
     const pkgid = parsePackageId(pkgidRaw);
     const pkg = await this.findRecipe(ctx, reference);
     if (!pkg) return notFound();
-    const [latest] = await this.revisionsOfKind(ctx, pkg, "package", pkgid);
+    const [latest] = await this.revisionsOfKind(ctx, pkg, "package", { rrev, packageId: pkgid });
     if (!latest) return notFound();
     return Response.json({ revision: latest.prev, time: latest.time });
   }
@@ -419,12 +425,12 @@ export class ConanAdapter implements RegistryPlugin {
     prevRaw: string,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
-    parseRevision(rrevRaw);
+    const rrev = parseRevision(rrevRaw);
     const pkgid = parsePackageId(pkgidRaw);
     const prev = parseRevision(prevRaw);
     const pkg = await this.findRecipe(ctx, reference);
     if (!pkg) return notFound();
-    const row = await ctx.data.versions.findLive(pkg, packageVersionKey(pkgid, prev));
+    const row = await ctx.data.versions.findLive(pkg, packageVersionKey(rrev, pkgid, prev));
     const meta = parseConanRevisionMeta(row?.metadata);
     if (meta?.kind !== "package") return notFound();
     return Response.json(buildConanFilesResponse(meta.files));

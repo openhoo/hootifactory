@@ -231,6 +231,7 @@ describe("Conan adapter", () => {
       ctx,
     );
     expect(res.status).toBe(200);
+    expect(res.headers.get("cache-control")).toBe("no-store");
     expect(await res.text()).toBe("secret-token");
   });
 
@@ -357,9 +358,17 @@ describe("Conan adapter", () => {
     const ctx = conanContext();
     ctx.data.packages.findByName = async () => pkgRow();
     ctx.data.versions.listLive = async () => [
-      versionRow(packageMeta("prevNew", "2026-03-02T00:00:00.000Z"), "pkg:pkgid01#prevNew"),
+      versionRow(packageMeta("prevNew", "2026-03-02T00:00:00.000Z"), "pkg:rrev1:pkgid01#prevNew"),
       // A different package id is excluded.
-      versionRow({ ...packageMeta("prevOther"), packageId: "otherpkg" }, "pkg:otherpkg#prevOther"),
+      versionRow(
+        { ...packageMeta("prevOther"), packageId: "otherpkg" },
+        "pkg:rrev1:otherpkg#prevOther",
+      ),
+      // A binary with the same package id under a *different* recipe revision is excluded.
+      versionRow(
+        { ...packageMeta("prevElsewhere"), rrev: "rrevOther" },
+        "pkg:rrevOther:pkgid01#prevElsewhere",
+      ),
     ];
     const revs = await new ConanAdapter().handle(
       {
@@ -381,7 +390,7 @@ describe("Conan adapter", () => {
     });
 
     ctx.data.versions.findLive = async (_pkg, version) => {
-      expect(version).toBe("pkg:pkgid01#prev1");
+      expect(version).toBe("pkg:rrev1:pkgid01#prev1");
       return versionRow(packageMeta());
     };
     const files = await new ConanAdapter().handle(
@@ -543,7 +552,11 @@ describe("Conan adapter", () => {
 
   test("PUT recipe file merges into an existing revision row", async () => {
     const ctx = conanContext();
-    const captured: { patchedFiles?: Record<string, unknown>; upsertCalled: boolean } = {
+    const captured: {
+      patchedFiles?: Record<string, unknown>;
+      patchedSizeBytes?: number;
+      upsertCalled: boolean;
+    } = {
       upsertCalled: false,
     };
     ctx.data.packages.findOrCreate = async ({ name }) => pkgRow(name);
@@ -570,6 +583,7 @@ describe("Conan adapter", () => {
         string,
         unknown
       >;
+      captured.patchedSizeBytes = result.update?.sizeBytes;
       return result.result as never;
     };
     ctx.data.versions.upsert = async () => {
@@ -612,6 +626,8 @@ describe("Conan adapter", () => {
       "conanfile.py": { blobDigest: DIGEST, sizeBytes: 4 },
       "conanmanifest.txt": { blobDigest: DIGEST, sizeBytes: 2 },
     });
+    // The revision's total size reflects every file, not just the latest upload.
+    expect(captured.patchedSizeBytes).toBe(6);
   });
 
   test("PUT rejects an empty body with 400", async () => {

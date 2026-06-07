@@ -29,7 +29,11 @@ export const ConanRevisionSchema = z
   .max(128)
   .refine((value) => REVISION_RE.test(value), "invalid Conan revision");
 
-/** A Conan package_id is a 40-char sha1-style hex digest (`0`*40 for header-only). */
+/**
+ * A Conan package_id is conventionally a 40-char sha1-style hex digest (`0`*40 for
+ * header-only), but we accept any bounded alphanumeric string so non-standard or
+ * future id shapes still route correctly rather than 400-ing at the boundary.
+ */
 export const ConanPackageIdSchema = z
   .string()
   .min(1)
@@ -112,15 +116,17 @@ export function parseConanRevisionMeta(value: unknown): ConanRevisionMeta | null
 
 /**
  * The per-version key (a hootifactory "version" string) encoding a recipe or
- * package revision. Recipe: `<rrev>`. Package: `pkg:<packageId>#<prev>`. This
- * keeps recipe and package revisions in distinct version rows under one package.
+ * package revision. Recipe: `<rrev>`. Package: `pkg:<rrev>:<packageId>#<prev>`.
+ * The package key is scoped by the owning recipe revision (`rrev`) so the same
+ * `packageId`+`prev` under different recipe revisions land in distinct version
+ * rows instead of colliding/overwriting each other.
  */
 export function recipeVersionKey(rrev: string): string {
   return rrev;
 }
 
-export function packageVersionKey(packageId: string, prev: string): string {
-  return `pkg:${packageId}#${prev}`;
+export function packageVersionKey(rrev: string, packageId: string, prev: string): string {
+  return `pkg:${rrev}:${packageId}#${prev}`;
 }
 
 /** Collapse a stored file map to the `{files:{name:{}}}` shape Conan expects. */

@@ -40,7 +40,12 @@ describe("conan-validation", () => {
 
   test("version keys keep recipe and package revisions distinct", () => {
     expect(recipeVersionKey("r1")).toBe("r1");
-    expect(packageVersionKey("p1", "v1")).toBe("pkg:p1#v1");
+    expect(packageVersionKey("r1", "p1", "v1")).toBe("pkg:r1:p1#v1");
+  });
+
+  test("package version key is scoped by recipe revision to avoid collisions", () => {
+    // Same package id + package revision under two recipe revisions must not collide.
+    expect(packageVersionKey("rrevA", "p1", "v1")).not.toBe(packageVersionKey("rrevB", "p1", "v1"));
   });
 
   test("segment schema accepts conan names and rejects spaces/slashes", () => {
