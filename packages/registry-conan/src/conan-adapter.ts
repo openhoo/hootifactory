@@ -1,5 +1,4 @@
 import {
-  delegateRegistryPlugin,
   type HttpMethod,
   type Permission,
   parseRegistryInput,
@@ -8,9 +7,7 @@ import {
   type RegistryRequestContext,
   type RouteMatch,
   readWritePermission,
-  registryBearerAuthChallenge,
-  registryCapabilities,
-  registryPlugin,
+  registryAdapter,
   serveRegistryBlob,
 } from "@hootifactory/registry";
 import { conanAuthenticate, conanCheckCredentials, conanPing } from "./conan-auth";
@@ -89,255 +86,7 @@ function parseReference(
  * own package revisions (prev). Every transferred file is stored as a CAS blob
  * keyed by reference+revision+filename, modelled as a hootifactory version row.
  */
-export class ConanAdapter implements RegistryPlugin {
-  readonly id = "conan" as const;
-  // `virtualizable` only: revision-addressed reads are satisfied by the agnostic
-  // per-member fan-out. `proxyable` is intentionally NOT declared — there is no
-  // proxyIngest implementation, so proxy-repo creation (gated on adapter.proxyIngest)
-  // would be rejected; advertising the flag would be dishonest.
-  readonly capabilities = registryCapabilities("virtualizable");
-  authChallenge = (perm: Permission, ctx: RegistryRequestContext) =>
-    registryBearerAuthChallenge({ ctx, permission: perm, service: REGISTRY_TOKEN_SERVICE });
-
-  private readonly plugin = registryPlugin(this.id)
-    .module({
-      displayName: "Conan",
-      mountSegment: "conan",
-      acceptsRegistryBearerToken: true,
-      errorResponseKind: "singleError",
-      compressibleHandlers: [
-        "recipeRevisions",
-        "recipeLatest",
-        "recipeFiles",
-        "packageRevisions",
-        "packageLatest",
-        "packageFiles",
-        "recipeSearch",
-        "packageConfigSearch",
-        "packageRevisionSearch",
-      ],
-      scan: {
-        defaultOsvEcosystem: "ConanCenter",
-        dependencyGraph: () => ({ deps: {}, purlType: "conan" }),
-        referencedDigests: (metadata) => {
-          const meta = parseConanRevisionMeta(metadata);
-          if (!meta) return [];
-          return Object.values(meta.files).map((file) => file.blobDigest);
-        },
-      },
-    })
-    .capabilities(this.capabilities)
-    .authChallenge(this.authChallenge)
-    .routes((route) => [
-      // ── prelude ────────────────────────────────────────────────────────────
-      route.get("/v1/ping", "ping", () => conanPing()),
-      // The real Conan v2 client issues authenticate as a GET (HTTP Basic ->
-      // token text); we keep a POST alias for tolerance with other tooling.
-      route.get("/v2/users/authenticate", "authenticate", ({ req, ctx }) =>
-        conanAuthenticate(req, ctx),
-      ),
-      route.post("/v2/users/authenticate", "authenticatePost", ({ req, ctx }) =>
-        conanAuthenticate(req, ctx),
-      ),
-      route.get("/v2/users/check_credentials", "checkCredentials", ({ ctx }) =>
-        conanCheckCredentials(ctx),
-      ),
-      // ── recipe search ────────────────────────────────────────────────────────
-      // `GET /v2/conans/search?q=<glob>` drives `conan search <pattern> -r`. It is
-      // a single segment after `conans`, so it can never be shadowed by the
-      // 4-segment `.../:name/:version/:user/:channel/...` recipe routes.
-      route.get(
-        "/v2/conans/search",
-        "recipeSearch",
-        ({ req, ctx }) => this.recipeSearch(req, ctx),
-        { searchable: true },
-      ),
-      // ── package-binary routes (declared before recipe-file routes so the more
-      //     specific `.../packages/...` paths win over `.../files/...`) ─────────
-      route.get(
-        "/v2/conans/:name/:version/:user/:channel/revisions/:rrev/packages/:pkgid/revisions/:prev/files",
-        "packageFiles",
-        ({ params, ctx }) =>
-          this.packageFiles(
-            parseReference(params.name, params.version, params.user, params.channel),
-            params.rrev,
-            params.pkgid,
-            params.prev,
-            ctx,
-          ),
-      ),
-      route.get(
-        "/v2/conans/:name/:version/:user/:channel/revisions/:rrev/packages/:pkgid/revisions/:prev/files/:filename",
-        "packageFileDownload",
-        ({ params, req, ctx }) =>
-          this.fileDownload(
-            {
-              reference: parseReference(params.name, params.version, params.user, params.channel),
-              rrev: parseRevision(params.rrev),
-              packageId: parsePackageId(params.pkgid),
-              prev: parseRevision(params.prev),
-              filename: parseFilename(params.filename),
-            },
-            req,
-            ctx,
-          ),
-      ),
-      route.put(
-        "/v2/conans/:name/:version/:user/:channel/revisions/:rrev/packages/:pkgid/revisions/:prev/files/:filename",
-        "packageFileUpload",
-        ({ params, req, ctx }) =>
-          handleConanFileUpload(
-            {
-              reference: parseReference(params.name, params.version, params.user, params.channel),
-              rrev: parseRevision(params.rrev),
-              packageId: parsePackageId(params.pkgid),
-              prev: parseRevision(params.prev),
-              filename: parseFilename(params.filename),
-            },
-            req,
-            ctx,
-          ),
-      ),
-      route.get(
-        "/v2/conans/:name/:version/:user/:channel/revisions/:rrev/packages/:pkgid/latest",
-        "packageLatest",
-        ({ params, ctx }) =>
-          this.packageLatest(
-            parseReference(params.name, params.version, params.user, params.channel),
-            params.rrev,
-            params.pkgid,
-            ctx,
-          ),
-      ),
-      route.get(
-        "/v2/conans/:name/:version/:user/:channel/revisions/:rrev/packages/:pkgid/revisions",
-        "packageRevisions",
-        ({ params, ctx }) =>
-          this.packageRevisions(
-            parseReference(params.name, params.version, params.user, params.channel),
-            params.rrev,
-            params.pkgid,
-            ctx,
-          ),
-      ),
-      // ── package-configuration search ─────────────────────────────────────────
-      // `GET .../revisions/:rrev/search` enumerates the binary package_ids under a
-      // specific recipe revision, returning each one's settings/options/requires.
-      route.get(
-        "/v2/conans/:name/:version/:user/:channel/revisions/:rrev/search",
-        "packageRevisionSearch",
-        ({ params, ctx }) =>
-          this.packageConfigSearch(
-            parseReference(params.name, params.version, params.user, params.channel),
-            params.rrev,
-            ctx,
-          ),
-      ),
-      // ── recipe-file routes ───────────────────────────────────────────────────
-      route.get(
-        "/v2/conans/:name/:version/:user/:channel/revisions/:rrev/files",
-        "recipeFiles",
-        ({ params, ctx }) =>
-          this.recipeFiles(
-            parseReference(params.name, params.version, params.user, params.channel),
-            params.rrev,
-            ctx,
-          ),
-      ),
-      route.get(
-        "/v2/conans/:name/:version/:user/:channel/revisions/:rrev/files/:filename",
-        "recipeFileDownload",
-        ({ params, req, ctx }) =>
-          this.fileDownload(
-            {
-              reference: parseReference(params.name, params.version, params.user, params.channel),
-              rrev: parseRevision(params.rrev),
-              filename: parseFilename(params.filename),
-            },
-            req,
-            ctx,
-          ),
-      ),
-      route.put(
-        "/v2/conans/:name/:version/:user/:channel/revisions/:rrev/files/:filename",
-        "recipeFileUpload",
-        ({ params, req, ctx }) =>
-          handleConanFileUpload(
-            {
-              reference: parseReference(params.name, params.version, params.user, params.channel),
-              rrev: parseRevision(params.rrev),
-              filename: parseFilename(params.filename),
-            },
-            req,
-            ctx,
-          ),
-      ),
-      // ── recipe-revision routes ───────────────────────────────────────────────
-      route.get(
-        "/v2/conans/:name/:version/:user/:channel/latest",
-        "recipeLatest",
-        ({ params, ctx }) =>
-          this.recipeLatest(
-            parseReference(params.name, params.version, params.user, params.channel),
-            ctx,
-          ),
-      ),
-      route.get(
-        "/v2/conans/:name/:version/:user/:channel/revisions",
-        "recipeRevisions",
-        ({ params, ctx }) =>
-          this.recipeRevisions(
-            parseReference(params.name, params.version, params.user, params.channel),
-            ctx,
-          ),
-      ),
-      // `GET .../channel/search` enumerates the binary package_ids of a recipe's
-      // latest recipe revision (`conan search <ref>:* -r`). `search` is a distinct
-      // literal segment from the `latest`/`revisions` siblings, so no shadowing.
-      route.get(
-        "/v2/conans/:name/:version/:user/:channel/search",
-        "packageConfigSearch",
-        ({ params, ctx }) =>
-          this.packageConfigSearch(
-            parseReference(params.name, params.version, params.user, params.channel),
-            undefined,
-            ctx,
-          ),
-      ),
-    ])
-    .build();
-  private readonly delegate = delegateRegistryPlugin(this.plugin);
-
-  get displayName() {
-    return this.plugin.displayName;
-  }
-  get mountSegment() {
-    return this.plugin.mountSegment;
-  }
-  get repositoryNamePolicy() {
-    return this.plugin.repositoryNamePolicy;
-  }
-  get acceptsRegistryBearerToken() {
-    return this.plugin.acceptsRegistryBearerToken;
-  }
-  get apiKeyHeaders() {
-    return this.plugin.apiKeyHeaders;
-  }
-  get errorResponseKind() {
-    return this.plugin.errorResponseKind;
-  }
-  get compressibleHandlers() {
-    return this.plugin.compressibleHandlers;
-  }
-  get compressibleContentTypes() {
-    return this.plugin.compressibleContentTypes;
-  }
-  get scan() {
-    return this.plugin.scan;
-  }
-
-  routes = this.delegate.routes;
-
+class ConanAdapterState {
   requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
     const permission = readWritePermission(method);
     const { name, version, user, channel } = match?.params ?? {};
@@ -362,8 +111,6 @@ export class ConanAdapter implements RegistryPlugin {
     }
     return { ...permission, resource: { type: "package", packageName } };
   }
-
-  handle = this.delegate.handle;
 
   private async findRecipe(ctx: RegistryRequestContext, reference: ConanReference) {
     return ctx.data.packages.findByName(referenceToPackageName(reference));
@@ -394,10 +141,7 @@ export class ConanAdapter implements RegistryPlugin {
   }
 
   /** GET .../revisions — list recipe revisions newest-first. */
-  private async recipeRevisions(
-    reference: ConanReference,
-    ctx: RegistryRequestContext,
-  ): Promise<Response> {
+  async recipeRevisions(reference: ConanReference, ctx: RegistryRequestContext): Promise<Response> {
     const pkg = await this.findRecipe(ctx, reference);
     if (!pkg) return notFound();
     const metas = await this.revisionsOfKind(ctx, pkg, "recipe");
@@ -408,10 +152,7 @@ export class ConanAdapter implements RegistryPlugin {
   }
 
   /** GET .../latest — the newest recipe revision. */
-  private async recipeLatest(
-    reference: ConanReference,
-    ctx: RegistryRequestContext,
-  ): Promise<Response> {
+  async recipeLatest(reference: ConanReference, ctx: RegistryRequestContext): Promise<Response> {
     const pkg = await this.findRecipe(ctx, reference);
     if (!pkg) return notFound();
     const [latest] = await this.revisionsOfKind(ctx, pkg, "recipe");
@@ -420,7 +161,7 @@ export class ConanAdapter implements RegistryPlugin {
   }
 
   /** GET .../revisions/:rrev/files — the file map of a recipe revision. */
-  private async recipeFiles(
+  async recipeFiles(
     reference: ConanReference,
     rrevRaw: string,
     ctx: RegistryRequestContext,
@@ -435,7 +176,7 @@ export class ConanAdapter implements RegistryPlugin {
   }
 
   /** GET .../packages/:pkgid/revisions — package-binary revisions newest-first. */
-  private async packageRevisions(
+  async packageRevisions(
     reference: ConanReference,
     rrevRaw: string,
     pkgidRaw: string,
@@ -453,7 +194,7 @@ export class ConanAdapter implements RegistryPlugin {
   }
 
   /** GET .../packages/:pkgid/latest — the newest package-binary revision. */
-  private async packageLatest(
+  async packageLatest(
     reference: ConanReference,
     rrevRaw: string,
     pkgidRaw: string,
@@ -469,7 +210,7 @@ export class ConanAdapter implements RegistryPlugin {
   }
 
   /** GET .../packages/:pkgid/revisions/:prev/files — package-binary file map. */
-  private async packageFiles(
+  async packageFiles(
     reference: ConanReference,
     rrevRaw: string,
     pkgidRaw: string,
@@ -488,7 +229,7 @@ export class ConanAdapter implements RegistryPlugin {
   }
 
   /** GET .../files/:filename — serve a stored recipe or package file blob. */
-  private async fileDownload(
+  async fileDownload(
     target: ConanFileTarget,
     req: Request,
     ctx: RegistryRequestContext,
@@ -527,7 +268,7 @@ export class ConanAdapter implements RegistryPlugin {
    * recipes are returned. The package names stored in this module are already the
    * canonical `name/version@user/channel` references.
    */
-  private async recipeSearch(req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  async recipeSearch(req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const url = new URL(req.url);
     const pattern = url.searchParams.get("q") ?? url.searchParams.get("query") ?? "*";
     const ignoreCase = url.searchParams.get("ignorecase") !== "False";
@@ -547,7 +288,7 @@ export class ConanAdapter implements RegistryPlugin {
    * `{ settings, options, requires }` parsed from its stored `conaninfo.txt`.
    * Shape: `{ "<package_id>": { settings, options, requires } }`.
    */
-  private async packageConfigSearch(
+  async packageConfigSearch(
     reference: ConanReference,
     rrevRaw: string | undefined,
     ctx: RegistryRequestContext,
@@ -609,4 +350,214 @@ function notFound(): Response {
   return conanJsonResponse({ error: "Not Found" }, { status: 404 });
 }
 
+const conanDefinition = registryAdapter("conan")
+  .stateClass(ConanAdapterState)
+  .module((module) =>
+    module
+      .displayName("Conan")
+      .mount("conan")
+      // `virtualizable` only: no proxyIngest/upstream mirror is implemented.
+      .capabilities("virtualizable")
+      .acceptsRegistryBearerToken()
+      .errorResponseKind("singleError")
+      .compressibleHandlers(
+        "recipeRevisions",
+        "recipeLatest",
+        "recipeFiles",
+        "packageRevisions",
+        "packageLatest",
+        "packageFiles",
+        "recipeSearch",
+        "packageConfigSearch",
+        "packageRevisionSearch",
+      ),
+  )
+  .scan({
+    defaultOsvEcosystem: "ConanCenter",
+    dependencyGraph: () => ({ deps: {}, purlType: "conan" }),
+    referencedDigests: (metadata) => {
+      const meta = parseConanRevisionMeta(metadata);
+      if (!meta) return [];
+      return Object.values(meta.files).map((file) => file.blobDigest);
+    },
+  })
+  .registryBearerAuth({ service: REGISTRY_TOKEN_SERVICE })
+  .fromState((state) => state.defaultPermission("requiredPermission"))
+  .routes((route) => [
+    // ── prelude ────────────────────────────────────────────────────────────
+    route.get("/v1/ping", "ping").handle(() => conanPing()),
+    route
+      .get("/v2/users/authenticate", "authenticate")
+      .handle(({ req, ctx }) => conanAuthenticate(req, ctx)),
+    route
+      .post("/v2/users/authenticate", "authenticatePost")
+      .handle(({ req, ctx }) => conanAuthenticate(req, ctx)),
+    route
+      .get("/v2/users/check_credentials", "checkCredentials")
+      .handle(({ ctx }) => conanCheckCredentials(ctx)),
+    // ── recipe search ────────────────────────────────────────────────────────
+    route
+      .searchGet("/v2/conans/search", "recipeSearch")
+      .calls((state, { req, ctx }) => state.recipeSearch(req, ctx)),
+    // ── package-binary routes ────────────────────────────────────────────────
+    route
+      .get(
+        "/v2/conans/:name/:version/:user/:channel/revisions/:rrev/packages/:pkgid/revisions/:prev/files",
+        "packageFiles",
+      )
+      .calls((state, { params, ctx }) =>
+        state.packageFiles(
+          parseReference(params.name, params.version, params.user, params.channel),
+          params.rrev,
+          params.pkgid,
+          params.prev,
+          ctx,
+        ),
+      ),
+    route
+      .get(
+        "/v2/conans/:name/:version/:user/:channel/revisions/:rrev/packages/:pkgid/revisions/:prev/files/:filename",
+        "packageFileDownload",
+      )
+      .calls((state, { params, req, ctx }) =>
+        state.fileDownload(
+          {
+            reference: parseReference(params.name, params.version, params.user, params.channel),
+            rrev: parseRevision(params.rrev),
+            packageId: parsePackageId(params.pkgid),
+            prev: parseRevision(params.prev),
+            filename: parseFilename(params.filename),
+          },
+          req,
+          ctx,
+        ),
+      ),
+    route
+      .put(
+        "/v2/conans/:name/:version/:user/:channel/revisions/:rrev/packages/:pkgid/revisions/:prev/files/:filename",
+        "packageFileUpload",
+      )
+      .handle(({ params, req, ctx }) =>
+        handleConanFileUpload(
+          {
+            reference: parseReference(params.name, params.version, params.user, params.channel),
+            rrev: parseRevision(params.rrev),
+            packageId: parsePackageId(params.pkgid),
+            prev: parseRevision(params.prev),
+            filename: parseFilename(params.filename),
+          },
+          req,
+          ctx,
+        ),
+      ),
+    route
+      .get(
+        "/v2/conans/:name/:version/:user/:channel/revisions/:rrev/packages/:pkgid/latest",
+        "packageLatest",
+      )
+      .calls((state, { params, ctx }) =>
+        state.packageLatest(
+          parseReference(params.name, params.version, params.user, params.channel),
+          params.rrev,
+          params.pkgid,
+          ctx,
+        ),
+      ),
+    route
+      .get(
+        "/v2/conans/:name/:version/:user/:channel/revisions/:rrev/packages/:pkgid/revisions",
+        "packageRevisions",
+      )
+      .calls((state, { params, ctx }) =>
+        state.packageRevisions(
+          parseReference(params.name, params.version, params.user, params.channel),
+          params.rrev,
+          params.pkgid,
+          ctx,
+        ),
+      ),
+    // ── package-configuration search ─────────────────────────────────────────
+    route
+      .get(
+        "/v2/conans/:name/:version/:user/:channel/revisions/:rrev/search",
+        "packageRevisionSearch",
+      )
+      .calls((state, { params, ctx }) =>
+        state.packageConfigSearch(
+          parseReference(params.name, params.version, params.user, params.channel),
+          params.rrev,
+          ctx,
+        ),
+      ),
+    // ── recipe-file routes ───────────────────────────────────────────────────
+    route
+      .get("/v2/conans/:name/:version/:user/:channel/revisions/:rrev/files", "recipeFiles")
+      .calls((state, { params, ctx }) =>
+        state.recipeFiles(
+          parseReference(params.name, params.version, params.user, params.channel),
+          params.rrev,
+          ctx,
+        ),
+      ),
+    route
+      .get(
+        "/v2/conans/:name/:version/:user/:channel/revisions/:rrev/files/:filename",
+        "recipeFileDownload",
+      )
+      .calls((state, { params, req, ctx }) =>
+        state.fileDownload(
+          {
+            reference: parseReference(params.name, params.version, params.user, params.channel),
+            rrev: parseRevision(params.rrev),
+            filename: parseFilename(params.filename),
+          },
+          req,
+          ctx,
+        ),
+      ),
+    route
+      .put(
+        "/v2/conans/:name/:version/:user/:channel/revisions/:rrev/files/:filename",
+        "recipeFileUpload",
+      )
+      .handle(({ params, req, ctx }) =>
+        handleConanFileUpload(
+          {
+            reference: parseReference(params.name, params.version, params.user, params.channel),
+            rrev: parseRevision(params.rrev),
+            filename: parseFilename(params.filename),
+          },
+          req,
+          ctx,
+        ),
+      ),
+    // ── recipe-revision routes ───────────────────────────────────────────────
+    route
+      .get("/v2/conans/:name/:version/:user/:channel/latest", "recipeLatest")
+      .calls((state, { params, ctx }) =>
+        state.recipeLatest(
+          parseReference(params.name, params.version, params.user, params.channel),
+          ctx,
+        ),
+      ),
+    route
+      .get("/v2/conans/:name/:version/:user/:channel/revisions", "recipeRevisions")
+      .calls((state, { params, ctx }) =>
+        state.recipeRevisions(
+          parseReference(params.name, params.version, params.user, params.channel),
+          ctx,
+        ),
+      ),
+    route
+      .get("/v2/conans/:name/:version/:user/:channel/search", "packageConfigSearch")
+      .calls((state, { params, ctx }) =>
+        state.packageConfigSearch(
+          parseReference(params.name, params.version, params.user, params.channel),
+          undefined,
+          ctx,
+        ),
+      ),
+  ]);
+
+export class ConanAdapter extends conanDefinition.adapterClass() {}
 export const conanRegistryPlugin: RegistryPlugin = new ConanAdapter();
