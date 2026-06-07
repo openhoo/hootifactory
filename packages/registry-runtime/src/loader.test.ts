@@ -49,6 +49,7 @@ describe("loadConfiguredRegistryPlugins", () => {
       "rubygems",
       "composer",
       "maven",
+      "alpine",
       "apt",
       "pub",
       "swift",
@@ -59,6 +60,7 @@ describe("loadConfiguredRegistryPlugins", () => {
       "rpm",
       "oci",
       "helm",
+      "apk",
       "yum",
       "dnf",
     ]);
