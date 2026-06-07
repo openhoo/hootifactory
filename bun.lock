@@ -298,6 +298,13 @@
         "@hootifactory/registry": "workspace:*",
       },
     },
+    "packages/registry-p2": {
+      "name": "@hootifactory/registry-p2",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/registry": "workspace:*",
+      },
+    },
     "packages/registry-pub": {
       "name": "@hootifactory/registry-pub",
       "version": "0.0.0",
@@ -342,6 +349,7 @@
         "@hootifactory/registry-npm": "workspace:*",
         "@hootifactory/registry-nuget": "workspace:*",
         "@hootifactory/registry-oci": "workspace:*",
+        "@hootifactory/registry-p2": "workspace:*",
         "@hootifactory/registry-pub": "workspace:*",
         "@hootifactory/registry-pypi": "workspace:*",
         "@hootifactory/registry-rpm": "workspace:*",
@@ -664,6 +672,8 @@
     "@hootifactory/registry-nuget": ["@hootifactory/registry-nuget@workspace:packages/registry-nuget"],
 
     "@hootifactory/registry-oci": ["@hootifactory/registry-oci@workspace:packages/registry-oci"],
+
+    "@hootifactory/registry-p2": ["@hootifactory/registry-p2@workspace:packages/registry-p2"],
 
     "@hootifactory/registry-pub": ["@hootifactory/registry-pub@workspace:packages/registry-pub"],
 

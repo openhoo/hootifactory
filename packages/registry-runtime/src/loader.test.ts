@@ -50,6 +50,7 @@ describe("loadConfiguredRegistryPlugins", () => {
       "composer",
       "maven",
       "apt",
+      "p2",
       "pub",
       "swift",
       "chocolatey",
