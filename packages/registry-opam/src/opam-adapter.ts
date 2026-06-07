@@ -55,7 +55,11 @@ function parseVersion(version: string): string {
  */
 export class OpamAdapter implements RegistryPlugin {
   readonly id = "opam" as const;
-  readonly capabilities = registryCapabilities("proxyable", "virtualizable");
+  // Only `virtualizable` is advertised: this adapter hosts opam repos but performs
+  // no upstream fetch, so it wires no `.proxyIngest(...)` and declaring `proxyable`
+  // would be dishonest (proxy creation is gated on `adapter.proxyIngest`, so an
+  // advertised-but-unimplemented proxy capability can never be exercised).
+  readonly capabilities = registryCapabilities("virtualizable");
   authChallenge = basicAuthChallenge;
 
   private readonly plugin = registryPlugin(this.id)

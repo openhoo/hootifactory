@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import type {
-  RegistryPackageRow,
-  RegistryPackageVersionRow,
-  RegistryStoredBlob,
-  RouteMatch,
+import {
+  computeDigest,
+  type RegistryPackageRow,
+  type RegistryPackageVersionRow,
+  type RegistryStoredBlob,
+  type RouteMatch,
 } from "@hootifactory/registry";
 import { createTestRegistryContext } from "@hootifactory/registry/testing";
 import { OpamAdapter } from "./opam-adapter";
@@ -95,11 +96,14 @@ describe("opam adapter", () => {
     ]);
   });
 
-  test("exposes the declared capabilities (proxyable + virtualizable)", () => {
+  test("exposes only the implemented capabilities (virtualizable, not proxyable)", () => {
+    // `proxyable` is intentionally NOT declared: the adapter wires no
+    // `.proxyIngest(...)` and does no upstream fetch, so advertising a proxy
+    // capability it cannot honor would be dishonest.
     expect(new OpamAdapter().capabilities).toEqual({
       contentAddressable: false,
       resumableUploads: false,
-      proxyable: true,
+      proxyable: false,
       virtualizable: true,
     });
   });
@@ -490,4 +494,182 @@ describe("opam adapter", () => {
     );
     expect(res.status).toBe(400);
   });
+
+  test("publish 400s when the multipart body is missing the manifest part", async () => {
+    const ctx = opamContext();
+    const body = buildMultipartBody("BOUND", [
+      { name: "archive", filename: "lwt-5.6.1.tar.gz", data: new Uint8Array([1, 2, 3, 4]) },
+    ]);
+    const res = await publishUpload(ctx, body);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "missing 'manifest' part" });
+  });
+
+  test("publish 400s when the multipart body is missing the archive part", async () => {
+    const ctx = opamContext();
+    const body = buildMultipartBody("BOUND", [
+      {
+        name: "manifest",
+        data: new TextEncoder().encode(JSON.stringify({ name: "lwt", version: "5.6.1" })),
+      },
+    ]);
+    const res = await publishUpload(ctx, body);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "missing 'archive' part" });
+  });
+
+  test("publish 400s when the manifest part is not valid JSON", async () => {
+    const ctx = opamContext();
+    const body = buildMultipartBody("BOUND", [
+      { name: "manifest", data: new TextEncoder().encode("{ not json") },
+      { name: "archive", filename: "lwt-5.6.1.tar.gz", data: new Uint8Array([1, 2, 3, 4]) },
+    ]);
+    const res = await publishUpload(ctx, body);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "'manifest' part is not valid JSON" });
+  });
+
+  test("publish rejects a traversal archive filename with 400 NAME_INVALID", async () => {
+    const ctx = opamContext();
+    const body = buildMultipartBody("BOUND", [
+      {
+        name: "manifest",
+        data: new TextEncoder().encode(JSON.stringify({ name: "lwt", version: "5.6.1" })),
+      },
+      { name: "archive", filename: "../evil.tar.gz", data: new Uint8Array([1, 2, 3, 4]) },
+    ]);
+    // A bad uploaded filename throws a RegistryError out of the publish parser
+    // (dispatch catches it); the adapter call surfaces it as a 400/NAME_INVALID.
+    await expect(publishUpload(ctx, body)).rejects.toMatchObject({
+      status: 400,
+      code: "NAME_INVALID",
+    });
+  });
+
+  test("publish 400s when the archive filename has an unsupported extension", async () => {
+    const ctx = opamContext();
+    const body = buildMultipartBody("BOUND", [
+      {
+        name: "manifest",
+        data: new TextEncoder().encode(JSON.stringify({ name: "lwt", version: "5.6.1" })),
+      },
+      { name: "archive", filename: "evil.exe", data: new Uint8Array([1, 2, 3, 4]) },
+    ]);
+    await expect(publishUpload(ctx, body)).rejects.toMatchObject({
+      status: 400,
+      code: "NAME_INVALID",
+    });
+  });
+
+  test("opam update round-trip: published checksum matches the downloaded archive bytes", async () => {
+    // The integrity property a real opam client enforces: the `checksum` embedded
+    // in the opam file (read from index.tar.gz) is the sha256 of the actual bytes
+    // served at `url.src`. Exercise it end-to-end with a real content-addressed
+    // store: publish a real archive, read the generated index, download the
+    // archive, and assert sha256(downloaded) === the embedded checksum.
+    const ctx = opamContext();
+    const archive = new Uint8Array(256);
+    for (let i = 0; i < archive.length; i++) archive[i] = (i * 31 + 7) & 0xff;
+
+    // Minimal in-memory CAS shared across publish + the index/archive reads.
+    const blobs = new Map<string, Uint8Array>();
+    let committed: Record<string, unknown> | undefined;
+
+    ctx.data.packages.findOrCreate = async ({ name }) => pkgRow(name);
+    ctx.data.packages.findByName = async (name) => (name === "lwt" ? pkgRow("lwt") : null);
+    ctx.data.packages.list = async () => [pkgRow("lwt")];
+    ctx.data.versions.exists = async () => false;
+    ctx.data.content.storeBlobWithRef = async (input): Promise<RegistryStoredBlob> => {
+      const digest = computeDigest(input.data);
+      blobs.set(digest, input.data);
+      return { digest, size: input.data.length, deduped: false, refCreated: true, blobRefId: "r1" };
+    };
+    ctx.data.versions.commitOrReleaseBlob = async (input) => {
+      committed = input.metadata;
+      return { versionId: "ver_1" };
+    };
+    const findCommitted = async () =>
+      committed ? versionRow(committed as Record<string, unknown>) : null;
+    ctx.data.versions.findLive = findCommitted;
+    ctx.data.versions.listLiveForPackages = async (pkgs) =>
+      new Map(pkgs.map((pkg) => [pkg.id, committed ? [versionRow(committed)] : []]));
+    ctx.data.content.blobRefExists = async () => true;
+    ctx.data.content.serveBlobIfClean = async ({ digest, contentType }) => {
+      const bytes = blobs.get(digest);
+      if (!bytes) return new Response("Not Found", { status: 404 });
+      return new Response(bytes, { headers: { "content-type": contentType } });
+    };
+
+    const adapter = new OpamAdapter();
+
+    // 1. Publish a real archive.
+    const publishBody = buildMultipartBody("BOUND", [
+      {
+        name: "manifest",
+        data: new TextEncoder().encode(JSON.stringify({ name: "lwt", version: "5.6.1" })),
+      },
+      { name: "archive", filename: "lwt-5.6.1.tar.gz", data: archive },
+    ]);
+    const publishRes = await publishUpload(ctx, publishBody, adapter);
+    expect(publishRes.status).toBe(201);
+
+    // 2. Fetch index.tar.gz, gunzip, parse the opam file, extract the sha256 hex.
+    const indexRes = await adapter.handle(
+      {
+        entry: { method: "GET", pattern: "/index.tar.gz", handlerId: "index" },
+        params: {},
+        path: "/index.tar.gz",
+      },
+      new Request("https://registry.test/index.tar.gz"),
+      ctx,
+    );
+    expect(indexRes.status).toBe(200);
+    const tar = decodeTar(Bun.gunzipSync(new Uint8Array(await indexRes.arrayBuffer())));
+    const opamFile = tar.get("packages/lwt/lwt.5.6.1/opam");
+    expect(opamFile).toBeTruthy();
+    const checksumMatch = opamFile?.match(/checksum: \[ "sha256=([a-f0-9]{64})" \]/);
+    const embeddedHex = checksumMatch?.[1];
+    if (!embeddedHex) throw new Error("expected a sha256 checksum in the opam file");
+    // The published checksum must equal the sha256 of the bytes we actually stored.
+    expect(embeddedHex).toBe(computeDigest(archive).slice("sha256:".length));
+
+    // 3. Download the archive via /archives/... and verify the bytes hash to it.
+    const archiveRes = await adapter.handle(
+      {
+        entry: {
+          method: "GET",
+          pattern: "/archives/:name/:version/:filename",
+          handlerId: "archive",
+        },
+        params: { name: "lwt", version: "5.6.1", filename: "lwt-5.6.1.tar.gz" },
+        path: "/archives/lwt/5.6.1/lwt-5.6.1.tar.gz",
+      },
+      new Request("https://registry.test/archives/lwt/5.6.1/lwt-5.6.1.tar.gz"),
+      ctx,
+    );
+    expect(archiveRes.status).toBe(200);
+    const downloaded = new Uint8Array(await archiveRes.arrayBuffer());
+    expect(Array.from(downloaded)).toEqual(Array.from(archive));
+    expect(computeDigest(downloaded).slice("sha256:".length)).toBe(embeddedHex);
+  });
 });
+
+function publishUpload(
+  ctx: ReturnType<typeof opamContext>,
+  body: Uint8Array,
+  adapter = new OpamAdapter(),
+): Promise<Response> {
+  return adapter.handle(
+    {
+      entry: { method: "PUT", pattern: "/upload", handlerId: "publish" },
+      params: {},
+      path: "/upload",
+    },
+    new Request("https://registry.test/upload", {
+      method: "PUT",
+      headers: { "content-type": "multipart/form-data; boundary=BOUND" },
+      body,
+    }),
+    ctx,
+  );
+}
