@@ -1,5 +1,6 @@
 import type { RegistryPlugin } from "@hootifactory/registry";
 import { aptRegistryPlugin } from "@hootifactory/registry-apt";
+import { archRegistryPlugin } from "@hootifactory/registry-arch";
 import { cargoRegistryPlugin } from "@hootifactory/registry-cargo";
 import { chocolateyRegistryPlugin } from "@hootifactory/registry-chocolatey";
 import { composerRegistryPlugin } from "@hootifactory/registry-composer";
@@ -42,6 +43,7 @@ export const REGISTRY_PLUGIN_MANIFEST: RegistryPluginEntry[] = [
   { plugin: composerRegistryPlugin },
   { plugin: mavenRegistryPlugin },
   { plugin: aptRegistryPlugin },
+  { plugin: archRegistryPlugin, aliases: ["pacman"] },
   { plugin: pubRegistryPlugin },
   { plugin: swiftRegistryPlugin },
   { plugin: chocolateyRegistryPlugin },

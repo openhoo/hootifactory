@@ -235,6 +235,13 @@
         "@hootifactory/registry": "workspace:*",
       },
     },
+    "packages/registry-arch": {
+      "name": "@hootifactory/registry-arch",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/registry": "workspace:*",
+      },
+    },
     "packages/registry-cargo": {
       "name": "@hootifactory/registry-cargo",
       "version": "0.0.0",
@@ -333,6 +340,7 @@
         "@hootifactory/config": "workspace:*",
         "@hootifactory/registry": "workspace:*",
         "@hootifactory/registry-apt": "workspace:*",
+        "@hootifactory/registry-arch": "workspace:*",
         "@hootifactory/registry-cargo": "workspace:*",
         "@hootifactory/registry-chocolatey": "workspace:*",
         "@hootifactory/registry-composer": "workspace:*",
@@ -646,6 +654,8 @@
     "@hootifactory/registry-application": ["@hootifactory/registry-application@workspace:packages/registry-application"],
 
     "@hootifactory/registry-apt": ["@hootifactory/registry-apt@workspace:packages/registry-apt"],
+
+    "@hootifactory/registry-arch": ["@hootifactory/registry-arch@workspace:packages/registry-arch"],
 
     "@hootifactory/registry-cargo": ["@hootifactory/registry-cargo@workspace:packages/registry-cargo"],
 
