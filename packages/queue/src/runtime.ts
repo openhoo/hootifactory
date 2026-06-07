@@ -12,7 +12,9 @@ import { stopBoss, work } from "./index";
 
 /** Parse a numeric env var with a fallback default and a lower bound. */
 export function intEnv(name: string, fallback: number, min: number): number {
-  return Math.max(min, Number(process.env[name] ?? fallback) || fallback);
+  const raw = process.env[name];
+  const parsed = raw === undefined ? fallback : Number(raw);
+  return Math.max(min, Number.isFinite(parsed) ? parsed : fallback);
 }
 
 export interface HealthServer {

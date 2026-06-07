@@ -11,9 +11,7 @@ import { runMigrations } from "./migrate";
  */
 
 describe("runMigrations", () => {
-  afterEach(async () => {
-    const migrator = await import("drizzle-orm/bun-sql/migrator");
-    await mock.module("drizzle-orm/bun-sql/migrator", () => ({ ...migrator }));
+  afterEach(() => {
     mock.restore();
   });
 

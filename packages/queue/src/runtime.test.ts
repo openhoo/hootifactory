@@ -38,10 +38,16 @@ describe("intEnv", () => {
     expect(intEnv(KEY, 9, 1)).toBe(9);
   });
 
-  test("treats a falsy 0 value as unset and uses the fallback", () => {
-    // Number("0") is 0, which is falsy, so the `|| fallback` clause applies.
+  test("parses an explicit 0 and clamps it up to the minimum", () => {
+    // 0 is a valid numeric value (not treated as unset); it parses, then the
+    // lower bound applies, so it clamps up to `min` rather than the fallback.
     process.env[KEY] = "0";
-    expect(intEnv(KEY, 5, 1)).toBe(5);
+    expect(intEnv(KEY, 5, 1)).toBe(1);
+  });
+
+  test("preserves an explicit 0 when the minimum allows it", () => {
+    process.env[KEY] = "0";
+    expect(intEnv(KEY, 5, 0)).toBe(0);
   });
 
   test("clamps a below-minimum value up to the lower bound", () => {
