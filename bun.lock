@@ -284,6 +284,13 @@
         "@hootifactory/registry": "workspace:*",
       },
     },
+    "packages/registry-hex": {
+      "name": "@hootifactory/registry-hex",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/registry": "workspace:*",
+      },
+    },
     "packages/registry-homebrew": {
       "name": "@hootifactory/registry-homebrew",
       "version": "0.0.0",
@@ -368,6 +375,7 @@
         "@hootifactory/registry-composer": "workspace:*",
         "@hootifactory/registry-cran": "workspace:*",
         "@hootifactory/registry-go": "workspace:*",
+        "@hootifactory/registry-hex": "workspace:*",
         "@hootifactory/registry-homebrew": "workspace:*",
         "@hootifactory/registry-ivy": "workspace:*",
         "@hootifactory/registry-maven": "workspace:*",
@@ -700,6 +708,8 @@
     "@hootifactory/registry-cran": ["@hootifactory/registry-cran@workspace:packages/registry-cran"],
 
     "@hootifactory/registry-go": ["@hootifactory/registry-go@workspace:packages/registry-go"],
+
+    "@hootifactory/registry-hex": ["@hootifactory/registry-hex@workspace:packages/registry-hex"],
 
     "@hootifactory/registry-homebrew": ["@hootifactory/registry-homebrew@workspace:packages/registry-homebrew"],
 

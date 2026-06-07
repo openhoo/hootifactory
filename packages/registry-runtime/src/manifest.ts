@@ -7,6 +7,7 @@ import { cocoapodsRegistryPlugin } from "@hootifactory/registry-cocoapods";
 import { composerRegistryPlugin } from "@hootifactory/registry-composer";
 import { cranRegistryPlugin } from "@hootifactory/registry-cran";
 import { goRegistryPlugin } from "@hootifactory/registry-go";
+import { hexRegistryPlugin } from "@hootifactory/registry-hex";
 import { homebrewRegistryPlugin } from "@hootifactory/registry-homebrew";
 import { ivyRegistryPlugin } from "@hootifactory/registry-ivy";
 import { mavenRegistryPlugin } from "@hootifactory/registry-maven";
@@ -55,6 +56,7 @@ export const REGISTRY_PLUGIN_MANIFEST: RegistryPluginEntry[] = [
   { plugin: cocoapodsRegistryPlugin },
   { plugin: wingetRegistryPlugin },
   { plugin: homebrewRegistryPlugin },
+  { plugin: hexRegistryPlugin },
   { plugin: scoopRegistryPlugin },
   { plugin: vagrantRegistryPlugin },
   { plugin: rpmRegistryPlugin, aliases: ["yum", "dnf"] },
