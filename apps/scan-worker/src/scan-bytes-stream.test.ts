@@ -71,14 +71,12 @@ function runtime(scanners: ResolvedScanner[], options: ScannerRuntimeOptions = {
   return { options, scanners };
 }
 
-let blobStub: BlobStub;
 const writtenChunks: Uint8Array[] = [];
 
 async function loadModule(blob: BlobStub, maxBytes = 1024) {
-  blobStub = blob;
   writtenChunks.length = 0;
   const realStorage = await import("@hootifactory/storage");
-  await mock.module("@hootifactory/storage", () => ({ ...realStorage, blobStore: blobStub }));
+  await mock.module("@hootifactory/storage", () => ({ ...realStorage, blobStore: blob }));
   const realConfig = await import("@hootifactory/config");
   await mock.module("@hootifactory/config", () => ({
     ...realConfig,
