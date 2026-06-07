@@ -15,8 +15,11 @@ export interface VagrantPublishPlan {
   box: string;
   version: string;
   provider: string;
-  /** The raw `.box` artifact bytes (the PUT request body). */
-  artifact: Uint8Array;
+  /**
+   * The raw `.box` artifact body (the PUT request stream). `.box` files are
+   * commonly large, so the body is streamed into storage rather than buffered.
+   */
+  artifact: ReadableStream<Uint8Array>;
 }
 
 export type VagrantPublishParseResult =
@@ -53,25 +56,25 @@ function parseProvider(provider: string): string {
 
 /**
  * Parse a `PUT /:user/:box/:version/:provider` publish. The path supplies the box
- * coordinates; the request body is the raw `.box` artifact. An empty body is
- * rejected — a box must carry bytes.
+ * coordinates; the request body is the raw `.box` artifact, streamed into storage
+ * rather than buffered into memory. A missing body is rejected here; an empty
+ * stream is caught after storage by the lifecycle (a box must carry bytes).
  */
-export async function parseVagrantPublishRequest(
+export function parseVagrantPublishRequest(
   userRaw: string,
   boxRaw: string,
   versionRaw: string,
   providerRaw: string,
   req: Request,
-): Promise<VagrantPublishParseResult> {
+): VagrantPublishParseResult {
   const user = parseUser(userRaw);
   const box = parseBox(boxRaw);
   const version = parseVersion(versionRaw);
   const provider = parseProvider(providerRaw);
 
-  const artifact = new Uint8Array(await req.arrayBuffer());
-  if (artifact.length === 0) {
+  if (!req.body) {
     return { ok: false, error: { error: "empty box artifact", status: 400 } };
   }
 
-  return { ok: true, plan: { user, box, version, provider, artifact } };
+  return { ok: true, plan: { user, box, version, provider, artifact: req.body } };
 }

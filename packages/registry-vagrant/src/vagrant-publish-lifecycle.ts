@@ -4,7 +4,7 @@ import {
   type RegistryRequestContext,
   type RegistryStoredBlob,
   releaseRegistryBlobRef,
-  storeRegistryBlobWithRef,
+  storeRegistryBlobStreamWithRef,
 } from "@hootifactory/registry";
 import { parseVagrantPublishRequest } from "./vagrant-publish";
 import {
@@ -38,7 +38,7 @@ export async function handleVagrantPublish(
   req: Request,
   ctx: RegistryRequestContext,
 ): Promise<Response> {
-  const parsed = await parseVagrantPublishRequest(userRaw, boxRaw, versionRaw, providerRaw, req);
+  const parsed = parseVagrantPublishRequest(userRaw, boxRaw, versionRaw, providerRaw, req);
   if (!parsed.ok) {
     return Response.json({ error: parsed.error.error }, { status: parsed.error.status });
   }
@@ -58,15 +58,26 @@ export async function handleVagrantPublish(
     return Response.json({ error: "box provider already exists" }, { status: 409 });
   }
 
-  const stored = await storeRegistryBlobWithRef(ctx, {
+  // Stream the (potentially large) `.box` body straight into storage instead of
+  // buffering it in memory.
+  const stored = await storeRegistryBlobStreamWithRef(ctx, {
     data: artifact,
     kind: BOX_ASSET_ROLE,
     scope,
     mediaType: BOX_MEDIA_TYPE,
   });
 
+  // An empty body is only knowable once the stream is drained: a box must carry
+  // bytes, so reject it and undo any ref the empty store created.
+  if (stored.size === 0) {
+    if (stored.refCreated) {
+      await releaseRegistryBlobRef(ctx, { digest: stored.digest, kind: BOX_ASSET_ROLE, scope });
+    }
+    return Response.json({ error: "empty box artifact" }, { status: 400 });
+  }
+
   const pkg = await ctx.data.packages.findOrCreate({ name });
-  const providerFile = buildVagrantProviderFile(stored.digest, artifact.length);
+  const providerFile = buildVagrantProviderFile(stored.digest, stored.size);
 
   const added = await addProviderToVersion(ctx, {
     package: pkg,
@@ -74,7 +85,7 @@ export async function handleVagrantPublish(
     provider,
     providerFile,
     stored,
-    sizeBytes: artifact.length,
+    sizeBytes: stored.size,
   });
   if (!added.ok) {
     if (stored.refCreated) {

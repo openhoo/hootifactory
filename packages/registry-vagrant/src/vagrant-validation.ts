@@ -1,8 +1,9 @@
 import { z } from "@hootifactory/registry";
 
 /**
- * Vagrant box names are `:user/:box`. Each segment is a lowercase-ish token; the
- * client (and Vagrant Cloud) accepts letters, digits, dot, underscore, dash.
+ * Vagrant box names are `:user/:box`. Each segment accepts letters (either case),
+ * digits, dot, underscore, and dash, mirroring what the client and Vagrant Cloud
+ * permit.
  */
 const NAME_SEGMENT_RE = /^[A-Za-z0-9._-]+$/;
 /** Box versions are SemVer-ish: letters, digits, dot, plus, underscore, dash. */

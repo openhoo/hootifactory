@@ -336,7 +336,7 @@ describe("Vagrant publish", () => {
     let scanned: { digest: string } | undefined;
     let asset: { scope?: string } | undefined;
     ctx.data.assets.findByScope = async () => null;
-    ctx.data.content.storeBlobWithRef = async (input) => {
+    ctx.data.content.storeBlobStreamWithRef = async (input) => {
       expect(input.kind).toBe("vagrant_box");
       expect(input.scope).toBe(boxScope(NAME, "1.2.3", "virtualbox"));
       return storedBlob();
@@ -379,7 +379,7 @@ describe("Vagrant publish", () => {
     let patchedMeta: Record<string, unknown> | undefined;
     let patchedSize: number | undefined;
     ctx.data.assets.findByScope = async () => null;
-    ctx.data.content.storeBlobWithRef = async () => storedBlob();
+    ctx.data.content.storeBlobStreamWithRef = async () => storedBlob();
     ctx.data.packages.findOrCreate = async () => pkgRow();
     // Version already exists -> create() returns null, lifecycle falls back to patch().
     ctx.data.versions.create = async () => null;
@@ -414,7 +414,7 @@ describe("Vagrant publish", () => {
     const ctx = vagrantContext();
     let released = false;
     ctx.data.assets.findByScope = async () => null;
-    ctx.data.content.storeBlobWithRef = async () => storedBlob();
+    ctx.data.content.storeBlobStreamWithRef = async () => storedBlob();
     ctx.data.content.releaseBlobRef = async () => {
       released = true;
     };
@@ -440,27 +440,34 @@ describe("Vagrant publish", () => {
       expect(input.includeDeleted).toBe(true);
       return { scope: input.scope } as never;
     };
-    ctx.data.content.storeBlobWithRef = async () => {
+    ctx.data.content.storeBlobStreamWithRef = async () => {
       throw new Error("should not store when the box provider already exists");
     };
     const res = await new VagrantAdapter().handle(publishMatch, publishRequest(), ctx);
     expect(res.status).toBe(409);
   });
 
-  test("rejects an empty box artifact with 400", async () => {
+  test("rejects an empty box artifact with 400 and releases the stored ref", async () => {
     const ctx = vagrantContext();
+    let released = false;
     ctx.data.assets.findByScope = async () => null;
+    // A drained-empty body stores a zero-size blob; the lifecycle rejects it.
+    ctx.data.content.storeBlobStreamWithRef = async () => ({ ...storedBlob(), size: 0 });
+    ctx.data.content.releaseBlobRef = async () => {
+      released = true;
+    };
     const res = await new VagrantAdapter().handle(
       publishMatch,
       publishRequest(new Uint8Array(0)),
       ctx,
     );
     expect(res.status).toBe(400);
+    expect(released).toBe(true);
   });
 
   test("publish rejects an invalid version before storing anything", async () => {
     const ctx = vagrantContext();
-    ctx.data.content.storeBlobWithRef = async () => {
+    ctx.data.content.storeBlobStreamWithRef = async () => {
       throw new Error("should not store on an invalid version");
     };
     await expect(
