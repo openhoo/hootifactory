@@ -45,6 +45,7 @@ describe("loadConfiguredRegistryPlugins", () => {
       "nix",
       "arch",
       "pacman",
+      "hackage",
     ]) {
       expect(registry.has(id)).toBe(true);
     }
@@ -89,6 +90,7 @@ describe("loadConfiguredRegistryPlugins", () => {
       "alpine",
       "nix",
       "arch",
+      "hackage",
       "oci",
       "helm",
       "yum",

@@ -326,6 +326,13 @@
         "@hootifactory/registry": "workspace:*",
       },
     },
+    "packages/registry-hackage": {
+      "name": "@hootifactory/registry-hackage",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/registry": "workspace:*",
+      },
+    },
     "packages/registry-hex": {
       "name": "@hootifactory/registry-hex",
       "version": "0.0.0",
@@ -437,6 +444,7 @@
         "@hootifactory/registry-generic": "workspace:*",
         "@hootifactory/registry-gitlfs": "workspace:*",
         "@hootifactory/registry-go": "workspace:*",
+        "@hootifactory/registry-hackage": "workspace:*",
         "@hootifactory/registry-hex": "workspace:*",
         "@hootifactory/registry-homebrew": "workspace:*",
         "@hootifactory/registry-ivy": "workspace:*",
@@ -792,6 +800,8 @@
     "@hootifactory/registry-gitlfs": ["@hootifactory/registry-gitlfs@workspace:packages/registry-gitlfs"],
 
     "@hootifactory/registry-go": ["@hootifactory/registry-go@workspace:packages/registry-go"],
+
+    "@hootifactory/registry-hackage": ["@hootifactory/registry-hackage@workspace:packages/registry-hackage"],
 
     "@hootifactory/registry-hex": ["@hootifactory/registry-hex@workspace:packages/registry-hex"],
 

@@ -13,6 +13,7 @@ import { cranRegistryPlugin } from "@hootifactory/registry-cran";
 import { genericRegistryPlugin } from "@hootifactory/registry-generic";
 import { gitlfsRegistryPlugin } from "@hootifactory/registry-gitlfs";
 import { goRegistryPlugin } from "@hootifactory/registry-go";
+import { hackageRegistryPlugin } from "@hootifactory/registry-hackage";
 import { hexRegistryPlugin } from "@hootifactory/registry-hex";
 import { homebrewRegistryPlugin } from "@hootifactory/registry-homebrew";
 import { ivyRegistryPlugin } from "@hootifactory/registry-ivy";
@@ -79,4 +80,5 @@ export const REGISTRY_PLUGIN_MANIFEST: RegistryPluginEntry[] = [
   { plugin: alpineRegistryPlugin, aliases: ["apk"] },
   { plugin: nixRegistryPlugin },
   { plugin: archRegistryPlugin, aliases: ["pacman"] },
+  { plugin: hackageRegistryPlugin },
 ];
