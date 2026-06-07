@@ -1,4 +1,9 @@
-import { asJsonRecord, type RegistryRequestContext } from "@hootifactory/registry";
+import {
+  asJsonRecord,
+  type RegistryPlugin,
+  type RegistryRequestContext,
+  registryErrorResponseForModule,
+} from "@hootifactory/registry";
 import {
   contentTypeForPath,
   type IvyCoordinates,
@@ -21,13 +26,19 @@ export async function handleIvyUpload(
   path: string,
   req: Request,
   ctx: RegistryRequestContext,
+  module: Pick<RegistryPlugin, "errorResponseKind">,
 ): Promise<Response> {
   const mediaType = contentTypeForPath(path);
   const coords = parseIvyCoordinates(path);
   const descriptor = coords && isIvyDescriptor(coords) ? coords : null;
 
   if (!descriptor) {
-    if (!req.body) return new Response("empty request body", { status: 400 });
+    if (!req.body) {
+      return registryErrorResponseForModule(module, {
+        status: 400,
+        message: "empty request body",
+      });
+    }
     const stored = await ctx.data.content.storeBlobStreamWithRef({
       data: req.body,
       kind: IVY_FILE_KIND,

@@ -92,31 +92,67 @@ export interface IvyCoordinates {
   organisation: string;
   module: string;
   revision: string;
+  /** The artifact-type directory (`jars`, `ivys`, `srcs`, …) for the standard
+   * Ivy/SBT layout, or null for the flat `[org]/[module]/[rev]/[file]` form. */
+  typeDir: string | null;
   file: string;
 }
 
 /**
- * Parse `[organisation]/[module]/[revision]/[file]` coordinates from a repository
- * path. Ivy's organisation is a single segment (unlike Maven's dotted, slashed
- * groupId), so a real Ivy file path is always exactly four segments. Returns null
- * for anything shorter or longer.
+ * Parse Ivy coordinates from a repository path. Two layouts are recognised:
+ *
+ *  - the flat `[organisation]/[module]/[revision]/[file]` form (4 segments), and
+ *  - the DEFAULT Apache Ivy / sbt `ivyStylePatterns` layout
+ *    `[organisation]/[module]/[revision]/[type]s/[file]` (5 segments) where
+ *    artifacts live under a type-bucket directory (`jars/`, `srcs/`, `docs/`,
+ *    `poms/`) and the descriptor under `ivys/` — what `~/.ivy2/local` and a
+ *    default `publishTo := Resolver.url(...)(Resolver.ivyStylePatterns)` produce.
+ *
+ * In both forms organisation/module/revision come from the first three segments
+ * (Ivy's organisation is a single segment, unlike Maven's dotted, slashed
+ * groupId). Returns null for anything shorter than 4 or longer than 5 segments.
  */
 export function parseIvyCoordinates(path: string): IvyCoordinates | null {
   const segments = path.split("/").filter(Boolean);
-  if (segments.length !== 4) return null;
-  const [organisation, module, revision, file] = segments as [string, string, string, string];
-  if (!organisation || !module || !revision || !file) return null;
-  return { organisation, module, revision, file };
+  if (segments.length === 4) {
+    const [organisation, module, revision, file] = segments as [string, string, string, string];
+    if (!organisation || !module || !revision || !file) return null;
+    return { organisation, module, revision, typeDir: null, file };
+  }
+  if (segments.length === 5) {
+    const [organisation, module, revision, typeDir, file] = segments as [
+      string,
+      string,
+      string,
+      string,
+      string,
+    ];
+    if (!organisation || !module || !revision || !typeDir || !file) return null;
+    return { organisation, module, revision, typeDir, file };
+  }
+  return null;
 }
 
-/** The canonical Ivy module descriptor filename for a revision: `ivy-<revision>.xml`. */
+/** The canonical Apache-Ivy module descriptor filename for a revision: `ivy-<revision>.xml`. */
 export function ivyDescriptorFile(revision: string): string {
   return `ivy-${revision}.xml`;
 }
 
-/** True when the coordinates address the module descriptor `ivy-<revision>.xml`. */
+/** The descriptor type-bucket directory in the standard Ivy/SBT layout. */
+const IVY_DESCRIPTOR_DIR = "ivys";
+
+/**
+ * True when the coordinates address the module descriptor. Recognised forms:
+ *  - flat layout: file `ivy-<revision>.xml` directly under the revision dir, and
+ *  - standard layout: a file under the `ivys/` type bucket named either
+ *    `ivy.xml` (sbt `ivyStylePatterns`) or `ivy-<revision>.xml` (Apache Ivy default).
+ */
 export function isIvyDescriptor(coords: IvyCoordinates): boolean {
-  return coords.file === ivyDescriptorFile(coords.revision);
+  if (coords.typeDir === null) {
+    return coords.file === ivyDescriptorFile(coords.revision);
+  }
+  if (coords.typeDir !== IVY_DESCRIPTOR_DIR) return false;
+  return coords.file === "ivy.xml" || coords.file === ivyDescriptorFile(coords.revision);
 }
 
 /**

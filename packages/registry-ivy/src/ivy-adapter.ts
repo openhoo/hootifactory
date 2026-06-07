@@ -10,6 +10,7 @@ import {
   type RouteMatch,
   readWritePermission,
   registryCapabilities,
+  registryErrorResponseForModule,
   registryPlugin,
   serveRegistryBlob,
   textResponseWithEtag,
@@ -36,7 +37,11 @@ import {
  */
 export class IvyAdapter implements RegistryPlugin {
   readonly id = "ivy" as const;
-  readonly capabilities = registryCapabilities("proxyable", "virtualizable");
+  // Virtualizable only: stored Ivy files are served from member repos via the
+  // application-layer per-file fan-out (identical to the Maven reference). No
+  // proxy/fetch-through is implemented (no proxyIngest), so `proxyable` is NOT
+  // declared — a proxy Ivy repo is correctly rejected at creation time.
+  readonly capabilities = registryCapabilities("virtualizable");
   authChallenge = basicAuthChallenge;
 
   private readonly plugin = registryPlugin(this.id)
@@ -111,7 +116,7 @@ export class IvyAdapter implements RegistryPlugin {
       code: "NAME_INVALID",
       message: "invalid ivy path",
     });
-    return handleIvyUpload(safePath, req, ctx);
+    return handleIvyUpload(safePath, req, ctx, this);
   }
 
   private async download(
@@ -142,7 +147,11 @@ export class IvyAdapter implements RegistryPlugin {
       scope: path,
       contentType: contentTypeForPath(path),
       redirect: req.method === "GET",
-      blocked: () => new Response("artifact blocked by scan policy", { status: 403 }),
+      blocked: () =>
+        registryErrorResponseForModule(this, {
+          status: 403,
+          message: "artifact blocked by scan policy",
+        }),
     });
   }
 

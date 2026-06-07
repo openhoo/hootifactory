@@ -11,6 +11,10 @@ import { computeChecksumHex } from "./ivy-upload-lifecycle";
 
 const DESCRIPTOR_PATH = "org.example/demo/1.2.3/ivy-1.2.3.xml";
 const ARTIFACT_PATH = "org.example/demo/1.2.3/demo-1.2.3.jar";
+// The default Apache-Ivy / sbt `ivyStylePatterns` layout: descriptor under
+// `ivys/ivy.xml` and artifacts under a `[type]s/` bucket (5 path segments).
+const IVY_STYLE_DESCRIPTOR_PATH = "org.example/demo/1.2.3/ivys/ivy.xml";
+const IVY_STYLE_ARTIFACT_PATH = "org.example/demo/1.2.3/jars/demo-1.2.3.jar";
 const DIGEST = `sha256:${"a".repeat(64)}`;
 const ARTIFACT_BYTES = new Uint8Array([1, 2, 3, 4]);
 
@@ -99,6 +103,38 @@ describe("IvyAdapter", () => {
       ),
     ).toEqual({
       action: "write",
+      resource: { type: "package", packageName: "org.example#demo" },
+    });
+  });
+
+  test("scopes write permission to org#module for a standard 5-segment artifact path", () => {
+    const adapter = new IvyAdapter();
+    expect(
+      adapter.requiredPermission(
+        "PUT",
+        createTestRouteMatch(
+          { method: "PUT", pattern: "/:path+", handlerId: "upload" },
+          { path: IVY_STYLE_ARTIFACT_PATH },
+        ),
+      ),
+    ).toEqual({
+      action: "write",
+      resource: { type: "package", packageName: "org.example#demo" },
+    });
+  });
+
+  test("scopes the standard ivys/ivy.xml descriptor read to its org#module package", () => {
+    const adapter = new IvyAdapter();
+    expect(
+      adapter.requiredPermission(
+        "GET",
+        createTestRouteMatch(
+          { method: "GET", pattern: "/:path+", handlerId: "download" },
+          { path: IVY_STYLE_DESCRIPTOR_PATH },
+        ),
+      ),
+    ).toEqual({
+      action: "read",
       resource: { type: "package", packageName: "org.example#demo" },
     });
   });
@@ -442,5 +478,175 @@ describe("IvyAdapter", () => {
     expect(res.status).toBe(201);
     expect(captured.scans).toEqual([]);
     expect(captured.versions).toBe(0);
+  });
+
+  test("publish (PUT ivys/ivy.xml) in the standard layout projects a package/version, then downloads back", async () => {
+    const ctx = createTestRegistryContext();
+    const stored: RegistryStoredBlob = {
+      digest: DIGEST,
+      size: 8,
+      deduped: false,
+      refCreated: true,
+      blobRefId: "ref_1",
+    };
+    const captured: {
+      assetScope?: string;
+      versionName?: string;
+      version?: string;
+      metadata?: Record<string, unknown>;
+      scan?: { digest?: string; name?: string; version?: string; mediaType?: string };
+    } = {};
+    const descriptorBody = `<ivy-module version="2.0"><info organisation="org.example" module="demo" revision="1.2.3"/></ivy-module>`;
+    ctx.data.content.storeBlobWithRef = async (input) => {
+      expect(input.kind).toBe("ivy_file");
+      expect(input.scope).toBe(IVY_STYLE_DESCRIPTOR_PATH);
+      return stored;
+    };
+    ctx.data.assets.upsert = async (input) => {
+      captured.assetScope = input.scope ?? "";
+      return assetRow(input.scope ?? "");
+    };
+    ctx.data.packages.findOrCreate = async ({ name }) => {
+      captured.versionName = name;
+      return packageRow(name);
+    };
+    ctx.data.versions.upsert = async (input) => {
+      captured.version = input.version;
+      captured.metadata = input.metadata;
+      return "ver_1";
+    };
+    ctx.enqueueScan = async (input) => {
+      captured.scan = input;
+    };
+
+    const publishRes = await new IvyAdapter().handle(
+      createTestRouteMatch(
+        { method: "PUT", pattern: "/:path+", handlerId: "upload" },
+        { path: IVY_STYLE_DESCRIPTOR_PATH },
+      ),
+      new Request(`https://r.test/ivy/o/r/${IVY_STYLE_DESCRIPTOR_PATH}`, {
+        method: "PUT",
+        body: descriptorBody,
+      }),
+      ctx,
+    );
+    expect(publishRes.status).toBe(201);
+    expect(captured.assetScope).toBe(IVY_STYLE_DESCRIPTOR_PATH);
+    expect(captured.versionName).toBe("org.example#demo");
+    expect(captured.version).toBe("1.2.3");
+    expect(captured.metadata).toMatchObject({
+      organisation: "org.example",
+      module: "demo",
+      revision: "1.2.3",
+      descriptorDigest: DIGEST,
+    });
+    expect(captured.scan).toEqual({
+      digest: DIGEST,
+      name: "org.example#demo",
+      version: "1.2.3",
+      mediaType: "application/xml",
+    });
+
+    // Round-trip: the stored descriptor is served back from its path-scoped asset.
+    ctx.data.assets.findByScope = async ({ scope }) => assetRow(scope);
+    ctx.data.content.serveBlobIfClean = async ({ digest, contentType }) =>
+      new Response(`blob:${digest}`, { headers: { "content-type": contentType } });
+    ctx.data.content.blobRefExists = async () => true;
+    const downloadRes = await new IvyAdapter().handle(
+      createTestRouteMatch(
+        { method: "GET", pattern: "/:path+", handlerId: "download" },
+        { path: IVY_STYLE_DESCRIPTOR_PATH },
+      ),
+      new Request(`https://r.test/ivy/o/r/${IVY_STYLE_DESCRIPTOR_PATH}`),
+      ctx,
+    );
+    expect(downloadRes.status).toBe(200);
+    expect(downloadRes.headers.get("content-type")).toContain("application/xml");
+    expect(await downloadRes.text()).toBe(`blob:${DIGEST}`);
+  });
+
+  test("PUT of a jar under jars/ (standard layout) streams and scans with the projected coordinates", async () => {
+    const ctx = createTestRegistryContext();
+    const stored: RegistryStoredBlob = {
+      digest: DIGEST,
+      size: 4,
+      deduped: false,
+      refCreated: true,
+      blobRefId: "ref_1",
+    };
+    const captured: { mode?: string; scan?: unknown } = {};
+    ctx.data.content.storeBlobStreamWithRef = async (input) => {
+      captured.mode = "stream";
+      expect(input.scope).toBe(IVY_STYLE_ARTIFACT_PATH);
+      expect(input.data).toBeInstanceOf(ReadableStream);
+      return stored;
+    };
+    ctx.data.assets.upsert = async (input) => assetRow(input.scope ?? "");
+    ctx.enqueueScan = async (input) => {
+      captured.scan = input;
+    };
+
+    const res = await new IvyAdapter().handle(
+      createTestRouteMatch(
+        { method: "PUT", pattern: "/:path+", handlerId: "upload" },
+        { path: IVY_STYLE_ARTIFACT_PATH },
+      ),
+      new Request(`https://r.test/ivy/o/r/${IVY_STYLE_ARTIFACT_PATH}`, {
+        method: "PUT",
+        body: ARTIFACT_BYTES,
+      }),
+      ctx,
+    );
+    expect(res.status).toBe(201);
+    expect(captured.mode).toBe("stream");
+    // The 5-segment path resolves coordinates, so the scan carries org#module@rev.
+    expect(captured.scan).toEqual({
+      digest: DIGEST,
+      name: "org.example#demo",
+      version: "1.2.3",
+      mediaType: "application/java-archive",
+    });
+  });
+
+  test("an empty-body upload returns a singleError JSON envelope, not plain text", async () => {
+    const ctx = createTestRegistryContext();
+    const res = await new IvyAdapter().handle(
+      createTestRouteMatch(
+        { method: "PUT", pattern: "/:path+", handlerId: "upload" },
+        { path: `${ARTIFACT_PATH}.sha1` },
+      ),
+      new Request(`https://r.test/ivy/o/r/${ARTIFACT_PATH}.sha1`, { method: "PUT" }),
+      ctx,
+    );
+    expect(res.status).toBe(400);
+    expect(res.headers.get("content-type")).toContain("application/json");
+    expect(await res.json()).toEqual({ error: "empty request body" });
+  });
+
+  test("a scan-blocked download returns a singleError JSON envelope at 403", async () => {
+    const ctx = createTestRegistryContext();
+    ctx.data.assets.findByScope = async ({ scope }) => assetRow(scope);
+    // Faithful to the real contract: serveBlobIfClean invokes the caller's
+    // `blocked` callback when scan policy bars the artifact.
+    ctx.data.content.serveBlobIfClean = async ({ blocked }) =>
+      blocked?.() ?? new Response(null, { status: 403 });
+    ctx.data.content.blobRefExists = async () => true;
+    const res = await new IvyAdapter().handle(
+      createTestRouteMatch(
+        { method: "GET", pattern: "/:path+", handlerId: "download" },
+        { path: ARTIFACT_PATH },
+      ),
+      new Request(`https://r.test/ivy/o/r/${ARTIFACT_PATH}`),
+      ctx,
+    );
+    expect(res.status).toBe(403);
+    expect(res.headers.get("content-type")).toContain("application/json");
+    expect(await res.json()).toEqual({ error: "artifact blocked by scan policy" });
+  });
+
+  test("declares only the virtualizable capability (no dishonest proxyable)", () => {
+    const { capabilities } = new IvyAdapter();
+    expect(capabilities.virtualizable).toBe(true);
+    expect(capabilities.proxyable).toBe(false);
   });
 });
