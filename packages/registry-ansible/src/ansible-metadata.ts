@@ -118,9 +118,11 @@ export function buildCollectionSummary(input: {
 }): AnsibleCollectionSummary | null {
   const highest = highestVersion(input.versions);
   if (!highest) return null;
-  const sorted = [...input.versions].sort((a, b) => compareSemver(a.version, b.version));
-  const created = sorted[0]?.metadata.published ?? highest.metadata.published;
-  const updated = sorted.at(-1)?.metadata.published ?? highest.metadata.published;
+  // created/updated track the earliest/latest publish *timestamps*, which can
+  // differ from SemVer order when versions are published out-of-order.
+  const published = input.versions.map((entry) => entry.metadata.published);
+  const created = published.reduce((a, b) => (a <= b ? a : b));
+  const updated = published.reduce((a, b) => (a >= b ? a : b));
   return {
     href: collectionHref(input.mountPath, input.namespace, input.name),
     namespace: input.namespace,

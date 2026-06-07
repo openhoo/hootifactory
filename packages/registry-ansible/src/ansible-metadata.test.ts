@@ -85,6 +85,25 @@ describe("Ansible metadata", () => {
     ).toBeNull();
   });
 
+  test("buildCollectionSummary uses earliest/latest publish times, not SemVer order", () => {
+    // A prerelease published before a lower stable release: created/updated must
+    // follow publish timestamps, not the SemVer-sorted endpoints.
+    const summary = buildCollectionSummary({
+      namespace: "acme",
+      name: "tools",
+      versions: [
+        stored("2.0.0-rc.1", "2026-01-01T00:00:00.000Z"),
+        stored("1.5.0", "2026-01-05T00:00:00.000Z"),
+        stored("1.0.0", "2026-01-03T00:00:00.000Z"),
+      ],
+      baseUrl: BASE,
+      mountPath: MOUNT,
+    });
+    expect(summary?.created_at).toBe("2026-01-01T00:00:00.000Z");
+    expect(summary?.updated_at).toBe("2026-01-05T00:00:00.000Z");
+    expect(summary?.highest_version.version).toBe("1.5.0");
+  });
+
   test("buildVersionList paginates newest-first with meta/links/data", () => {
     const list = buildVersionList({
       namespace: "acme",

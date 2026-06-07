@@ -56,7 +56,17 @@ export async function parseAnsibleUploadRequest(req: Request): Promise<AnsibleUp
     return error("invalid", "missing collection artifact in field 'file'", 400);
   }
 
-  const archiveBytes = new Uint8Array(await fields.data.file.arrayBuffer());
+  // Reject empty/oversized uploads from the declared size *before* buffering the
+  // whole archive into memory, so a huge upload can't force a giant allocation.
+  const uploaded = fields.data.file;
+  if (uploaded.size === 0) {
+    return error("invalid", "collection artifact is empty", 400);
+  }
+  if (uploaded.size > MAX_ARCHIVE_BYTES) {
+    return error("invalid", "collection artifact is too large", 413);
+  }
+
+  const archiveBytes = new Uint8Array(await uploaded.arrayBuffer());
   if (archiveBytes.length === 0) {
     return error("invalid", "collection artifact is empty", 400);
   }
