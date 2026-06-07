@@ -147,11 +147,10 @@ describe("opam adapter", () => {
 
   test("GET /index.tar.gz serves a gzipped repo tarball, ordered + cacheable", async () => {
     const ctx = opamContext();
-    ctx.data.packages.listNames = async () => [{ name: "lwt" }, { name: "dune" }];
-    ctx.data.packages.findByName = async (name) => pkgRow(name);
-    ctx.data.versions.listLive = async (row, opts) => {
+    ctx.data.packages.list = async () => [pkgRow("lwt"), pkgRow("dune")];
+    ctx.data.versions.listLiveForPackages = async (pkgs, opts) => {
       expect(opts).toEqual({ orderByCreated: "asc" });
-      return [versionRow(storedMeta(row.name), "5.6.1")];
+      return new Map(pkgs.map((pkg) => [pkg.id, [versionRow(storedMeta(pkg.name), "5.6.1")]]));
     };
 
     const res = await new OpamAdapter().handle(
@@ -282,6 +281,38 @@ describe("opam adapter", () => {
     expect(res.status).toBe(200);
     expect(served.digest).toBe(DIGEST);
     expect(await res.text()).toBe("blob-bytes");
+  });
+
+  test("archive serves a non-gzip extension with the matching content-type", async () => {
+    const ctx = opamContext();
+    const meta = buildOpamVersionMeta(
+      OpamPublishManifestSchema.parse({ name: "lwt", version: "5.6.1" }),
+      { digest: DIGEST, sha256: HEX, filename: "lwt-5.6.1.zip" },
+    );
+    let servedContentType: string | undefined;
+    ctx.data.packages.findByName = async () => pkgRow("lwt");
+    ctx.data.versions.findLive = async () => versionRow({ ...meta });
+    ctx.data.content.blobRefExists = async () => true;
+    ctx.data.content.serveBlobIfClean = async ({ contentType }) => {
+      servedContentType = contentType;
+      return new Response("blob-bytes", { headers: { "content-type": contentType } });
+    };
+
+    const res = await new OpamAdapter().handle(
+      {
+        entry: {
+          method: "GET",
+          pattern: "/archives/:name/:version/:filename",
+          handlerId: "archive",
+        },
+        params: { name: "lwt", version: "5.6.1", filename: "lwt-5.6.1.zip" },
+        path: "/archives/lwt/5.6.1/lwt-5.6.1.zip",
+      },
+      new Request("https://registry.test/archives/lwt/5.6.1/lwt-5.6.1.zip"),
+      ctx,
+    );
+    expect(res.status).toBe(200);
+    expect(servedContentType).toBe("application/zip");
   });
 
   test("archive 404s when the requested filename does not match the stored archive", async () => {

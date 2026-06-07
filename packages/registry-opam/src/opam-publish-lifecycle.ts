@@ -4,7 +4,7 @@ import {
   type RegistryRequestContext,
 } from "@hootifactory/registry";
 import { parseOpamPublishRequest } from "./opam-publish";
-import { buildOpamVersionMeta } from "./opam-validation";
+import { buildOpamVersionMeta, opamArchiveMediaType } from "./opam-validation";
 
 /** Blob/asset kind for stored opam source archives. */
 export const OPAM_ARCHIVE_KIND = "opam_archive";
@@ -31,6 +31,9 @@ export async function handleOpamPublish(
   const name = manifest.name;
   const version = manifest.version;
   const scope = opamBlobScope(name, version, filename);
+  // The upload schema accepts several archive formats; derive the media type from
+  // the filename so stored blob/scan/asset metadata matches the actual contents.
+  const mediaType = opamArchiveMediaType(filename);
 
   const result = await publishImmutableVersionBlob(ctx, {
     package: { name },
@@ -41,7 +44,7 @@ export async function handleOpamPublish(
       data: archive,
       kind: OPAM_ARCHIVE_KIND,
       scope,
-      mediaType: "application/gzip",
+      mediaType,
     },
     metadata: (stored) =>
       buildOpamVersionMeta(manifest, {
@@ -53,13 +56,13 @@ export async function handleOpamPublish(
     scan: {
       name,
       version,
-      mediaType: "application/gzip",
+      mediaType,
     },
     asset: (stored) => ({
       role: OPAM_ARCHIVE_KIND,
       scope,
       path: opamArchivePath(name, version, filename),
-      mediaType: "application/gzip",
+      mediaType,
       metadata: { name, version, sha256: digestHex(stored.digest) },
     }),
     // opam source archives are immutable: re-publishing an existing version conflicts.

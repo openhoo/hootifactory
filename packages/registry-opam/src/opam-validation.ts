@@ -43,7 +43,17 @@ export const OpamDependSchema = z.object({
   constraint: z
     .string()
     .max(256)
-    .refine((value) => !value.includes("{") && !value.includes("}"), "invalid constraint")
+    // The constraint is written verbatim inside the `{ ... }` formula, so reject
+    // both brace characters (breaking out of the formula) and CR/LF (injecting
+    // extra opam lines/fields into the serialized output).
+    .refine(
+      (value) =>
+        !value.includes("{") &&
+        !value.includes("}") &&
+        !value.includes("\r") &&
+        !value.includes("\n"),
+      "invalid constraint",
+    )
     .optional(),
 });
 
@@ -103,6 +113,23 @@ export const OpamArchiveFilenameSchema = z
   .max(512)
   .refine((value) => !value.includes("/") && !value.includes("\\"), "invalid filename")
   .refine((value) => ARCHIVE_EXT_RE.test(value), "unsupported archive extension");
+
+/**
+ * Map a source-archive filename to its storage/transport media type. The publish
+ * schema accepts several archive formats, so the stored blob, scan metadata, and
+ * served `content-type` must reflect the actual extension rather than assuming
+ * gzip. Unknown/unmatched extensions fall back to a generic octet-stream.
+ */
+export function opamArchiveMediaType(filename: string): string {
+  const lower = filename.toLowerCase();
+  if (lower.endsWith(".tar.gz") || lower.endsWith(".tgz")) return "application/gzip";
+  if (lower.endsWith(".tar.bz2") || lower.endsWith(".tbz")) return "application/x-bzip2";
+  if (lower.endsWith(".tar.xz") || lower.endsWith(".txz")) return "application/x-xz";
+  if (lower.endsWith(".tar.zst")) return "application/zstd";
+  if (lower.endsWith(".zip")) return "application/zip";
+  if (lower.endsWith(".tar")) return "application/x-tar";
+  return "application/octet-stream";
+}
 
 /** Build the persisted version metadata from the publisher manifest + blob coords. */
 export function buildOpamVersionMeta(

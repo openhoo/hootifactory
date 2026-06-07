@@ -28,6 +28,7 @@ import {
   OpamPackageNameSchema,
   type OpamVersionMeta,
   OpamVersionSchema,
+  opamArchiveMediaType,
   parseOpamVersionMeta,
 } from "./opam-validation";
 
@@ -202,7 +203,7 @@ export class OpamAdapter implements RegistryPlugin {
       digest: meta.blobDigest,
       kind: OPAM_ARCHIVE_KIND,
       scope: opamBlobScope(name, version, filename),
-      contentType: "application/gzip",
+      contentType: opamArchiveMediaType(filename),
       redirect: req.method === "GET",
       blocked: () => new Response("blocked by scan policy", { status: 403 }),
     });
@@ -214,13 +215,18 @@ export class OpamAdapter implements RegistryPlugin {
 
   /** All live versions' stored opam metadata across every package in the repo. */
   private async liveMetas(ctx: RegistryRequestContext): Promise<OpamVersionMeta[]> {
-    const names = await ctx.data.packages.listNames();
+    // Batch the live-version lookup (one `list()` + one `listLiveForPackages()`)
+    // instead of an N+1 `findByName()`/`listLive()` per package, since this runs
+    // on every `/index.tar.gz` request.
+    const pkgs = await ctx.data.packages.list();
+    if (pkgs.length === 0) return [];
+    const byPackage = await ctx.data.versions.listLiveForPackages(pkgs, {
+      orderByCreated: "asc",
+    });
     const metas: OpamVersionMeta[] = [];
     // Deterministic ordering so the index bytes (and ETag) are stable.
-    for (const { name } of [...names].sort((a, b) => a.name.localeCompare(b.name))) {
-      const pkg = await ctx.data.packages.findByName(name);
-      if (!pkg) continue;
-      const rows = await ctx.data.versions.listLive(pkg, { orderByCreated: "asc" });
+    for (const pkg of [...pkgs].sort((a, b) => a.name.localeCompare(b.name))) {
+      const rows = byPackage.get(pkg.id) ?? [];
       for (const row of rows) {
         const meta = parseOpamVersionMeta(row.metadata);
         if (meta) metas.push(meta);

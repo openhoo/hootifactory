@@ -37,8 +37,9 @@ export function ustarPathFields(path: string): { name: string; prefix: string } 
 
 function splitUstarPath(path: string): { name: string; prefix: string } | null {
   if (Buffer.byteLength(path) <= 100) return { name: path, prefix: "" };
-  // Find the latest `/` such that the suffix fits in `name` (≤100) and the
-  // prefix fits in `prefix` (≤155). Prefer the longest suffix that still fits.
+  // Scan slashes left-to-right and return the first split whose suffix fits in
+  // `name` (≤100) and prefix fits in `prefix` (≤155). The leftmost qualifying
+  // slash yields the longest suffix that still fits `name`.
   for (let i = path.indexOf("/"); i >= 0; i = path.indexOf("/", i + 1)) {
     const prefix = path.slice(0, i);
     const name = path.slice(i + 1);

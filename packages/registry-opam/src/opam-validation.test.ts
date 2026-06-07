@@ -6,6 +6,7 @@ import {
   isValidOpamVersion,
   OpamArchiveFilenameSchema,
   OpamPublishManifestSchema,
+  opamArchiveMediaType,
   parseOpamVersionMeta,
 } from "./opam-validation";
 
@@ -65,6 +66,32 @@ describe("opam validation", () => {
       depends: [{ name: "ocaml", constraint: '>= "4.08" } evil { ' }],
     });
     expect(injected.success).toBe(false);
+  });
+
+  test("rejects a dependency constraint with CR/LF that could inject opam lines", () => {
+    for (const constraint of ['>= "4.08"\nflags: [ light-uninstall ]', '>= "4.08"\rfoo']) {
+      const result = OpamPublishManifestSchema.safeParse({
+        name: "lwt",
+        version: "5.6.1",
+        depends: [{ name: "ocaml", constraint }],
+      });
+      expect(result.success).toBe(false);
+    }
+  });
+
+  test("maps archive filenames to their transport media type", () => {
+    expect(opamArchiveMediaType("pkg-1.0.tar.gz")).toBe("application/gzip");
+    expect(opamArchiveMediaType("pkg-1.0.tgz")).toBe("application/gzip");
+    expect(opamArchiveMediaType("pkg-1.0.tar.bz2")).toBe("application/x-bzip2");
+    expect(opamArchiveMediaType("pkg-1.0.tbz")).toBe("application/x-bzip2");
+    expect(opamArchiveMediaType("pkg-1.0.tar.xz")).toBe("application/x-xz");
+    expect(opamArchiveMediaType("pkg-1.0.txz")).toBe("application/x-xz");
+    expect(opamArchiveMediaType("pkg-1.0.tar.zst")).toBe("application/zstd");
+    expect(opamArchiveMediaType("pkg-1.0.zip")).toBe("application/zip");
+    expect(opamArchiveMediaType("pkg-1.0.tar")).toBe("application/x-tar");
+    // Case-insensitive, and unknown extensions fall back to octet-stream.
+    expect(opamArchiveMediaType("PKG-1.0.ZIP")).toBe("application/zip");
+    expect(opamArchiveMediaType("pkg-1.0.bin")).toBe("application/octet-stream");
   });
 
   test("buildOpamVersionMeta persists descriptive fields + blob coords, no url/checksum", () => {
