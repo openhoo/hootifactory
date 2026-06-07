@@ -77,11 +77,63 @@ export function parseClamAvRestFindings(data: unknown): NormalizedFinding[] {
   return [...names].map(clamAvFinding);
 }
 
-function parseClamAvCliFindings(output: string): NormalizedFinding[] {
+function isCliWhitespace(code: number): boolean {
+  // JS regex \s set, matched explicitly so the parser stays regex-free.
+  return (
+    code === 0x20 ||
+    code === 0x09 ||
+    code === 0x0a ||
+    code === 0x0b ||
+    code === 0x0c ||
+    code === 0x0d ||
+    code === 0xa0 ||
+    code === 0x1680 ||
+    (code >= 0x2000 && code <= 0x200a) ||
+    code === 0x2028 ||
+    code === 0x2029 ||
+    code === 0x202f ||
+    code === 0x205f ||
+    code === 0x3000 ||
+    code === 0xfeff
+  );
+}
+
+/**
+ * Extract the signature name from a single `clamscan`/`clamdscan` output line of the
+ * form `<path>: <signature> FOUND`. Implemented as a linear, regex-free scan to avoid
+ * the polynomial-backtracking ReDoS that an anchored `/:\s*(.+?)\s+FOUND\s*$/` exhibits
+ * on adversarial whitespace-heavy lines (CodeQL js/polynomial-redos). Behavior is
+ * verified equivalent to that regex, including degenerate all-whitespace segments.
+ */
+function clamAvSignatureFromLine(line: string): string | undefined {
+  // Trailing-whitespace allowance (`\s*$`).
+  let end = line.length;
+  while (end > 0 && isCliWhitespace(line.charCodeAt(end - 1))) end--;
+  const suffix = "FOUND";
+  if (end < suffix.length || line.slice(end - suffix.length, end) !== suffix) return undefined;
+  const foundStart = end - suffix.length;
+  // The `\s+` run immediately before `FOUND` (at least one whitespace char required).
+  let wsStart = foundStart;
+  while (wsStart > 0 && isCliWhitespace(line.charCodeAt(wsStart - 1))) wsStart--;
+  if (wsStart === foundStart) return undefined;
+  // Leftmost `:` anchors the match, mirroring `RegExp.exec`.
+  const colon = line.indexOf(":");
+  if (colon < 0 || colon >= wsStart) return undefined;
+  // Skip the leading-whitespace allowance (`\s*`) after the colon.
+  let sigStart = colon + 1;
+  while (sigStart < wsStart && isCliWhitespace(line.charCodeAt(sigStart))) sigStart++;
+  if (sigStart < wsStart) return line.slice(sigStart, wsStart);
+  // All-whitespace segment between the colon and the trailing run: the lazy capture
+  // takes the second-to-last whitespace char (requires at least two such chars).
+  if (foundStart - (colon + 1) >= 2) return line[foundStart - 2];
+  return undefined;
+}
+
+export function parseClamAvCliFindings(output: string): NormalizedFinding[] {
   const names = new Set<string>();
   for (const line of output.split(/\r?\n/)) {
-    const match = /:\s*(.+?)\s+FOUND\s*$/.exec(line);
-    if (match?.[1]) names.add(match[1]);
+    const name = clamAvSignatureFromLine(line);
+    if (name) names.add(name);
   }
   return [...names].map(clamAvFinding);
 }

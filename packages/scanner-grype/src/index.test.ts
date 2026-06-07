@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { resolveTestScanner } from "@hootifactory/scanner/testing";
 import { grypeScanner, parseGrypeMatches } from "./index";
 
 describe("grype scanner", () => {
@@ -26,6 +27,35 @@ describe("grype scanner", () => {
     ]);
   });
 
+  test("tolerates missing fields and JSON without matches", () => {
+    expect(parseGrypeMatches(JSON.stringify({ matches: [{}] }))).toEqual([
+      {
+        type: "vuln",
+        vulnId: undefined,
+        severity: "unknown",
+        packageName: undefined,
+        packageVersion: undefined,
+        purl: undefined,
+        fixedVersion: undefined,
+      },
+    ]);
+    expect(parseGrypeMatches(JSON.stringify({}))).toEqual([]);
+  });
+
+  test("throws on non-JSON scanner output", () => {
+    expect(() => parseGrypeMatches("not json")).toThrow();
+  });
+
+  test("declares a digest-pinned default image and a content-input scanner", () => {
+    expect(grypeScanner.capabilities.inputKind).toBe("content");
+    const config = grypeScanner.configFromEnv({
+      env: {},
+      runtime: { cliRuntime: "host" },
+      isProduction: true,
+    });
+    expect(config.image).toMatch(/@sha256:[a-f0-9]{64}$/);
+  });
+
   test("rejects an unpinned image under the production Docker runtime", () => {
     expect(() =>
       grypeScanner.configFromEnv({
@@ -42,5 +72,10 @@ describe("grype scanner", () => {
         isProduction: true,
       }).image,
     ).toBe("anchore/grype:latest");
+  });
+
+  test("is unavailable on the disabled runtime", () => {
+    const resolved = resolveTestScanner(grypeScanner, { runtime: { cliRuntime: "disabled" } });
+    expect(resolved.available).toBe(false);
   });
 });
