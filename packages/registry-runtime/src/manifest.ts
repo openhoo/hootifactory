@@ -8,6 +8,7 @@ import { composerRegistryPlugin } from "@hootifactory/registry-composer";
 import { conanRegistryPlugin } from "@hootifactory/registry-conan";
 import { condaRegistryPlugin } from "@hootifactory/registry-conda";
 import { cranRegistryPlugin } from "@hootifactory/registry-cran";
+import { genericRegistryPlugin } from "@hootifactory/registry-generic";
 import { gitlfsRegistryPlugin } from "@hootifactory/registry-gitlfs";
 import { goRegistryPlugin } from "@hootifactory/registry-go";
 import { hexRegistryPlugin } from "@hootifactory/registry-hex";
@@ -71,4 +72,5 @@ export const REGISTRY_PLUGIN_MANIFEST: RegistryPluginEntry[] = [
   { plugin: terraformRegistryPlugin },
   { plugin: conanRegistryPlugin },
   { plugin: condaRegistryPlugin },
+  { plugin: genericRegistryPlugin, aliases: ["raw"] },
 ];

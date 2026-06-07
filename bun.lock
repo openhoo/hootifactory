@@ -291,6 +291,13 @@
         "@hootifactory/registry": "workspace:*",
       },
     },
+    "packages/registry-generic": {
+      "name": "@hootifactory/registry-generic",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/registry": "workspace:*",
+      },
+    },
     "packages/registry-gitlfs": {
       "name": "@hootifactory/registry-gitlfs",
       "version": "0.0.0",
@@ -404,6 +411,7 @@
         "@hootifactory/registry-conan": "workspace:*",
         "@hootifactory/registry-conda": "workspace:*",
         "@hootifactory/registry-cran": "workspace:*",
+        "@hootifactory/registry-generic": "workspace:*",
         "@hootifactory/registry-gitlfs": "workspace:*",
         "@hootifactory/registry-go": "workspace:*",
         "@hootifactory/registry-hex": "workspace:*",
@@ -750,6 +758,8 @@
     "@hootifactory/registry-conda": ["@hootifactory/registry-conda@workspace:packages/registry-conda"],
 
     "@hootifactory/registry-cran": ["@hootifactory/registry-cran@workspace:packages/registry-cran"],
+
+    "@hootifactory/registry-generic": ["@hootifactory/registry-generic@workspace:packages/registry-generic"],
 
     "@hootifactory/registry-gitlfs": ["@hootifactory/registry-gitlfs@workspace:packages/registry-gitlfs"],
 

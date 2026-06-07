@@ -38,6 +38,8 @@ describe("loadConfiguredRegistryPlugins", () => {
       "terraform",
       "conan",
       "conda",
+      "generic",
+      "raw",
     ]) {
       expect(registry.has(id)).toBe(true);
     }
@@ -78,12 +80,14 @@ describe("loadConfiguredRegistryPlugins", () => {
       "terraform",
       "conan",
       "conda",
+      "generic",
       "oci",
       "helm",
       "yum",
       "dnf",
       "galaxy",
       "lfs",
+      "raw",
     ]);
   });
 
