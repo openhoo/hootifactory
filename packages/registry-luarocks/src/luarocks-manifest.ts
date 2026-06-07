@@ -130,7 +130,7 @@ export function quoteLuaString(value: string): string {
     else if (ch === "\n") out += "\\n";
     else if (ch === "\r") out += "\\r";
     else if (ch === "\t") out += "\\t";
-    else if (code < 0x20) out += `\\${code}`;
+    else if (code < 0x20) out += `\\${code.toString().padStart(3, "0")}`;
     else out += ch;
   }
   return `${out}"`;

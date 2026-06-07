@@ -85,6 +85,20 @@ describe("LuaRocks artifact filename parsing", () => {
     });
   });
 
+  test("parses non-numeric versions such as scm-1", () => {
+    expect(parseArtifactFilename("lpeg-scm-1.rockspec")).toEqual({
+      kind: "rockspec",
+      rock: "lpeg",
+      version: "scm-1",
+    });
+    expect(parseArtifactFilename("lua-cjson-scm-1.src.rock")).toEqual({
+      kind: "rock",
+      rock: "lua-cjson",
+      version: "scm-1",
+      arch: "src",
+    });
+  });
+
   test("rejects traversal and unknown suffixes", () => {
     expect(parseArtifactFilename("sub/x-1.0-1.rockspec")).toBeNull();
     expect(parseArtifactFilename("..\\x-1.0-1.rock")).toBeNull();
@@ -187,6 +201,10 @@ describe("Lua-table manifest serializer", () => {
     expect(quoteLuaString("simple")).toBe('"simple"');
     expect(quoteLuaString('a"b\\c')).toBe('"a\\"b\\\\c"');
     expect(quoteLuaString("line\nbreak\t")).toBe('"line\\nbreak\\t"');
+    // Control chars use fixed-width 3-digit escapes so a following digit stays
+    // a separate character (`\001` + `2`, never the ambiguous `\12`).
+    expect(quoteLuaString("")).toBe('"\\001"');
+    expect(quoteLuaString("2")).toBe('"\\0012"');
   });
 
   test("builds a deterministic repository/modules/commands table", () => {
@@ -210,8 +228,9 @@ describe("Lua-table manifest serializer", () => {
     // `modules` and `commands` are empty, matching rock-server manifests.
     expect(manifest).toContain("modules = {}");
     expect(manifest).toContain("commands = {}");
-    // Alphabetical ordering: alpha before demo. Rock names are valid Lua
-    // identifiers so they are emitted as bare keys.
+    // Alphabetical ordering: alpha before demo. These rock names happen to be
+    // valid Lua identifiers, so they are emitted as bare keys; names containing
+    // `-` or `.` (e.g. `lua-cjson`) are bracket-quoted instead.
     expect(manifest.indexOf("alpha = {")).toBeLessThan(manifest.indexOf("demo = {"));
     // Versions are not valid identifiers, so they are bracket-quoted keys.
     expect(manifest).toContain('["1.0.0-1"]');

@@ -133,16 +133,15 @@ export function parseArtifactFilename(filename: string): ParsedArtifactFilename 
 
 /**
  * Split `<rock>-<version>` where version is `<dotted>` optionally followed by
- * `-<revision>`. The version always starts with a digit, so we scan dashes
- * left-to-right and take the first split whose suffix begins with a digit and
- * is a complete valid version — rock names containing dashes (e.g. `lua-cjson`)
- * therefore parse correctly because their dashes precede a non-digit.
+ * `-<revision>`. We scan dashes left-to-right and take the first split whose
+ * suffix is a complete valid version — rock names containing dashes (e.g.
+ * `lua-cjson`) therefore parse correctly because their leading dashes leave an
+ * invalid version suffix. The suffix need not begin with a digit, so versions
+ * like `scm-1` (e.g. `lpeg-scm-1.rockspec`) split correctly too.
  */
 function splitNameVersion(stem: string): { rock: string; version: string } | null {
   for (let i = 1; i < stem.length; i++) {
     if (stem[i] !== "-") continue;
-    const next = stem[i + 1];
-    if (next === undefined || next < "0" || next > "9") continue;
     const rock = stem.slice(0, i);
     const version = stem.slice(i + 1);
     if (isValidRockName(rock) && isValidRockVersion(version)) {
