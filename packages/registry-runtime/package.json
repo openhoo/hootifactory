@@ -20,6 +20,7 @@
     "@hootifactory/registry-chocolatey": "workspace:*",
     "@hootifactory/registry-cocoapods": "workspace:*",
     "@hootifactory/registry-winget": "workspace:*",
+    "@hootifactory/registry-ivy": "workspace:*",
     "@hootifactory/registry-maven": "workspace:*",
     "@hootifactory/registry-composer": "workspace:*",
     "@hootifactory/registry-cran": "workspace:*",

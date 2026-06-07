@@ -291,6 +291,13 @@
         "@hootifactory/registry": "workspace:*",
       },
     },
+    "packages/registry-ivy": {
+      "name": "@hootifactory/registry-ivy",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/registry": "workspace:*",
+      },
+    },
     "packages/registry-maven": {
       "name": "@hootifactory/registry-maven",
       "version": "0.0.0",
@@ -362,6 +369,7 @@
         "@hootifactory/registry-cran": "workspace:*",
         "@hootifactory/registry-go": "workspace:*",
         "@hootifactory/registry-homebrew": "workspace:*",
+        "@hootifactory/registry-ivy": "workspace:*",
         "@hootifactory/registry-maven": "workspace:*",
         "@hootifactory/registry-npm": "workspace:*",
         "@hootifactory/registry-nuget": "workspace:*",
@@ -694,6 +702,8 @@
     "@hootifactory/registry-go": ["@hootifactory/registry-go@workspace:packages/registry-go"],
 
     "@hootifactory/registry-homebrew": ["@hootifactory/registry-homebrew@workspace:packages/registry-homebrew"],
+
+    "@hootifactory/registry-ivy": ["@hootifactory/registry-ivy@workspace:packages/registry-ivy"],
 
     "@hootifactory/registry-maven": ["@hootifactory/registry-maven@workspace:packages/registry-maven"],
 
