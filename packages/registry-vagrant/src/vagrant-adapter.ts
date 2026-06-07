@@ -1,6 +1,4 @@
 import {
-  basicAuthChallenge,
-  delegateRegistryPlugin,
   type HttpMethod,
   type Permission,
   parseRegistryInput,
@@ -8,8 +6,7 @@ import {
   type RegistryRequestContext,
   type RouteMatch,
   readWritePermission,
-  registryCapabilities,
-  registryPlugin,
+  registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
 } from "@hootifactory/registry";
@@ -61,80 +58,7 @@ function parseProvider(provider: string): string {
  * a `.box` for a (version, provider) pair, and the metadata is regenerated from the
  * live versions on read.
  */
-export class VagrantAdapter implements RegistryPlugin {
-  readonly id = "vagrant" as const;
-  // Only `virtualizable` is honest: there is no proxyIngest handler, so a proxy
-  // Vagrant repo cannot be created (repository-create gates proxy on proxyIngest,
-  // not on this flag). Mirrors the homebrew reference (virtualizable-only).
-  readonly capabilities = registryCapabilities("virtualizable");
-  authChallenge = basicAuthChallenge;
-
-  private readonly plugin = registryPlugin(this.id)
-    .module({
-      displayName: "Vagrant",
-      mountSegment: "vagrant",
-      errorResponseKind: "singleError",
-      compressibleHandlers: ["metadata", "cloudMetadata"],
-      compressibleContentTypes: [JSON_CONTENT_TYPE],
-      scan: {
-        defaultOsvEcosystem: undefined,
-        referencedDigests: (metadata) => vagrantReferencedDigests(metadata),
-      },
-    })
-    .capabilities(this.capabilities)
-    .authChallenge(this.authChallenge)
-    .routes((route) => [
-      // Vagrant-Cloud-compatible read alias for short-name resolution. Declared
-      // first: its `/api/v1/box` literal prefix makes it the most specific pattern,
-      // so it can never be shadowed by the bare `/:user/:box` catalog route.
-      route.get("/api/v1/box/:user/:box", "cloudMetadata", ({ params, req, ctx }) =>
-        this.cloudMetadata(params.user, params.box, req, ctx),
-      ),
-      // The 4-segment download/publish routes are declared before the 2-segment
-      // metadata route (the route-matcher tries routes in order).
-      route.get("/:user/:box/:version/:provider", "download", ({ params, req, ctx }) =>
-        this.download(params.user, params.box, params.version, params.provider, req, ctx),
-      ),
-      route.put("/:user/:box/:version/:provider", "publish", ({ params, req, ctx }) =>
-        handleVagrantPublish(params.user, params.box, params.version, params.provider, req, ctx),
-      ),
-      route.get("/:user/:box", "metadata", ({ params, req, ctx }) =>
-        this.metadata(params.user, params.box, req, ctx),
-      ),
-    ])
-    .build();
-  private readonly delegate = delegateRegistryPlugin(this.plugin);
-
-  get displayName() {
-    return this.plugin.displayName;
-  }
-  get mountSegment() {
-    return this.plugin.mountSegment;
-  }
-  get repositoryNamePolicy() {
-    return this.plugin.repositoryNamePolicy;
-  }
-  get acceptsRegistryBearerToken() {
-    return this.plugin.acceptsRegistryBearerToken;
-  }
-  get apiKeyHeaders() {
-    return this.plugin.apiKeyHeaders;
-  }
-  get errorResponseKind() {
-    return this.plugin.errorResponseKind;
-  }
-  get compressibleHandlers() {
-    return this.plugin.compressibleHandlers;
-  }
-  get compressibleContentTypes() {
-    return this.plugin.compressibleContentTypes;
-  }
-  get scan() {
-    return this.plugin.scan;
-  }
-
-  routes = this.delegate.routes;
-
+class VagrantAdapterState {
   requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
     const permission = readWritePermission(method);
     const user = match?.params.user;
@@ -161,14 +85,12 @@ export class VagrantAdapter implements RegistryPlugin {
     return { ...permission, resource: { type: "package", packageName: name } };
   }
 
-  handle = this.delegate.handle;
-
   private base(ctx: RegistryRequestContext): string {
     return `${ctx.baseUrl}/${ctx.repo.mountPath}`;
   }
 
   /** `GET /:user/:box` — box metadata aggregated over every live version. */
-  private async metadata(
+  async metadata(
     userRaw: string,
     boxRaw: string,
     req: Request,
@@ -205,7 +127,7 @@ export class VagrantAdapter implements RegistryPlugin {
    * user/box`) against `VAGRANT_SERVER_URL`. Same live versions as the catalog
    * route, emitted in the Cloud field shape (`tag`, `download_url`).
    */
-  private async cloudMetadata(
+  async cloudMetadata(
     userRaw: string,
     boxRaw: string,
     req: Request,
@@ -271,7 +193,7 @@ export class VagrantAdapter implements RegistryPlugin {
   }
 
   /** `GET /:user/:box/:version/:provider` — serve the hosted `.box` blob. */
-  private async download(
+  async download(
     userRaw: string,
     boxRaw: string,
     versionRaw: string,
@@ -325,4 +247,52 @@ function vagrantReferencedDigests(metadata: Record<string, unknown>): string[] {
   return Object.values(parsed.providers).map((provider) => provider.blobDigest);
 }
 
+const vagrantDefinition = registryAdapter("vagrant")
+  .stateClass(VagrantAdapterState)
+  .module((module) =>
+    module
+      .displayName("Vagrant")
+      .mount("vagrant")
+      // Only `virtualizable` is honest: there is no proxyIngest handler, so a proxy
+      // Vagrant repo cannot be created. Mirrors the homebrew reference.
+      .capabilities("virtualizable")
+      .errorResponseKind("singleError")
+      .compressible({
+        handlers: ["metadata", "cloudMetadata"],
+        contentTypes: [JSON_CONTENT_TYPE],
+      }),
+  )
+  .scan({
+    defaultOsvEcosystem: undefined,
+    referencedDigests: (metadata) => vagrantReferencedDigests(metadata),
+  })
+  .basicAuth()
+  .fromState((state) => state.defaultPermission("requiredPermission"))
+  .routes((route) => [
+    // Vagrant-Cloud-compatible read alias for short-name resolution. Declared
+    // first: its `/api/v1/box` literal prefix makes it the most specific pattern,
+    // so it can never be shadowed by the bare `/:user/:box` catalog route.
+    route
+      .get("/api/v1/box/:user/:box", "cloudMetadata")
+      .calls((state, { params, req, ctx }) =>
+        state.cloudMetadata(params.user, params.box, req, ctx),
+      ),
+    // The 4-segment download/publish routes are declared before the 2-segment
+    // metadata route (the route-matcher tries routes in order).
+    route
+      .get("/:user/:box/:version/:provider", "download")
+      .calls((state, { params, req, ctx }) =>
+        state.download(params.user, params.box, params.version, params.provider, req, ctx),
+      ),
+    route
+      .put("/:user/:box/:version/:provider", "publish")
+      .handle(({ params, req, ctx }) =>
+        handleVagrantPublish(params.user, params.box, params.version, params.provider, req, ctx),
+      ),
+    route
+      .get("/:user/:box", "metadata")
+      .calls((state, { params, req, ctx }) => state.metadata(params.user, params.box, req, ctx)),
+  ]);
+
+export class VagrantAdapter extends vagrantDefinition.adapterClass() {}
 export const vagrantRegistryPlugin: RegistryPlugin = new VagrantAdapter();
