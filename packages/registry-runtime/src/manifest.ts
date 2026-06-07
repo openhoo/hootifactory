@@ -23,6 +23,7 @@ import { nixRegistryPlugin } from "@hootifactory/registry-nix";
 import { npmRegistryPlugin } from "@hootifactory/registry-npm";
 import { nugetRegistryPlugin } from "@hootifactory/registry-nuget";
 import { dockerRegistryPlugin } from "@hootifactory/registry-oci";
+import { opamRegistryPlugin } from "@hootifactory/registry-opam";
 import { p2RegistryPlugin } from "@hootifactory/registry-p2";
 import { pubRegistryPlugin } from "@hootifactory/registry-pub";
 import { puppetRegistryPlugin } from "@hootifactory/registry-puppet";
@@ -85,4 +86,5 @@ export const REGISTRY_PLUGIN_MANIFEST: RegistryPluginEntry[] = [
   { plugin: hackageRegistryPlugin },
   { plugin: puppetRegistryPlugin, aliases: ["forge"] },
   { plugin: chefRegistryPlugin, aliases: ["supermarket"] },
+  { plugin: opamRegistryPlugin },
 ];

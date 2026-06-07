@@ -38,6 +38,7 @@
     "@hootifactory/registry-nix": "workspace:*",
     "@hootifactory/registry-npm": "workspace:*",
     "@hootifactory/registry-nuget": "workspace:*",
+    "@hootifactory/registry-opam": "workspace:*",
     "@hootifactory/registry-oci": "workspace:*",
     "@hootifactory/registry-p2": "workspace:*",
     "@hootifactory/registry-pypi": "workspace:*",
