@@ -1,7 +1,5 @@
 import {
   asJsonRecord,
-  basicAuthChallenge,
-  delegateRegistryPlugin,
   Errors,
   type HttpMethod,
   type Permission,
@@ -10,8 +8,7 @@ import {
   type RegistryRequestContext,
   type RouteMatch,
   readWritePermission,
-  registryCapabilities,
-  registryPlugin,
+  registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
 } from "@hootifactory/registry";
@@ -32,76 +29,7 @@ import {
 const JSON_HEADERS = { "content-type": "application/json" } as const;
 
 /** Composer/Packagist: `packages.json` + v2 `/p2` metadata + zip dist + a custom upload. */
-export class ComposerAdapter implements RegistryPlugin {
-  readonly id = "composer" as const;
-  readonly capabilities = registryCapabilities("virtualizable");
-  authChallenge = basicAuthChallenge;
-
-  private readonly plugin = registryPlugin(this.id)
-    .module({
-      displayName: "Composer",
-      mountSegment: "composer",
-      errorResponseKind: "singleError",
-      compressibleHandlers: ["root", "metadata"],
-      compressibleContentTypes: ["application/json"],
-      scan: {
-        defaultOsvEcosystem: "Packagist",
-        dependencyGraph: ({ metadata }) => ({
-          deps: composerDependencyGraph(metadata),
-          osvEcosystem: "Packagist",
-          purlType: "composer",
-        }),
-        referencedDigests: (metadata) =>
-          typeof metadata.distDigest === "string" ? [metadata.distDigest] : [],
-      },
-    })
-    .capabilities(this.capabilities)
-    .authChallenge(this.authChallenge)
-    .routes((route) => [
-      route.get("/packages.json", "root", ({ req, ctx }) => this.root(req, ctx)),
-      route.get("/p2/:vendor/:package", "metadata", ({ params, req, ctx }) =>
-        this.metadata(params.vendor, params.package, req, ctx),
-      ),
-      route.get("/dist/:path+", "download", ({ params, req, ctx }) =>
-        this.download(params.path, req, ctx),
-      ),
-      route.put("/packages/:vendor/:package", "upload", ({ params, req, ctx }) =>
-        this.upload(params.vendor, params.package, req, ctx),
-      ),
-    ])
-    .build();
-  private readonly delegate = delegateRegistryPlugin(this.plugin);
-
-  get displayName() {
-    return this.plugin.displayName;
-  }
-  get mountSegment() {
-    return this.plugin.mountSegment;
-  }
-  get repositoryNamePolicy() {
-    return this.plugin.repositoryNamePolicy;
-  }
-  get acceptsRegistryBearerToken() {
-    return this.plugin.acceptsRegistryBearerToken;
-  }
-  get apiKeyHeaders() {
-    return this.plugin.apiKeyHeaders;
-  }
-  get errorResponseKind() {
-    return this.plugin.errorResponseKind;
-  }
-  get compressibleHandlers() {
-    return this.plugin.compressibleHandlers;
-  }
-  get compressibleContentTypes() {
-    return this.plugin.compressibleContentTypes;
-  }
-  get scan() {
-    return this.plugin.scan;
-  }
-
-  routes = this.delegate.routes;
-
+class ComposerAdapterState {
   requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
     const permission = readWritePermission(method);
     const path = match?.params.path;
@@ -120,20 +48,18 @@ export class ComposerAdapter implements RegistryPlugin {
     return permission;
   }
 
-  handle = this.delegate.handle;
-
-  private base(ctx: RegistryRequestContext): string {
+  base(ctx: RegistryRequestContext): string {
     return `${ctx.baseUrl}/${ctx.repo.mountPath}`;
   }
 
-  private async root(req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  async root(req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const names = (await ctx.data.packages.listNames())
       .map((row) => row.name)
       .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
     return textResponseWithEtag(req, buildPackagesRoot(this.base(ctx), names), JSON_HEADERS);
   }
 
-  private async metadata(
+  async metadata(
     vendor: string,
     packageParam: string,
     req: Request,
@@ -171,11 +97,7 @@ export class ComposerAdapter implements RegistryPlugin {
     );
   }
 
-  private async download(
-    path: string,
-    req: Request,
-    ctx: RegistryRequestContext,
-  ): Promise<Response> {
+  async download(path: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const distPath = parseRegistryInput(ComposerDistPathSchema, path, {
       code: "NAME_INVALID",
       message: "invalid composer dist path",
@@ -192,7 +114,7 @@ export class ComposerAdapter implements RegistryPlugin {
     });
   }
 
-  private async upload(
+  async upload(
     vendor: string,
     pkg: string,
     req: Request,
@@ -220,4 +142,42 @@ function composerDependencyGraph(metadata: Record<string, unknown>): Record<stri
   return out;
 }
 
+const composerDefinition = registryAdapter("composer")
+  .stateClass(ComposerAdapterState)
+  .module((module) =>
+    module
+      .displayName("Composer")
+      .mount("composer")
+      .capabilities("virtualizable")
+      .errorResponseKind("singleError")
+      .compressibleHandlers("root", "metadata")
+      .compressibleContentTypes("application/json"),
+  )
+  .scan((scan) =>
+    scan
+      .osvEcosystem("Packagist")
+      .purlType("composer")
+      .dependencies(composerDependencyGraph)
+      .referencedDigestPaths("distDigest"),
+  )
+  .basicAuth()
+  .fromState((state) => state.defaultPermission("requiredPermission"))
+  .routes((route) => [
+    route.get("/packages.json", "root").calls((state, { req, ctx }) => state.root(req, ctx)),
+    route
+      .get("/p2/:vendor/:package", "metadata")
+      .calls((state, { params, req, ctx }) =>
+        state.metadata(params.vendor, params.package, req, ctx),
+      ),
+    route
+      .get("/dist/:path+", "download")
+      .calls((state, { params, req, ctx }) => state.download(params.path, req, ctx)),
+    route
+      .put("/packages/:vendor/:package", "upload")
+      .calls((state, { params, req, ctx }) =>
+        state.upload(params.vendor, params.package, req, ctx),
+      ),
+  ]);
+
+export class ComposerAdapter extends composerDefinition.adapterClass() {}
 export const composerRegistryPlugin: RegistryPlugin = new ComposerAdapter();

@@ -209,6 +209,7 @@ describe("npm adapter contract", () => {
     expect(await first.json()).toMatchObject({ description: "cached" });
     expect(fullVersionReads).toBe(1);
 
+    if (!adapter.generateMetadata) throw new Error("expected npm metadata generator");
     const metadata = await adapter.generateMetadata("pkg", ctx);
     expect(JSON.parse(String(metadata?.body))).toMatchObject({ description: "cached" });
     expect(fullVersionReads).toBe(1);
