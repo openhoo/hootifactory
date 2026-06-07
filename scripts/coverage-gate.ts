@@ -30,6 +30,9 @@
  * The default --metric=lines is what CI gates on and is the metric that counts
  * untested files as 0%. --metric=functions is informational and reflects only
  * files that tests loaded (Bun emits no per-function data for untested files).
+ * A package that has measurable runtime lines but zero instrumented functions
+ * (e.g. only top-level statements) has no honest function ratio, so under
+ * --metric=functions it falls back to its line result rather than auto-passing.
  *
  *   bun run scripts/coverage-gate.ts [--threshold=80] [--metric=lines|functions]
  */
@@ -130,12 +133,10 @@ if (!sawAnyLcov) {
   );
 }
 
-// Worst-first ordering: failing packages bubble to the top.
-summaries.sort((a, b) => {
-  const aVal = metric === "functions" ? a.functionPct : a.linePct;
-  const bVal = metric === "functions" ? b.functionPct : b.linePct;
-  return aVal - bVal || a.name.localeCompare(b.name);
-});
+// Worst-first ordering: failing packages bubble to the top. Use pkgValue so the
+// ordering matches the basis each package is judged/reported on (including the
+// functions→lines fallback for packages with runtime lines but no functions).
+summaries.sort((a, b) => pkgValue(a) - pkgValue(b) || a.name.localeCompare(b.name));
 
 const allPassed = summaries.every((s) => s.passed);
 
@@ -204,9 +205,15 @@ async function measurePackage(pkgRel: string): Promise<PackageSummary> {
   let passed: boolean;
   if (noMeasurableCode) {
     passed = true;
-  } else if (metric === "functions") {
+  } else if (metric === "functions" && totalFuncs > 0) {
     passed = coveredFuncs * 100 >= threshold * totalFuncs - 1e-9;
   } else {
+    // Lines metric, OR the functions metric for a package that has measurable
+    // runtime lines but zero instrumented functions (e.g. only top-level
+    // statements). In the latter case Bun emits no per-function data, so the
+    // functions ratio (0/0) is meaningless; auto-passing it would let a package
+    // with uncovered runtime lines slip through under --metric=functions. We
+    // therefore fall back to the line result for that package instead.
     passed = coveredLines * 100 >= threshold * totalLines - 1e-9;
   }
 
@@ -308,16 +315,24 @@ function isIgnored(relPath: string): boolean {
 
 // --- reporting -----------------------------------------------------------
 
+// Under --metric=functions a package with measurable runtime lines but zero
+// instrumented functions has no honest function ratio (0/0), so the gate falls
+// back to its line result (see measurePackage). Report it on lines too, so its
+// displayed number matches the basis it was actually judged on.
+function usesFunctionMetric(s: PackageSummary): boolean {
+  return metric === "functions" && s.totalFuncs > 0;
+}
+
 function pkgValue(s: PackageSummary): number {
-  return metric === "functions" ? s.functionPct : s.linePct;
+  return usesFunctionMetric(s) ? s.functionPct : s.linePct;
 }
 
 function pkgCovered(s: PackageSummary): number {
-  return metric === "functions" ? s.coveredFuncs : s.coveredLines;
+  return usesFunctionMetric(s) ? s.coveredFuncs : s.coveredLines;
 }
 
 function pkgTotal(s: PackageSummary): number {
-  return metric === "functions" ? s.totalFuncs : s.totalLines;
+  return usesFunctionMetric(s) ? s.totalFuncs : s.totalLines;
 }
 
 function report(summaries: PackageSummary[], passed: boolean): void {
