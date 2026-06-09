@@ -37,11 +37,30 @@ function isRegistryWriteCandidate(method: string, pathname: string): boolean {
   return WHOLE_BODY_WRITE_METHODS.has(method) && !isExplicitAppPath(pathname);
 }
 
-function trustedOriginsForRequest(requestUrl: string): Set<string> {
-  const origins = new Set(env.API_TRUSTED_ORIGINS);
+/**
+ * The set of origins that may make cookie-authenticated writes: explicitly
+ * configured origins, the API's own origin, the registry's public URL, and the
+ * web app's own public URL. `APP_PUBLIC_URL` is first-party for the session
+ * cookies it issues, so a write from that exact origin is not CSRF — without it,
+ * the default dev config (web on APP_PUBLIC_URL, API elsewhere) can't write.
+ */
+export function buildTrustedOrigins(
+  requestUrl: string,
+  config: { trusted: readonly string[]; registryPublicUrl: string; appPublicUrl: string },
+): Set<string> {
+  const origins = new Set<string>(config.trusted);
   origins.add(new URL(requestUrl).origin);
-  origins.add(new URL(env.REGISTRY_PUBLIC_URL).origin);
+  origins.add(new URL(config.registryPublicUrl).origin);
+  origins.add(new URL(config.appPublicUrl).origin);
   return origins;
+}
+
+function trustedOriginsForRequest(requestUrl: string): Set<string> {
+  return buildTrustedOrigins(requestUrl, {
+    trusted: env.API_TRUSTED_ORIGINS,
+    registryPublicUrl: env.REGISTRY_PUBLIC_URL,
+    appPublicUrl: env.APP_PUBLIC_URL,
+  });
 }
 
 function isTrustedOrigin(requestUrl: string, origin: string): boolean {
