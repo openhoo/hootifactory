@@ -247,7 +247,7 @@ const EnvSchema = z
     S3_FORCE_PATH_STYLE: boolish.default(true),
 
     // Auth
-    SESSION_SECRET: z.string().min(16).default("dev-session-secret-change-me-please-32chars"),
+    SESSION_SECRET: z.string().min(32).default("dev-session-secret-change-me-please-32chars"),
     AUTH_ALLOW_REGISTRATION: boolish.optional(),
     AUTH_ALLOW_ORG_CREATION: boolish.optional(),
     AUTH_SYSTEM_ADMIN_USER_IDS: uuidList,
