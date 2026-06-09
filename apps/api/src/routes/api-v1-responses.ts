@@ -52,6 +52,10 @@ export async function validateJsonV1<T extends z.ZodType>(
   schema: T,
   message: string,
 ): Promise<ValidationResult<z.output<T>>> {
+  const contentType = c.req.header("Content-Type") ?? "";
+  if (!contentType.includes("application/json")) {
+    return { ok: false, response: errorResponse(c, 415, "UNSUPPORTED_MEDIA_TYPE", "Content-Type must be application/json") };
+  }
   let body: unknown;
   try {
     body = await c.req.json();
