@@ -6,6 +6,7 @@ import {
   Errors,
   InvalidDigestError,
   parseRegistryInput,
+  RegistryError,
   type RegistryRequestContext,
   type RegistryUploadedBlob,
   stagingKey,
@@ -54,6 +55,17 @@ export async function startUpload(
   }
 
   if (digest) {
+    const contentLength = req.headers.get("content-length");
+    if (contentLength) {
+      const size = parseInt(contentLength, 10);
+      if (!isNaN(size) && size > ctx.limits.maxUploadBytes) {
+        throw new RegistryError(
+          413,
+          "SIZE_INVALID",
+          `request body exceeds ${ctx.limits.maxUploadBytes} bytes`,
+        );
+      }
+    }
     await storeRegistryBlobStreamWithRef(ctx, {
       data: req.body ?? emptyStream(),
       expectedDigest: digest,
