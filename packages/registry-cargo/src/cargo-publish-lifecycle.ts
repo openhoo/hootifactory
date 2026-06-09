@@ -39,6 +39,11 @@ export async function handleCargoPublish(
   req: Request,
   ctx: RegistryRequestContext,
 ): Promise<Response> {
+  const contentLength = Number(req.headers.get("content-length") ?? 0);
+  if (contentLength > ctx.limits.maxUploadBytes) {
+    return cargoError("payload too large", 413);
+  }
+
   const { metadata: meta, crateBytes } = parseCargoPublishBody(
     new Uint8Array(await req.arrayBuffer()),
   );
