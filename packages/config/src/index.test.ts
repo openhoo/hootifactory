@@ -291,12 +291,14 @@ describe("environment auth creation defaults", () => {
       AUTH_OIDC_CLIENT_SECRET: "secret",
       AUTH_OIDC_SCOPES: "openid email profile groups email",
       AUTH_OIDC_GROUP_MAPPINGS: JSON.stringify({
-        developers: [{ org: "acme", role: "developer" }],
+        developers: [{ org: "acme", group: "developers" }],
         admins: [
-          { org: "acme", role: "owner" },
-          { org: "tools", role: "admin" },
+          { org: "acme", group: "owners" },
+          { org: "tools", group: "admins" },
         ],
       }),
+      AUTH_SYSTEM_ADMIN_USER_IDS:
+        "11111111-1111-4111-8111-111111111111,22222222-2222-4222-8222-222222222222",
     });
     expect(env.AUTH_OIDC_ENABLED).toBe(true);
     expect(env.AUTH_OIDC_NAME).toBe("Zitadel");
@@ -304,8 +306,18 @@ describe("environment auth creation defaults", () => {
     expect(env.AUTH_OIDC_SCOPES).toEqual(["openid", "email", "profile", "groups"]);
     expect(env.AUTH_OIDC_GROUP_MAPPINGS.admins?.[1]).toEqual({
       org: "tools",
-      role: "admin",
+      group: "admins",
     });
+    expect(env.AUTH_SYSTEM_ADMIN_USER_IDS).toEqual([
+      "11111111-1111-4111-8111-111111111111",
+      "22222222-2222-4222-8222-222222222222",
+    ]);
+  });
+
+  test("system-admin bootstrap user ids must be UUIDs", () => {
+    expect(() => loadEnv({ AUTH_SYSTEM_ADMIN_USER_IDS: "admin@example.test" })).toThrow(
+      /invalid user id/,
+    );
   });
 
   test("OIDC fails closed when enabled without required config", () => {
@@ -330,7 +342,7 @@ describe("environment auth creation defaults", () => {
         AUTH_OIDC_CLIENT_ID: "hootifactory",
         AUTH_OIDC_CLIENT_SECRET: "secret",
         AUTH_OIDC_GROUP_MAPPINGS: JSON.stringify({
-          admins: [{ org: "acme", role: "owner" }],
+          admins: [{ org: "acme", group: "owners" }],
         }),
       }),
     ).toThrow(/AUTH_OIDC_ISSUER must use https/);

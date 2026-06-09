@@ -69,7 +69,7 @@ test.describe("authentication", () => {
     expect(res.status()).toBe(401);
   });
 
-  test("repeated failed logins are throttled across changing forwarded IPs", async ({
+  test("repeated failed logins throttle the identity across changing forwarded IPs", async ({
     baseURL,
   }) => {
     const owner = await setupOwner(baseURL!);
@@ -93,14 +93,14 @@ test.describe("authentication", () => {
       error: "too many login attempts, try again later",
     });
 
-    const recovered = await anon.post("/api/auth/login", {
+    const blockedValidLogin = await anon.post("/api/auth/login", {
       headers: { "x-forwarded-for": "203.0.113.251" },
       data: { username: owner.username, password: owner.password },
     });
-    expect(recovered.status()).toBe(200);
+    expect(blockedValidLogin.status()).toBe(429);
   });
 
-  test("repeated failed basic auth attempts share the username throttle with login", async ({
+  test("repeated failed basic auth attempts share the username throttle and block recovery", async ({
     baseURL,
   }) => {
     const owner = await setupOwner(baseURL!);
@@ -122,17 +122,17 @@ test.describe("authentication", () => {
     expect(throttled.status()).toBe(429);
     expect(throttled.headers()["retry-after"]).toMatch(/^\d+$/);
 
-    const recoveredBasic = Buffer.from(`${owner.username}:${owner.password}`).toString("base64");
+    const blockedValidBasic = Buffer.from(`${owner.username}:${owner.password}`).toString("base64");
     const recovered = await anon.get("/api/me", {
-      headers: { ...headers, authorization: `Basic ${recoveredBasic}` },
+      headers: { ...headers, authorization: `Basic ${blockedValidBasic}` },
     });
-    expect(recovered.status()).toBe(200);
+    expect(recovered.status()).toBe(429);
 
     const login = await anon.post("/api/auth/login", {
       headers,
       data: { username: owner.username, password: owner.password },
     });
-    expect(login.status()).toBe(200);
+    expect(login.status()).toBe(429);
   });
 
   test("login missing fields -> 400", async ({ request }) => {

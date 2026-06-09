@@ -107,21 +107,43 @@ describe("tenancy tables", () => {
     expect(column(schema.users, "isActive").default).toBe(true);
   });
 
-  test("memberships default to the viewer role", () => {
+  test("memberships link users to organizations without legacy roles", () => {
     expect(getTableName(schema.memberships)).toBe("memberships");
-    expect(column(schema.memberships, "role").default).toBe("viewer");
+    expect(columnKeys(schema.memberships)).not.toContain("role");
     expect(column(schema.memberships, "orgId").notNull).toBe(true);
+  });
+
+  test("groups and group memberships model local access groups", () => {
+    expect(getTableName(schema.groups)).toBe("groups");
+    expect(column(schema.groups, "orgId").notNull).toBe(true);
+    expect(column(schema.groups, "slug").notNull).toBe(true);
+    expect(column(schema.groups, "displayName").notNull).toBe(true);
+    expect(getTableName(schema.groupMemberships)).toBe("group_memberships");
+    expect(column(schema.groupMemberships, "groupId").notNull).toBe(true);
+    expect(column(schema.groupMemberships, "userId").notNull).toBe(true);
+    expect(column(schema.groupMemberships, "source").default).toBe("local");
   });
 });
 
 describe("auth tables", () => {
-  test("api_tokens default to personal type with empty grants", () => {
+  test("api_tokens default to personal type without embedded grants", () => {
     expect(getTableName(schema.apiTokens)).toBe("api_tokens");
     expect(column(schema.apiTokens, "type").default).toBe("personal");
-    expect(column(schema.apiTokens, "grants").default).toEqual([]);
+    expect(columnKeys(schema.apiTokens)).not.toContain("grants");
+    expect(columnKeys(schema.apiTokens)).not.toContain("role");
     expect(column(schema.apiTokens, "tokenHash").isUnique).toBe(true);
     expect(varcharLength(schema.apiTokens, "tokenHash")).toBe(64);
     expect(varcharLength(schema.apiTokens, "tokenPrefix")).toBe(16);
+  });
+
+  test("permission_grants model fine-grained subjects and scopes", () => {
+    expect(getTableName(schema.permissionGrants)).toBe("permission_grants");
+    expect(column(schema.permissionGrants, "permission").notNull).toBe(true);
+    expect(column(schema.permissionGrants, "orgId").notNull).toBe(false);
+    expect(column(schema.permissionGrants, "userId").notNull).toBe(false);
+    expect(column(schema.permissionGrants, "groupId").notNull).toBe(false);
+    expect(column(schema.permissionGrants, "tokenId").notNull).toBe(false);
+    expect(column(schema.permissionGrants, "repositoryPattern").notNull).toBe(false);
   });
 
   test("sessions hash is unique and expiry is required", () => {
@@ -147,12 +169,10 @@ describe("auth tables", () => {
     expect(varcharLength(schema.emailDeliveries, "deliveryKey")).toBe(256);
   });
 
-  test("role_bindings, external identities and grants are wired", () => {
-    expect(getTableName(schema.roleBindings)).toBe("role_bindings");
+  test("external identities are wired", () => {
     expect(getTableName(schema.externalIdentities)).toBe("external_identities");
-    expect(getTableName(schema.externalRoleGrants)).toBe("external_role_grants");
-    expect(column(schema.roleBindings, "role").notNull).toBe(true);
-    expect(column(schema.externalRoleGrants, "groups").default).toEqual([]);
+    expect(column(schema.externalIdentities, "provider").notNull).toBe(true);
+    expect(column(schema.externalIdentities, "issuer").notNull).toBe(true);
   });
 });
 

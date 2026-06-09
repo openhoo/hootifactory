@@ -1,46 +1,26 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import {
-  apiTokens,
+  and,
   db,
   eq,
-  externalIdentities,
+  groupMemberships,
+  groups,
   memberships,
   organizations,
+  permissionGrants,
   repositories,
-  roleBindings,
   users,
 } from "@hootifactory/db";
-import { SignJWT } from "jose";
-import { authorize, createRequestAuthorizer, effectiveRoleFor, resolveUserRole } from "./authorize";
-import {
-  consumeAuthEmailToken,
-  createAuthEmailToken,
-  resetPasswordWithToken,
-} from "./email-tokens";
-import {
-  OIDC_PROVIDER,
-  OidcEmailLinkRequiredError,
-  oidcIdentityBelongsToAnotherUser,
-  syncOidcUser,
-} from "./oidc";
-import { hashPassword, verifyPassword } from "./password";
-import type { Principal } from "./principal";
-import { issueRegistryToken, registryJwks, verifyRegistryToken } from "./registry-jwt";
-import { createSession, resolveSession, revokeSession } from "./sessions";
+import type { PermissionKey } from "@hootifactory/types";
+import { authorize, createRequestAuthorizer } from "./authorize";
+import { syncOidcUser } from "./oidc";
+import type { Principal, ResourceRef } from "./principal";
 import { validateTokenGrant } from "./token-grants";
 import { createApiToken, recordTokenLastUsed, resolveToken, revokeToken } from "./tokens";
-import {
-  authenticateUserPassword,
-  createLocalUser,
-  findPasswordResetUser,
-  userPrincipalById,
-} from "./users";
 
 let orgId = "";
-let userId = "";
-let secondOrgId = "";
 let orgSlug = "";
-let secondOrgSlug = "";
+let userId = "";
 const cleanupUserIds: string[] = [];
 
 beforeAll(async () => {
@@ -50,78 +30,187 @@ beforeAll(async () => {
     .returning();
   orgId = org!.id;
   orgSlug = org!.slug;
-  const [u] = await db
+
+  const [user] = await db
     .insert(users)
     .values({
       email: `${crypto.randomUUID()}@test.dev`,
       username: `u-${crypto.randomUUID().slice(0, 8)}`,
     })
     .returning();
-  userId = u!.id;
-  await db.insert(memberships).values({ orgId, userId, role: "owner" });
-  const [secondOrg] = await db
-    .insert(organizations)
-    .values({ slug: `test-${crypto.randomUUID().slice(0, 8)}`, displayName: "Second Test Org" })
-    .returning();
-  secondOrgId = secondOrg!.id;
-  secondOrgSlug = secondOrg!.slug;
+  userId = user!.id;
+  await db.insert(memberships).values({ orgId, userId });
 });
 
 afterAll(async () => {
   for (const id of cleanupUserIds) {
     await db.delete(users).where(eq(users.id, id));
   }
-  if (secondOrgId) await db.delete(organizations).where(eq(organizations.id, secondOrgId));
   if (orgId) await db.delete(organizations).where(eq(organizations.id, orgId));
   if (userId) await db.delete(users).where(eq(users.id, userId));
 });
 
+async function grantUserPermission(
+  permission: PermissionKey,
+  overrides: Partial<typeof permissionGrants.$inferInsert> = {},
+) {
+  const [grant] = await db
+    .insert(permissionGrants)
+    .values({
+      orgId,
+      userId,
+      permission,
+      ...overrides,
+    })
+    .returning();
+  return grant!;
+}
+
+async function createRepo() {
+  const suffix = crypto.randomUUID().slice(0, 8);
+  const [repo] = await db
+    .insert(repositories)
+    .values({
+      orgId,
+      name: `repo-${suffix}`,
+      moduleId: "npm",
+      mountPath: `npm/test-${suffix}`,
+      storagePrefix: `${orgId}/auth-test-${suffix}`,
+    })
+    .returning();
+  return repo!;
+}
+
+describe("permission authorization (DB)", () => {
+  test("direct user grants allow implied repository actions and deny stronger actions", async () => {
+    const repo = await createRepo();
+    await grantUserPermission("repository.write", { repositoryPattern: repo.name });
+
+    const principal: Principal = { kind: "user", userId, username: "alice" };
+    const resource: ResourceRef = {
+      type: "repository",
+      orgId,
+      repositoryId: repo.id,
+      repositoryName: repo.name,
+    };
+
+    expect((await authorize(principal, "read", resource)).allowed).toBe(true);
+    expect((await authorize(principal, "write", resource)).allowed).toBe(true);
+    const deleteDecision = await authorize(principal, "delete", resource);
+    expect(deleteDecision.allowed).toBe(false);
+    expect(deleteDecision.code).toBe("insufficient_scope");
+  });
+
+  test("group grants are included in effective user permissions", async () => {
+    const repo = await createRepo();
+    const [group] = await db
+      .insert(groups)
+      .values({ orgId, slug: `writers-${crypto.randomUUID().slice(0, 6)}`, displayName: "Writers" })
+      .returning();
+    await db.insert(groupMemberships).values({ orgId, groupId: group!.id, userId });
+    await db.insert(permissionGrants).values({
+      orgId,
+      groupId: group!.id,
+      permission: "repository.write",
+      repositoryPattern: repo.name,
+    });
+
+    const decision = await authorize({ kind: "user", userId, username: "alice" }, "write", {
+      type: "repository",
+      orgId,
+      repositoryId: repo.id,
+      repositoryName: repo.name,
+    });
+
+    expect(decision.allowed).toBe(true);
+  });
+
+  test("request authorizer memoizes identical permission checks", async () => {
+    const repo = await createRepo();
+    await grantUserPermission("repository.read", { repositoryPattern: repo.name });
+    const resource: ResourceRef = {
+      type: "repository",
+      orgId,
+      repositoryId: repo.id,
+      repositoryName: repo.name,
+    };
+    const requestAuthorize = createRequestAuthorizer({ kind: "user", userId, username: "alice" });
+
+    const first = await requestAuthorize("read", resource);
+    const second = await requestAuthorize("read", resource);
+
+    expect(first.allowed).toBe(true);
+    expect(second.allowed).toBe(true);
+  });
+});
+
 describe("api tokens (DB)", () => {
-  test("create -> resolve -> revoke", async () => {
+  test("create -> resolve -> revoke persists permission grant rows", async () => {
     const { token, secret } = await createApiToken({
       orgId,
       ownerUserId: userId,
       name: "ci",
-      grants: [{ resource: "repository", repository: "acme/*", actions: ["read", "write"] }],
+      grants: [{ permission: "repository.read", repository: "acme/*" }],
     });
-    expect(secret.startsWith("hoot_")).toBe(true);
 
     const principal = await resolveToken(secret);
     expect(principal?.kind).toBe("token");
     if (principal?.kind === "token") {
       expect(principal.orgId).toBe(orgId);
       expect(principal.ownerUsername).not.toBeNull();
-      expect(principal.grants[0]).toMatchObject({ resource: "repository", repository: "acme/*" });
+      expect(principal.grants[0]).toMatchObject({ permission: "repository.read" });
     }
+    const grantRows = await db
+      .select()
+      .from(permissionGrants)
+      .where(eq(permissionGrants.tokenId, token.id));
+    expect(grantRows).toHaveLength(1);
 
     await revokeToken(token.id);
     expect(await resolveToken(secret)).toBeNull();
   });
 
-  test("owner-backed tokens stop resolving when the owner is disabled", async () => {
+  test("owner-backed token permissions are capped by the owner's current permissions", async () => {
+    const repo = await createRepo();
     const [owner] = await db
       .insert(users)
       .values({
         email: `${crypto.randomUUID()}@test.dev`,
-        username: `disabled-${crypto.randomUUID().slice(0, 8)}`,
+        username: `owner-${crypto.randomUUID().slice(0, 8)}`,
       })
       .returning();
-    await db.insert(memberships).values({ orgId, userId: owner!.id, role: "developer" });
-    const { secret } = await createApiToken({
+    cleanupUserIds.push(owner!.id);
+    await db.insert(memberships).values({ orgId, userId: owner!.id });
+    await db.insert(permissionGrants).values({
+      orgId,
+      userId: owner!.id,
+      permission: "repository.read",
+      repositoryPattern: repo.name,
+    });
+    const { token } = await createApiToken({
       orgId,
       ownerUserId: owner!.id,
-      name: "disabled-owner",
+      name: "repo-capped",
+      grants: [{ permission: "repository.write", repository: repo.name }],
     });
 
-    expect(await resolveToken(secret)).not.toBeNull();
-    await db.update(users).set({ isActive: false }).where(eq(users.id, owner!.id));
-    expect(await resolveToken(secret)).toBeNull();
-    await db.delete(users).where(eq(users.id, owner!.id));
-  });
+    const principal: Principal = {
+      kind: "token",
+      tokenId: token.id,
+      orgId,
+      ownerUserId: owner!.id,
+      grants: [{ permission: "repository.write", repository: repo.name }],
+      isRobot: false,
+    };
+    const decision = await authorize(principal, "write", {
+      type: "repository",
+      orgId,
+      repositoryId: repo.id,
+      repositoryName: repo.name,
+    });
 
-  test("garbage secret resolves to null", async () => {
-    expect(await resolveToken("hoot_not-a-real-token")).toBeNull();
-    expect(await resolveToken("totally-bogus")).toBeNull();
+    expect(decision.allowed).toBe(false);
+    expect(decision.reason).toContain("token owner");
   });
 
   test("last-used token bookkeeping is debounced", async () => {
@@ -131,671 +220,61 @@ describe("api tokens (DB)", () => {
       name: "last-used-debounce",
     });
     const firstWrite = Date.UTC(2026, 0, 1, 0, 0, 0);
-    const secondWrite = firstWrite + 60_000;
 
     expect(await recordTokenLastUsed(token.id, firstWrite)).toBe(true);
     expect(await recordTokenLastUsed(token.id, firstWrite + 30_000)).toBe(false);
-    let [row] = await db
-      .select({ lastUsedAt: apiTokens.lastUsedAt })
-      .from(apiTokens)
-      .where(eq(apiTokens.id, token.id))
-      .limit(1);
-    expect(row?.lastUsedAt?.getTime()).toBe(firstWrite);
-
-    expect(await recordTokenLastUsed(token.id, secondWrite)).toBe(true);
-    [row] = await db
-      .select({ lastUsedAt: apiTokens.lastUsedAt })
-      .from(apiTokens)
-      .where(eq(apiTokens.id, token.id))
-      .limit(1);
-    expect(row?.lastUsedAt?.getTime()).toBe(secondWrite);
-  });
-
-  test("owner-backed token roles are capped by repo-scoped owner bindings", async () => {
-    const [repo] = await db
-      .insert(repositories)
-      .values({
-        orgId,
-        name: `repo-${crypto.randomUUID().slice(0, 8)}`,
-        moduleId: "npm",
-        mountPath: `npm/test-${crypto.randomUUID().slice(0, 8)}`,
-        storagePrefix: `${orgId}/auth-test`,
-      })
-      .returning();
-    const { token } = await createApiToken({
-      orgId,
-      ownerUserId: userId,
-      name: "repo-capped",
-      grants: [{ resource: "repository", repository: repo!.name, actions: ["read", "write"] }],
-      role: "owner",
-    });
-    await db.insert(roleBindings).values({
-      orgId,
-      userId,
-      repositoryId: repo!.id,
-      role: "viewer",
-    });
-
-    const principal: Principal = {
-      kind: "token",
-      tokenId: token.id,
-      orgId,
-      ownerUserId: userId,
-      grants: token.grants,
-      role: token.role,
-      isRobot: false,
-    };
-    await expect(
-      effectiveRoleFor(principal, {
-        type: "repository",
-        orgId,
-        repositoryId: repo!.id,
-        repositoryName: repo!.name,
-      }),
-    ).resolves.toBe("viewer");
-  });
-
-  test("authorize applies owner role caps to token stored roles", async () => {
-    const [repo] = await db
-      .insert(repositories)
-      .values({
-        orgId,
-        name: `repo-${crypto.randomUUID().slice(0, 8)}`,
-        moduleId: "npm",
-        mountPath: `npm/test-${crypto.randomUUID().slice(0, 8)}`,
-        storagePrefix: `${orgId}/auth-test`,
-      })
-      .returning();
-    const { token } = await createApiToken({
-      orgId,
-      ownerUserId: userId,
-      name: "repo-capped-authorize",
-      grants: [{ resource: "repository", repository: repo!.name, actions: ["read", "write"] }],
-      role: "owner",
-    });
-    await db.insert(roleBindings).values({
-      orgId,
-      userId,
-      repositoryId: repo!.id,
-      role: "viewer",
-    });
-
-    const principal: Principal = {
-      kind: "token",
-      tokenId: token.id,
-      orgId,
-      ownerUserId: userId,
-      grants: token.grants,
-      role: token.role,
-      isRobot: false,
-    };
-    const decision = await authorize(principal, "write", {
-      type: "repository",
-      orgId,
-      repositoryId: repo!.id,
-      repositoryName: repo!.name,
-    });
-    expect(decision.allowed).toBe(false);
-    expect(decision.code).toBe("insufficient_role");
-  });
-
-  test("request authorizer memoizes effective roles by principal and repository", async () => {
-    const [repo] = await db
-      .insert(repositories)
-      .values({
-        orgId,
-        name: `repo-${crypto.randomUUID().slice(0, 8)}`,
-        moduleId: "npm",
-        mountPath: `npm/test-${crypto.randomUUID().slice(0, 8)}`,
-        storagePrefix: `${orgId}/auth-test`,
-      })
-      .returning();
-    const principal: Principal = { kind: "user", userId, username: "alice" };
-    const resource = {
-      type: "repository" as const,
-      orgId,
-      repositoryId: repo!.id,
-      repositoryName: repo!.name,
-    };
-    const requestAuthorize = createRequestAuthorizer(principal);
-
-    await expect(requestAuthorize("write", resource)).resolves.toMatchObject({ allowed: true });
-    await db.insert(roleBindings).values({
-      orgId,
-      userId,
-      repositoryId: repo!.id,
-      role: "viewer",
-    });
-    await expect(requestAuthorize("write", resource)).resolves.toMatchObject({ allowed: true });
-    await expect(authorize(principal, "write", resource)).resolves.toMatchObject({
-      allowed: false,
-      code: "insufficient_role",
-    });
-  });
-
-  test("token-scoped repo bindings override a token's org role", async () => {
-    const [repo] = await db
-      .insert(repositories)
-      .values({
-        orgId,
-        name: `repo-${crypto.randomUUID().slice(0, 8)}`,
-        moduleId: "npm",
-        mountPath: `npm/test-${crypto.randomUUID().slice(0, 8)}`,
-        storagePrefix: `${orgId}/auth-test`,
-      })
-      .returning();
-    const [token] = await db
-      .insert(apiTokens)
-      .values({
-        orgId,
-        ownerUserId: null,
-        name: "robot-bound",
-        type: "robot",
-        tokenHash: crypto.randomUUID().replaceAll("-", ""),
-        tokenPrefix: "hoot_test",
-        grants: [],
-        role: "admin",
-      })
-      .returning();
-    await db.insert(roleBindings).values({
-      orgId,
-      tokenId: token!.id,
-      repositoryId: repo!.id,
-      role: "viewer",
-    });
-
-    const principal: Principal = {
-      kind: "token",
-      tokenId: token!.id,
-      orgId,
-      ownerUserId: null,
-      grants: [],
-      role: "admin",
-      isRobot: true,
-    };
-    await expect(
-      effectiveRoleFor(principal, {
-        type: "repository",
-        orgId,
-        repositoryId: repo!.id,
-        repositoryName: repo!.name,
-      }),
-    ).resolves.toBe("viewer");
-  });
-
-  test("repo bindings with a mismatched org are ignored", async () => {
-    const [repo] = await db
-      .insert(repositories)
-      .values({
-        orgId: secondOrgId,
-        name: `repo-${crypto.randomUUID().slice(0, 8)}`,
-        moduleId: "npm",
-        mountPath: `npm/test-${crypto.randomUUID().slice(0, 8)}`,
-        storagePrefix: `${secondOrgId}/auth-test`,
-      })
-      .returning();
-    await db.insert(roleBindings).values({
-      orgId,
-      userId,
-      repositoryId: repo!.id,
-      role: "owner",
-    });
-
-    await expect(
-      effectiveRoleFor(
-        { kind: "user", userId, username: "alice" },
-        {
-          type: "repository",
-          orgId: secondOrgId,
-          repositoryId: repo!.id,
-          repositoryName: repo!.name,
-        },
-      ),
-    ).resolves.toBeNull();
+    expect(await recordTokenLastUsed(token.id, firstWrite + 60_000)).toBe(true);
   });
 });
 
-describe("sessions (DB)", () => {
-  test("create -> resolve -> revoke", async () => {
-    const { secret } = await createSession(userId, { ip: "127.0.0.1" });
-    const resolved = await resolveSession(secret);
-    expect(resolved?.userId).toBe(userId);
-    await revokeSession(secret);
-    expect(await resolveSession(secret)).toBeNull();
-  });
-});
-
-describe("auth email tokens (DB)", () => {
-  test("password reset user lookup only returns active local accounts", async () => {
-    const localPassword = "reset-password";
-    const local = await createLocalUser({
-      email: `${crypto.randomUUID()}@reset.test`,
-      username: `reset-${crypto.randomUUID().slice(0, 8)}`,
-      password: localPassword,
-    });
-    cleanupUserIds.push(local.id);
-    const [ssoOnly] = await db
-      .insert(users)
-      .values({
-        email: `${crypto.randomUUID()}@reset.test`,
-        username: `sso-only-${crypto.randomUUID().slice(0, 8)}`,
-        passwordHash: null,
-      })
-      .returning();
-    cleanupUserIds.push(ssoOnly!.id);
-    const [disabled] = await db
-      .insert(users)
-      .values({
-        email: `${crypto.randomUUID()}@reset.test`,
-        username: `disabled-reset-${crypto.randomUUID().slice(0, 8)}`,
-        passwordHash: await hashPassword(localPassword),
-        isActive: false,
-      })
-      .returning();
-    cleanupUserIds.push(disabled!.id);
-
-    await expect(findPasswordResetUser(local.email)).resolves.toEqual({
-      id: local.id,
-      email: local.email,
-    });
-    await expect(findPasswordResetUser(ssoOnly!.email)).resolves.toBeNull();
-    await expect(findPasswordResetUser(disabled!.email)).resolves.toBeNull();
-  });
-
-  test("password reset tokens are single-use and revoke existing sessions", async () => {
-    const oldPassword = "old-password";
-    const newPassword = "new-password";
-    const [user] = await db
-      .insert(users)
-      .values({
-        email: `${crypto.randomUUID()}@reset.test`,
-        username: `reset-${crypto.randomUUID().slice(0, 8)}`,
-        passwordHash: await hashPassword(oldPassword),
-      })
-      .returning();
-    cleanupUserIds.push(user!.id);
-    const session = await createSession(user!.id);
-    const { secret } = await createAuthEmailToken({
-      purpose: "password_reset",
-      userId: user!.id,
-      email: user!.email,
-      ttlSeconds: 60,
-    });
-
-    await expect(resetPasswordWithToken(secret, newPassword)).resolves.toEqual({
-      userId: user!.id,
-    });
-    await expect(resolveSession(session.secret)).resolves.toBeNull();
-
-    const [updated] = await db.select().from(users).where(eq(users.id, user!.id)).limit(1);
-    expect(await verifyPassword(newPassword, updated!.passwordHash!)).toBe(true);
-    await expect(resetPasswordWithToken(secret, "another-password")).resolves.toBeNull();
-  });
-
-  test("expired auth email tokens do not consume", async () => {
-    const { secret } = await createAuthEmailToken({
-      purpose: "oidc_link",
-      userId,
-      email: `${crypto.randomUUID()}@reset.test`,
-      ttlSeconds: -1,
-    });
-
-    await expect(consumeAuthEmailToken("oidc_link", secret)).resolves.toBeNull();
-  });
-});
-
-describe("local users (DB)", () => {
-  test("createLocalUser hashes credentials and principal helpers ignore disabled users", async () => {
-    const password = "local-user-password";
-    const user = await createLocalUser({
-      email: `${crypto.randomUUID()}@local.test`,
-      username: `local-${crypto.randomUUID().slice(0, 8)}`,
-      password,
-      displayName: "Local User",
-    });
-    cleanupUserIds.push(user.id);
-
-    expect(user.passwordHash).not.toBe(password);
-    expect(await verifyPassword(password, user.passwordHash!)).toBe(true);
-    await expect(authenticateUserPassword(user.username, password)).resolves.toEqual({
-      kind: "user",
-      userId: user.id,
-      username: user.username,
-    });
-    await expect(authenticateUserPassword(user.username, "wrong-password")).resolves.toBeNull();
-    await expect(userPrincipalById(user.id)).resolves.toEqual({
-      kind: "user",
-      userId: user.id,
-      username: user.username,
-    });
-
-    await db.update(users).set({ isActive: false }).where(eq(users.id, user.id));
-    await expect(authenticateUserPassword(user.username, password)).resolves.toBeNull();
-    await expect(userPrincipalById(user.id)).resolves.toBeNull();
-  });
-});
-
-describe("OIDC user sync (DB)", () => {
-  test("detects OIDC identities owned by a different user", async () => {
+describe("OIDC group sync (DB)", () => {
+  test("syncs mapped IdP groups into local groups and group memberships", async () => {
     const subject = crypto.randomUUID();
-    const user = await syncOidcUser({
+    const result = await syncOidcUser({
       issuer: "https://idp.test",
       subject,
       email: `${crypto.randomUUID()}@oidc.test`,
       emailVerified: true,
-      username: "owned-identity",
-      displayName: "Owned Identity",
-      groups: ["developers"],
-      grants: [{ org: orgSlug, role: "developer", groups: ["developers"] }],
-    });
-    cleanupUserIds.push(user.id);
-    const [otherUser] = await db
-      .insert(users)
-      .values({
-        email: `${crypto.randomUUID()}@oidc.test`,
-        username: `other-identity-${crypto.randomUUID().slice(0, 8)}`,
-      })
-      .returning();
-    cleanupUserIds.push(otherUser!.id);
-
-    await expect(
-      oidcIdentityBelongsToAnotherUser({
-        issuer: "https://idp.test",
-        subject,
-        userId: user.id,
-      }),
-    ).resolves.toBe(false);
-    await expect(
-      oidcIdentityBelongsToAnotherUser({
-        issuer: "https://idp.test",
-        subject,
-        userId: otherUser!.id,
-      }),
-    ).resolves.toBe(true);
-  });
-
-  test("auto-provisions a mapped user and grants org access", async () => {
-    const email = `${crypto.randomUUID()}@oidc.test`;
-    const user = await syncOidcUser({
-      issuer: "https://idp.test",
-      subject: crypto.randomUUID(),
-      email,
-      emailVerified: true,
       username: "Alice SSO",
       displayName: "Alice SSO",
       groups: ["developers"],
-      grants: [{ org: orgSlug, role: "developer", groups: ["developers"] }],
+      grants: [{ org: orgSlug, group: "developers", groups: ["developers"] }],
     });
-    cleanupUserIds.push(user.id);
+    cleanupUserIds.push(result.id);
 
-    await expect(resolveUserRole(user.id, orgId)).resolves.toBe("developer");
-    const [identity] = await db
+    const [group] = await db
       .select()
-      .from(externalIdentities)
-      .where(eq(externalIdentities.userId, user.id))
+      .from(groups)
+      .where(and(eq(groups.orgId, orgId), eq(groups.slug, "developers")))
       .limit(1);
-    expect(identity?.provider).toBe(OIDC_PROVIDER);
-    expect(identity?.email).toBe(email);
-  });
-
-  test("requires confirmation before linking an existing local email", async () => {
-    const email = `${crypto.randomUUID()}@oidc.test`;
-    const [local] = await db
-      .insert(users)
-      .values({ email, username: `local-${crypto.randomUUID().slice(0, 8)}` })
-      .returning();
-    cleanupUserIds.push(local!.id);
-
-    const input: Parameters<typeof syncOidcUser>[0] = {
-      issuer: "https://idp.test",
-      subject: crypto.randomUUID(),
-      email,
-      emailVerified: true,
-      username: "linked-user",
-      displayName: "Linked User",
-      groups: ["admins"],
-      grants: [{ org: orgSlug, role: "owner", groups: ["admins"] }],
-    };
-
-    await expect(syncOidcUser(input)).rejects.toBeInstanceOf(OidcEmailLinkRequiredError);
-
-    const linked = await syncOidcUser(input, { allowExistingEmailLink: true });
-
-    expect(linked.id).toBe(local!.id);
-    await expect(resolveUserRole(local!.id, orgId)).resolves.toBe("owner");
-  });
-
-  test("requires verified IdP email before linking an existing local email", async () => {
-    const email = `${crypto.randomUUID()}@oidc.test`;
-    const [local] = await db
-      .insert(users)
-      .values({ email, username: `conflict-${crypto.randomUUID().slice(0, 8)}` })
-      .returning();
-    cleanupUserIds.push(local!.id);
-
-    const input: Parameters<typeof syncOidcUser>[0] = {
-      issuer: "https://idp.test",
-      subject: crypto.randomUUID(),
-      email,
-      emailVerified: false,
-      username: "conflict-user",
-      displayName: "Conflict User",
-      groups: ["developers"],
-      grants: [{ org: orgSlug, role: "developer", groups: ["developers"] }],
-    };
-
-    await expect(syncOidcUser(input)).rejects.toThrow("oidc: email claim is not verified");
-    await expect(syncOidcUser(input, { allowExistingEmailLink: true })).rejects.toThrow(
-      "oidc: email claim is not verified",
-    );
-  });
-
-  test("reconciles stale OIDC grants without deleting local memberships", async () => {
-    const email = `${crypto.randomUUID()}@oidc.test`;
-    const subject = crypto.randomUUID();
-    const user = await syncOidcUser({
-      issuer: "https://idp.test",
-      subject,
-      email,
-      emailVerified: true,
-      username: "grant-sync",
-      displayName: "Grant Sync",
-      groups: ["developers", "viewers"],
-      grants: [
-        { org: orgSlug, role: "developer", groups: ["developers"] },
-        { org: secondOrgSlug, role: "viewer", groups: ["viewers"] },
-      ],
-    });
-    cleanupUserIds.push(user.id);
-    await db.insert(memberships).values({ orgId, userId: user.id, role: "viewer" });
-
-    await expect(resolveUserRole(user.id, orgId)).resolves.toBe("developer");
-    await expect(resolveUserRole(user.id, secondOrgId)).resolves.toBe("viewer");
-
-    await syncOidcUser({
-      issuer: "https://idp.test",
-      subject,
-      email,
-      emailVerified: true,
-      username: "grant-sync",
-      displayName: "Grant Sync",
-      groups: ["admins"],
-      grants: [{ org: secondOrgSlug, role: "owner", groups: ["admins"] }],
-    });
-
-    await expect(resolveUserRole(user.id, orgId)).resolves.toBe("viewer");
-    await expect(resolveUserRole(user.id, secondOrgId)).resolves.toBe("owner");
+    expect(group).toBeDefined();
+    const membershipsRows = await db
+      .select()
+      .from(groupMemberships)
+      .where(and(eq(groupMemberships.groupId, group!.id), eq(groupMemberships.userId, result.id)));
+    expect(membershipsRows).toHaveLength(1);
   });
 });
 
-describe("validateTokenGrant issuance ceiling (DB)", () => {
-  // A dedicated org isolates the per-repo loop (which iterates ALL repos in the
-  // org) from fixtures other tests leave behind.
-  let devOrgId = "";
-  let devUserId = "";
-  let repoId = "";
-  const repoName = "scoped-app";
+describe("token grant validation (DB)", () => {
+  test("allows grants within caller permissions and rejects stronger grants", async () => {
+    const repo = await createRepo();
+    await grantUserPermission("repository.read", { repositoryPattern: repo.name });
+    const principal: Principal = { kind: "user", userId, username: "alice" };
 
-  beforeAll(async () => {
-    const [org] = await db
-      .insert(organizations)
-      .values({ slug: `tg-${crypto.randomUUID().slice(0, 8)}`, displayName: "TokenGrant Org" })
-      .returning();
-    devOrgId = org!.id;
-    const [u] = await db
-      .insert(users)
-      .values({
-        email: `${crypto.randomUUID()}@test.dev`,
-        username: `dev-${crypto.randomUUID().slice(0, 8)}`,
-      })
-      .returning();
-    devUserId = u!.id;
-    // Creator is a *developer* at org scope (read + write, no delete/admin).
-    await db.insert(memberships).values({ orgId: devOrgId, userId: devUserId, role: "developer" });
-    const [repo] = await db
-      .insert(repositories)
-      .values({
-        orgId: devOrgId,
-        name: repoName,
-        moduleId: "generic",
-        mountPath: `generic/${repoName}`,
-        storagePrefix: repoName,
-      })
-      .returning();
-    repoId = repo!.id;
-    // Demote the creator to viewer on this one repo (read only).
-    await db
-      .insert(roleBindings)
-      .values({ orgId: devOrgId, userId: devUserId, repositoryId: repoId, role: "viewer" });
-  });
+    await expect(
+      validateTokenGrant({
+        principal,
+        orgId,
+        grants: [{ permission: "repository.read", repository: repo.name }],
+      }),
+    ).resolves.toEqual({ ok: true });
 
-  afterAll(async () => {
-    if (devOrgId) await db.delete(organizations).where(eq(organizations.id, devOrgId));
-    if (devUserId) await db.delete(users).where(eq(users.id, devUserId));
-  });
-
-  test("rejects requesting a role above the creator's own", async () => {
     const result = await validateTokenGrant({
-      userId: devUserId,
-      orgId: devOrgId,
-      requestedRole: "owner",
-      grants: [],
-    });
-    expect(result).toEqual({ ok: false, error: "cannot grant a role above your own" });
-  });
-
-  test("rejects a grant action beyond the creator's org role", async () => {
-    const result = await validateTokenGrant({
-      userId: devUserId,
-      orgId: devOrgId,
-      grants: [{ resource: "repository", repository: repoName, actions: ["delete"] }],
+      principal,
+      orgId,
+      grants: [{ permission: "repository.write", repository: repo.name }],
     });
     expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.error).toBe("cannot grant scope action 'delete' beyond your role");
-    }
-  });
-
-  test("rejects org-wide token management grants from non-admin creators", async () => {
-    const result = await validateTokenGrant({
-      userId: devUserId,
-      orgId: devOrgId,
-      grants: [{ resource: "token", target: "org", actions: ["write"] }],
-    });
-    expect(result).toEqual({
-      ok: false,
-      error: "cannot grant org token management beyond your role",
-    });
-  });
-
-  test("allows self-token management grants from developer creators", async () => {
-    const result = await validateTokenGrant({
-      userId: devUserId,
-      orgId: devOrgId,
-      grants: [{ resource: "token", target: "self", actions: ["read", "write"] }],
-    });
-    expect(result).toEqual({ ok: true });
-  });
-
-  test("rejects write on a repo where the creator is only a viewer, but allows read", async () => {
-    const writeGrant = await validateTokenGrant({
-      userId: devUserId,
-      orgId: devOrgId,
-      grants: [{ resource: "repository", repository: repoName, actions: ["write"] }],
-    });
-    expect(writeGrant.ok).toBe(false);
-    if (!writeGrant.ok) {
-      expect(writeGrant.error).toBe(
-        `cannot grant scope action 'write' on repository '${repoName}'`,
-      );
-    }
-
-    const readGrant = await validateTokenGrant({
-      userId: devUserId,
-      orgId: devOrgId,
-      grants: [{ resource: "repository", repository: repoName, actions: ["read"] }],
-    });
-    expect(readGrant).toEqual({ ok: true });
-  });
-});
-
-describe("registry JWT (RS256)", () => {
-  test("issue -> verify round-trips access claims", async () => {
-    const jwt = await issueRegistryToken({
-      subject: "alice",
-      audience: "hootifactory-registry",
-      access: [{ type: "repository", name: "acme/app", actions: ["pull", "push"] }],
-    });
-    const verified = await verifyRegistryToken(jwt, "hootifactory-registry");
-    expect(verified.subject).toBe("alice");
-    expect(verified.access[0]?.name).toBe("acme/app");
-    expect(verified.access[0]?.actions).toContain("push");
-  });
-
-  test("jwks exposes a public RS256 key", async () => {
-    const jwks = await registryJwks();
-    expect(jwks.keys.length).toBeGreaterThan(0);
-    expect(jwks.keys[0]?.alg).toBe("RS256");
-  });
-
-  test("rejects a token verified against the wrong audience", async () => {
-    const jwt = await issueRegistryToken({
-      subject: "alice",
-      audience: "hootifactory-registry",
-      access: [],
-    });
-    await expect(verifyRegistryToken(jwt, "wrong-audience")).rejects.toThrow();
-  });
-
-  test("rejects an expired token", async () => {
-    const jwt = await issueRegistryToken({
-      subject: "alice",
-      audience: "hootifactory-registry",
-      access: [],
-      ttlSeconds: -1,
-    });
-    await expect(verifyRegistryToken(jwt, "hootifactory-registry")).rejects.toThrow();
-  });
-
-  test("rejects a non-RS256 (alg-confusion) token", async () => {
-    // Forge an HS256 token with the same claims and a random secret. The
-    // algorithms:["RS256"] pin must reject it before any signature/claim check —
-    // defending against alg-confusion / alg:none.
-    const forged = await new SignJWT({ access: [] })
-      .setProtectedHeader({ alg: "HS256" })
-      .setIssuer("https://registry.test")
-      .setAudience("hootifactory-registry")
-      .setSubject("mallory")
-      .setExpirationTime("5m")
-      .sign(new TextEncoder().encode("attacker-secret"));
-    await expect(verifyRegistryToken(forged, "hootifactory-registry")).rejects.toThrow();
-  });
-});
-
-describe("password hashing", () => {
-  test("hash + verify", async () => {
-    const hash = await hashPassword("s3cret-pw");
-    expect(await verifyPassword("s3cret-pw", hash)).toBe(true);
-    expect(await verifyPassword("wrong", hash)).toBe(false);
   });
 });

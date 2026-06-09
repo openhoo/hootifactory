@@ -4,24 +4,23 @@ import { DEFAULT_TOKEN_TTL_MS, resolveCreateApiTokenRequest } from "./create-tok
 const now = new Date("2026-06-02T12:00:00.000Z");
 
 describe("create API token request resolution", () => {
-  test("defaults grantless tokens to developer role and a 90-day expiry", () => {
-    const request = resolveCreateApiTokenRequest({ name: "ci", type: "personal" }, now);
+  test("defaults token type and a 90-day expiry", () => {
+    const request = resolveCreateApiTokenRequest({ name: "ci" }, now);
 
     expect(request).toEqual({
       name: "ci",
       type: "personal",
       grants: [],
-      requestedRole: "developer",
       expiresAt: new Date(now.getTime() + DEFAULT_TOKEN_TTL_MS),
     });
   });
 
-  test("does not add a role to explicitly granted tokens", () => {
+  test("preserves explicit grants", () => {
     const request = resolveCreateApiTokenRequest(
       {
         name: "reader",
         type: "robot",
-        grants: [{ resource: "repository", repository: "packages", actions: ["read"] }],
+        grants: [{ permission: "repository.read", repository: "packages" }],
       },
       now,
     );
@@ -29,22 +28,18 @@ describe("create API token request resolution", () => {
     expect(request).toMatchObject({
       name: "reader",
       type: "robot",
-      requestedRole: undefined,
-      grants: [{ resource: "repository", repository: "packages", actions: ["read"] }],
+      grants: [{ permission: "repository.read", repository: "packages" }],
     });
   });
 
-  test("preserves explicit role and expiry choices", () => {
+  test("preserves explicit expiry choices", () => {
     const expiresAt = new Date("2026-07-01T00:00:00.000Z");
-    expect(
-      resolveCreateApiTokenRequest(
-        { name: "admin", type: "personal", role: "admin", expiresAt },
-        now,
-      ),
-    ).toMatchObject({ requestedRole: "admin", expiresAt });
+    expect(resolveCreateApiTokenRequest({ name: "admin", expiresAt }, now)).toMatchObject({
+      expiresAt,
+    });
 
-    expect(
-      resolveCreateApiTokenRequest({ name: "forever", type: "personal", expiresAt: null }, now),
-    ).toMatchObject({ requestedRole: "developer", expiresAt: null });
+    expect(resolveCreateApiTokenRequest({ name: "forever", expiresAt: null }, now)).toMatchObject({
+      expiresAt: null,
+    });
   });
 });

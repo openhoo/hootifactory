@@ -1,6 +1,5 @@
 import { gunzipSync } from "node:zlib";
 import { expect, test } from "@playwright/test";
-// biome-ignore lint/style/useImportType: buildApkFixture is a runtime value.
 import { buildApkFixture } from "../../packages/registry-alpine/src/apk-fixture";
 import { CLI_IMAGES, dockerReachableUrl, dockerRun, ensureDockerAvailable } from "./docker-clients";
 import { createRepoReturning, setupOwner } from "./helpers";

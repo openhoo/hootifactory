@@ -1,5 +1,3 @@
-import type { RoleName } from "./permissions";
-
 export const OIDC_PROVIDER = "oidc";
 
 export interface OidcProviderConfig {
@@ -15,11 +13,11 @@ export interface OidcProviderConfig {
 
 export interface OidcGroupGrant {
   org: string;
-  role: RoleName;
+  group: string;
   groups: string[];
 }
 
-export type OidcGroupMappings = Record<string, { org: string; role: RoleName }[]>;
+export type OidcGroupMappings = Record<string, { org: string; group: string }[]>;
 
 export interface SignedOidcState {
   state: string;

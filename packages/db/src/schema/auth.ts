@@ -1,4 +1,4 @@
-import type { TokenGrant } from "@hootifactory/types";
+import type { PermissionKey, PolicyName, TokenTarget } from "@hootifactory/types";
 import { sql } from "drizzle-orm";
 import {
   check,
@@ -13,9 +13,9 @@ import {
   varchar,
 } from "drizzle-orm/pg-core";
 import { primaryId, timestamps } from "./_helpers";
-import { authEmailTokenPurposeEnum, roleNameEnum, tokenTypeEnum } from "./enums";
+import { authEmailTokenPurposeEnum, tokenTypeEnum } from "./enums";
 import { repositories } from "./repositories";
-import { organizations, users } from "./tenancy";
+import { groups, organizations, users } from "./tenancy";
 
 export type { TokenAction, TokenGrant } from "@hootifactory/types";
 
@@ -36,10 +36,6 @@ export const apiTokens = pgTable(
     name: text().notNull(),
     tokenHash: varchar({ length: 64 }).notNull().unique(),
     tokenPrefix: varchar({ length: 16 }).notNull(),
-    /** Fine-grained grants; an empty list means the token inherits its owner/robot role. */
-    grants: jsonb().$type<TokenGrant[]>().notNull().default([]),
-    /** Robot tokens may carry an explicit role at org scope. */
-    role: roleNameEnum(),
     expiresAt: timestamp({ withTimezone: true }),
     revokedAt: timestamp({ withTimezone: true }),
     revokedByUserId: uuid(),
@@ -55,6 +51,89 @@ export const apiTokens = pgTable(
     index("api_tokens_prefix_idx").on(t.tokenPrefix),
     index("api_tokens_org_idx").on(t.orgId),
     index("api_tokens_owner_idx").on(t.ownerUserId),
+  ],
+);
+
+export const permissionGrants = pgTable(
+  "permission_grants",
+  {
+    id: primaryId(),
+    orgId: uuid().references(() => organizations.id, { onDelete: "cascade" }),
+    userId: uuid().references(() => users.id, { onDelete: "cascade" }),
+    groupId: uuid().references(() => groups.id, { onDelete: "cascade" }),
+    tokenId: uuid().references(() => apiTokens.id, { onDelete: "cascade" }),
+    permission: text().$type<PermissionKey>().notNull(),
+    repositoryId: uuid().references(() => repositories.id, { onDelete: "cascade" }),
+    repositoryPattern: text(),
+    packagePattern: text(),
+    artifactPattern: text(),
+    policy: text().$type<PolicyName>(),
+    tokenTarget: text().$type<TokenTarget>(),
+    targetTokenId: uuid().references(() => apiTokens.id, { onDelete: "cascade" }),
+    grantedByUserId: uuid().references(() => users.id, { onDelete: "set null" }),
+    source: varchar({ length: 32 }),
+    ...timestamps(),
+  },
+  (t) => [
+    index("permission_grants_org_idx").on(t.orgId),
+    index("permission_grants_user_idx").on(t.userId),
+    index("permission_grants_group_idx").on(t.groupId),
+    index("permission_grants_token_idx").on(t.tokenId),
+    index("permission_grants_repository_idx").on(t.repositoryId),
+    uniqueIndex("permission_grants_user_scope_uq")
+      .on(
+        t.userId,
+        t.orgId,
+        t.permission,
+        t.repositoryId,
+        t.repositoryPattern,
+        t.packagePattern,
+        t.artifactPattern,
+        t.policy,
+        t.tokenTarget,
+        t.targetTokenId,
+      )
+      .where(sql`${t.userId} is not null`),
+    uniqueIndex("permission_grants_group_scope_uq")
+      .on(
+        t.groupId,
+        t.orgId,
+        t.permission,
+        t.repositoryId,
+        t.repositoryPattern,
+        t.packagePattern,
+        t.artifactPattern,
+        t.policy,
+        t.tokenTarget,
+        t.targetTokenId,
+      )
+      .where(sql`${t.groupId} is not null`),
+    uniqueIndex("permission_grants_token_scope_uq")
+      .on(
+        t.tokenId,
+        t.orgId,
+        t.permission,
+        t.repositoryId,
+        t.repositoryPattern,
+        t.packagePattern,
+        t.artifactPattern,
+        t.policy,
+        t.tokenTarget,
+        t.targetTokenId,
+      )
+      .where(sql`${t.tokenId} is not null`),
+    check(
+      "permission_grants_one_subject_ck",
+      sql`num_nonnulls(${t.userId}, ${t.groupId}, ${t.tokenId}) = 1`,
+    ),
+    check(
+      "permission_grants_scoped_ck",
+      sql`(
+        (${t.permission} = 'system.admin' and ${t.orgId} is null and ${t.userId} is not null and ${t.groupId} is null and ${t.tokenId} is null and ${t.repositoryId} is null and ${t.repositoryPattern} is null and ${t.packagePattern} is null and ${t.artifactPattern} is null and ${t.policy} is null and ${t.tokenTarget} is null and ${t.targetTokenId} is null)
+        or
+        (${t.permission} <> 'system.admin' and ${t.orgId} is not null)
+      )`,
+    ),
   ],
 );
 
@@ -131,46 +210,6 @@ export const emailDeliveries = pgTable(
   (t) => [uniqueIndex("email_deliveries_delivery_key_uq").on(t.deliveryKey)],
 );
 
-/**
- * Repo-scoped (or org-wide when repositoryId is null) role assignments that
- * override org membership. Most-specific binding wins (resolved in code).
- */
-export const roleBindings = pgTable(
-  "role_bindings",
-  {
-    id: primaryId(),
-    orgId: uuid()
-      .notNull()
-      .references(() => organizations.id, { onDelete: "cascade" }),
-    userId: uuid().references(() => users.id, { onDelete: "cascade" }),
-    tokenId: uuid().references(() => apiTokens.id, { onDelete: "cascade" }),
-    repositoryId: uuid().references(() => repositories.id, { onDelete: "cascade" }),
-    role: roleNameEnum().notNull(),
-    ...timestamps(),
-  },
-  (t) => [
-    index("role_bindings_org_idx").on(t.orgId),
-    index("role_bindings_user_idx").on(t.userId),
-    index("role_bindings_token_idx").on(t.tokenId),
-    index("role_bindings_repository_idx").on(t.repositoryId),
-    check("role_bindings_one_subject_ck", sql`(${t.userId} is null) <> (${t.tokenId} is null)`),
-    uniqueIndex("role_bindings_user_repo_uq")
-      .on(t.orgId, t.userId, t.repositoryId)
-      .where(sql`${t.userId} is not null`),
-    // A partial unique index dedupes org-wide user bindings (repositoryId IS NULL),
-    // which the composite index above leaves distinct because NULLs are distinct.
-    uniqueIndex("role_bindings_user_org_uq")
-      .on(t.orgId, t.userId)
-      .where(sql`${t.userId} is not null and ${t.repositoryId} is null`),
-    uniqueIndex("role_bindings_token_repo_uq")
-      .on(t.orgId, t.tokenId, t.repositoryId)
-      .where(sql`${t.tokenId} is not null`),
-    uniqueIndex("role_bindings_token_org_uq")
-      .on(t.orgId, t.tokenId)
-      .where(sql`${t.tokenId} is not null and ${t.repositoryId} is null`),
-  ],
-);
-
 /** External identity links for SSO providers. */
 export const externalIdentities = pgTable(
   "external_identities",
@@ -189,34 +228,5 @@ export const externalIdentities = pgTable(
   (t) => [
     uniqueIndex("external_identities_provider_subject_uq").on(t.provider, t.issuer, t.subject),
     index("external_identities_user_idx").on(t.userId),
-  ],
-);
-
-/** Org-wide roles managed by an external auth provider and refreshed at login. */
-export const externalRoleGrants = pgTable(
-  "external_role_grants",
-  {
-    id: primaryId(),
-    provider: varchar({ length: 32 }).notNull(),
-    issuer: text().notNull(),
-    userId: uuid()
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
-    orgId: uuid()
-      .notNull()
-      .references(() => organizations.id, { onDelete: "cascade" }),
-    role: roleNameEnum().notNull(),
-    groups: jsonb().$type<string[]>().notNull().default([]),
-    ...timestamps(),
-  },
-  (t) => [
-    uniqueIndex("external_role_grants_provider_user_org_uq").on(
-      t.provider,
-      t.issuer,
-      t.userId,
-      t.orgId,
-    ),
-    index("external_role_grants_user_idx").on(t.userId),
-    index("external_role_grants_org_idx").on(t.orgId),
   ],
 );

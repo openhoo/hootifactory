@@ -44,11 +44,11 @@ describe("http route helpers", () => {
 
     const forbidden = denied(context(), {
       allowed: false,
-      code: "insufficient_role",
-      reason: "role does not grant write",
+      code: "insufficient_scope",
+      reason: "scope does not grant write",
     });
     expect(forbidden.status).toBe(403);
-    expect(await forbidden.json()).toEqual({ error: "role does not grant write" });
+    expect(await forbidden.json()).toEqual({ error: "scope does not grant write" });
   });
 
   test("audit forwards the entry to the writer (fire-and-forget)", async () => {

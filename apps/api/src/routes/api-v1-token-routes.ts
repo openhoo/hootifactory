@@ -3,6 +3,7 @@ import {
   createApiToken,
   getApiTokenById,
   getApiTokenWithOwner,
+  getTokenGrants,
   principalActor,
   resolveCreateApiTokenRequest,
   revokeToken,
@@ -64,7 +65,7 @@ export function registerApiV1TokenRoutes(apiV1Router: Hono<AppEnv>) {
       );
       return listResponse(
         c,
-        page.map((row) => tokenDto(row.token, row.ownerUsername)),
+        page.map((row) => tokenDto(row.token, row.ownerUsername, row.grants)),
         { limit: pagination.data.limit, offset: pagination.data.offset, total: rows.length },
       );
     },
@@ -105,7 +106,6 @@ export function registerApiV1TokenRoutes(apiV1Router: Hono<AppEnv>) {
       const grant = await validateCreatedTokenGrant({
         principal: user.principal,
         orgId: params.data.orgId,
-        requestedRole: request.requestedRole,
         grants: request.grants,
       });
       if (!grant.ok) return authorizationDenied(c, grant.decision);
@@ -115,7 +115,6 @@ export function registerApiV1TokenRoutes(apiV1Router: Hono<AppEnv>) {
         name: request.name,
         type: request.type,
         grants: request.grants,
-        role: request.requestedRole,
         expiresAt: request.expiresAt,
       });
       audit({
@@ -127,7 +126,11 @@ export function registerApiV1TokenRoutes(apiV1Router: Hono<AppEnv>) {
         principal: user.principal,
         detail: { name: token.name, type: token.type },
       });
-      return dataResponse(c, { token: tokenDto(token, user.principal.username), secret }, 201);
+      return dataResponse(
+        c,
+        { token: tokenDto(token, user.principal.username, request.grants), secret },
+        201,
+      );
     },
   );
 
@@ -148,7 +151,7 @@ export function registerApiV1TokenRoutes(apiV1Router: Hono<AppEnv>) {
       if (!row) return errorResponse(c, 404, "NOT_FOUND", "token not found");
       const decision = await tokenResourceDecision(c.get("principal"), row.token, "read");
       if (!decision.allowed) return authorizationDenied(c, decision);
-      return dataResponse(c, tokenDto(row.token, row.ownerUsername));
+      return dataResponse(c, tokenDto(row.token, row.ownerUsername, row.grants));
     },
   );
 
@@ -182,7 +185,10 @@ export function registerApiV1TokenRoutes(apiV1Router: Hono<AppEnv>) {
         resourceId: token.id,
         principal: c.get("principal"),
       });
-      return dataResponse(c, { token: tokenDto(rotated.token), secret: rotated.secret });
+      return dataResponse(c, {
+        token: tokenDto(rotated.token, null, await getTokenGrants(rotated.token.id)),
+        secret: rotated.secret,
+      });
     },
   );
 

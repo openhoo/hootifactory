@@ -100,12 +100,20 @@ export async function authorizeArtifactFindings(
   c: Context<AppEnv>,
   row: ArtifactWithRepositoryRow,
 ) {
+  if (c.get("principal").kind === "anonymous") {
+    return authorizationDenied(c, {
+      allowed: false,
+      code: "unauthenticated",
+      reason: "authentication required",
+    });
+  }
   const decision = await authorize(c.get("principal"), "read", {
-    type: "policy",
+    type: "artifact",
     orgId: row.repo.orgId,
     repositoryId: row.repo.id,
     repositoryName: row.repo.name,
-    policy: "scan",
+    artifactRef: row.art.digest,
+    visibility: row.repo.visibility,
   });
   if (decision.allowed) return undefined;
   return authorizationDenied(c, decision);
@@ -148,10 +156,10 @@ export async function listAccessibleRepositories(
   }
 
   const rows = await listRepositoriesForOrg(orgId);
-  // Each authorize resolves role bindings via the DB, so the previous serial loop
+  // Each authorize resolves permission grants via the DB, so the previous serial loop
   // was O(n) sequential round-trips. Run them with bounded concurrency instead.
   // (An accurate `total` of accessible repos still requires scanning the org's
-  // repos; pushing the visibility/role filter into SQL would be a larger follow-up.)
+  // repos; pushing the visibility/permission filter into SQL would be a larger follow-up.)
   const decisions = await mapWithBoundedConcurrency(rows, 16, (repo) =>
     requestAuthorize("read", {
       type: "repository",

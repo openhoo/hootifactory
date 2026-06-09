@@ -15,7 +15,7 @@ import {
   requireOrg,
 } from "./api-v1-access";
 
-// Anonymous principals are authorized purely (no role bindings to load), so every
+// Anonymous principals are authorized purely (no permission grants to load), so every
 // authorize() call here denies without touching the database.
 function anonContext() {
   return {

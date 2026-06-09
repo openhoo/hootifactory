@@ -44,6 +44,24 @@ const expectedOperations = [
   "POST /repositories/{repoId}/retention/apply",
   "POST /repositories/{repoId}/upstreams",
   "POST /repositories/{repoId}/members",
+  "GET /permissions",
+  "GET /users",
+  "POST /users",
+  "PATCH /users/{userId}",
+  "POST /users/{userId}/active",
+  "POST /users/{userId}/password",
+  "GET /orgs/{orgId}/memberships",
+  "POST /orgs/{orgId}/memberships",
+  "DELETE /orgs/{orgId}/memberships/{userId}",
+  "GET /orgs/{orgId}/groups",
+  "POST /orgs/{orgId}/groups",
+  "PATCH /orgs/{orgId}/groups/{groupId}",
+  "DELETE /orgs/{orgId}/groups/{groupId}",
+  "GET /orgs/{orgId}/groups/{groupId}/members",
+  "POST /orgs/{orgId}/groups/{groupId}/members",
+  "DELETE /orgs/{orgId}/groups/{groupId}/members/{userId}",
+  "GET /orgs/{orgId}/groups/{groupId}/permissions",
+  "PUT /orgs/{orgId}/groups/{groupId}/permissions",
   "GET /orgs/{orgId}/tokens",
   "POST /orgs/{orgId}/tokens",
   "GET /tokens/{tokenId}",
@@ -115,6 +133,6 @@ describe("API v1 OpenAPI contracts", () => {
         ?.schema;
     expect(createToken?.description).toBe("Grants-based API token creation request.");
     expect(createToken?.required).toContain("grants");
-    expect(JSON.stringify(createToken)).toContain("Fine-grained token grants.");
+    expect(JSON.stringify(createToken)).toContain("Fine-grained token permission grants.");
   });
 });

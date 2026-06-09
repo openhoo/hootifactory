@@ -1,4 +1,0 @@
-CREATE INDEX "role_bindings_token_idx" ON "role_bindings" USING btree ("token_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "role_bindings_token_repo_uq" ON "role_bindings" USING btree ("org_id","token_id","repository_id") WHERE "role_bindings"."token_id" is not null;--> statement-breakpoint
-CREATE UNIQUE INDEX "role_bindings_token_org_uq" ON "role_bindings" USING btree ("org_id","token_id") WHERE "role_bindings"."token_id" is not null and "role_bindings"."repository_id" is null;--> statement-breakpoint
-ALTER TABLE "role_bindings" ADD CONSTRAINT "role_bindings_one_subject_ck" CHECK (("role_bindings"."user_id" is null) <> ("role_bindings"."token_id" is null));

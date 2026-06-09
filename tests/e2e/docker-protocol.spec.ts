@@ -311,7 +311,7 @@ test.describe("docker registry protocol authorization", () => {
       await (
         await createToken(owner.ctx, owner.orgId, {
           name: "oci-reader",
-          grants: [{ resource: "repository", repository: imageName, actions: ["read"] }],
+          grants: [{ permission: "repository.read", repository: imageName }],
         })
       ).json()
     ).secret as string;
@@ -348,7 +348,7 @@ test.describe("docker registry protocol authorization", () => {
       await (
         await createToken(owner.ctx, owner.orgId, {
           name: "repo-name-only",
-          grants: [{ resource: "repository", repository: "containers", actions: ["read"] }],
+          grants: [{ permission: "repository.read", repository: "containers" }],
         })
       ).json()
     ).secret as string;
@@ -388,9 +388,8 @@ test.describe("docker registry protocol authorization", () => {
           name: "app-reader",
           grants: [
             {
-              resource: "repository",
+              permission: "repository.read",
               repository: `${owner.orgSlug}/containers/app`,
-              actions: ["read"],
             },
           ],
         })
@@ -412,9 +411,8 @@ test.describe("docker registry protocol authorization", () => {
           name: "other-reader",
           grants: [
             {
-              resource: "repository",
+              permission: "repository.read",
               repository: `${owner.orgSlug}/containers/other`,
-              actions: ["read"],
             },
           ],
         })
@@ -444,9 +442,12 @@ test.describe("docker registry protocol authorization", () => {
           name: "other-deleter",
           grants: [
             {
-              resource: "repository",
+              permission: "repository.read",
               repository: `${owner.orgSlug}/containers/other`,
-              actions: ["read", "delete"],
+            },
+            {
+              permission: "repository.delete",
+              repository: `${owner.orgSlug}/containers/other`,
             },
           ],
         })
@@ -880,9 +881,8 @@ test.describe("docker registry protocol authorization", () => {
           name: "resumable-reader",
           grants: [
             {
-              resource: "repository",
+              permission: "repository.read",
               repository: `${owner.orgSlug}/containers/resumable`,
-              actions: ["read"],
             },
           ],
         })

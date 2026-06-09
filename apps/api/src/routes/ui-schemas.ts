@@ -1,11 +1,9 @@
 import { z } from "@hootifactory/core";
 import { isValidRepositoryPattern, POLICY_MODES, SEVERITIES } from "@hootifactory/scan-core";
 import {
-  ACTIONS,
-  type Action,
+  PERMISSION_KEYS,
   POLICY_NAMES,
   REPO_KINDS,
-  ROLE_NAMES,
   TOKEN_TARGETS,
   TOKEN_TYPES,
   type TokenGrant,
@@ -14,13 +12,12 @@ import {
 
 export type ParsedTokenGrant = TokenGrant;
 
-const RoleNameSchema = z.enum(ROLE_NAMES);
-const ActionSchema = z.enum(ACTIONS);
 export const RepoKindSchema = z.enum(REPO_KINDS);
 export const VisibilitySchema = z.enum(VISIBILITIES);
 const PolicyModeSchema = z.enum(POLICY_MODES);
 const TokenTypeSchema = z.enum(TOKEN_TYPES);
 const SeveritySchema = z.enum(SEVERITIES);
+const PermissionKeySchema = z.enum(PERMISSION_KEYS);
 const RegistryModuleIdSchema = z
   .string()
   .trim()
@@ -28,17 +25,6 @@ const RegistryModuleIdSchema = z
   .max(128)
   .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/);
 const OptionalDescriptionSchema = z.string().trim().max(2048).optional();
-const TokenActionsSchema = z
-  .array(ActionSchema)
-  .min(1)
-  .max(4)
-  .transform((actions): Action[] => {
-    const deduped: Action[] = [];
-    for (const action of actions) {
-      if (!deduped.includes(action)) deduped.push(action);
-    }
-    return deduped;
-  });
 const TokenPatternSchema = z.string().trim().min(1).max(512);
 
 export const PaginationQuerySchema = z.strictObject({
@@ -93,46 +79,20 @@ export const CreateRepositoryBodySchema = z.strictObject({
 });
 export type CreateRepositoryBody = z.output<typeof CreateRepositoryBodySchema>;
 
-export const TokenGrantSchema = z.discriminatedUnion("resource", [
-  z.strictObject({
-    resource: z.literal("org"),
-    actions: TokenActionsSchema,
-  }),
-  z.strictObject({
-    resource: z.literal("repository"),
-    repository: TokenPatternSchema,
-    actions: TokenActionsSchema,
-  }),
-  z.strictObject({
-    resource: z.literal("package"),
-    repository: TokenPatternSchema,
-    package: TokenPatternSchema,
-    actions: TokenActionsSchema,
-  }),
-  z.strictObject({
-    resource: z.literal("artifact"),
-    repository: TokenPatternSchema,
-    artifact: TokenPatternSchema,
-    actions: TokenActionsSchema,
-  }),
-  z.strictObject({
-    resource: z.literal("policy"),
-    policy: z.enum(POLICY_NAMES),
-    repository: TokenPatternSchema.optional(),
-    actions: TokenActionsSchema,
-  }),
-  z.strictObject({
-    resource: z.literal("token"),
-    target: z.enum(TOKEN_TARGETS),
-    actions: TokenActionsSchema,
-  }),
-]);
+export const TokenGrantSchema = z.strictObject({
+  permission: PermissionKeySchema,
+  repository: TokenPatternSchema.optional(),
+  package: TokenPatternSchema.optional(),
+  artifact: TokenPatternSchema.optional(),
+  policy: z.enum(POLICY_NAMES).optional(),
+  tokenTarget: z.enum(TOKEN_TARGETS).optional(),
+  tokenId: z.uuid().optional(),
+});
 
 export const CreateTokenBodySchema = z.strictObject({
   name: z.string().trim().min(1).max(256),
   type: TokenTypeSchema.default("personal"),
-  grants: z.array(TokenGrantSchema).max(100).optional(),
-  role: RoleNameSchema.optional(),
+  grants: z.array(TokenGrantSchema).min(1).max(100),
   expiresAt: z.union([z.iso.datetime().transform((value) => new Date(value)), z.null()]).optional(),
 });
 export type CreateTokenBody = z.output<typeof CreateTokenBodySchema>;
@@ -141,7 +101,6 @@ export const CreateTokenV1BodySchema = z.strictObject({
   name: z.string().trim().min(1).max(256),
   type: TokenTypeSchema.default("personal"),
   grants: z.array(TokenGrantSchema).min(1).max(100),
-  role: RoleNameSchema.optional(),
   expiresAt: z.union([z.iso.datetime().transform((value) => new Date(value)), z.null()]).optional(),
 });
 export type CreateTokenV1Body = z.output<typeof CreateTokenV1BodySchema>;

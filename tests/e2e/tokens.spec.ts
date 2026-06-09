@@ -1,78 +1,13 @@
-import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { type APIRequestContext, expect, test } from "@playwright/test";
-import { anonContext, createRepo, createToken, setupOwner, uniq } from "./helpers";
-
-const TEST_DATABASE_URL =
-  process.env.E2E_DATABASE_URL ??
-  "postgres://hootifactory:hootifactory@localhost:5432/hootifactory_test";
-
-function insertRoleBinding(input: {
-  orgId: string;
-  userId: string;
-  repositoryId: string;
-  role: "viewer" | "developer" | "admin" | "owner";
-}): void {
-  execFileSync(
-    "bun",
-    [
-      "-e",
-      [
-        'import { db, roleBindings } from "@hootifactory/db";',
-        "await db.insert(roleBindings).values({",
-        "  orgId: process.env.ORG_ID,",
-        "  userId: process.env.USER_ID,",
-        "  repositoryId: process.env.REPOSITORY_ID,",
-        "  role: process.env.ROLE,",
-        "});",
-      ].join("\n"),
-    ],
-    {
-      env: {
-        ...process.env,
-        DATABASE_URL: TEST_DATABASE_URL,
-        ORG_ID: input.orgId,
-        USER_ID: input.userId,
-        REPOSITORY_ID: input.repositoryId,
-        ROLE: input.role,
-      },
-      stdio: "pipe",
-      encoding: "utf8",
-    },
-  );
-}
-
-function insertOrgRoleBinding(input: {
-  orgId: string;
-  userId: string;
-  role: "viewer" | "developer" | "admin" | "owner";
-}): void {
-  execFileSync(
-    "bun",
-    [
-      "-e",
-      [
-        'import { db, roleBindings } from "@hootifactory/db";',
-        "await db.insert(roleBindings).values({",
-        "  orgId: process.env.ORG_ID,",
-        "  userId: process.env.USER_ID,",
-        "  role: process.env.ROLE,",
-        "});",
-      ].join("\n"),
-    ],
-    {
-      env: {
-        ...process.env,
-        DATABASE_URL: TEST_DATABASE_URL,
-        ORG_ID: input.orgId,
-        USER_ID: input.userId,
-        ROLE: input.role,
-      },
-      stdio: "pipe",
-      encoding: "utf8",
-    },
-  );
-}
+import {
+  anonContext,
+  createRepo,
+  createToken,
+  grantUserPermissions,
+  setupOwner,
+  uniq,
+} from "./helpers";
 
 function sha256(bytes: Buffer | string): string {
   return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
@@ -101,12 +36,15 @@ async function publishRawNpm(ctx: APIRequestContext, mountPath: string, pkgName:
 test.describe("api tokens", () => {
   test("create -> bearer works -> list -> revoke -> bearer fails", async ({ baseURL }) => {
     const owner = await setupOwner(baseURL!);
-    const created = await createToken(owner.ctx, owner.orgId, { name: "ci-token" });
+    const created = await createToken(owner.ctx, owner.orgId, {
+      name: "ci-token",
+      grants: [{ permission: "repository.read", repository: "*" }],
+    });
     expect(created.status()).toBe(201);
     const { token, secret } = await created.json();
     expect(secret).toMatch(/^hoot_/);
     expect(token.ownerUsername).toBe(owner.username);
-    expect(token.role).toBe("developer");
+    expect(token.grants).toEqual([{ permission: "repository.read", repository: "*" }]);
     expect(Date.parse(token.expiresAt)).toBeGreaterThan(Date.now());
 
     const anon = await anonContext(baseURL!);
@@ -117,7 +55,7 @@ test.describe("api tokens", () => {
     const listed = list.tokens.find((t: { id: string }) => t.id === token.id);
     expect(listed).toBeTruthy();
     expect(listed.ownerUsername).toBe(owner.username);
-    expect(listed.role).toBe("developer");
+    expect(listed.grants).toEqual([{ permission: "repository.read", repository: "*" }]);
     expect(Date.parse(listed.expiresAt)).toBeGreaterThan(Date.now());
 
     const del = await owner.ctx.delete(`/api/orgs/${owner.orgId}/tokens/${token.id}`);
@@ -162,19 +100,26 @@ test.describe("api tokens", () => {
     const viewerMe = (await (await viewer.ctx.get("/api/me")).json()) as {
       principal: { userId: string };
     };
-    insertOrgRoleBinding({
+    grantUserPermissions({
       orgId: owner.orgId,
       userId: adminMe.principal.userId,
-      role: "admin",
+      grants: [
+        { permission: "org.read" },
+        { permission: "token.read", tokenTarget: "org" },
+        { permission: "token.revoke", tokenTarget: "org" },
+      ],
     });
-    insertOrgRoleBinding({
+    grantUserPermissions({
       orgId: owner.orgId,
       userId: viewerMe.principal.userId,
-      role: "viewer",
+      grants: [{ permission: "org.read" }],
     });
 
     const { token } = await (
-      await createToken(owner.ctx, owner.orgId, { name: "owner-token" })
+      await createToken(owner.ctx, owner.orgId, {
+        name: "owner-token",
+        grants: [{ permission: "repository.read", repository: "*" }],
+      })
     ).json();
 
     const adminList = await admin.ctx.get(`/api/orgs/${owner.orgId}/tokens`);
@@ -201,7 +146,7 @@ test.describe("api tokens", () => {
       await (
         await createToken(owner.ctx, owner.orgId, {
           name: "scoped",
-          grants: [{ resource: "repository", repository: "acme/*", actions: ["read"] }],
+          grants: [{ permission: "repository.read", repository: "acme/*" }],
         })
       ).json()
     ).secret as string;
@@ -213,15 +158,21 @@ test.describe("api tokens", () => {
       })
     ).json();
     expect(me.principal.grants[0]).toMatchObject({
-      resource: "repository",
+      permission: "repository.read",
       repository: "acme/*",
     });
   });
 
   test("a token cannot mint another token (login required)", async ({ baseURL }) => {
     const owner = await setupOwner(baseURL!);
-    const secret = (await (await createToken(owner.ctx, owner.orgId, { name: "t" })).json())
-      .secret as string;
+    const secret = (
+      await (
+        await createToken(owner.ctx, owner.orgId, {
+          name: "t",
+          grants: [{ permission: "repository.read", repository: "*" }],
+        })
+      ).json()
+    ).secret as string;
     const anon = await anonContext(baseURL!);
     const res = await anon.post(`/api/orgs/${owner.orgId}/tokens`, {
       headers: { authorization: `Bearer ${secret}` },
@@ -245,7 +196,7 @@ test.describe("api tokens", () => {
       await (
         await createToken(owner.ctx, owner.orgId, {
           name: "repo-reader",
-          grants: [{ resource: "repository", repository: repo.name, actions: ["read"] }],
+          grants: [{ permission: "repository.read", repository: repo.name }],
         })
       ).json()
     ).secret as string;
@@ -253,7 +204,7 @@ test.describe("api tokens", () => {
       await (
         await createToken(owner.ctx, owner.orgId, {
           name: "wrong-reader",
-          grants: [{ resource: "repository", repository: `${repo.name}-other`, actions: ["read"] }],
+          grants: [{ permission: "repository.read", repository: `${repo.name}-other` }],
         })
       ).json()
     ).secret as string;
@@ -288,24 +239,28 @@ test.describe("api tokens", () => {
     expect(denied.status()).toBe(403);
   });
 
-  test("repo-scoped demotion prevents minting write tokens for that repo", async ({ baseURL }) => {
+  test("repo-scoped reader cannot mint write tokens for that repo", async ({ baseURL }) => {
     const owner = await setupOwner(baseURL!);
-    const me = (await (await owner.ctx.get("/api/me")).json()) as {
-      principal: { userId: string };
-    };
+    const limited = await setupOwner(baseURL!);
     const repoName = uniq("demoted-repo");
     const repo = (
       await (await createRepo(owner.ctx, owner.orgId, { name: repoName, moduleId: "npm" })).json()
     ).repository as { id: string; name: string; mountPath: string };
-    insertRoleBinding({
+    const limitedMe = (await (await limited.ctx.get("/api/me")).json()) as {
+      principal: { userId: string };
+    };
+    grantUserPermissions({
       orgId: owner.orgId,
-      userId: me.principal.userId,
-      repositoryId: repo.id,
-      role: "viewer",
+      userId: limitedMe.principal.userId,
+      grants: [
+        { permission: "org.read" },
+        { permission: "token.create", tokenTarget: "org" },
+        { permission: "repository.read", repository: repo.name },
+      ],
     });
 
     const blockedPkgName = uniq("demoted-pkg");
-    const directWrite = await owner.ctx.put(`/${repo.mountPath}/${blockedPkgName}`, {
+    const directWrite = await limited.ctx.put(`/${repo.mountPath}/${blockedPkgName}`, {
       data: {
         name: blockedPkgName,
         versions: { "1.0.0": { name: blockedPkgName, version: "1.0.0" } },
@@ -317,69 +272,65 @@ test.describe("api tokens", () => {
     });
     expect(directWrite.status()).toBe(403);
 
-    const scopedWrite = await createToken(owner.ctx, owner.orgId, {
+    const scopedWrite = await createToken(limited.ctx, owner.orgId, {
       name: "repo-writer",
-      grants: [{ resource: "repository", repository: repo.name, actions: ["write"] }],
+      grants: [{ permission: "repository.write", repository: repo.name }],
     });
     expect(scopedWrite.status()).toBe(403);
     expect(await scopedWrite.json()).toMatchObject({
-      error: `cannot grant scope action 'write' on repository '${repo.name}'`,
+      error: "cannot grant permission 'repository.write' beyond your own access",
     });
-
-    const roleToken = await createToken(owner.ctx, owner.orgId, {
-      name: "role-writer",
-      role: "developer",
-    });
-    expect(roleToken.status()).toBe(403);
   });
 
-  test("repo-scoped demotion also caps image-path token grants", async ({ baseURL }) => {
+  test("repo-scoped reader also caps image-path token grants", async ({ baseURL }) => {
     const owner = await setupOwner(baseURL!);
-    const me = (await (await owner.ctx.get("/api/me")).json()) as {
-      principal: { userId: string };
-    };
+    const limited = await setupOwner(baseURL!);
     const repoName = uniq("demoted-containers");
     const repo = (
       await (
         await createRepo(owner.ctx, owner.orgId, { name: repoName, moduleId: "docker" })
       ).json()
     ).repository as { id: string; name: string; mountPath: string };
-    insertRoleBinding({
+    const limitedMe = (await (await limited.ctx.get("/api/me")).json()) as {
+      principal: { userId: string };
+    };
+    grantUserPermissions({
       orgId: owner.orgId,
-      userId: me.principal.userId,
-      repositoryId: repo.id,
-      role: "viewer",
+      userId: limitedMe.principal.userId,
+      grants: [
+        { permission: "org.read" },
+        { permission: "token.create", tokenTarget: "org" },
+        { permission: "repository.read", repository: repo.name },
+      ],
     });
 
     const bytes = Buffer.from("blocked layer");
-    const directWrite = await owner.ctx.post(
+    const directWrite = await limited.ctx.post(
       `/${repo.mountPath}/app/blobs/uploads?digest=${sha256(bytes)}`,
       { headers: { "content-type": "application/octet-stream" }, data: bytes },
     );
     expect(directWrite.status()).toBe(403);
 
-    const scopedWrite = await createToken(owner.ctx, owner.orgId, {
+    const scopedWrite = await createToken(limited.ctx, owner.orgId, {
       name: "oci-writer",
       grants: [
         {
-          resource: "repository",
+          permission: "repository.write",
           repository: `${owner.orgSlug}/${repo.name}/app`,
-          actions: ["write"],
         },
       ],
     });
     expect(scopedWrite.status()).toBe(403);
     expect(await scopedWrite.json()).toMatchObject({
-      error: `cannot grant scope action 'write' on repository '${repo.name}'`,
+      error: "cannot grant permission 'repository.write' beyond your own access",
     });
 
-    const scopedRead = await createToken(owner.ctx, owner.orgId, {
+    const scopedRead = await createToken(limited.ctx, owner.orgId, {
       name: "oci-reader",
       grants: [
         {
-          resource: "repository",
+          permission: "repository.read",
           repository: `${owner.orgSlug}/${repo.name}/app`,
-          actions: ["read"],
         },
       ],
     });

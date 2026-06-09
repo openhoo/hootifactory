@@ -1,5 +1,5 @@
-import type { Principal, RoleName, TokenGrant } from "@hootifactory/types";
-import { authorize } from "./authorize";
+import type { PermissionKey, Principal, TokenGrant } from "@hootifactory/types";
+import { authorize, authorizePermission } from "./authorize";
 import type { Action } from "./permissions";
 import type { Decision } from "./principal";
 import { validateTokenGrant } from "./token-grants";
@@ -25,14 +25,20 @@ function tokenTargetFor(principal: Principal, token: ApiTokenRow): "self" | "org
   return "org";
 }
 
+function tokenPermissionForAction(action: Action): PermissionKey {
+  if (action === "read") return "token.read";
+  if (action === "write") return "token.rotate";
+  if (action === "delete") return "token.revoke";
+  return "token.create";
+}
+
 export function tokenResourceDecision(
   principal: Principal,
   token: ApiTokenRow,
   action: Action,
 ): Promise<Decision> {
   const tokenTarget = tokenTargetFor(principal, token);
-  const requiredAction = tokenTarget === "org" ? "admin" : action;
-  return authorize(principal, requiredAction, {
+  return authorizePermission(principal, tokenPermissionForAction(action), {
     type: "token",
     orgId: token.orgId,
     tokenId: token.id,
@@ -42,20 +48,22 @@ export function tokenResourceDecision(
 
 export function authorizeTokenCreation(principal: Principal, orgId: string): Promise<Decision> {
   if (principal.kind !== "user") return Promise.resolve(unauthenticated());
-  return authorize(principal, "write", { type: "token", orgId, tokenTarget: "org" });
+  return authorizePermission(principal, "token.create", {
+    type: "token",
+    orgId,
+    tokenTarget: "org",
+  });
 }
 
 export async function validateCreatedTokenGrant(input: {
   principal: Principal;
   orgId: string;
-  requestedRole?: RoleName;
   grants: TokenGrant[];
 }): Promise<TokenManagementResult<undefined>> {
   if (input.principal.kind !== "user") return { ok: false, decision: unauthenticated() };
   const grant = await validateTokenGrant({
-    userId: input.principal.userId,
+    principal: input.principal,
     orgId: input.orgId,
-    requestedRole: input.requestedRole,
     grants: input.grants,
   });
   if (grant.ok) return { ok: true, value: undefined };
@@ -69,7 +77,7 @@ export async function visibleTokensForPrincipal(
   principal: Principal,
   orgId: string,
 ): Promise<TokenManagementResult<ApiTokenWithOwner[]>> {
-  const adminDecision = await authorize(principal, "admin", {
+  const adminDecision = await authorizePermission(principal, "token.read", {
     type: "token",
     orgId,
     tokenTarget: "org",

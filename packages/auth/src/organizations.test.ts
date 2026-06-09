@@ -5,51 +5,36 @@ import {
   createOrganizationWithOwner,
   getOrganizationById,
   listAccessibleOrgs,
-  mergeAccessibleOrgs,
+  ORG_OWNER_PERMISSIONS,
 } from "./organizations";
 
-describe("accessible org listing", () => {
-  test("deduplicates local and external grants by strongest role and sorts by slug", () => {
-    expect(
-      mergeAccessibleOrgs(
-        [
-          { id: "org-2", slug: "zeta", displayName: "Zeta", role: "admin" },
-          { id: "org-1", slug: "alpha", displayName: "Alpha", role: "viewer" },
-        ],
-        [
-          { id: "org-1", slug: "alpha", displayName: "Alpha", role: "developer" },
-          { id: "org-3", slug: "middle", displayName: "Middle", role: "owner" },
-        ],
-      ),
-    ).toEqual([
-      { id: "org-1", slug: "alpha", displayName: "Alpha", role: "developer" },
-      { id: "org-3", slug: "middle", displayName: "Middle", role: "owner" },
-      { id: "org-2", slug: "zeta", displayName: "Zeta", role: "admin" },
-    ]);
-  });
-
-  test("keeps local membership when it outranks an external grant", () => {
-    expect(
-      mergeAccessibleOrgs(
-        [{ id: "org-1", slug: "alpha", displayName: "Alpha", role: "owner" }],
-        [{ id: "org-1", slug: "alpha", displayName: "Alpha", role: "viewer" }],
-      ),
-    ).toEqual([{ id: "org-1", slug: "alpha", displayName: "Alpha", role: "owner" }]);
-  });
-});
-
 describe("listAccessibleOrgs", () => {
-  test("merges membership and external grants, keeping the strongest role per org", async () => {
+  test("returns membership orgs with sorted effective permission keys", async () => {
     await withFakeDb(db, async (fake) => {
       fake.queue([
-        { id: "org-1", slug: "alpha", displayName: "Alpha", role: "viewer" },
-        { id: "org-2", slug: "beta", displayName: "Beta", role: "admin" },
+        { id: "org-2", slug: "zeta", displayName: "Zeta" },
+        { id: "org-1", slug: "alpha", displayName: "Alpha" },
       ]);
-      fake.queue([{ id: "org-1", slug: "alpha", displayName: "Alpha", role: "owner" }]);
+      fake.queue([{ permission: "repository.write" }, { permission: "org.read" }]);
+      fake.queue([{ permission: "token.read" }, { permission: "repository.read" }]);
+      fake.queue([]);
+      fake.queue([]);
+
       const orgs = await listAccessibleOrgs("user-1");
+
       expect(orgs).toEqual([
-        { id: "org-1", slug: "alpha", displayName: "Alpha", role: "owner" },
-        { id: "org-2", slug: "beta", displayName: "Beta", role: "admin" },
+        {
+          id: "org-1",
+          slug: "alpha",
+          displayName: "Alpha",
+          permissions: ["repository.read", "token.read"],
+        },
+        {
+          id: "org-2",
+          slug: "zeta",
+          displayName: "Zeta",
+          permissions: ["org.read", "repository.write"],
+        },
       ]);
     });
   });
@@ -67,26 +52,32 @@ describe("getOrganizationById", () => {
 });
 
 describe("createOrganizationWithOwner", () => {
-  test("inserts the org then an owner membership in one transaction", async () => {
+  test("inserts the org, membership, and owner permission grants in one transaction", async () => {
     await withFakeDb(db, async (fake) => {
-      fake.queue([{ id: "org-9", slug: "gamma", displayName: "Gamma" }]); // org insert
-      fake.queue([]); // membership insert
+      fake.queue([{ id: "org-9", slug: "gamma", displayName: "Gamma" }]);
+      fake.queue([]);
+      fake.queue([]);
+
       const org = await createOrganizationWithOwner({
         slug: "gamma",
         displayName: "Gamma",
         description: "desc",
         ownerUserId: "owner-1",
       });
+
       expect(org.id).toBe("org-9");
-      const [orgInsert, memberInsert] = fake.queries;
+      const [orgInsert, memberInsert, grantInsert] = fake.queries;
       expect(orgInsert!.kind).toBe("insert");
       expect((orgInsert!.values as Record<string, unknown>).slug).toBe("gamma");
       expect(memberInsert!.kind).toBe("insert");
       expect(memberInsert!.values).toMatchObject({
         orgId: "org-9",
         userId: "owner-1",
-        role: "owner",
       });
+      expect(grantInsert!.kind).toBe("insert");
+      const grants = grantInsert!.values as Array<Record<string, unknown>>;
+      expect(grants).toHaveLength(ORG_OWNER_PERMISSIONS.length);
+      expect(grants[0]).toMatchObject({ orgId: "org-9", userId: "owner-1" });
     });
   });
 

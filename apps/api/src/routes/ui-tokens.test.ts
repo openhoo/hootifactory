@@ -13,7 +13,14 @@ const visibleTokensForPrincipal = mock(
       ok: false,
       decision: { allowed: false, code: "unauthenticated", reason: "login required" },
     }) as
-      | { ok: true; value: Array<{ token: Record<string, unknown>; ownerUsername: string | null }> }
+      | {
+          ok: true;
+          value: Array<{
+            token: Record<string, unknown>;
+            ownerUsername: string | null;
+            grants: unknown[];
+          }>;
+        }
       | { ok: false; decision: Decision },
 );
 const getApiTokenById = mock(async () => null as { id: string; orgId: string } | null);
@@ -44,8 +51,6 @@ function tokenRow() {
     name: "ci",
     tokenPrefix: "hoot_x",
     type: "personal",
-    grants: [],
-    role: null,
     expiresAt: null,
     revokedAt: null,
     revokedByUserId: null,
@@ -64,11 +69,10 @@ mock.module("@hootifactory/auth", () => ({
   createApiToken,
   getApiTokenById,
   principalActor: () => ({ userId: "user_1", tokenId: null }),
-  resolveCreateApiTokenRequest: (body: { name: string }) => ({
+  resolveCreateApiTokenRequest: (body: { name: string; grants?: unknown[]; type?: string }) => ({
     name: body.name,
-    type: "personal",
-    grants: [],
-    requestedRole: undefined,
+    type: body.type ?? "personal",
+    grants: body.grants ?? [],
     expiresAt: null,
   }),
   revokeToken,
@@ -91,6 +95,7 @@ const { registerTokenRoutes } = await import("./ui-tokens");
 const ORG_ID = "00000000-0000-4000-8000-000000000001";
 const TOKEN_ID = "00000000-0000-4000-8000-000000000002";
 const user: Principal = { kind: "user", userId: "user_1", username: "alice" };
+const tokenCreateBody = { name: "ci", grants: [{ permission: "org.read" }] };
 
 function appWith(principal: Principal = { kind: "anonymous" }) {
   const router = new Hono<AppEnv>();
@@ -143,7 +148,7 @@ describe("ui token routes", () => {
   test("GET tokens serializes the visible tokens", async () => {
     visibleTokensForPrincipal.mockResolvedValueOnce({
       ok: true,
-      value: [{ token: tokenRow(), ownerUsername: "alice" }],
+      value: [{ token: tokenRow(), ownerUsername: "alice", grants: [] }],
     });
     const res = await appWith(user).fetch(new Request(`http://localhost/orgs/${ORG_ID}/tokens`));
     expect(res.status).toBe(200);
@@ -185,13 +190,13 @@ describe("ui token routes", () => {
   });
 
   test("POST token requires a user principal", async () => {
-    const res = await appWith().fetch(postJson(`/orgs/${ORG_ID}/tokens`, { name: "ci" }));
+    const res = await appWith().fetch(postJson(`/orgs/${ORG_ID}/tokens`, tokenCreateBody));
     expect(res.status).toBe(401);
   });
 
   test("POST token denies unauthorized creation", async () => {
     requireUserResult = { ok: true, principal: user };
-    const res = await appWith(user).fetch(postJson(`/orgs/${ORG_ID}/tokens`, { name: "ci" }));
+    const res = await appWith(user).fetch(postJson(`/orgs/${ORG_ID}/tokens`, tokenCreateBody));
     expect(res.status).toBe(403);
   });
 
@@ -202,14 +207,14 @@ describe("ui token routes", () => {
       ok: false,
       decision: { allowed: false, code: "forbidden", reason: "grant too broad" },
     });
-    const res = await appWith(user).fetch(postJson(`/orgs/${ORG_ID}/tokens`, { name: "ci" }));
+    const res = await appWith(user).fetch(postJson(`/orgs/${ORG_ID}/tokens`, tokenCreateBody));
     expect(res.status).toBe(403);
   });
 
   test("POST token creates and returns the secret once", async () => {
     requireUserResult = { ok: true, principal: user };
     authorizeTokenCreation.mockResolvedValueOnce({ allowed: true });
-    const res = await appWith(user).fetch(postJson(`/orgs/${ORG_ID}/tokens`, { name: "ci" }));
+    const res = await appWith(user).fetch(postJson(`/orgs/${ORG_ID}/tokens`, tokenCreateBody));
     expect(res.status).toBe(201);
     const body = (await res.json()) as { token: { id: string }; secret: string };
     expect(body.secret).toBe("hoot_secret");

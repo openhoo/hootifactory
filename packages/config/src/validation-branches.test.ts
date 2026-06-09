@@ -44,16 +44,16 @@ describe("OIDC group mappings parsing", () => {
     expect(() =>
       loadEnv({
         AUTH_OIDC_GROUP_MAPPINGS: JSON.stringify({
-          devs: [{ org: "a", role: "developer" }],
+          devs: [{ org: "a", group: "developers" }],
         }),
       }),
     ).toThrow(/AUTH_OIDC_GROUP_MAPPINGS/);
 
-    // unknown role -> schema failure.
+    // invalid group slug -> schema failure.
     expect(() =>
       loadEnv({
         AUTH_OIDC_GROUP_MAPPINGS: JSON.stringify({
-          devs: [{ org: "acme", role: "not-a-role" }],
+          devs: [{ org: "acme", group: "-not-a-group" }],
         }),
       }),
     ).toThrow(/AUTH_OIDC_GROUP_MAPPINGS/);

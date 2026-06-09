@@ -10,10 +10,10 @@ describe("public @hootifactory/auth barrel", () => {
     expect(typeof auth.can).toBe("function"); // can
     expect(typeof auth.resolveCreateApiTokenRequest).toBe("function"); // create-token-request
     expect(typeof auth.createAuthEmailToken).toBe("function"); // email-tokens
-    expect(typeof auth.mapGroupsToOrgRoles).toBe("function"); // oidc
-    expect(typeof auth.mergeAccessibleOrgs).toBe("function"); // organizations
+    expect(typeof auth.mapGroupsToOrgGroups).toBe("function"); // oidc
+    expect(typeof auth.listAccessibleOrgs).toBe("function"); // organizations
     expect(typeof auth.hashPassword).toBe("function"); // password
-    expect(typeof auth.roleAllows).toBe("function"); // permissions
+    expect(typeof auth.permissionImplies).toBe("function"); // permissions
     expect(typeof auth.isAnonymous).toBe("function"); // principal
     expect(typeof auth.issueRegistryToken).toBe("function"); // registry-jwt
     expect(typeof auth.grantGrants).toBe("function"); // scope

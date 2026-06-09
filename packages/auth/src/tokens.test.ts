@@ -26,8 +26,6 @@ function tokenRow(overrides: Record<string, unknown> = {}): ApiTokenRow {
     ownerUserId: null,
     revokedAt: null,
     expiresAt: null,
-    grants: [],
-    role: null,
     type: "personal",
     ...overrides,
   } as unknown as ApiTokenRow;
@@ -57,32 +55,47 @@ describe("createApiToken", () => {
       expect(values.tokenHash).toBe(sha256hex(secret));
       expect(values.tokenPrefix).toBe(secret.slice(0, 12));
       expect(values.type).toBe("personal");
-      expect(values.grants).toEqual([]);
+      expect(values).not.toHaveProperty("grants");
+      expect(values).not.toHaveProperty("role");
       expect(values.ownerUserId).toBeNull();
     });
   });
 
-  test("forwards explicit owner, type, grants, role, and expiry", async () => {
+  test("forwards explicit owner, type, grants, and expiry", async () => {
     await withFakeDb(db, async (fake) => {
       const expiresAt = new Date("2030-01-01T00:00:00.000Z");
       fake.queue([tokenRow()]);
+      fake.queue([]);
       await createApiToken({
         orgId: "org-1",
         name: "robot",
         ownerUserId: "owner-1",
         type: "robot",
-        grants: [{ resource: "repository", repository: "acme/*", actions: ["read"] }],
-        role: "admin",
+        grants: [{ permission: "repository.read", repository: "acme/*" }],
         expiresAt,
       });
       const values = fake.queries[0]!.values as Record<string, unknown>;
       expect(values).toMatchObject({
         ownerUserId: "owner-1",
         type: "robot",
-        role: "admin",
         expiresAt,
       });
-      expect(values.grants).toHaveLength(1);
+      expect(values).not.toHaveProperty("grants");
+      expect(values).not.toHaveProperty("role");
+      expect(fake.queries[1]!.values).toEqual([
+        {
+          orgId: "org-1",
+          tokenId: "tok-1",
+          permission: "repository.read",
+          repositoryPattern: "acme/*",
+          packagePattern: null,
+          artifactPattern: null,
+          policy: null,
+          tokenTarget: null,
+          targetTokenId: null,
+          source: "token",
+        },
+      ]);
     });
   });
 
@@ -109,9 +122,11 @@ describe("token lookups", () => {
   test("getApiTokenWithOwner returns the joined row or null", async () => {
     await withFakeDb(db, async (fake) => {
       fake.queue([{ token: tokenRow(), ownerUsername: "alice" }]);
+      fake.queue([]);
       expect(await getApiTokenWithOwner("tok-1")).toEqual({
         token: tokenRow(),
         ownerUsername: "alice",
+        grants: [],
       });
       fake.queue([]);
       expect(await getApiTokenWithOwner("nope")).toBeNull();
@@ -120,11 +135,14 @@ describe("token lookups", () => {
 
   test("listOrgTokens / listOrgTokensOwnedBy return the joined rows", async () => {
     await withFakeDb(db, async (fake) => {
-      const rows = [{ token: tokenRow(), ownerUsername: null }];
+      const row = { token: tokenRow(), ownerUsername: null };
+      const rows = [row];
       fake.queue(rows);
-      expect(await listOrgTokens("org-1")).toBe(rows);
+      fake.queue([]);
+      expect(await listOrgTokens("org-1")).toEqual([{ ...row, grants: [] }]);
       fake.queue(rows);
-      expect(await listOrgTokensOwnedBy("org-1", "owner-1")).toBe(rows);
+      fake.queue([]);
+      expect(await listOrgTokensOwnedBy("org-1", "owner-1")).toEqual([{ ...row, grants: [] }]);
     });
   });
 });
@@ -157,6 +175,7 @@ describe("resolveToken", () => {
   test("returns a token principal for a live ownerless token", async () => {
     await withFakeDb(db, async (fake) => {
       fake.queue([{ token: tokenRow({ id: "tok-x", type: "robot" }), ownerIsActive: null }]);
+      fake.queue([{ permission: "repository.read", repositoryPattern: "acme/*" }]);
       const principal = await resolveToken("hoot_secret");
       expect(principal).toMatchObject({
         kind: "token",
@@ -165,6 +184,7 @@ describe("resolveToken", () => {
         ownerUserId: null,
         ownerUsername: null,
         isRobot: true,
+        grants: [{ permission: "repository.read", repository: "acme/*" }],
       });
     });
   });
@@ -178,6 +198,7 @@ describe("resolveToken", () => {
           ownerUsername: "alice",
         },
       ]);
+      fake.queue([]);
       const principal = await resolveToken("hoot_secret");
       expect(principal).toMatchObject({ ownerUserId: "owner-1", ownerUsername: "alice" });
     });

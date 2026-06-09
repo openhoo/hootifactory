@@ -25,7 +25,7 @@ export function registerTokenRoutes(router: Hono<AppEnv>): void {
     const visible = await visibleTokensForPrincipal(c.get("principal"), orgId);
     if (!visible.ok) return denied(c, visible.decision);
     return c.json({
-      tokens: visible.value.map((row) => tokenDto(row.token, row.ownerUsername)),
+      tokens: visible.value.map((row) => tokenDto(row.token, row.ownerUsername, row.grants)),
     });
   });
 
@@ -66,7 +66,6 @@ export function registerTokenRoutes(router: Hono<AppEnv>): void {
     const grant = await validateCreatedTokenGrant({
       principal: p,
       orgId,
-      requestedRole: request.requestedRole,
       grants: request.grants,
     });
     if (!grant.ok) return denied(c, grant.decision);
@@ -77,7 +76,6 @@ export function registerTokenRoutes(router: Hono<AppEnv>): void {
       name: request.name,
       type: request.type,
       grants: request.grants,
-      role: request.requestedRole,
       expiresAt: request.expiresAt,
     });
     audit({
@@ -89,6 +87,6 @@ export function registerTokenRoutes(router: Hono<AppEnv>): void {
       principal: p,
       detail: { name: token.name, type: token.type },
     });
-    return c.json({ token: tokenDto(token, p.username), secret }, 201);
+    return c.json({ token: tokenDto(token, p.username, request.grants), secret }, 201);
   });
 }

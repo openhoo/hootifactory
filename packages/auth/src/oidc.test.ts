@@ -2,13 +2,13 @@ import { describe, expect, test } from "bun:test";
 import {
   extractGroups,
   extractStringClaim,
-  mapGroupsToOrgRoles,
+  mapGroupsToOrgGroups,
   safeOidcReturnTo,
   signOidcState,
   verifyOidcState,
 } from "./oidc";
 
-describe("OIDC group -> role mapping", () => {
+describe("OIDC group -> local group mapping", () => {
   test("extractGroups handles array, string, and missing claims", () => {
     expect(extractGroups({ groups: ["a", "b"] }, "groups")).toEqual(["a", "b"]);
     expect(extractGroups({ roles: "admin" }, "roles")).toEqual(["admin"]);
@@ -24,19 +24,21 @@ describe("OIDC group -> role mapping", () => {
     expect(extractStringClaim({ profile: { email: 123 } }, "profile.email")).toBeNull();
   });
 
-  test("multi-org mappings keep the highest role per org", () => {
+  test("multi-org mappings keep each distinct local group", () => {
     expect(
-      mapGroupsToOrgRoles(["everyone", "developers", "platform-admins"], {
-        everyone: [{ org: "acme", role: "viewer" }],
+      mapGroupsToOrgGroups(["everyone", "developers", "platform-admins"], {
+        everyone: [{ org: "acme", group: "viewers" }],
         developers: [
-          { org: "acme", role: "developer" },
-          { org: "tools", role: "developer" },
+          { org: "acme", group: "developers" },
+          { org: "tools", group: "developers" },
         ],
-        "platform-admins": [{ org: "acme", role: "owner" }],
+        "platform-admins": [{ org: "acme", group: "admins" }],
       }),
     ).toEqual([
-      { org: "acme", role: "owner", groups: ["platform-admins"] },
-      { org: "tools", role: "developer", groups: ["developers"] },
+      { org: "acme", group: "viewers", groups: ["everyone"] },
+      { org: "acme", group: "developers", groups: ["developers"] },
+      { org: "tools", group: "developers", groups: ["developers"] },
+      { org: "acme", group: "admins", groups: ["platform-admins"] },
     ]);
   });
 

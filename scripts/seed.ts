@@ -8,8 +8,8 @@
  *
  *   bun run db:seed
  */
-import { createApiToken, hashPassword } from "@hootifactory/auth";
-import { and, db, eq, memberships, organizations, users } from "@hootifactory/db";
+import { createApiToken, hashPassword, ORG_OWNER_PERMISSIONS } from "@hootifactory/auth";
+import { and, db, eq, memberships, organizations, permissionGrants, users } from "@hootifactory/db";
 
 const isProduction = process.env.NODE_ENV === "production";
 
@@ -83,8 +83,24 @@ async function main() {
     .where(and(eq(memberships.userId, user.id), eq(memberships.orgId, org.id)))
     .limit(1);
   if (!member) {
-    await db.insert(memberships).values({ orgId: org.id, userId: user.id, role: "owner" });
-    console.log("created owner membership");
+    await db.insert(memberships).values({ orgId: org.id, userId: user.id });
+    console.log("created admin membership");
+  }
+  for (const permission of ORG_OWNER_PERMISSIONS) {
+    const [existing] = await db
+      .select({ id: permissionGrants.id })
+      .from(permissionGrants)
+      .where(
+        and(
+          eq(permissionGrants.orgId, org.id),
+          eq(permissionGrants.userId, user.id),
+          eq(permissionGrants.permission, permission),
+        ),
+      )
+      .limit(1);
+    if (!existing) {
+      await db.insert(permissionGrants).values({ orgId: org.id, userId: user.id, permission });
+    }
   }
 
   const token = shouldMintToken
@@ -92,7 +108,15 @@ async function main() {
         orgId: org.id,
         ownerUserId: user.id,
         name: "seed-token",
-        role: "owner",
+        grants: [
+          { permission: "repository.read", repository: "*" },
+          { permission: "repository.write", repository: "*" },
+          { permission: "repository.delete", repository: "*" },
+          { permission: "token.read" },
+          { permission: "token.create" },
+          { permission: "token.rotate" },
+          { permission: "token.revoke" },
+        ],
       })
     : null;
 

@@ -3,8 +3,8 @@ import { app } from "../app";
 import { registerAdapters } from "../bootstrap";
 
 // These exercise the route handlers through the real app with anonymous and
-// malformed requests. Anonymous principals are authorized purely (no role
-// bindings to load), so authorization denials and request-validation failures
+// malformed requests. Anonymous principals are authorized purely (no permission
+// grants to load), so authorization denials and request-validation failures
 // run end-to-end without any DB access. Happy-path/DB branches are covered by
 // the integration suite.
 registerAdapters();
@@ -109,7 +109,7 @@ describe("api v1 token guards", () => {
       (
         await fetchJson(
           `/api/v1/orgs/${UUID}/tokens`,
-          postJson({ name: "ci", grants: [{ resource: "org", actions: ["read"] }] }),
+          postJson({ name: "ci", grants: [{ permission: "org.read" }] }),
         )
       ).status,
     ).toBe(401);

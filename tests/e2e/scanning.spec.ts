@@ -439,7 +439,7 @@ test.describe("scanning + policy gates", () => {
       await (
         await createToken(owner.ctx, owner.orgId, {
           name: "public-scan-reader",
-          grants: [{ resource: "repository", repository: repo.name, actions: ["read"] }],
+          grants: [{ permission: "repository.read", repository: repo.name }],
         })
       ).json()
     ).secret as string;

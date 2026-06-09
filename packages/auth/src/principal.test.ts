@@ -10,7 +10,7 @@ describe("principal helpers", () => {
 
   test("httpStatusForDenial maps unauthenticated to 401 and everything else to 403", () => {
     expect(httpStatusForDenial({ allowed: false, code: "unauthenticated" } as Decision)).toBe(401);
-    expect(httpStatusForDenial({ allowed: false, code: "insufficient_role" } as Decision)).toBe(
+    expect(httpStatusForDenial({ allowed: false, code: "insufficient_scope" } as Decision)).toBe(
       403,
     );
     expect(httpStatusForDenial({ allowed: false, code: "forbidden" } as Decision)).toBe(403);

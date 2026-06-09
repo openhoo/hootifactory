@@ -55,6 +55,7 @@ test.describe("web UI (browser)", () => {
     // create an API token
     await page.getByRole("link", { name: "API Tokens" }).click();
     await page.getByTestId("token-name").fill("ci");
+    await page.getByTestId("token-repository").fill("uirepo");
     await page.getByTestId("token-create").click();
     await expect(page.getByTestId("token-secret")).toContainText(/hoot_/);
   });

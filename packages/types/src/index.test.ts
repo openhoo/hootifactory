@@ -17,7 +17,6 @@ import {
   isLogLevel,
   isPolicyName,
   isRepoKind,
-  isRoleName,
   isScannerCliRuntime,
   isTokenTarget,
   isUploadState,
@@ -26,7 +25,6 @@ import {
   POLICY_NAMES,
   REPO_KINDS,
   type RegistryModuleId,
-  ROLE_NAMES,
   SCANNER_CLI_RUNTIMES,
   TOKEN_TARGETS,
   TOKEN_TYPES,
@@ -40,7 +38,6 @@ describe("shared type constants", () => {
     expect(REPO_KINDS).toEqual(["hosted", "proxy", "virtual"]);
     expect(VISIBILITIES).toEqual(["private", "public"]);
     expect(ACTIONS).toEqual(["read", "write", "delete", "admin"]);
-    expect(ROLE_NAMES).toEqual(["viewer", "developer", "admin", "owner"]);
     expect(TOKEN_TYPES).toEqual(["personal", "robot"]);
     expect(BLOB_STATES).toEqual(["active", "pending_delete"]);
     expect(BLOB_STATE.pendingDelete).toBe("pending_delete");
@@ -66,8 +63,6 @@ describe("shared type constants", () => {
     expect(isVisibility("internal")).toBe(false);
     expect(isAction("write")).toBe(true);
     expect(isAction("publish")).toBe(false);
-    expect(isRoleName("developer")).toBe(true);
-    expect(isRoleName("superuser")).toBe(false);
     expect(isBlobState("pending_delete")).toBe(true);
     expect(isBlobState("deleted")).toBe(false);
     expect(isUploadState("committed")).toBe(true);

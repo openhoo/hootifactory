@@ -1,106 +1,87 @@
-import type { Action, RoleName } from "./permissions";
-import { roleAllows } from "./permissions";
+import type { PermissionGrantRow } from "./permission-grants";
+import { permissionGrantsAllow } from "./permission-grants";
+import type { Action, PermissionKey } from "./permissions";
+import { permissionForAction } from "./permissions";
 import type { Decision, Principal, ResourceRef } from "./principal";
-import { grantGrants } from "./scope";
 
 export interface CanInput {
   principal: Principal;
-  action: Action;
+  action?: Action;
+  permission?: PermissionKey;
   resource: ResourceRef;
-  /** Principal's resolved role in resource.org (for users and scope-less tokens). */
-  effectiveRole?: RoleName | null;
+  grants?: PermissionGrantRow[];
 }
 
-/** A token's effective role: the explicitly-resolved role, else the principal's own role. */
-function tokenRole(
-  principal: Extract<Principal, { kind: "token" }>,
-  effectiveRole?: RoleName | null,
-): RoleName | null {
-  return effectiveRole !== undefined ? effectiveRole : (principal.role ?? null);
+function requiredPermission(input: CanInput): PermissionKey {
+  if (input.permission) return input.permission;
+  if (!input.action) throw new Error("action or permission is required");
+  return permissionForAction(input.action, input.resource);
 }
 
-function denyRole(reason: string): Decision {
-  return { allowed: false, code: "insufficient_role", reason };
+function denyPermission(permission: PermissionKey): Decision {
+  return {
+    allowed: false,
+    code: "insufficient_scope",
+    reason: `permission '${permission}' is required`,
+  };
 }
 
 const ANONYMOUS_PUBLIC_READ_TYPES = new Set(["repository", "package", "artifact"]);
+const PUBLIC_READ_PERMISSIONS = new Set<PermissionKey>([
+  "repository.read",
+  "package.read",
+  "artifact.read",
+]);
 
 /**
- * The single authoritative authorization decision. Pure and synchronous so it
- * is exhaustively unit-testable. Role resolution + DB lookups happen in
- * authorize() which then calls this.
- *
- * Contract: denials for unauthenticated principals map to HTTP 401 (re-auth);
- * all other denials map to 403.
+ * Pure authorization decision. DB-backed subject/group/token grant resolution
+ * happens in authorize(), which then calls this.
  */
-export function can({ principal, action, resource, effectiveRole }: CanInput): Decision {
-  // ── anonymous ────────────────────────────────────────────────────────────
-  if (principal.kind === "anonymous") {
+export function can(input: CanInput): Decision {
+  const permission = requiredPermission(input);
+
+  if (input.principal.kind === "anonymous") {
     if (
-      action === "read" &&
-      resource.visibility === "public" &&
-      ANONYMOUS_PUBLIC_READ_TYPES.has(resource.type)
+      PUBLIC_READ_PERMISSIONS.has(permission) &&
+      input.resource.visibility === "public" &&
+      ANONYMOUS_PUBLIC_READ_TYPES.has(input.resource.type)
     ) {
       return { allowed: true };
     }
     return { allowed: false, code: "unauthenticated", reason: "authentication required" };
   }
 
-  // ── token ────────────────────────────────────────────────────────────────
-  if (principal.kind === "token") {
-    // Org boundary — enforced on every call.
-    if (resource.orgId && principal.orgId !== resource.orgId) {
-      return { allowed: false, code: "cross_org", reason: "token not valid for this organization" };
-    }
-    // Explicit grants are a hard ceiling: when present, ONLY matching grants apply.
-    if (principal.grants.length > 0) {
-      const name = resource.repositoryName;
-      if (grantGrants(principal.grants, resource, action, principal.tokenId)) {
-        const role = tokenRole(principal, effectiveRole);
-        if (!role || !roleAllows(role, action)) {
-          return denyRole(`token role does not grant '${action}'`);
-        }
-        return { allowed: true };
-      }
-      return {
-        allowed: false,
-        code: "insufficient_scope",
-        reason: `token grant does not grant '${action}' on ${name ?? resource.type}`,
-      };
-    }
-    // Only truly scope-less tokens inherit a role (robot role, or owner's membership role).
-    const role = tokenRole(principal, effectiveRole);
-    if (role && roleAllows(role, action)) return { allowed: true };
-    return denyRole(`role does not grant '${action}'`);
-  }
-
-  // ── delegated registry bearer token ───────────────────────────────────────
-  // The bearer claim carries generic actions (read/write/delete); the module
-  // that mints the token owns any protocol-specific action vocabulary, so this
-  // agnostic verifier matches the requested action directly.
-  if (principal.kind === "registryToken") {
-    const name = resource.repositoryName;
+  if (input.principal.kind === "registryToken") {
+    if (!input.action) return denyPermission(permission);
+    const name = input.resource.repositoryName;
     const granted =
       !!name &&
-      principal.access.some(
+      input.principal.access.some(
         (a) =>
           a.type === "repository" &&
           a.name === name &&
-          (a.actions.includes(action) || a.actions.includes("*")),
+          (a.actions.includes(input.action!) || a.actions.includes("*")),
       );
     return granted
       ? { allowed: true }
       : {
           allowed: false,
           code: "insufficient_scope",
-          reason: `token does not grant '${action}' on ${name ?? "?"}`,
+          reason: `token does not grant '${input.action}' on ${name ?? "?"}`,
         };
   }
 
-  // ── user (session) ─────────────────────────────────────────────────────────
-  if (!effectiveRole) {
-    return { allowed: false, code: "not_member", reason: "no role in this organization" };
+  if (
+    input.principal.kind === "token" &&
+    input.resource.orgId &&
+    input.principal.orgId !== input.resource.orgId
+  ) {
+    return { allowed: false, code: "cross_org", reason: "token not valid for this organization" };
   }
-  if (roleAllows(effectiveRole, action)) return { allowed: true };
-  return denyRole(`role '${effectiveRole}' does not grant '${action}'`);
+
+  if (permissionGrantsAllow(input.grants ?? [], permission, input.resource)) {
+    return { allowed: true };
+  }
+
+  return denyPermission(permission);
 }

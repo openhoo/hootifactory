@@ -7,7 +7,8 @@ test.describe("organizations", () => {
     const orgs = await (await owner.ctx.get("/api/orgs")).json();
     const mine = orgs.orgs.find((o: { id: string }) => o.id === owner.orgId);
     expect(mine).toBeTruthy();
-    expect(mine.role).toBe("owner");
+    expect(mine.permissions).toContain("org.read");
+    expect(mine.permissions).toContain("repository.create");
   });
 
   test("anonymous cannot create org -> 401", async ({ baseURL }) => {

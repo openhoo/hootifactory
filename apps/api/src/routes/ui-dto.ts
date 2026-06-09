@@ -1,6 +1,7 @@
 import type { ApiTokenRow } from "@hootifactory/auth";
 import type { ApiTokenDto, RepositoryDto, WireTimestamp } from "@hootifactory/contracts/legacy";
 import type { ResolvedRepo } from "@hootifactory/registry";
+import type { TokenGrant } from "@hootifactory/types";
 
 type RepositoryRow = ResolvedRepo;
 
@@ -27,7 +28,11 @@ export function repositoryDto(repo: RepositoryRow): RepositoryDto {
   };
 }
 
-export function tokenDto(token: ApiTokenRow, ownerUsername?: string | null): ApiTokenDto {
+export function tokenDto(
+  token: ApiTokenRow,
+  ownerUsername?: string | null,
+  grants: TokenGrant[] = [],
+): ApiTokenDto {
   return {
     id: token.id,
     ownerUserId: token.ownerUserId,
@@ -35,8 +40,7 @@ export function tokenDto(token: ApiTokenRow, ownerUsername?: string | null): Api
     name: token.name,
     prefix: token.tokenPrefix,
     type: token.type,
-    grants: token.grants,
-    role: token.role,
+    grants,
     expiresAt: nullableWireTimestamp(token.expiresAt),
     revokedAt: nullableWireTimestamp(token.revokedAt),
     revokedByUserId: token.revokedByUserId,

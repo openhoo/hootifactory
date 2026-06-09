@@ -4,8 +4,10 @@ import {
   db,
   eq,
   externalIdentities,
-  externalRoleGrants,
+  groupMemberships,
+  groups,
   inArray,
+  memberships,
   organizations,
   users,
 } from "@hootifactory/db";
@@ -47,6 +49,16 @@ async function uniqueUsername(value: string | null, fallback: string): Promise<s
   return `${base.slice(0, 80)}-${crypto.randomUUID().slice(0, 12)}`;
 }
 
+function managedGroupExternalKey(issuer: string, group: string): string {
+  return JSON.stringify([issuer, group]);
+}
+
+function noMappedAccessError(input: SyncOidcUserInput): Error {
+  return new Error(
+    input.grants.length === 0 ? "oidc: no mapped groups" : "oidc: no mapped organizations exist",
+  );
+}
+
 export async function oidcIdentityBelongsToAnotherUser(input: {
   issuer: string;
   subject: string;
@@ -70,19 +82,20 @@ export async function syncOidcUser(
   input: SyncOidcUserInput,
   options: SyncOidcUserOptions = {},
 ): Promise<SyncedOidcUser> {
-  if (input.grants.length === 0) throw new Error("oidc: no mapped groups");
   const mappedSlugs = [...new Set(input.grants.map((grant) => grant.org))];
-  const orgRows = await db
-    .select({ id: organizations.id, slug: organizations.slug })
-    .from(organizations)
-    .where(inArray(organizations.slug, mappedSlugs));
+  const orgRows =
+    mappedSlugs.length > 0
+      ? await db
+          .select({ id: organizations.id, slug: organizations.slug })
+          .from(organizations)
+          .where(inArray(organizations.slug, mappedSlugs))
+      : [];
   const orgBySlug = new Map(orgRows.map((org) => [org.slug, org.id]));
   const validGrants = input.grants
     .map((grant) => ({ ...grant, orgId: orgBySlug.get(grant.org) }))
     .filter((grant): grant is OidcGroupGrant & { orgId: string } => Boolean(grant.orgId));
-  if (validGrants.length === 0) throw new Error("oidc: no mapped organizations exist");
 
-  return db.transaction(async (tx) => {
+  const result = await db.transaction(async (tx) => {
     const [linked] = await tx
       .select({ user: users })
       .from(externalIdentities)
@@ -98,6 +111,7 @@ export async function syncOidcUser(
 
     let user = linked?.user ?? null;
     if (user && !user.isActive) throw new Error("oidc: linked user is disabled");
+    if (!user && validGrants.length === 0) throw noMappedAccessError(input);
 
     if (!user && input.email) {
       const [existing] = await tx.select().from(users).where(eq(users.email, input.email)).limit(1);
@@ -161,26 +175,73 @@ export async function syncOidcUser(
         set: { userId: user.id, email: input.email, lastLoginAt: new Date() },
       });
 
+    const validOrgIds = [...new Set(validGrants.map((grant) => grant.orgId))];
+    if (validOrgIds.length > 0) {
+      await tx
+        .insert(memberships)
+        .values(validOrgIds.map((orgId) => ({ orgId, userId: user.id })))
+        .onConflictDoNothing();
+    }
+
     await tx
-      .delete(externalRoleGrants)
+      .delete(groupMemberships)
       .where(
         and(
-          eq(externalRoleGrants.provider, OIDC_PROVIDER),
-          eq(externalRoleGrants.issuer, input.issuer),
-          eq(externalRoleGrants.userId, user.id),
+          eq(groupMemberships.source, OIDC_PROVIDER),
+          eq(groupMemberships.provider, OIDC_PROVIDER),
+          eq(groupMemberships.externalKey, input.issuer),
+          eq(groupMemberships.userId, user.id),
         ),
       );
-    await tx.insert(externalRoleGrants).values(
-      validGrants.map((grant) => ({
-        provider: OIDC_PROVIDER,
-        issuer: input.issuer,
-        userId: user.id,
-        orgId: grant.orgId,
-        role: grant.role,
-        groups: grant.groups,
-      })),
-    );
 
-    return { id: user.id, username: user.username };
+    const syncedMemberships: (typeof groupMemberships.$inferInsert)[] = [];
+    for (const grant of validGrants) {
+      const expectedExternalKey = managedGroupExternalKey(input.issuer, grant.group);
+      const [existingGroup] = await tx
+        .select()
+        .from(groups)
+        .where(and(eq(groups.orgId, grant.orgId), eq(groups.slug, grant.group)))
+        .limit(1);
+      if (
+        existingGroup &&
+        (existingGroup.managedBy !== OIDC_PROVIDER ||
+          existingGroup.externalKey !== expectedExternalKey)
+      ) {
+        throw new Error("oidc: mapped group slug collides with an existing local group");
+      }
+      const group =
+        existingGroup ??
+        (
+          await tx
+            .insert(groups)
+            .values({
+              orgId: grant.orgId,
+              slug: grant.group,
+              displayName: grant.group,
+              managedBy: OIDC_PROVIDER,
+              externalKey: expectedExternalKey,
+            })
+            .returning()
+        )[0];
+      if (!group) throw new Error("oidc: failed to create mapped group");
+      syncedMemberships.push({
+        orgId: grant.orgId,
+        groupId: group.id,
+        userId: user.id,
+        source: OIDC_PROVIDER,
+        provider: OIDC_PROVIDER,
+        externalKey: input.issuer,
+      });
+    }
+    if (syncedMemberships.length > 0) {
+      await tx.insert(groupMemberships).values(syncedMemberships).onConflictDoNothing();
+    }
+
+    return {
+      user: { id: user.id, username: user.username },
+      hasMappedAccess: validGrants.length > 0,
+    };
   });
+  if (!result.hasMappedAccess) throw noMappedAccessError(input);
+  return result.user;
 }

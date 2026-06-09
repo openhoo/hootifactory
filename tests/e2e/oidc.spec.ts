@@ -51,7 +51,7 @@ function createOidcLinkToken(input: {
         '      username: "linked-e2e",',
         '      displayName: "Linked E2E",',
         '      groups: ["oidc-admins"],',
-        '      grants: [{ org: process.env.ORG_SLUG, role: "owner", groups: ["oidc-admins"] }],',
+        '      grants: [{ org: process.env.ORG_SLUG, group: "oidc-admins", groups: ["oidc-admins"] }],',
         "    },",
         "  },",
         "});",
@@ -73,6 +73,50 @@ function createOidcLinkToken(input: {
     },
   );
   return (JSON.parse(output) as { secret: string }).secret;
+}
+
+function seedOidcManagedGroupPermissions(): void {
+  execFileSync(
+    "bun",
+    [
+      "-e",
+      [
+        'import { and, db, eq, groups, organizations, permissionGrants } from "@hootifactory/db";',
+        'const groupSlug = "oidc-admins";',
+        "const [org] = await db.select().from(organizations).where(eq(organizations.slug, process.env.ORG_SLUG)).limit(1);",
+        'if (!org) throw new Error("OIDC E2E org does not exist");',
+        "const externalKey = JSON.stringify([process.env.ISSUER, groupSlug]);",
+        "await db.transaction(async (tx) => {",
+        "  const [group] = await tx.insert(groups).values({",
+        "    orgId: org.id,",
+        "    slug: groupSlug,",
+        "    displayName: groupSlug,",
+        '    managedBy: "oidc",',
+        "    externalKey,",
+        "  }).onConflictDoUpdate({",
+        "    target: [groups.orgId, groups.slug],",
+        '    set: { managedBy: "oidc", externalKey },',
+        "  }).returning();",
+        '  if (!group) throw new Error("OIDC E2E group was not returned");',
+        "  await tx.delete(permissionGrants).where(and(eq(permissionGrants.orgId, org.id), eq(permissionGrants.groupId, group.id)));",
+        "  await tx.insert(permissionGrants).values([",
+        '    { orgId: org.id, groupId: group.id, permission: "org.read", source: "e2e" },',
+        '    { orgId: org.id, groupId: group.id, permission: "repository.read", source: "e2e", repositoryPattern: "*" },',
+        "  ]);",
+        "});",
+      ].join("\n"),
+    ],
+    {
+      env: {
+        ...process.env,
+        DATABASE_URL: TEST_DATABASE_URL,
+        ORG_SLUG,
+        ISSUER,
+      },
+      stdio: "pipe",
+      encoding: "utf8",
+    },
+  );
 }
 
 function csrfFromConfirmationPage(html: string): string {
@@ -249,11 +293,12 @@ test.describe("OIDC SSO", () => {
         data: { slug: ORG_SLUG, displayName: "OIDC E2E" },
       });
       expect([201, 409]).toContain(org.status());
+      seedOidcManagedGroupPermissions();
 
       await page.goto(`${WEB}/login`);
       await page.getByRole("button", { name: "E2E SSO" }).click();
       await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
-      await expect(page.getByTestId("org-switcher")).toContainText("OIDC E2E (owner)");
+      await expect(page.getByTestId("org-switcher")).toContainText("OIDC E2E (2)");
     } finally {
       await provider.stop();
     }

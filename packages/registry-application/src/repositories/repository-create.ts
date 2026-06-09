@@ -1,5 +1,5 @@
 import {
-  authorize,
+  authorizePermission,
   getOrganizationById,
   httpStatusForDenial,
   type Principal,
@@ -128,7 +128,10 @@ export async function createRepositoryForPrincipal(input: {
   orgId: string;
   body: CreateRepositoryBodyInput;
 }): Promise<CreateRepositoryUseCaseResult> {
-  const decision = await authorize(input.principal, "admin", { type: "org", orgId: input.orgId });
+  const decision = await authorizePermission(input.principal, "repository.create", {
+    type: "org",
+    orgId: input.orgId,
+  });
   if (!decision.allowed) {
     const status = httpStatusForDenial(decision);
     return {

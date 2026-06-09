@@ -33,6 +33,7 @@ async function loadUseCase(overrides: {
   await mock.module("@hootifactory/auth", () => ({
     ...realAuth,
     authorize: async () => overrides.decision,
+    authorizePermission: async () => overrides.decision,
     httpStatusForDenial: () => overrides.httpStatus ?? 403,
     getOrganizationById: async () => overrides.org ?? null,
   }));

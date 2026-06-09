@@ -920,7 +920,7 @@ test.describe("virtual + proxy repositories (Dockerized real npm)", () => {
           data: { memberRepoId: privateOther.id },
         })
       ).status(),
-    ).toBe(403);
+    ).toBe(404);
     expect(
       (
         await owner.ctx.post(`/api/repositories/${virtual.id}/members`, {

@@ -1,5 +1,6 @@
 import type { TokenGrant } from "@hootifactory/types";
 import type { Action } from "./permissions";
+import { permissionForAction, permissionImplies } from "./permissions";
 import type { ResourceRef } from "./principal";
 
 /**
@@ -51,45 +52,40 @@ export function scopeSpecificity(pattern: string): number {
   return 100_000 + pattern.length; // exact dominates any glob
 }
 
-function repositoryGrantMatches(
-  grant: Extract<TokenGrant, { resource: "repository" }>,
-  resource: ResourceRef,
-): boolean {
+function repositoryGrantMatches(grant: TokenGrant, resource: ResourceRef): boolean {
   const name = resource.repositoryName;
-  return Boolean(name && patternMatches(grant.repository, name));
+  return Boolean(grant.repository && name && patternMatches(grant.repository, name));
 }
 
-function packageGrantMatches(
-  grant: Extract<TokenGrant, { resource: "package" }>,
-  resource: ResourceRef,
-): boolean {
+function packageGrantMatches(grant: TokenGrant, resource: ResourceRef): boolean {
   const repo = resource.repositoryName;
   const pkg = resource.packageName;
   return Boolean(
-    repo && pkg && patternMatches(grant.repository, repo) && patternMatches(grant.package, pkg),
+    grant.repository &&
+      grant.package &&
+      repo &&
+      pkg &&
+      patternMatches(grant.repository, repo) &&
+      patternMatches(grant.package, pkg),
   );
 }
 
-function artifactGrantMatches(
-  grant: Extract<TokenGrant, { resource: "artifact" }>,
-  resource: ResourceRef,
-): boolean {
+function artifactGrantMatches(grant: TokenGrant, resource: ResourceRef): boolean {
   const repo = resource.repositoryName;
   const artifact = resource.artifactRef;
   return Boolean(
-    repo &&
+    grant.repository &&
+      grant.artifact &&
+      repo &&
       artifact &&
       patternMatches(grant.repository, repo) &&
       patternMatches(grant.artifact, artifact),
   );
 }
 
-function policyGrantMatches(
-  grant: Extract<TokenGrant, { resource: "policy" }>,
-  resource: ResourceRef,
-): boolean {
+function policyGrantMatches(grant: TokenGrant, resource: ResourceRef): boolean {
   if (resource.type !== "policy") return false;
-  if (grant.policy !== "*" && resource.policy !== grant.policy) return false;
+  if (grant.policy && grant.policy !== "*" && resource.policy !== grant.policy) return false;
   if (!grant.repository) return true;
   return Boolean(
     resource.repositoryName && patternMatches(grant.repository, resource.repositoryName),
@@ -98,13 +94,17 @@ function policyGrantMatches(
 
 function tokenGrantMatches(
   principalTokenId: string,
-  grant: Extract<TokenGrant, { resource: "token" }>,
+  grant: TokenGrant,
   resource: ResourceRef,
 ): boolean {
   if (resource.type !== "token") return false;
-  if (grant.target === "org")
+  if (grant.tokenTarget === "org")
     return resource.tokenTarget === "org" || resource.tokenTarget === "self";
-  return resource.tokenTarget === "self" && resource.tokenId === principalTokenId;
+  return (
+    grant.tokenTarget === "self" &&
+    resource.tokenTarget === "self" &&
+    (!grant.tokenId || grant.tokenId === principalTokenId || grant.tokenId === resource.tokenId)
+  );
 }
 
 /** Does a structured token grant allow action on the resource? */
@@ -114,10 +114,11 @@ export function grantGrants(
   action: Action,
   principalTokenId?: string,
 ): boolean {
+  const required = permissionForAction(action, resource);
   return grants.some((grant) => {
-    if (!grant.actions.includes(action)) return false;
-    if (grant.resource === "org") return resource.type === "org";
-    if (grant.resource === "repository") {
+    if (!permissionImplies(grant.permission, required)) return false;
+    if (grant.permission.startsWith("org.")) return resource.type === "org";
+    if (grant.permission.startsWith("repository.")) {
       return (
         (resource.type === "repository" ||
           resource.type === "package" ||
@@ -126,14 +127,14 @@ export function grantGrants(
         repositoryGrantMatches(grant, resource)
       );
     }
-    if (grant.resource === "package") {
+    if (grant.permission.startsWith("package.")) {
       return resource.type === "package" && packageGrantMatches(grant, resource);
     }
-    if (grant.resource === "artifact") {
+    if (grant.permission.startsWith("artifact.")) {
       return resource.type === "artifact" && artifactGrantMatches(grant, resource);
     }
-    if (grant.resource === "policy") return policyGrantMatches(grant, resource);
-    if (grant.resource === "token") {
+    if (grant.permission.startsWith("policy.")) return policyGrantMatches(grant, resource);
+    if (grant.permission.startsWith("token.")) {
       return Boolean(principalTokenId && tokenGrantMatches(principalTokenId, grant, resource));
     }
     return false;

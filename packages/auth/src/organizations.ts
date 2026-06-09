@@ -1,6 +1,7 @@
-import { db, eq, externalRoleGrants, memberships, organizations } from "@hootifactory/db";
-import type { RoleName } from "./permissions";
-import { roleOutranks } from "./permissions";
+import { db, eq, memberships, organizations, permissionGrants } from "@hootifactory/db";
+import type { PermissionKey } from "@hootifactory/types";
+import { permissionGrantsForUser } from "./permission-grants";
+import { PERMISSIONS } from "./permissions";
 
 export type OrganizationRow = typeof organizations.$inferSelect;
 
@@ -8,7 +9,7 @@ export type AccessibleOrg = {
   id: string;
   slug: string;
   displayName: string;
-  role: RoleName;
+  permissions: PermissionKey[];
 };
 
 export type CreateOrganizationInput = {
@@ -18,41 +19,35 @@ export type CreateOrganizationInput = {
   ownerUserId: string;
 };
 
-export function mergeAccessibleOrgs(
-  membershipOrgs: AccessibleOrg[],
-  externalOrgs: AccessibleOrg[],
-): AccessibleOrg[] {
-  const byId = new Map<string, AccessibleOrg>();
-  for (const org of [...membershipOrgs, ...externalOrgs]) {
-    const existing = byId.get(org.id);
-    if (!existing || roleOutranks(org.role, existing.role)) byId.set(org.id, org);
-  }
-  return [...byId.values()].sort((a, b) => a.slug.localeCompare(b.slug));
+export const ORG_OWNER_PERMISSIONS = PERMISSIONS.filter(
+  (permission) => permission !== "system.admin",
+) as PermissionKey[];
+
+function sortedUniquePermissions(permissions: Iterable<PermissionKey>): PermissionKey[] {
+  return [...new Set(permissions)].sort();
 }
 
 export async function listAccessibleOrgs(userId: string): Promise<AccessibleOrg[]> {
-  const membershipOrgs = await db
+  const rows = await db
     .select({
       id: organizations.id,
       slug: organizations.slug,
       displayName: organizations.displayName,
-      role: memberships.role,
     })
     .from(memberships)
     .innerJoin(organizations, eq(memberships.orgId, organizations.id))
     .where(eq(memberships.userId, userId));
-  const externalOrgs = await db
-    .select({
-      id: organizations.id,
-      slug: organizations.slug,
-      displayName: organizations.displayName,
-      role: externalRoleGrants.role,
-    })
-    .from(externalRoleGrants)
-    .innerJoin(organizations, eq(externalRoleGrants.orgId, organizations.id))
-    .where(eq(externalRoleGrants.userId, userId));
 
-  return mergeAccessibleOrgs(membershipOrgs, externalOrgs);
+  const orgs = await Promise.all(
+    rows.map(async (org) => {
+      const grants = await permissionGrantsForUser(userId, org.id);
+      return {
+        ...org,
+        permissions: sortedUniquePermissions(grants.map((grant) => grant.permission)),
+      };
+    }),
+  );
+  return orgs.sort((a, b) => a.slug.localeCompare(b.slug));
 }
 
 export async function getOrganizationById(orgId: string): Promise<OrganizationRow | null> {
@@ -76,8 +71,14 @@ export async function createOrganizationWithOwner(
     await tx.insert(memberships).values({
       orgId: org.id,
       userId: input.ownerUserId,
-      role: "owner",
     });
+    await tx.insert(permissionGrants).values(
+      ORG_OWNER_PERMISSIONS.map((permission) => ({
+        orgId: org.id,
+        userId: input.ownerUserId,
+        permission,
+      })),
+    );
     return org;
   });
 }

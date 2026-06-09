@@ -17,16 +17,12 @@ describe("token scope helpers", () => {
   });
 
   test("structured grants match resource-specific targets", () => {
+    expect(grantGrants([{ permission: "org.read" }], { type: "org", orgId: "org_1" }, "read")).toBe(
+      true,
+    );
     expect(
       grantGrants(
-        [{ resource: "org", actions: ["read"] }],
-        { type: "org", orgId: "org_1" },
-        "read",
-      ),
-    ).toBe(true);
-    expect(
-      grantGrants(
-        [{ resource: "org", actions: ["read"] }],
+        [{ permission: "org.read" }],
         { type: "repository", orgId: "org_1", repositoryName: "team/web" },
         "read",
       ),
@@ -34,7 +30,7 @@ describe("token scope helpers", () => {
 
     expect(
       grantGrants(
-        [{ resource: "package", repository: "team/*", package: "@scope/*", actions: ["read"] }],
+        [{ permission: "package.read", repository: "team/*", package: "@scope/*" }],
         {
           type: "package",
           orgId: "org_1",
@@ -47,7 +43,7 @@ describe("token scope helpers", () => {
 
     expect(
       grantGrants(
-        [{ resource: "policy", policy: "quota", repository: "team/*", actions: ["write"] }],
+        [{ permission: "policy.write", policy: "quota", repository: "team/*" }],
         { type: "policy", orgId: "org_1", repositoryName: "team/web", policy: "quota" },
         "write",
       ),
@@ -55,7 +51,7 @@ describe("token scope helpers", () => {
 
     expect(
       grantGrants(
-        [{ resource: "token", target: "self", actions: ["write"] }],
+        [{ permission: "token.rotate", tokenTarget: "self" }],
         { type: "token", orgId: "org_1", tokenId: "tok_1", tokenTarget: "self" },
         "write",
         "tok_1",
@@ -64,7 +60,7 @@ describe("token scope helpers", () => {
 
     expect(
       grantGrants(
-        [{ resource: "artifact", repository: "team/*", artifact: "sha256:*", actions: ["read"] }],
+        [{ permission: "artifact.read", repository: "team/*", artifact: "sha256:*" }],
         {
           type: "artifact",
           orgId: "org_1",

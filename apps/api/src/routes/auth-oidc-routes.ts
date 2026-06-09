@@ -256,7 +256,7 @@ export function registerOidcRoutes(router: Hono<AppEnv>): void {
           issuer: claims.issuer,
           subject: claims.subject,
           groups: claims.groups,
-          grants: claims.grants.map((grant) => ({ org: grant.org, role: grant.role })),
+          grants: claims.grants.map((grant) => ({ org: grant.org, group: grant.group })),
         },
       });
       return c.redirect(state.returnTo);

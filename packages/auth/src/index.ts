@@ -1,4 +1,5 @@
 export type { TokenGrant } from "@hootifactory/types";
+export * from "./access-management";
 export * from "./audit";
 export * from "./authorize";
 export * from "./can";

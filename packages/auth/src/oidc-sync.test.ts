@@ -17,7 +17,7 @@ function baseInput(overrides: Partial<SyncOidcUserInput> = {}): SyncOidcUserInpu
     username: "Alice SSO",
     displayName: "Alice SSO",
     groups: ["developers"],
-    grants: [{ org: "acme", role: "developer", groups: ["developers"] }],
+    grants: [{ org: "acme", group: "developers", groups: ["developers"] }],
     ...overrides,
   };
 }
@@ -74,7 +74,7 @@ describe("syncOidcUser validation", () => {
 });
 
 describe("syncOidcUser provisioning", () => {
-  test("auto-provisions a new user, links the identity, and replaces role grants", async () => {
+  test("auto-provisions a new user, links the identity, and replaces group memberships", async () => {
     const fake = new FakeDb();
     const restore = fake.install(db);
     try {
@@ -85,8 +85,11 @@ describe("syncOidcUser provisioning", () => {
       fake.queue([]); // uniqueUsername lookup -> available
       fake.queue([{ id: "user-1", username: "alice-sso", displayName: null }]); // insert user
       fake.queue([]); // insert externalIdentities (onConflictDoUpdate)
-      fake.queue([]); // delete externalRoleGrants
-      fake.queue([]); // insert externalRoleGrants
+      fake.queue([]); // insert memberships
+      fake.queue([]); // delete old groupMemberships
+      fake.queue([]); // group lookup -> none
+      fake.queue([{ id: "group-1", slug: "developers" }]); // insert mapped group
+      fake.queue([]); // insert groupMemberships
       const result = await syncOidcUser(baseInput());
       expect(result).toEqual({ id: "user-1", username: "alice-sso" });
 
@@ -98,17 +101,17 @@ describe("syncOidcUser provisioning", () => {
       expect(values.passwordHash).toBeNull();
       expect(values.externalIdp).toEqual({ issuer: "https://idp.test", subject: "subject-1" });
 
-      // The role grant insert receives one mapped grant for the resolved org id.
+      // The synced group-membership insert receives one mapped local group membership.
       const grantInsert = fake.queries.at(-1)!;
       expect(grantInsert.kind).toBe("insert");
       expect(grantInsert.values).toEqual([
         {
-          provider: "oidc",
-          issuer: "https://idp.test",
-          userId: "user-1",
           orgId: "org-1",
-          role: "developer",
-          groups: ["developers"],
+          groupId: "group-1",
+          userId: "user-1",
+          source: "oidc",
+          provider: "oidc",
+          externalKey: "https://idp.test",
         },
       ]);
     } finally {
@@ -127,8 +130,11 @@ describe("syncOidcUser provisioning", () => {
       fake.queue([]); // uniqueUsername attempt 1 -> free
       fake.queue([{ id: "user-2", username: "alice-sso-1", displayName: null }]); // insert user
       fake.queue([]); // identity upsert
-      fake.queue([]); // delete grants
-      fake.queue([]); // insert grants
+      fake.queue([]); // insert memberships
+      fake.queue([]); // delete old groupMemberships
+      fake.queue([]); // group lookup
+      fake.queue([{ id: "group-1", slug: "developers" }]); // insert mapped group
+      fake.queue([]); // insert groupMemberships
       const result = await syncOidcUser(baseInput());
       expect(result.username).toBe("alice-sso-1");
     } finally {
@@ -162,8 +168,11 @@ describe("syncOidcUser provisioning", () => {
       ]); // existing by email
       fake.queue([]); // update users (existing-user branch)
       fake.queue([]); // identity upsert
-      fake.queue([]); // delete grants
-      fake.queue([]); // insert grants
+      fake.queue([]); // insert memberships
+      fake.queue([]); // delete old groupMemberships
+      fake.queue([]); // group lookup
+      fake.queue([{ id: "group-1", slug: "developers" }]); // insert mapped group
+      fake.queue([]); // insert groupMemberships
       const result = await syncOidcUser(baseInput(), { allowExistingEmailLink: true });
       expect(result).toEqual({ id: "local-1", username: "alice" });
       // The existing-user branch issues an update, never a user insert.

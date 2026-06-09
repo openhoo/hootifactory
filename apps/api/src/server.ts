@@ -1,4 +1,4 @@
-import { sweepExpiredAuthThrottleBuckets } from "@hootifactory/auth";
+import { bootstrapSystemAdmins, sweepExpiredAuthThrottleBuckets } from "@hootifactory/auth";
 import { env } from "@hootifactory/config";
 import { shutdownObservability } from "@hootifactory/observability";
 import { stopBoss } from "@hootifactory/queue";
@@ -8,6 +8,19 @@ import { logger } from "./lib/logger";
 import { errorMessage } from "./validation";
 
 registerAdapters();
+
+const adminBootstrap = await bootstrapSystemAdmins(env.AUTH_SYSTEM_ADMIN_USER_IDS);
+if (adminBootstrap.granted.length > 0 || adminBootstrap.revoked.length > 0) {
+  logger.info("system admin bootstrap reconciled", {
+    granted: adminBootstrap.granted.length,
+    revoked: adminBootstrap.revoked.length,
+  });
+}
+if (adminBootstrap.missing.length > 0) {
+  logger.warn("system admin bootstrap references unknown user ids", {
+    missing: adminBootstrap.missing,
+  });
+}
 
 const authThrottleSweepTimer = setInterval(() => {
   void sweepExpiredAuthThrottleBuckets()

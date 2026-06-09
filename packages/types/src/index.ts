@@ -9,9 +9,48 @@ export type Visibility = (typeof VISIBILITIES)[number];
 
 export const ACTIONS = ["read", "write", "delete", "admin"] as const;
 export type Action = (typeof ACTIONS)[number];
-export type TokenAction = Action;
-export const ROLE_NAMES = ["viewer", "developer", "admin", "owner"] as const;
-export type RoleName = (typeof ROLE_NAMES)[number];
+export const PERMISSION_KEYS = [
+  "system.admin",
+  "org.read",
+  "org.update",
+  "org.delete",
+  "org.member.read",
+  "org.member.manage",
+  "user.read",
+  "user.create",
+  "user.update",
+  "user.deactivate",
+  "user.reset_password",
+  "group.read",
+  "group.create",
+  "group.update",
+  "group.delete",
+  "group.member.manage",
+  "group.permission.manage",
+  "permission.read",
+  "permission.grant",
+  "repository.read",
+  "repository.create",
+  "repository.update",
+  "repository.write",
+  "repository.delete",
+  "repository.permission.manage",
+  "package.read",
+  "package.write",
+  "package.delete",
+  "artifact.read",
+  "artifact.write",
+  "artifact.delete",
+  "policy.read",
+  "policy.write",
+  "policy.delete",
+  "token.read",
+  "token.create",
+  "token.rotate",
+  "token.revoke",
+] as const;
+export type PermissionKey = (typeof PERMISSION_KEYS)[number];
+export type TokenAction = PermissionKey;
 export const TOKEN_TYPES = ["personal", "robot"] as const;
 export type TokenType = (typeof TOKEN_TYPES)[number];
 export const BLOB_STATE = {
@@ -71,7 +110,6 @@ export type DenialCode =
   | "cross_org"
   | "not_member"
   | "insufficient_scope"
-  | "insufficient_role"
   | "forbidden";
 
 function isOneOf<const T extends readonly string[]>(values: T, value: unknown): value is T[number] {
@@ -90,8 +128,8 @@ export function isAction(value: unknown): value is Action {
   return isOneOf(ACTIONS, value);
 }
 
-export function isRoleName(value: unknown): value is RoleName {
-  return isOneOf(ROLE_NAMES, value);
+export function isPermissionKey(value: unknown): value is PermissionKey {
+  return isOneOf(PERMISSION_KEYS, value);
 }
 
 export function isBlobState(value: unknown): value is BlobState {
@@ -130,13 +168,17 @@ export function isEmailTemplate(value: unknown): value is EmailTemplate {
   return isOneOf(EMAIL_TEMPLATES, value);
 }
 
-export type TokenGrant =
-  | { resource: "org"; actions: TokenAction[] }
-  | { resource: "repository"; repository: string; actions: TokenAction[] }
-  | { resource: "package"; repository: string; package: string; actions: TokenAction[] }
-  | { resource: "artifact"; repository: string; artifact: string; actions: TokenAction[] }
-  | { resource: "policy"; policy: PolicyName; repository?: string; actions: TokenAction[] }
-  | { resource: "token"; target: TokenTarget; actions: TokenAction[] };
+export type PermissionGrant = {
+  permission: PermissionKey;
+  repository?: string;
+  package?: string;
+  artifact?: string;
+  policy?: PolicyName;
+  tokenTarget?: TokenTarget;
+  tokenId?: string;
+};
+
+export type TokenGrant = PermissionGrant;
 
 /** A delegated registry bearer-token access claim authorized at token-issue time. */
 export interface RegistryAccess {
@@ -157,7 +199,6 @@ export type Principal =
       ownerUsername?: string | null;
       tokenName?: string;
       grants: TokenGrant[];
-      role: RoleName | null;
       isRobot: boolean;
     }
   | { kind: "registryToken"; subject: string; access: RegistryAccess[] };

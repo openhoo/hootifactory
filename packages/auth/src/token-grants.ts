@@ -1,99 +1,118 @@
-import { and, db, eq, isNotNull, repositories, roleBindings } from "@hootifactory/db";
-import type { TokenGrant } from "@hootifactory/types";
-import { resolveUserRole } from "./authorize";
-import { type RoleName, roleAllows, roleOutranks } from "./permissions";
+import { db, eq, repositories } from "@hootifactory/db";
+import type { PermissionKey, TokenGrant } from "@hootifactory/types";
+import { authorizePermission } from "./authorize";
+import type { Principal, ResourceRef } from "./principal";
 import { scopeMayTargetRepo } from "./scope";
 
 interface TokenGrantRequest {
-  userId: string;
+  principal: Principal;
   orgId: string;
-  requestedRole?: RoleName;
   grants: TokenGrant[];
 }
 
 type TokenGrantResult = { ok: true } | { ok: false; error: string };
 
-function isOrgTokenGrant(grant: TokenGrant): boolean {
-  return grant.resource === "token" && grant.target === "org";
+export function resourceForGrant(
+  grant: TokenGrant,
+  orgId: string,
+  repo?: typeof repositories.$inferSelect,
+): ResourceRef {
+  if (grant.permission === "system.admin" || grant.permission.startsWith("user.")) {
+    return { type: "system" };
+  }
+  if (grant.permission.startsWith("token.")) {
+    return {
+      type: "token",
+      orgId,
+      tokenTarget: grant.tokenTarget ?? "org",
+      tokenId: grant.tokenId,
+    };
+  }
+  if (grant.permission.startsWith("policy.")) {
+    return {
+      type: "policy",
+      orgId,
+      repositoryId: repo?.id,
+      repositoryName: repo?.name,
+      policy: grant.policy,
+      visibility: repo?.visibility,
+    };
+  }
+  if (grant.permission.startsWith("repository.")) {
+    return {
+      type: "repository",
+      orgId,
+      repositoryId: repo?.id,
+      repositoryName: repo?.name ?? grant.repository,
+      visibility: repo?.visibility,
+    };
+  }
+  if (grant.permission.startsWith("package.")) {
+    return {
+      type: "package",
+      orgId,
+      repositoryId: repo?.id,
+      repositoryName: repo?.name ?? grant.repository,
+      packageName: grant.package ?? "*",
+      visibility: repo?.visibility,
+    };
+  }
+  if (grant.permission.startsWith("artifact.")) {
+    return {
+      type: "artifact",
+      orgId,
+      repositoryId: repo?.id,
+      repositoryName: repo?.name ?? grant.repository,
+      artifactRef: grant.artifact ?? "*",
+      visibility: repo?.visibility,
+    };
+  }
+  return { type: "org", orgId };
 }
 
-export async function validateTokenGrant({
-  userId,
+export async function canGrantPermission(
+  principal: Principal,
+  permission: PermissionKey,
+  resource: ResourceRef,
+): Promise<boolean> {
+  if (principal.kind !== "user") return false;
+  const decision = await authorizePermission(principal, permission, resource);
+  return decision.allowed;
+}
+
+export async function validateAssignablePermissionGrants({
+  principal,
   orgId,
-  requestedRole,
   grants,
-}: TokenGrantRequest): Promise<TokenGrantResult> {
-  const creatorRole = await resolveUserRole(userId, orgId);
-  if (requestedRole && (!creatorRole || roleOutranks(requestedRole, creatorRole))) {
-    return { ok: false, error: "cannot grant a role above your own" };
-  }
+  allowSystemAdmin = false,
+}: TokenGrantRequest & { allowSystemAdmin?: boolean }): Promise<TokenGrantResult> {
+  if (principal.kind !== "user") return { ok: false, error: "login required" };
+  const orgRepos = grants.some((grant) => grant.repository)
+    ? await db.select().from(repositories).where(eq(repositories.orgId, orgId))
+    : [];
 
-  const orgRepos =
-    requestedRole || grants.some((grant) => "repository" in grant && grant.repository)
-      ? await db
-          .select({
-            id: repositories.id,
-            name: repositories.name,
-            mountPath: repositories.mountPath,
-          })
-          .from(repositories)
-          .where(eq(repositories.orgId, orgId))
-      : [];
-  const repoRoleById =
-    orgRepos.length > 0
-      ? new Map(
-          (
-            await db
-              .select({ repositoryId: roleBindings.repositoryId, role: roleBindings.role })
-              .from(roleBindings)
-              .where(
-                and(
-                  eq(roleBindings.userId, userId),
-                  eq(roleBindings.orgId, orgId),
-                  isNotNull(roleBindings.repositoryId),
-                ),
-              )
-          ).flatMap((row) => (row.repositoryId ? [[row.repositoryId, row.role] as const] : [])),
-        )
-      : new Map<string, RoleName>();
-  const effectiveRepoRole = (repoId: string): RoleName | null =>
-    repoRoleById.get(repoId) ?? creatorRole;
-
-  if (requestedRole) {
-    for (const repo of orgRepos) {
-      const repoRole = effectiveRepoRole(repo.id);
-      if (!repoRole || roleOutranks(requestedRole, repoRole)) {
+  for (const grant of grants) {
+    if (grant.permission === "system.admin" && !allowSystemAdmin) {
+      return { ok: false, error: "system.admin cannot be granted through this flow" };
+    }
+    const matchingRepos = grant.repository
+      ? orgRepos.filter((repo) => scopeMayTargetRepo(grant.repository!, repo))
+      : [undefined];
+    const targets = matchingRepos.length > 0 ? matchingRepos : [undefined];
+    for (const repo of targets) {
+      const resource = resourceForGrant(grant, orgId, repo);
+      if (!(await canGrantPermission(principal, grant.permission, resource))) {
         return {
           ok: false,
-          error: `cannot grant role '${requestedRole}' on repository '${repo.name}'`,
+          error: `cannot grant permission '${grant.permission}' beyond your own access`,
         };
       }
     }
   }
 
-  for (const grant of grants) {
-    if (isOrgTokenGrant(grant) && (!creatorRole || !roleAllows(creatorRole, "admin"))) {
-      return { ok: false, error: "cannot grant org token management beyond your role" };
-    }
-    for (const action of grant.actions) {
-      if (!creatorRole || !roleAllows(creatorRole, action)) {
-        return { ok: false, error: `cannot grant scope action '${action}' beyond your role` };
-      }
-    }
-    if (!("repository" in grant) || !grant.repository) continue;
-    for (const repo of orgRepos) {
-      if (!scopeMayTargetRepo(grant.repository, repo)) continue;
-      const repoRole = effectiveRepoRole(repo.id);
-      for (const action of grant.actions) {
-        if (!repoRole || !roleAllows(repoRole, action)) {
-          return {
-            ok: false,
-            error: `cannot grant scope action '${action}' on repository '${repo.name}'`,
-          };
-        }
-      }
-    }
-  }
-
   return { ok: true };
+}
+
+export function validateTokenGrant(input: TokenGrantRequest): Promise<TokenGrantResult> {
+  return validateAssignablePermissionGrants(input);
 }

@@ -2,7 +2,7 @@ import { BoundedLruCache } from "@hootifactory/core";
 import * as client from "openid-client";
 import { z } from "zod";
 import { extractGroups, extractStringClaim } from "./oidc-claim-path";
-import { mapGroupsToOrgRoles } from "./oidc-claims";
+import { mapGroupsToOrgGroups } from "./oidc-claims";
 import { safeOidcReturnTo } from "./oidc-state";
 import type { OidcCallbackClaims, OidcProviderConfig, SignedOidcState } from "./oidc-types";
 
@@ -111,6 +111,6 @@ export async function resolveOidcCallbackClaims(
     username: extractStringClaim(claims, config.usernameClaim ?? "preferred_username"),
     displayName: extractStringClaim(claims, "name"),
     groups,
-    grants: mapGroupsToOrgRoles(groups, groupMappings),
+    grants: mapGroupsToOrgGroups(groups, groupMappings),
   };
 }

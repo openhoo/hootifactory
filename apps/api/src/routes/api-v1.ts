@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { describeRoute, openAPIRouteHandler } from "hono-openapi";
 import type { AppEnv } from "../types";
+import { registerApiV1AccessManagementRoutes } from "./api-v1-access-management-routes";
 import { registerApiV1ContentRoutes } from "./api-v1-content-routes";
 import { registerApiV1OrganizationRoutes } from "./api-v1-organization-routes";
 import { registerApiV1PolicyRoutes } from "./api-v1-policy-routes";
@@ -65,6 +66,7 @@ apiV1Router.get(
   }),
 );
 
+registerApiV1AccessManagementRoutes(apiV1Router);
 registerApiV1OrganizationRoutes(apiV1Router);
 registerApiV1ContentRoutes(apiV1Router);
 

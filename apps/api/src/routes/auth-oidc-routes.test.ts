@@ -10,7 +10,7 @@ type Claims = {
   issuer: string;
   subject: string;
   groups: string[];
-  grants: Array<{ org: string; role: string }>;
+  grants: Array<{ org: string; group: string }>;
 };
 const sampleClaims: Claims = {
   issuer: "https://idp.test",

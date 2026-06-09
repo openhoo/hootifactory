@@ -57,7 +57,7 @@ export function DashboardPage() {
             {selected && (
               <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
                 <ShieldCheck className="size-3.5" />
-                {selected.role}
+                {selected.permissions.length} permissions
               </span>
             )}
           </div>

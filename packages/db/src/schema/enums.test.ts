@@ -5,7 +5,6 @@ import {
   AUTH_EMAIL_TOKEN_PURPOSES,
   BLOB_STATES,
   REPO_KINDS,
-  ROLE_NAMES,
   TOKEN_TYPES,
   UPLOAD_STATES,
   VISIBILITIES,
@@ -16,7 +15,6 @@ import {
   authEmailTokenPurposeEnum,
   blobStateEnum,
   repoKindEnum,
-  roleNameEnum,
   scanStatusEnum,
   scanTypeEnum,
   severityEnum,
@@ -29,7 +27,6 @@ describe("database enum contracts", () => {
   test("keeps authorization and policy enums stable", () => {
     expect(repoKindEnum.enumValues).toEqual([...REPO_KINDS]);
     expect(visibilityEnum.enumValues).toEqual([...VISIBILITIES]);
-    expect(roleNameEnum.enumValues).toEqual([...ROLE_NAMES]);
     expect(tokenTypeEnum.enumValues).toEqual([...TOKEN_TYPES]);
     expect(authEmailTokenPurposeEnum.enumValues).toEqual([...AUTH_EMAIL_TOKEN_PURPOSES]);
     expect(blobStateEnum.enumValues).toEqual([...BLOB_STATES]);

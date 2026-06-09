@@ -56,12 +56,17 @@ const tokensRoute = createRoute({
   path: "/tokens",
   component: lazyRouteComponent(() => import("@/features/tokens/pages"), "TokensPage"),
 });
+const accessRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/access",
+  component: lazyRouteComponent(() => import("@/features/access/pages"), "AccessPage"),
+});
 
 const routeTree = rootRoute.addChildren([
   loginRoute,
   forgotPasswordRoute,
   resetPasswordRoute,
-  appRoute.addChildren([dashboardRoute, reposRoute, repoDetailRoute, tokensRoute]),
+  appRoute.addChildren([dashboardRoute, reposRoute, repoDetailRoute, tokensRoute, accessRoute]),
 ]);
 
 const router = createRouter({ routeTree });

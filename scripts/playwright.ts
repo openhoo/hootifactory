@@ -15,8 +15,25 @@ const env = {
   NO_COLOR: "",
   NODE_OPTIONS: withDisabledWarning(process.env.NODE_OPTIONS, "DEP0205"),
 };
+const args = process.argv.slice(2);
 
-const proc = Bun.spawn([playwrightBin, ...process.argv.slice(2)], {
+if (args[0] === "test") {
+  const setup = Bun.spawnSync(
+    ["bun", "-e", 'import setup from "./tests/global-setup"; await setup();'],
+    {
+      cwd: repoRoot,
+      env,
+      stdin: "inherit",
+      stdout: "inherit",
+      stderr: "inherit",
+    },
+  );
+  if (setup.exitCode !== 0) {
+    process.exit(setup.exitCode ?? 1);
+  }
+}
+
+const proc = Bun.spawn([playwrightBin, ...args], {
   cwd: repoRoot,
   env,
   stdin: "inherit",

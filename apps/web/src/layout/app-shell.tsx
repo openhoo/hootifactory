@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, Outlet, useNavigate } from "@tanstack/react-router";
-import { Boxes, Building2, KeyRound, LayoutDashboard, LogOut, Menu } from "lucide-react";
+import { Boxes, Building2, KeyRound, LayoutDashboard, LogOut, Menu, Users } from "lucide-react";
 import { useEffect, useState } from "react";
 import { BrandWordmark, HexPattern } from "@/components/brand";
 import { ThemeToggle } from "@/components/theme";
@@ -25,6 +25,7 @@ const NAV = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard },
   { to: "/repositories", label: "Repositories", icon: Boxes },
   { to: "/tokens", label: "API Tokens", icon: KeyRound },
+  { to: "/access", label: "Access", icon: Users },
 ] as const;
 
 function NavLink({
@@ -141,7 +142,7 @@ export function AppShell() {
               >
                 {orgs.map((o) => (
                   <NativeSelectOption key={o.id} value={o.id}>
-                    {o.displayName} ({o.role})
+                    {o.displayName} ({o.permissions.length})
                   </NativeSelectOption>
                 ))}
               </NativeSelect>

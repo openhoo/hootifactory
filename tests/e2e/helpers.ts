@@ -1,5 +1,11 @@
+import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import type { PermissionKey, PolicyName, TokenTarget } from "@hootifactory/types";
 import { type APIRequestContext, request as pwRequest } from "@playwright/test";
+
+const TEST_DATABASE_URL =
+  process.env.E2E_DATABASE_URL ??
+  "postgres://hootifactory:hootifactory@localhost:5432/hootifactory_test";
 
 /** Unique, slug-safe identifier for test isolation. */
 export function uniq(prefix: string): string {
@@ -52,7 +58,76 @@ export async function createToken(
   orgId: string,
   data: Record<string, unknown>,
 ) {
-  return ctx.post(`/api/orgs/${orgId}/tokens`, { data });
+  return ctx.post(`/api/orgs/${orgId}/tokens`, {
+    data: {
+      grants: [
+        { permission: "repository.write", repository: "*" },
+        { permission: "repository.delete", repository: "*" },
+        { permission: "policy.write", policy: "*" },
+        { permission: "token.read", tokenTarget: "self" },
+        { permission: "token.rotate", tokenTarget: "self" },
+      ],
+      ...data,
+    },
+  });
+}
+
+export interface E2EPermissionGrant {
+  permission: PermissionKey;
+  repository?: string;
+  package?: string;
+  artifact?: string;
+  policy?: PolicyName;
+  tokenTarget?: TokenTarget;
+  tokenId?: string;
+}
+
+export function grantUserPermissions(input: {
+  orgId: string;
+  userId: string;
+  grants: E2EPermissionGrant[];
+}): void {
+  execFileSync(
+    "bun",
+    [
+      "-e",
+      [
+        'import { db, memberships, permissionGrants } from "@hootifactory/db";',
+        "const grants = JSON.parse(process.env.GRANTS ?? '[]');",
+        "await db.transaction(async (tx) => {",
+        "  await tx.insert(memberships).values({",
+        "    orgId: process.env.ORG_ID,",
+        "    userId: process.env.USER_ID,",
+        "  }).onConflictDoNothing();",
+        "  if (grants.length > 0) {",
+        "    await tx.insert(permissionGrants).values(grants.map((grant) => ({",
+        "      orgId: process.env.ORG_ID,",
+        "      userId: process.env.USER_ID,",
+        "      permission: grant.permission,",
+        "      repositoryPattern: grant.repository ?? null,",
+        "      packagePattern: grant.package ?? null,",
+        "      artifactPattern: grant.artifact ?? null,",
+        "      policy: grant.policy ?? null,",
+        "      tokenTarget: grant.tokenTarget ?? null,",
+        "      targetTokenId: grant.tokenId ?? null,",
+        '      source: "e2e",',
+        "    }))).onConflictDoNothing();",
+        "  }",
+        "});",
+      ].join("\n"),
+    ],
+    {
+      env: {
+        ...process.env,
+        DATABASE_URL: TEST_DATABASE_URL,
+        ORG_ID: input.orgId,
+        USER_ID: input.userId,
+        GRANTS: JSON.stringify(input.grants),
+      },
+      stdio: "pipe",
+      encoding: "utf8",
+    },
+  );
 }
 
 export interface CreatedRepo {

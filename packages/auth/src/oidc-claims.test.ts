@@ -1,36 +1,39 @@
 import { describe, expect, test } from "bun:test";
-import { mapGroupsToOrgRoles } from "./oidc-claims";
+import { mapGroupsToOrgGroups } from "./oidc-claims";
 
-describe("mapGroupsToOrgRoles edge cases", () => {
-  test("merges the contributing groups when two groups map to the same org and role", () => {
+describe("mapGroupsToOrgGroups edge cases", () => {
+  test("merges contributing IdP groups when they map to the same local group", () => {
     expect(
-      mapGroupsToOrgRoles(["team-a", "team-b"], {
-        "team-a": [{ org: "acme", role: "developer" }],
-        "team-b": [{ org: "acme", role: "developer" }],
+      mapGroupsToOrgGroups(["team-a", "team-b"], {
+        "team-a": [{ org: "acme", group: "developers" }],
+        "team-b": [{ org: "acme", group: "developers" }],
       }),
-    ).toEqual([{ org: "acme", role: "developer", groups: ["team-a", "team-b"] }]);
+    ).toEqual([{ org: "acme", group: "developers", groups: ["team-a", "team-b"] }]);
   });
 
   test("ignores duplicate group names without double-listing them", () => {
     expect(
-      mapGroupsToOrgRoles(["team-a", "team-a"], {
-        "team-a": [{ org: "acme", role: "developer" }],
+      mapGroupsToOrgGroups(["team-a", "team-a"], {
+        "team-a": [{ org: "acme", group: "developers" }],
       }),
-    ).toEqual([{ org: "acme", role: "developer", groups: ["team-a"] }]);
+    ).toEqual([{ org: "acme", group: "developers", groups: ["team-a"] }]);
   });
 
-  test("a stronger role replaces a weaker one and resets the contributing group", () => {
+  test("keeps distinct target groups for the same organization", () => {
     expect(
-      mapGroupsToOrgRoles(["viewers", "admins"], {
-        viewers: [{ org: "acme", role: "viewer" }],
-        admins: [{ org: "acme", role: "admin" }],
+      mapGroupsToOrgGroups(["viewers", "admins"], {
+        viewers: [{ org: "acme", group: "viewers" }],
+        admins: [{ org: "acme", group: "admins" }],
       }),
-    ).toEqual([{ org: "acme", role: "admin", groups: ["admins"] }]);
+    ).toEqual([
+      { org: "acme", group: "viewers", groups: ["viewers"] },
+      { org: "acme", group: "admins", groups: ["admins"] },
+    ]);
   });
 
   test("groups with no mapping contribute nothing", () => {
     expect(
-      mapGroupsToOrgRoles(["unmapped"], { mapped: [{ org: "acme", role: "viewer" }] }),
+      mapGroupsToOrgGroups(["unmapped"], { mapped: [{ org: "acme", group: "viewers" }] }),
     ).toEqual([]);
   });
 });

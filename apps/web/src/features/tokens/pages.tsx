@@ -1,7 +1,7 @@
-import { ACTIONS, type Action } from "@hootifactory/types";
+import type { PermissionKey } from "@hootifactory/types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { KeyRound } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Code, EmptyState, Field, PageTitle, Pill, SubmitButton } from "@/components/common";
 import { Button } from "@/components/ui/button";
@@ -18,15 +18,45 @@ import {
 import { useOrg } from "@/features/orgs/context";
 import { api, apiErrorMessage } from "@/lib/api";
 
+const TOKEN_PERMISSION_OPTIONS: PermissionKey[] = [
+  "org.read",
+  "repository.read",
+  "repository.write",
+  "repository.delete",
+  "package.read",
+  "package.write",
+  "artifact.read",
+  "artifact.write",
+  "policy.read",
+  "policy.write",
+  "token.read",
+  "token.create",
+  "token.rotate",
+  "token.revoke",
+];
+
+function grantUsesRepositoryScope(permission: PermissionKey) {
+  return (
+    permission.startsWith("repository.") ||
+    permission.startsWith("package.") ||
+    permission.startsWith("artifact.") ||
+    permission.startsWith("policy.")
+  );
+}
+
 export function TokensPage() {
   const { selected } = useOrg();
   const qc = useQueryClient();
   const [name, setName] = useState("");
   const [secret, setSecret] = useState("");
   const [error, setError] = useState("");
-  const [grantResource, setGrantResource] = useState<"org" | "repository">("org");
-  const [repositoryPattern, setRepositoryPattern] = useState("*");
-  const [grantActions, setGrantActions] = useState<Action[]>(["read", "write"]);
+  const [grantPermission, setGrantPermission] = useState<PermissionKey>("repository.read");
+  const [repositoryPattern, setRepositoryPattern] = useState("");
+  const grantOptions = useMemo(
+    () =>
+      TOKEN_PERMISSION_OPTIONS.filter((permission) => selected?.permissions.includes(permission)),
+    [selected?.permissions],
+  );
 
   // The org switcher swaps the active org without remounting this page, so clear
   // the one-time secret (and any stale error) when the selected org changes.
@@ -35,6 +65,12 @@ export function TokensPage() {
     setSecret("");
     setError("");
   }, [selected?.id]);
+
+  useEffect(() => {
+    if (grantOptions.includes(grantPermission)) return;
+    const nextPermission = grantOptions[0];
+    if (nextPermission) setGrantPermission(nextPermission);
+  }, [grantOptions, grantPermission]);
 
   const tokensQ = useQuery({
     queryKey: ["tokens", selected?.id],
@@ -46,9 +82,12 @@ export function TokensPage() {
       api.createToken(selected!.id, {
         name,
         grants: [
-          grantResource === "org"
-            ? { resource: "org", actions: grantActions }
-            : { resource: "repository", repository: repositoryPattern, actions: grantActions },
+          {
+            permission: grantPermission,
+            ...(grantUsesRepositoryScope(grantPermission)
+              ? { repository: repositoryPattern.trim() }
+              : {}),
+          },
         ],
       }),
     onSuccess: async (res) => {
@@ -66,24 +105,23 @@ export function TokensPage() {
   });
 
   const tokens = tokensQ.data?.tokens ?? [];
-  const canSeeTokenOwners = selected?.role === "admin" || selected?.role === "owner";
-  const actions = ACTIONS;
-
-  function toggleAction(action: Action) {
-    setGrantActions((current) =>
-      current.includes(action) ? current.filter((a) => a !== action) : [...current, action],
-    );
-  }
+  const canSeeTokenOwners = Boolean(selected?.permissions.includes("token.read"));
+  const needsRepositoryScope = grantUsesRepositoryScope(grantPermission);
+  const canCreateToken = Boolean(
+    selected &&
+      name.trim() &&
+      (!needsRepositoryScope || repositoryPattern.trim()) &&
+      grantOptions.length > 0 &&
+      !create.isPending,
+  );
 
   function grantSummary(t: (typeof tokens)[number]) {
-    if (!t.grants.length) return t.role ?? "inherited";
+    if (!t.grants.length) return "no grants";
     return t.grants
       .map((grant) => {
-        if (grant.resource === "repository") {
-          return `${grant.repository}: ${grant.actions.join(",")}`;
-        }
-        if (grant.resource === "org") return `org: ${grant.actions.join(",")}`;
-        return `${grant.resource}: ${grant.actions.join(",")}`;
+        const scope =
+          grant.repository ?? grant.package ?? grant.artifact ?? grant.policy ?? grant.tokenTarget;
+        return scope ? `${grant.permission} (${scope})` : grant.permission;
       })
       .join("; ");
   }
@@ -101,6 +139,7 @@ export function TokensPage() {
             onSubmit={(e) => {
               e.preventDefault();
               if (!selected) return;
+              if (needsRepositoryScope && !repositoryPattern.trim()) return;
               setError("");
               create.mutate();
             }}
@@ -117,48 +156,41 @@ export function TokensPage() {
               </Field>
             </div>
             <div className="w-40">
-              <Field label="Grant">
+              <Field label="Permission">
                 <select
                   className="h-9 w-full rounded-md border bg-background px-2 text-sm"
-                  value={grantResource}
-                  onChange={(e) => setGrantResource(e.target.value as "org" | "repository")}
+                  value={grantPermission}
+                  disabled={grantOptions.length === 0}
+                  onChange={(e) => setGrantPermission(e.target.value as PermissionKey)}
                 >
-                  <option value="org">Org</option>
-                  <option value="repository">Repository</option>
+                  {grantOptions.length === 0 ? (
+                    <option value={grantPermission}>No grantable permissions</option>
+                  ) : (
+                    grantOptions.map((permission) => (
+                      <option key={permission} value={permission}>
+                        {permission}
+                      </option>
+                    ))
+                  )}
                 </select>
               </Field>
             </div>
-            {grantResource === "repository" && (
+            {needsRepositoryScope && (
               <div className="w-56">
                 <Field label="Repository pattern">
                   <Input
                     className="h-9 w-full"
                     value={repositoryPattern}
                     onChange={(e) => setRepositoryPattern(e.target.value)}
+                    data-testid="token-repository"
                     placeholder="repo or team/*"
                   />
                 </Field>
               </div>
             )}
-            <div>
-              <Field label="Actions">
-                <div className="flex h-9 flex-wrap items-center gap-2">
-                  {actions.map((action) => (
-                    <label key={action} className="flex items-center gap-1 text-xs capitalize">
-                      <input
-                        type="checkbox"
-                        checked={grantActions.includes(action)}
-                        onChange={() => toggleAction(action)}
-                      />
-                      {action}
-                    </label>
-                  ))}
-                </div>
-              </Field>
-            </div>
             <SubmitButton
               pending={create.isPending}
-              disabled={!selected}
+              disabled={!canCreateToken}
               className="h-9"
               data-testid="token-create"
             >

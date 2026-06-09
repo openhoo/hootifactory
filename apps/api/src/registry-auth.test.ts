@@ -135,7 +135,11 @@ describe("registry authorization denial responses", () => {
       adapter: adapter(),
       ctx,
       principal: { kind: "user", userId: "user_1", username: "alice" },
-      decision: { allowed: false, code: "insufficient_role", reason: "role does not grant write" },
+      decision: {
+        allowed: false,
+        code: "insufficient_scope",
+        reason: "scope does not grant write",
+      },
       permission: { action: "write" },
       deny,
     });
@@ -145,7 +149,7 @@ describe("registry authorization denial responses", () => {
       {
         status: 403,
         code: "DENIED",
-        message: "role does not grant write",
+        message: "scope does not grant write",
       },
     ]);
   });

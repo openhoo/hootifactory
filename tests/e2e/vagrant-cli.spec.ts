@@ -9,7 +9,7 @@ import {
   dockerRun,
   ensureDockerAvailable,
 } from "./docker-clients";
-import { createRepoReturning, createToken, setupOwner } from "./helpers";
+import { createRepoReturning, setupOwner } from "./helpers";
 
 // `vagrant cloud publish` targets the unimplemented Vagrant Cloud API, so we PUT
 // the .box over HTTP (a hootifactory extension) and consume with the real
@@ -30,9 +30,6 @@ test.describe("vagrant registry (Dockerized real vagrant)", () => {
       moduleId: "vagrant",
       visibility: "public",
     });
-    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "vagrant" })).json())
-      .secret as string;
-
     const id = Date.now().toString(36);
     const user = "hooti";
     const box = `bionic${id}`;

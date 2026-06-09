@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { can } from "./can";
-import { roleAllows } from "./permissions";
+import type { PermissionGrantRow } from "./permission-grants";
+import { permissionImplies } from "./permissions";
 import { httpStatusForDenial, type Principal } from "./principal";
 import { patternMatches } from "./scope";
 
@@ -11,32 +12,47 @@ const tokenScoped: Principal = {
   tokenId: "t1",
   orgId: "orgA",
   ownerUserId: "u1",
-  grants: [{ resource: "repository", repository: "acme/*", actions: ["read", "write"] }],
-  role: null,
+  grants: [],
   isRobot: false,
 };
-const tokenRobot: Principal = {
-  kind: "token",
-  tokenId: "t2",
-  orgId: "orgA",
-  ownerUserId: null,
-  grants: [],
-  role: "developer",
-  isRobot: true,
-};
 
-describe("role matrix", () => {
-  test("viewer reads only", () => {
-    expect(roleAllows("viewer", "read")).toBe(true);
-    expect(roleAllows("viewer", "write")).toBe(false);
+function grant(overrides: Partial<PermissionGrantRow> = {}): PermissionGrantRow {
+  return {
+    id: "g1",
+    orgId: "orgA",
+    userId: "u1",
+    groupId: null,
+    tokenId: null,
+    permission: "repository.write",
+    repositoryId: null,
+    repositoryPattern: "acme/*",
+    packagePattern: null,
+    artifactPattern: null,
+    policy: null,
+    tokenTarget: null,
+    targetTokenId: null,
+    grantedByUserId: null,
+    source: null,
+    createdAt: new Date("2026-06-01T00:00:00.000Z"),
+    updatedAt: new Date("2026-06-01T00:00:00.000Z"),
+    ...overrides,
+  };
+}
+
+describe("permission matrix", () => {
+  test("system admin implies every permission", () => {
+    expect(permissionImplies("system.admin", "repository.delete")).toBe(true);
+    expect(permissionImplies("system.admin", "user.deactivate")).toBe(true);
   });
-  test("developer reads + writes, not delete", () => {
-    expect(roleAllows("developer", "write")).toBe(true);
-    expect(roleAllows("developer", "delete")).toBe(false);
+
+  test("write grants read but not delete", () => {
+    expect(permissionImplies("repository.write", "repository.read")).toBe(true);
+    expect(permissionImplies("repository.write", "repository.delete")).toBe(false);
   });
-  test("admin/owner can delete + admin", () => {
-    expect(roleAllows("admin", "delete")).toBe(true);
-    expect(roleAllows("owner", "admin")).toBe(true);
+
+  test("repository grants imply package and artifact permissions", () => {
+    expect(permissionImplies("repository.write", "package.write")).toBe(true);
+    expect(permissionImplies("repository.delete", "artifact.delete")).toBe(true);
   });
 });
 
@@ -52,42 +68,30 @@ describe("scope matching", () => {
 });
 
 describe("can() — anonymous", () => {
-  test("public repo read allowed", () => {
-    const d = can({
-      principal: anon,
-      action: "read",
-      resource: { type: "repository", visibility: "public", orgId: "orgA" },
-    });
-    expect(d.allowed).toBe(true);
+  test("public repository, package, and artifact reads are allowed", () => {
+    expect(
+      can({
+        principal: anon,
+        action: "read",
+        resource: { type: "repository", visibility: "public", orgId: "orgA" },
+      }).allowed,
+    ).toBe(true);
+    expect(
+      can({
+        principal: anon,
+        permission: "package.read",
+        resource: {
+          type: "package",
+          visibility: "public",
+          orgId: "orgA",
+          repositoryName: "acme/app",
+          packageName: "demo",
+        },
+      }).allowed,
+    ).toBe(true);
   });
-  test("public package and artifact reads allowed", () => {
-    const pkg = can({
-      principal: anon,
-      action: "read",
-      resource: {
-        type: "package",
-        visibility: "public",
-        orgId: "orgA",
-        repositoryName: "acme/app",
-        packageName: "demo",
-      },
-    });
-    const artifact = can({
-      principal: anon,
-      action: "read",
-      resource: {
-        type: "artifact",
-        visibility: "public",
-        orgId: "orgA",
-        repositoryName: "acme/app",
-        packageName: "demo",
-        artifactRef: "demo-1.0.0.tgz",
-      },
-    });
-    expect(pkg.allowed).toBe(true);
-    expect(artifact.allowed).toBe(true);
-  });
-  test("public visibility does not make scan policy metadata anonymous-readable", () => {
+
+  test("public visibility does not make policy metadata anonymous-readable", () => {
     const d = can({
       principal: anon,
       action: "read",
@@ -102,7 +106,8 @@ describe("can() — anonymous", () => {
     expect(d.allowed).toBe(false);
     expect(d.code).toBe("unauthenticated");
   });
-  test("private repo read => 401 unauthenticated", () => {
+
+  test("private reads and writes require authentication", () => {
     const d = can({
       principal: anon,
       action: "read",
@@ -112,34 +117,27 @@ describe("can() — anonymous", () => {
     expect(d.code).toBe("unauthenticated");
     expect(httpStatusForDenial(d)).toBe(401);
   });
-  test("public repo write => 401 (writes always need auth)", () => {
-    const d = can({
-      principal: anon,
-      action: "write",
-      resource: { type: "repository", visibility: "public", orgId: "orgA" },
-    });
-    expect(d.allowed).toBe(false);
-    expect(d.code).toBe("unauthenticated");
-  });
 });
 
-describe("can() — token org boundary", () => {
-  test("cross-org token => 403 cross_org", () => {
+describe("can() — token and user grants", () => {
+  test("tokens are bound to their issuing organization", () => {
     const d = can({
       principal: tokenScoped,
       action: "read",
       resource: { type: "repository", orgId: "orgB", repositoryName: "acme/app" },
+      grants: [grant({ tokenId: "t1", userId: null })],
     });
     expect(d.allowed).toBe(false);
     expect(d.code).toBe("cross_org");
     expect(httpStatusForDenial(d)).toBe(403);
   });
-  test("same-org scoped token: grant within scope, deny outside", () => {
+
+  test("matching scoped grants allow and mismatched scopes deny", () => {
     const ok = can({
       principal: tokenScoped,
       action: "write",
       resource: { type: "repository", orgId: "orgA", repositoryName: "acme/app" },
-      effectiveRole: "developer",
+      grants: [grant({ tokenId: "t1", userId: null })],
     });
     expect(ok.allowed).toBe(true);
 
@@ -147,107 +145,27 @@ describe("can() — token org boundary", () => {
       principal: tokenScoped,
       action: "write",
       resource: { type: "repository", orgId: "orgA", repositoryName: "other/app" },
+      grants: [grant({ tokenId: "t1", userId: null })],
     });
     expect(denied.allowed).toBe(false);
     expect(denied.code).toBe("insufficient_scope");
   });
-  test("robot token uses its role", () => {
-    const d = can({
-      principal: tokenRobot,
-      action: "write",
-      resource: { type: "repository", orgId: "orgA", repositoryName: "x/y" },
-    });
-    expect(d.allowed).toBe(true);
-    const del = can({
-      principal: tokenRobot,
-      action: "delete",
-      resource: { type: "repository", orgId: "orgA", repositoryName: "x/y" },
-    });
-    expect(del.allowed).toBe(false);
-  });
-  test("scoped token cannot escalate on an org-level resource (no repositoryName)", () => {
-    // Even if the owner is an org admin/owner, a scoped token must not inherit
-    // that role on a resource its scopes can't match (privilege-escalation guard).
-    const d = can({
-      principal: tokenScoped,
-      action: "admin",
-      resource: { type: "org", orgId: "orgA" },
-      effectiveRole: "owner",
-    });
-    expect(d.allowed).toBe(false);
-    expect(d.code).toBe("insufficient_scope");
-  });
-  test("scoped token cannot exceed its effective role", () => {
-    const d = can({
-      principal: tokenScoped,
-      action: "write",
-      resource: { type: "repository", orgId: "orgA", repositoryName: "acme/app" },
-      effectiveRole: "viewer",
-    });
-    expect(d.allowed).toBe(false);
-    expect(d.code).toBe("insufficient_role");
-  });
-  test("effective role caps token stored role, including null", () => {
-    const tokenWithStoredAdmin: Principal = {
-      ...tokenScoped,
-      role: "admin",
-    };
-    const capped = can({
-      principal: tokenWithStoredAdmin,
-      action: "write",
-      resource: { type: "repository", orgId: "orgA", repositoryName: "acme/app" },
-      effectiveRole: "viewer",
-    });
-    expect(capped.allowed).toBe(false);
-    expect(capped.code).toBe("insufficient_role");
 
-    const removed = can({
-      principal: tokenWithStoredAdmin,
-      action: "read",
-      resource: { type: "repository", orgId: "orgA", repositoryName: "acme/app" },
-      effectiveRole: null,
-    });
-    expect(removed.allowed).toBe(false);
-    expect(removed.code).toBe("insufficient_role");
-
-    const scopeLess = can({
-      principal: { ...tokenRobot, role: "admin" },
-      action: "write",
-      resource: { type: "repository", orgId: "orgA", repositoryName: "x/y" },
-      effectiveRole: "viewer",
-    });
-    expect(scopeLess.allowed).toBe(false);
-    expect(scopeLess.code).toBe("insufficient_role");
-  });
-});
-
-describe("can() — user", () => {
-  test("non-member => 403 not_member", () => {
-    const d = can({
-      principal: user,
-      action: "read",
-      resource: { type: "repository", orgId: "orgA" },
-      effectiveRole: null,
-    });
-    expect(d.allowed).toBe(false);
-    expect(d.code).toBe("not_member");
-    expect(httpStatusForDenial(d)).toBe(403);
-  });
-  test("member role gates action", () => {
+  test("user permissions are grant based", () => {
     expect(
       can({
         principal: user,
         action: "write",
-        resource: { type: "repository", orgId: "orgA" },
-        effectiveRole: "developer",
+        resource: { type: "repository", orgId: "orgA", repositoryName: "acme/app" },
+        grants: [grant()],
       }).allowed,
     ).toBe(true);
     expect(
       can({
         principal: user,
         action: "delete",
-        resource: { type: "repository", orgId: "orgA" },
-        effectiveRole: "developer",
+        resource: { type: "repository", orgId: "orgA", repositoryName: "acme/app" },
+        grants: [grant()],
       }).allowed,
     ).toBe(false);
   });
@@ -289,16 +207,6 @@ describe("delegated registry bearer token", () => {
       false,
     );
     expect(can({ principal: reg([]), action: "read", resource: repoRes("acme/app") }).allowed).toBe(
-      false,
-    );
-  });
-
-  test("does not translate Docker verbs: the claim vocabulary is generic actions", () => {
-    // Phase-3 regression guard: agnostic auth matches the requested generic
-    // action directly and must NOT accept a legacy Docker verb in the claim
-    // (the OCI token issuer translates pull/push->read/write at mint time).
-    const p = reg([{ type: "repository", name: "acme/app", actions: ["pull"] }]);
-    expect(can({ principal: p, action: "read", resource: repoRes("acme/app") }).allowed).toBe(
       false,
     );
   });

@@ -125,7 +125,7 @@ describe("api v1 response helpers", () => {
 
     const forbidden = authorizationDenied(context(), {
       allowed: false,
-      code: "insufficient_role",
+      code: "insufficient_scope",
     });
     expect(forbidden.status).toBe(403);
     const body = (await forbidden.json()) as { error: { code: string; message: string } };

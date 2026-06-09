@@ -64,7 +64,7 @@ const listRegistryAssetsForRepository = mock(async () => ({
 mock.module("@hootifactory/auth", () => ({
   authorize: async () => ({
     allowed: allow,
-    code: allow ? "ok" : "insufficient_role",
+    code: allow ? "ok" : "insufficient_scope",
     reason: "denied",
   }),
   createRequestAuthorizer: () => async () => ({ allowed: allow }),

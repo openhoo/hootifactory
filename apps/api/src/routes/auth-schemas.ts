@@ -1,5 +1,4 @@
 import { z } from "@hootifactory/core";
-import { ROLE_NAMES } from "@hootifactory/types";
 
 const EmailSchema = z
   .string()
@@ -33,7 +32,7 @@ export const PasswordResetConfirmBodySchema = z.strictObject({
 
 const OidcGrantSchema = z.strictObject({
   org: z.string().min(1),
-  role: z.enum(ROLE_NAMES),
+  group: z.string().min(1),
   groups: z.array(z.string()),
 });
 

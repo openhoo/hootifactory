@@ -38,7 +38,6 @@ describe("writeAudit actor derivation", () => {
       orgId: "org-1",
       ownerUserId: "owner-2",
       grants: [],
-      role: null,
       isRobot: false,
     };
     const values = await captureAuditValues({ action: "push", result: "deny", principal });

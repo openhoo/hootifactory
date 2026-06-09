@@ -11,7 +11,6 @@ import {
   AUTH_EMAIL_TOKEN_PURPOSES,
   BLOB_STATES,
   REPO_KINDS,
-  ROLE_NAMES,
   TOKEN_TYPES,
   UPLOAD_STATES,
   VISIBILITIES,
@@ -21,9 +20,6 @@ import { pgEnum } from "drizzle-orm/pg-core";
 export const repoKindEnum = pgEnum("repo_kind", REPO_KINDS);
 
 export const visibilityEnum = pgEnum("visibility", VISIBILITIES);
-
-/** Fixed RBAC role matrix (resolved to permissions in code). */
-export const roleNameEnum = pgEnum("role_name", ROLE_NAMES);
 
 export const tokenTypeEnum = pgEnum("token_type", TOKEN_TYPES);
 

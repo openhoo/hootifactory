@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import {
-  V1ActionSchema,
   V1AddUpstreamRequestSchema,
   V1AddVirtualMemberRequestSchema,
   V1ApiTokenSchema,
@@ -42,6 +41,7 @@ import {
   V1PackageVersionSummarySchema,
   V1PaginationMetaSchema,
   V1PaginationQuerySchema,
+  V1PermissionKeySchema,
   V1PolicyModeSchema,
   V1PrincipalSchema,
   V1QuotaRequestSchema,
@@ -58,12 +58,10 @@ import {
   V1RetentionRequestSchema,
   V1RetentionResponseSchema,
   V1RetentionResultSchema,
-  V1RoleNameSchema,
   V1ScanPolicyRequestSchema,
   V1ScanPolicyResponseSchema,
   V1ScanPolicySchema,
   V1SeveritySchema,
-  V1TokenActionsSchema,
   V1TokenGrantSchema,
   V1TokenIdParamsSchema,
   V1TokenListResponseSchema,
@@ -172,8 +170,7 @@ describe("api-v1 path-parameter schemas", () => {
 
 describe("api-v1 enum schemas", () => {
   test("enum schemas accept their member values", () => {
-    expect(V1RoleNameSchema.parse("owner")).toBe("owner");
-    expect(V1ActionSchema.parse("read")).toBe("read");
+    expect(V1PermissionKeySchema.parse("repository.read")).toBe("repository.read");
     expect(V1RepoKindSchema.parse("proxy")).toBe("proxy");
     expect(V1VisibilitySchema.parse("public")).toBe("public");
     expect(V1PolicyModeSchema.parse("enforce")).toBe("enforce");
@@ -184,64 +181,50 @@ describe("api-v1 enum schemas", () => {
   });
 
   test("enum schemas reject non-members", () => {
-    expect(V1RoleNameSchema.safeParse("superuser").success).toBe(false);
+    expect(V1PermissionKeySchema.safeParse("repository.superuser").success).toBe(false);
     expect(V1SeveritySchema.safeParse("apocalyptic").success).toBe(false);
     expect(V1ArtifactStateSchema.safeParse("exploded").success).toBe(false);
   });
 });
 
 describe("api-v1 token grants", () => {
-  test("V1TokenActionsSchema dedupes while preserving order", () => {
-    expect(V1TokenActionsSchema.parse(["read", "read", "write"])).toEqual(["read", "write"]);
-    expect(V1TokenActionsSchema.safeParse([]).success).toBe(false);
-    expect(
-      V1TokenActionsSchema.safeParse(["read", "write", "delete", "admin", "read"]).success,
-    ).toBe(false);
-  });
-
-  test("V1TokenGrantSchema discriminates on the resource", () => {
-    expect(V1TokenGrantSchema.parse({ resource: "org", actions: ["read"] })).toEqual({
-      resource: "org",
-      actions: ["read"],
+  test("V1TokenGrantSchema accepts fine-grained permission grants", () => {
+    expect(V1TokenGrantSchema.parse({ permission: "org.read" })).toEqual({
+      permission: "org.read",
     });
     expect(
-      V1TokenGrantSchema.parse({ resource: "repository", repository: "lib/*", actions: ["write"] }),
-    ).toMatchObject({ resource: "repository", repository: "lib/*" });
+      V1TokenGrantSchema.parse({ permission: "repository.write", repository: "lib/*" }),
+    ).toMatchObject({ permission: "repository.write", repository: "lib/*" });
     expect(
       V1TokenGrantSchema.parse({
-        resource: "package",
+        permission: "package.read",
         repository: "lib",
         package: "left-pad",
-        actions: ["read"],
       }),
-    ).toMatchObject({ resource: "package", package: "left-pad" });
+    ).toMatchObject({ permission: "package.read", package: "left-pad" });
     expect(
       V1TokenGrantSchema.parse({
-        resource: "artifact",
+        permission: "artifact.read",
         repository: "imgs",
         artifact: "*",
-        actions: ["read"],
       }),
-    ).toMatchObject({ resource: "artifact" });
+    ).toMatchObject({ permission: "artifact.read" });
+    expect(V1TokenGrantSchema.parse({ permission: "policy.write", policy: "scan" })).toMatchObject({
+      permission: "policy.write",
+      policy: "scan",
+    });
     expect(
-      V1TokenGrantSchema.parse({ resource: "policy", policy: "scan", actions: ["admin"] }),
-    ).toMatchObject({ resource: "policy", policy: "scan" });
-    expect(
-      V1TokenGrantSchema.parse({ resource: "token", target: "org", actions: ["admin"] }),
-    ).toMatchObject({ resource: "token", target: "org" });
+      V1TokenGrantSchema.parse({ permission: "token.create", tokenTarget: "org" }),
+    ).toMatchObject({ permission: "token.create", tokenTarget: "org" });
   });
 
-  test("V1TokenGrantSchema rejects unknown resources and bad members", () => {
-    expect(V1TokenGrantSchema.safeParse({ resource: "galaxy", actions: ["read"] }).success).toBe(
-      false,
-    );
+  test("V1TokenGrantSchema rejects unknown permissions and bad members", () => {
+    expect(V1TokenGrantSchema.safeParse({ permission: "galaxy.read" }).success).toBe(false);
     expect(
-      V1TokenGrantSchema.safeParse({ resource: "policy", policy: "nope", actions: ["read"] })
-        .success,
+      V1TokenGrantSchema.safeParse({ permission: "policy.read", policy: "nope" }).success,
     ).toBe(false);
     expect(
-      V1TokenGrantSchema.safeParse({ resource: "token", target: "everyone", actions: ["read"] })
-        .success,
+      V1TokenGrantSchema.safeParse({ permission: "token.read", tokenTarget: "everyone" }).success,
     ).toBe(false);
   });
 });
@@ -271,7 +254,7 @@ describe("api-v1 request schemas", () => {
   test("V1CreateTokenRequestSchema defaults the type and parses expiry into a Date", () => {
     const parsed = V1CreateTokenRequestSchema.parse({
       name: "ci",
-      grants: [{ resource: "org", actions: ["read"] }],
+      grants: [{ permission: "org.read" }],
       expiresAt: TS,
     });
     expect(parsed.type).toBe("personal");
@@ -279,7 +262,7 @@ describe("api-v1 request schemas", () => {
     expect(
       V1CreateTokenRequestSchema.parse({
         name: "ci",
-        grants: [{ resource: "org", actions: ["read"] }],
+        grants: [{ permission: "org.read" }],
         type: "robot",
       }).type,
     ).toBe("robot");
@@ -288,12 +271,13 @@ describe("api-v1 request schemas", () => {
   test("V1CreateTokenRequestSchema accepts a null expiry and rejects empty names", () => {
     const parsed = V1CreateTokenRequestSchema.parse({
       name: "ci",
-      grants: [{ resource: "org", actions: ["read"] }],
+      grants: [{ permission: "org.read" }],
       expiresAt: null,
     });
     expect(parsed.expiresAt).toBeNull();
     expect(
-      V1CreateTokenRequestSchema.safeParse({ name: "", grants: [{ resource: "org" }] }).success,
+      V1CreateTokenRequestSchema.safeParse({ name: "", grants: [{ permission: "org.read" }] })
+        .success,
     ).toBe(false);
   });
 
@@ -456,8 +440,7 @@ describe("api-v1 entity schemas", () => {
         name: "ci",
         prefix: "hf_",
         type: "robot",
-        grants: [{ resource: "org", actions: ["read"] }],
-        role: null,
+        grants: [{ permission: "org.read" }],
         expiresAt: null,
         revokedAt: null,
         revokedByUserId: null,
@@ -482,8 +465,7 @@ describe("api-v1 entity schemas", () => {
         tokenId: UUID,
         orgId: UUID,
         ownerUserId: null,
-        grants: [{ resource: "org", actions: ["read"] }],
-        role: null,
+        grants: [{ permission: "org.read" }],
         isRobot: true,
       }),
     ).toMatchObject({ kind: "token", isRobot: true });
@@ -514,7 +496,6 @@ describe("api-v1 simple value schemas", () => {
       prefix: "hf_",
       type: "personal",
       grants: [],
-      role: null,
       expiresAt: null,
       revokedAt: null,
       revokedByUserId: null,
@@ -673,7 +654,6 @@ describe("api-v1 response envelope helpers", () => {
       prefix: "hf_",
       type: "personal",
       grants: [],
-      role: null,
       expiresAt: null,
       revokedAt: null,
       revokedByUserId: null,

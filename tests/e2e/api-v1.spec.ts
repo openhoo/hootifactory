@@ -1,42 +1,5 @@
-import { execFileSync } from "node:child_process";
 import { type APIRequestContext, expect, test } from "@playwright/test";
-import { anonContext, createRepo, setupOwner, uniq } from "./helpers";
-
-const TEST_DATABASE_URL =
-  process.env.E2E_DATABASE_URL ??
-  "postgres://hootifactory:hootifactory@localhost:5432/hootifactory_test";
-
-function insertOrgRoleBinding(input: {
-  orgId: string;
-  userId: string;
-  role: "viewer" | "developer" | "admin" | "owner";
-}): void {
-  execFileSync(
-    "bun",
-    [
-      "-e",
-      [
-        'import { db, roleBindings } from "@hootifactory/db";',
-        "await db.insert(roleBindings).values({",
-        "  orgId: process.env.ORG_ID,",
-        "  userId: process.env.USER_ID,",
-        "  role: process.env.ROLE,",
-        "});",
-      ].join("\n"),
-    ],
-    {
-      env: {
-        ...process.env,
-        DATABASE_URL: TEST_DATABASE_URL,
-        ORG_ID: input.orgId,
-        USER_ID: input.userId,
-        ROLE: input.role,
-      },
-      stdio: "pipe",
-      encoding: "utf8",
-    },
-  );
-}
+import { anonContext, createRepo, grantUserPermissions, setupOwner, uniq } from "./helpers";
 
 async function publishRawNpm(ctx: APIRequestContext, mountPath: string, pkgName: string) {
   const filename = `${pkgName}-1.0.0.tgz`;
@@ -104,11 +67,11 @@ test.describe("external api v1", () => {
 
     const created = await createV1Token(owner.ctx, owner.orgId, {
       name: "repo-reader",
-      grants: [{ resource: "repository", repository: repo.name, actions: ["read"] }],
+      grants: [{ permission: "repository.read", repository: repo.name }],
     });
     const wrong = await createV1Token(owner.ctx, owner.orgId, {
       name: "wrong-reader",
-      grants: [{ resource: "repository", repository: `${repo.name}-other`, actions: ["read"] }],
+      grants: [{ permission: "repository.read", repository: `${repo.name}-other` }],
     });
 
     const anon = await anonContext(baseURL!);
@@ -174,10 +137,10 @@ test.describe("external api v1", () => {
     const developerMe = (await (await developer.ctx.get("/api/v1/me")).json()) as {
       data: { principal: { userId: string } };
     };
-    insertOrgRoleBinding({
+    grantUserPermissions({
       orgId: owner.orgId,
       userId: developerMe.data.principal.userId,
-      role: "developer",
+      grants: [{ permission: "org.read" }, { permission: "token.create", tokenTarget: "org" }],
     });
 
     const policy = { repositoryPattern: "*", mode: "audit" };
@@ -186,16 +149,13 @@ test.describe("external api v1", () => {
     });
     expect(denied.status()).toBe(403);
 
-    const scoped = await createV1Token(developer.ctx, owner.orgId, {
-      name: "policy-writer",
-      grants: [{ resource: "policy", policy: "scan", actions: ["write"] }],
+    const scoped = await developer.ctx.post(`/api/v1/orgs/${owner.orgId}/tokens`, {
+      data: {
+        name: "policy-writer",
+        grants: [{ permission: "policy.write", policy: "scan" }],
+      },
     });
-    const anon = await anonContext(baseURL!);
-    const tokenDenied = await anon.post(`/api/v1/orgs/${owner.orgId}/scan-policies`, {
-      headers: { authorization: `Bearer ${scoped.data.secret}` },
-      data: policy,
-    });
-    expect(tokenDenied.status()).toBe(403);
+    expect(scoped.status()).toBe(403);
 
     const created = await owner.ctx.post(`/api/v1/orgs/${owner.orgId}/scan-policies`, {
       data: policy,
@@ -209,10 +169,10 @@ test.describe("external api v1", () => {
     const developerMe = (await (await developer.ctx.get("/api/v1/me")).json()) as {
       data: { principal: { userId: string } };
     };
-    insertOrgRoleBinding({
+    grantUserPermissions({
       orgId: owner.orgId,
       userId: developerMe.data.principal.userId,
-      role: "developer",
+      grants: [{ permission: "org.read" }, { permission: "token.create", tokenTarget: "org" }],
     });
 
     const quota = { maxStorageBytes: 0, maxArtifacts: 0 };
@@ -221,16 +181,13 @@ test.describe("external api v1", () => {
     });
     expect(denied.status()).toBe(403);
 
-    const scoped = await createV1Token(developer.ctx, owner.orgId, {
-      name: "quota-writer",
-      grants: [{ resource: "policy", policy: "quota", actions: ["write"] }],
+    const scoped = await developer.ctx.post(`/api/v1/orgs/${owner.orgId}/tokens`, {
+      data: {
+        name: "quota-writer",
+        grants: [{ permission: "policy.write", policy: "quota" }],
+      },
     });
-    const anon = await anonContext(baseURL!);
-    const tokenDenied = await anon.post(`/api/v1/orgs/${owner.orgId}/quota`, {
-      headers: { authorization: `Bearer ${scoped.data.secret}` },
-      data: quota,
-    });
-    expect(tokenDenied.status()).toBe(403);
+    expect(scoped.status()).toBe(403);
 
     const updated = await owner.ctx.post(`/api/v1/orgs/${owner.orgId}/quota`, {
       data: quota,
@@ -252,10 +209,10 @@ test.describe("external api v1", () => {
     const developerMe = (await (await developer.ctx.get("/api/v1/me")).json()) as {
       data: { principal: { userId: string } };
     };
-    insertOrgRoleBinding({
+    grantUserPermissions({
       orgId: owner.orgId,
       userId: developerMe.data.principal.userId,
-      role: "developer",
+      grants: [{ permission: "org.read" }, { permission: "token.create", tokenTarget: "org" }],
     });
 
     const request = { keepLastN: 1 };
@@ -264,16 +221,13 @@ test.describe("external api v1", () => {
     });
     expect(denied.status()).toBe(403);
 
-    const scoped = await createV1Token(developer.ctx, owner.orgId, {
-      name: "retention-writer",
-      grants: [{ resource: "policy", policy: "retention", actions: ["write"] }],
+    const scoped = await developer.ctx.post(`/api/v1/orgs/${owner.orgId}/tokens`, {
+      data: {
+        name: "retention-writer",
+        grants: [{ permission: "policy.write", policy: "retention" }],
+      },
     });
-    const anon = await anonContext(baseURL!);
-    const tokenDenied = await anon.post(`/api/v1/repositories/${repo.id}/retention/apply`, {
-      headers: { authorization: `Bearer ${scoped.data.secret}` },
-      data: request,
-    });
-    expect(tokenDenied.status()).toBe(403);
+    expect(scoped.status()).toBe(403);
 
     const applied = await owner.ctx.post(`/api/v1/repositories/${repo.id}/retention/apply`, {
       data: request,
@@ -285,7 +239,10 @@ test.describe("external api v1", () => {
     const owner = await setupOwner(baseURL!);
     const created = await createV1Token(owner.ctx, owner.orgId, {
       name: "self-rotator",
-      grants: [{ resource: "token", target: "self", actions: ["read", "write"] }],
+      grants: [
+        { permission: "token.read", tokenTarget: "self" },
+        { permission: "token.rotate", tokenTarget: "self" },
+      ],
     });
 
     const anon = await anonContext(baseURL!);
@@ -319,22 +276,25 @@ test.describe("external api v1", () => {
     const adminMe = (await (await admin.ctx.get("/api/v1/me")).json()) as {
       data: { principal: { userId: string } };
     };
-    insertOrgRoleBinding({
+    grantUserPermissions({
       orgId: owner.orgId,
       userId: viewerMe.data.principal.userId,
-      role: "viewer",
+      grants: [{ permission: "org.read" }],
     });
-    insertOrgRoleBinding({
+    grantUserPermissions({
       orgId: owner.orgId,
       userId: adminMe.data.principal.userId,
-      role: "admin",
+      grants: [{ permission: "org.read" }, { permission: "token.read", tokenTarget: "org" }],
     });
 
     const created = await createV1Token(owner.ctx, owner.orgId, {
       name: "owner-ci",
       type: "robot",
-      role: "owner",
-      grants: [{ resource: "token", target: "org", actions: ["admin"] }],
+      grants: [
+        { permission: "token.read", tokenTarget: "org" },
+        { permission: "token.rotate", tokenTarget: "org" },
+        { permission: "token.revoke", tokenTarget: "org" },
+      ],
     });
 
     const viewerList = await viewer.ctx.get(`/api/v1/orgs/${owner.orgId}/tokens`);
@@ -351,7 +311,9 @@ test.describe("external api v1", () => {
     const ownerBody = await ownerDetail.json();
     expect(ownerBody.data.name).toBe("owner-ci");
     expect(ownerBody.data.grants).toEqual([
-      { resource: "token", target: "org", actions: ["admin"] },
+      { permission: "token.read", tokenTarget: "org" },
+      { permission: "token.rotate", tokenTarget: "org" },
+      { permission: "token.revoke", tokenTarget: "org" },
     ]);
 
     const adminList = await admin.ctx.get(`/api/v1/orgs/${owner.orgId}/tokens`);
@@ -372,22 +334,32 @@ test.describe("external api v1", () => {
     const adminMe = (await (await admin.ctx.get("/api/v1/me")).json()) as {
       data: { principal: { userId: string } };
     };
-    insertOrgRoleBinding({
+    grantUserPermissions({
       orgId: owner.orgId,
       userId: developerMe.data.principal.userId,
-      role: "developer",
+      grants: [
+        { permission: "org.read" },
+        { permission: "token.create", tokenTarget: "org" },
+        { permission: "token.rotate", tokenTarget: "self" },
+      ],
     });
-    insertOrgRoleBinding({
+    grantUserPermissions({
       orgId: owner.orgId,
       userId: adminMe.data.principal.userId,
-      role: "admin",
+      grants: [
+        { permission: "org.read" },
+        { permission: "token.read", tokenTarget: "org" },
+        { permission: "token.rotate", tokenTarget: "org" },
+      ],
     });
 
     const created = await createV1Token(owner.ctx, owner.orgId, {
       name: "owner-robot",
       type: "robot",
-      role: "owner",
-      grants: [{ resource: "token", target: "org", actions: ["admin"] }],
+      grants: [
+        { permission: "token.read", tokenTarget: "org" },
+        { permission: "token.rotate", tokenTarget: "org" },
+      ],
     });
 
     const denied = await developer.ctx.post(`/api/v1/tokens/${created.data.token.id}/rotate`);
@@ -396,19 +368,18 @@ test.describe("external api v1", () => {
     const blockedGrant = await developer.ctx.post(`/api/v1/orgs/${owner.orgId}/tokens`, {
       data: {
         name: "developer-token-manager",
-        grants: [{ resource: "token", target: "org", actions: ["write"] }],
+        grants: [{ permission: "token.rotate", tokenTarget: "org" }],
       },
     });
     expect(blockedGrant.status()).toBe(403);
 
-    const lowRoleManager = await createV1Token(owner.ctx, owner.orgId, {
-      name: "low-role-token-manager",
-      role: "developer",
-      grants: [{ resource: "token", target: "org", actions: ["write"] }],
+    const selfOnlyManager = await createV1Token(developer.ctx, owner.orgId, {
+      name: "self-only-token-manager",
+      grants: [{ permission: "token.rotate", tokenTarget: "self" }],
     });
     const anon = await anonContext(baseURL!);
     const tokenDenied = await anon.post(`/api/v1/tokens/${created.data.token.id}/rotate`, {
-      headers: { authorization: `Bearer ${lowRoleManager.data.secret}` },
+      headers: { authorization: `Bearer ${selfOnlyManager.data.secret}` },
     });
     expect(tokenDenied.status()).toBe(403);
 

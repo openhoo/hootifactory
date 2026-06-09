@@ -25,8 +25,6 @@ const token = {
   name: "ci",
   tokenPrefix: "hoot_abc",
   type: "personal",
-  grants: [{ resource: "org", actions: ["read"] }],
-  role: "developer",
   expiresAt: null,
   revokedAt: null,
   revokedByUserId: null,
@@ -66,7 +64,7 @@ describe("ui DTO serialization", () => {
   });
 
   test("serializes a token row and defaults a missing owner username to null", () => {
-    const dto = tokenDto(token);
+    const dto = tokenDto(token, null, [{ permission: "org.read" }]);
     expect(dto).toMatchObject({
       id: "tok_1",
       ownerUserId: "user_1",
@@ -74,7 +72,7 @@ describe("ui DTO serialization", () => {
       name: "ci",
       prefix: "hoot_abc",
       type: "personal",
-      role: "developer",
+      grants: [{ permission: "org.read" }],
       expiresAt: null,
       revokedAt: null,
       lastUsedAt: null,
@@ -92,6 +90,7 @@ describe("ui DTO serialization", () => {
         rotatedAt: updatedAt,
       } as unknown as ApiTokenRow,
       "alice",
+      [{ permission: "org.read" }],
     );
     expect(dto.ownerUsername).toBe("alice");
     expect(dto.expiresAt).toBe(createdAt.toISOString());

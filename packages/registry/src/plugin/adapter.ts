@@ -17,7 +17,6 @@ export type {
   PolicyName,
   RegistryAccess,
   ResourceRef,
-  RoleName,
   TokenAction,
   TokenGrant,
   TokenTarget,

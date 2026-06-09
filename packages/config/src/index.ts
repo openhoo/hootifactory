@@ -1,4 +1,4 @@
-import { LOG_LEVELS, ROLE_NAMES, SCANNER_CLI_RUNTIMES } from "@hootifactory/types";
+import { LOG_LEVELS, SCANNER_CLI_RUNTIMES } from "@hootifactory/types";
 import { z } from "zod";
 
 /**
@@ -78,8 +78,6 @@ const originList = z
     return [...new Set(origins)];
   });
 
-const roleName = z.enum(ROLE_NAMES);
-
 /**
  * A comma-separated plugin allowlist (registries or scanners). An unset/empty
  * value yields `undefined` — meaning "register every built-in plugin" — so the
@@ -105,10 +103,36 @@ const pluginAllowlist = z.preprocess(
     ),
 );
 
+const uuidList = z
+  .string()
+  .default("")
+  .transform((value, ctx) => {
+    const ids: string[] = [];
+    for (const raw of value.split(",")) {
+      const id = raw.trim();
+      if (!id) continue;
+      const parsed = z.uuid().safeParse(id);
+      if (!parsed.success) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `invalid user id "${id}"`,
+        });
+        return z.NEVER;
+      }
+      ids.push(id);
+    }
+    return [...new Set(ids)];
+  });
+
 const orgSlug = z
   .string()
   .trim()
   .regex(/^[a-z0-9][a-z0-9-]{1,62}$/, "org must be a slug (2-63 lowercase chars)");
+
+const groupSlug = z
+  .string()
+  .trim()
+  .regex(/^[a-z0-9][a-z0-9._-]{1,127}$/, "group must be a slug (2-128 chars)");
 
 const oidcScopes = z
   .string()
@@ -125,7 +149,7 @@ const oidcScopes = z
 
 const OidcGroupMappingsSchema = z.record(
   z.string().min(1),
-  z.array(z.strictObject({ org: orgSlug, role: roleName })).min(1),
+  z.array(z.strictObject({ org: orgSlug, group: groupSlug })).min(1),
 );
 
 const oidcGroupMappings = z
@@ -226,6 +250,7 @@ const EnvSchema = z
     SESSION_SECRET: z.string().min(16).default("dev-session-secret-change-me-please-32chars"),
     AUTH_ALLOW_REGISTRATION: boolish.optional(),
     AUTH_ALLOW_ORG_CREATION: boolish.optional(),
+    AUTH_SYSTEM_ADMIN_USER_IDS: uuidList,
     AUTH_LOGIN_MAX_ATTEMPTS: positiveInt(5),
     AUTH_LOGIN_WINDOW_SECONDS: positiveInt(60),
     AUTH_THROTTLE_MAX_BUCKETS: positiveInt(10_000),

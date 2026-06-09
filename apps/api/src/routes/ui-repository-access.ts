@@ -80,13 +80,14 @@ export async function requireScanFindingsAccess(
   notFoundLabel: string,
 ): Promise<Response | undefined> {
   if (!repo) return c.json({ error: notFoundLabel }, 404);
-  const decision = await authorize(c.get("principal"), "read", {
-    type: "policy",
-    orgId: repo.orgId,
-    repositoryId: repo.id,
-    repositoryName: repo.name,
-    policy: "scan",
-  });
+  if (c.get("principal").kind === "anonymous") {
+    return denied(c, {
+      allowed: false,
+      code: "unauthenticated",
+      reason: "authentication required",
+    });
+  }
+  const decision = await authorize(c.get("principal"), "read", repositoryTarget(repo));
   if (decision.allowed) return undefined;
   return denied(c, decision);
 }

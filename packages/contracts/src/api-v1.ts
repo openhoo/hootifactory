@@ -1,9 +1,8 @@
 import { ARTIFACT_STATES, FINDING_TYPES, POLICY_MODES, SEVERITIES } from "@hootifactory/scan-core";
 import {
-  ACTIONS,
+  PERMISSION_KEYS,
   POLICY_NAMES,
   REPO_KINDS,
-  ROLE_NAMES,
   TOKEN_TARGETS,
   TOKEN_TYPES,
   VISIBILITIES,
@@ -36,6 +35,15 @@ export const V1PaginationQuerySchema = z
     offset: z.coerce.number().int().min(0).default(0).describe("Zero-based item offset."),
   })
   .describe("Offset pagination controls.");
+export const V1UserListQuerySchema = V1PaginationQuerySchema.extend({
+  q: z
+    .string()
+    .trim()
+    .min(1)
+    .max(128)
+    .describe("Optional username, email, or display-name search.")
+    .optional(),
+}).describe("User listing filters.");
 
 export const V1PaginationMetaSchema = z
   .strictObject({
@@ -80,6 +88,35 @@ export const V1TokenIdParamsSchema = z
     tokenId: V1UuidSchema.describe("API token identifier."),
   })
   .describe("Token path parameters.");
+export const V1UserIdParamsSchema = z
+  .strictObject({
+    userId: V1UuidSchema.describe("User identifier."),
+  })
+  .describe("User path parameters.");
+export const V1OrgUserParamsSchema = z
+  .strictObject({
+    orgId: V1UuidSchema.describe("Organization identifier."),
+    userId: V1UuidSchema.describe("User identifier."),
+  })
+  .describe("Organization user path parameters.");
+export const V1GroupIdParamsSchema = z
+  .strictObject({
+    groupId: V1UuidSchema.describe("Group identifier."),
+  })
+  .describe("Group path parameters.");
+export const V1OrgGroupParamsSchema = z
+  .strictObject({
+    orgId: V1UuidSchema.describe("Organization identifier."),
+    groupId: V1UuidSchema.describe("Group identifier."),
+  })
+  .describe("Organization group path parameters.");
+export const V1OrgGroupUserParamsSchema = z
+  .strictObject({
+    orgId: V1UuidSchema.describe("Organization identifier."),
+    groupId: V1UuidSchema.describe("Group identifier."),
+    userId: V1UuidSchema.describe("User identifier."),
+  })
+  .describe("Organization group member path parameters.");
 export const V1OrgTokenParamsSchema = z
   .strictObject({
     orgId: V1UuidSchema.describe("Organization identifier."),
@@ -92,9 +129,10 @@ export const V1AssetListQuerySchema = V1PaginationQuerySchema.extend({
   digest: V1DigestSchema.describe("Limit assets to one content digest.").optional(),
 }).describe("Registry asset listing filters.");
 
-export const V1RoleNameSchema = z.enum(ROLE_NAMES).describe("Role assigned by Hootifactory RBAC.");
-export const V1ActionSchema = z.enum(ACTIONS).describe("Grant action.");
-export type V1Action = z.output<typeof V1ActionSchema>;
+export const V1PermissionKeySchema = z
+  .enum(PERMISSION_KEYS)
+  .describe("Fine-grained permission key.");
+export type V1PermissionKey = z.output<typeof V1PermissionKeySchema>;
 export const V1RepoKindSchema = z.enum(REPO_KINDS).describe("Repository behavior mode.");
 export const V1VisibilitySchema = z.enum(VISIBILITIES).describe("Repository visibility.");
 export const V1RegistryModuleIdSchema = z
@@ -116,18 +154,6 @@ export const V1ArtifactFindingsQuerySchema = V1PaginationQuerySchema.extend({
   severity: V1SeveritySchema.describe("Limit findings to one severity.").optional(),
 }).describe("Artifact finding listing filters.");
 
-export const V1TokenActionsSchema = z
-  .array(V1ActionSchema)
-  .min(1)
-  .max(4)
-  .describe("Allowed actions for the grant.")
-  .transform((actions): V1Action[] => {
-    const deduped: V1Action[] = [];
-    for (const action of actions) {
-      if (!deduped.includes(action)) deduped.push(action);
-    }
-    return deduped;
-  });
 const V1TokenPatternSchema = z
   .string()
   .trim()
@@ -136,57 +162,73 @@ const V1TokenPatternSchema = z
   .describe("Repository, package, or artifact scope pattern. '*' wildcards are supported.");
 
 export const V1TokenGrantSchema = z
-  .discriminatedUnion("resource", [
-    z
-      .strictObject({
-        resource: z.literal("org").describe("Grant applies to the organization."),
-        actions: V1TokenActionsSchema,
-      })
-      .describe("Organization-wide token grant."),
-    z
-      .strictObject({
-        resource: z.literal("repository").describe("Grant applies to matching repositories."),
-        repository: V1TokenPatternSchema.describe("Repository name or wildcard pattern."),
-        actions: V1TokenActionsSchema,
-      })
-      .describe("Repository-scoped token grant."),
-    z
-      .strictObject({
-        resource: z.literal("package").describe("Grant applies to matching packages."),
-        repository: V1TokenPatternSchema.describe("Repository name or wildcard pattern."),
-        package: V1TokenPatternSchema.describe("Package name or wildcard pattern."),
-        actions: V1TokenActionsSchema,
-      })
-      .describe("Package-scoped token grant."),
-    z
-      .strictObject({
-        resource: z.literal("artifact").describe("Grant applies to matching artifacts."),
-        repository: V1TokenPatternSchema.describe("Repository name or wildcard pattern."),
-        artifact: V1TokenPatternSchema.describe("Artifact digest, name, or wildcard pattern."),
-        actions: V1TokenActionsSchema,
-      })
-      .describe("Artifact-scoped token grant."),
-    z
-      .strictObject({
-        resource: z.literal("policy").describe("Grant applies to policy management."),
-        policy: z.enum(POLICY_NAMES).describe("Policy family covered by this grant."),
-        repository: V1TokenPatternSchema.describe(
-          "Optional repository name or wildcard.",
-        ).optional(),
-        actions: V1TokenActionsSchema,
-      })
-      .describe("Policy-scoped token grant."),
-    z
-      .strictObject({
-        resource: z.literal("token").describe("Grant applies to token management."),
-        target: z.enum(TOKEN_TARGETS).describe("Whether the grant targets itself or org tokens."),
-        actions: V1TokenActionsSchema,
-      })
-      .describe("Token-management grant."),
-  ])
+  .strictObject({
+    permission: V1PermissionKeySchema.refine(
+      (permission) => permission !== "system.admin",
+      "system.admin cannot be granted through scoped grant payloads",
+    ),
+    repository: V1TokenPatternSchema.describe("Optional repository name or wildcard.").optional(),
+    package: V1TokenPatternSchema.describe("Optional package name or wildcard.").optional(),
+    artifact: V1TokenPatternSchema.describe(
+      "Optional artifact digest, ref, or wildcard.",
+    ).optional(),
+    policy: z.enum(POLICY_NAMES).describe("Optional policy family.").optional(),
+    tokenTarget: z.enum(TOKEN_TARGETS).describe("Optional token target, self or org.").optional(),
+    tokenId: V1UuidSchema.describe("Optional target token identifier.").optional(),
+  })
   .describe("Fine-grained token grant.");
 export type V1TokenGrant = z.output<typeof V1TokenGrantSchema>;
 export type ParsedTokenGrant = V1TokenGrant;
+
+export const V1CreateUserRequestSchema = z
+  .strictObject({
+    username: z.string().trim().min(1).max(128).describe("Unique username."),
+    email: z.string().trim().max(320).pipe(z.email()).describe("Unique email address."),
+    displayName: z.string().trim().min(1).max(256).nullable().optional(),
+    passwordMode: z.enum(["none", "temporary"]).default("none"),
+  })
+  .describe("Admin user creation request.");
+export const V1UpdateUserRequestSchema = z
+  .strictObject({
+    username: z.string().trim().min(1).max(128).optional(),
+    email: z.string().trim().max(320).pipe(z.email()).optional(),
+    displayName: z.string().trim().min(1).max(256).nullable().optional(),
+  })
+  .describe("Admin user update request.");
+export const V1SetUserActiveRequestSchema = z
+  .strictObject({ active: z.boolean().describe("Whether the user is active.") })
+  .describe("User activation request.");
+export const V1AdminPasswordRequestSchema = z
+  .strictObject({
+    mode: z.enum(["email", "temporary"]).describe("Password reset delivery mode."),
+  })
+  .describe("Admin password reset request.");
+export const V1AddOrgMemberRequestSchema = z
+  .strictObject({ userId: V1UuidSchema.describe("User to add to the organization.") })
+  .describe("Organization member addition request.");
+export const V1CreateGroupRequestSchema = z
+  .strictObject({
+    slug: z
+      .string()
+      .trim()
+      .min(2)
+      .max(128)
+      .regex(/^[a-z0-9][a-z0-9._-]*$/)
+      .describe("Group slug unique within the organization."),
+    displayName: z.string().trim().min(1).max(256).describe("Group display name."),
+    description: z.string().trim().max(2048).nullable().optional(),
+  })
+  .describe("Group creation request.");
+export const V1UpdateGroupRequestSchema =
+  V1CreateGroupRequestSchema.partial().describe("Group update request.");
+export const V1AddGroupMemberRequestSchema = z
+  .strictObject({ userId: V1UuidSchema.describe("User to add to the group.") })
+  .describe("Group member addition request.");
+export const V1ReplaceGroupPermissionsRequestSchema = z
+  .strictObject({
+    grants: z.array(V1TokenGrantSchema).max(500).describe("Replacement group permission grants."),
+  })
+  .describe("Group permission replacement request.");
 
 export const V1CreateRepositoryRequestSchema = z
   .strictObject({
@@ -213,8 +255,11 @@ export const V1CreateTokenRequestSchema = z
   .strictObject({
     name: z.string().trim().min(1).max(256).describe("Human-readable token name."),
     type: V1TokenTypeSchema.default("personal"),
-    grants: z.array(V1TokenGrantSchema).min(1).max(100).describe("Fine-grained token grants."),
-    role: V1RoleNameSchema.describe("Optional RBAC role associated with the token.").optional(),
+    grants: z
+      .array(V1TokenGrantSchema)
+      .min(1)
+      .max(100)
+      .describe("Fine-grained token permission grants."),
     expiresAt: z
       .union([z.iso.datetime().transform((value) => new Date(value)), z.null()])
       .describe("Optional expiration timestamp. Omit to use the default TTL; null disables expiry.")
@@ -303,12 +348,66 @@ export const V1OrganizationSchema = z
     id: V1UuidSchema.describe("Organization identifier."),
     slug: z.string().describe("Organization URL slug."),
     displayName: z.string().describe("Organization display name."),
-    role: V1RoleNameSchema.describe("Caller role in the organization.").optional(),
+    permissions: z
+      .array(V1PermissionKeySchema)
+      .describe("Caller permissions in the organization.")
+      .optional(),
     description: z.string().nullable().describe("Organization description.").optional(),
     createdAt: V1WireTimestampSchema.describe("Organization creation timestamp.").optional(),
     updatedAt: V1WireTimestampSchema.describe("Last organization update timestamp.").optional(),
   })
   .describe("Organization visible to the caller.");
+
+export const V1PermissionCatalogEntrySchema = z
+  .strictObject({
+    key: V1PermissionKeySchema,
+    description: z.string().describe("Human-readable permission description."),
+  })
+  .describe("Permission catalog entry.");
+
+export const V1UserSchema = z
+  .strictObject({
+    id: V1UuidSchema.describe("User identifier."),
+    username: z.string().describe("Username."),
+    email: z.string().describe("Email address."),
+    displayName: z.string().nullable().describe("Display name."),
+    isSystem: z.boolean().describe("Whether the user is a system identity."),
+    isActive: z.boolean().describe("Whether the user can authenticate."),
+    createdAt: V1WireTimestampSchema.describe("User creation timestamp."),
+    updatedAt: V1WireTimestampSchema.describe("Last user update timestamp."),
+  })
+  .describe("User metadata.");
+
+export const V1UserCreateResponseSchema = z
+  .strictObject({
+    data: z.strictObject({
+      user: V1UserSchema,
+      temporaryPassword: z.string().nullable().describe("One-time temporary password, if issued."),
+    }),
+  })
+  .describe("Created user response.");
+export const V1AdminPasswordResponseSchema = z
+  .strictObject({
+    data: z.strictObject({
+      ok: z.literal(true),
+      temporaryPassword: z.string().nullable().describe("Temporary password, if issued."),
+    }),
+  })
+  .describe("Admin password reset response.");
+
+export const V1GroupSchema = z
+  .strictObject({
+    id: V1UuidSchema.describe("Group identifier."),
+    orgId: V1UuidSchema.describe("Organization identifier."),
+    slug: z.string().describe("Group slug."),
+    displayName: z.string().describe("Group display name."),
+    description: z.string().nullable().describe("Group description."),
+    managedBy: z.string().nullable().describe("External manager, if any."),
+    externalKey: z.string().nullable().describe("External group key, if any."),
+    createdAt: V1WireTimestampSchema.describe("Group creation timestamp."),
+    updatedAt: V1WireTimestampSchema.describe("Last group update timestamp."),
+  })
+  .describe("Group metadata.");
 
 export const V1RepositorySchema = z
   .strictObject({
@@ -444,7 +543,6 @@ export const V1ApiTokenSchema = z
     prefix: z.string().describe("Non-secret token prefix for display and lookup."),
     type: V1TokenTypeSchema,
     grants: z.array(V1TokenGrantSchema).describe("Fine-grained token grants."),
-    role: V1RoleNameSchema.nullable().describe("Token RBAC role, if set."),
     expiresAt: V1WireTimestampSchema.nullable().describe("Expiration timestamp, if any."),
     revokedAt: V1WireTimestampSchema.nullable().describe("Revocation timestamp, if any."),
     revokedByUserId: V1UuidSchema.nullable().describe("User that revoked the token, if any."),
@@ -476,7 +574,6 @@ export const V1PrincipalSchema = z
         ownerUserId: V1UuidSchema.nullable().describe("Token owner user identifier, if any."),
         ownerUsername: z.string().nullable().optional().describe("Token owner username, if known."),
         grants: z.array(V1TokenGrantSchema).describe("Token grants."),
-        role: V1RoleNameSchema.nullable().describe("Token role, if set."),
         isRobot: z.boolean().describe("Whether the token is a robot token."),
       })
       .describe("Authenticated API token principal."),
@@ -540,6 +637,11 @@ export const V1TokenSecretDataSchema = z
     secret: z.string().describe("Token secret. Store it immediately; it is not returned later."),
   })
   .describe("Token metadata with one-time secret.");
+export const V1PermissionCatalogDataSchema = z
+  .strictObject({
+    permissions: z.array(V1PermissionCatalogEntrySchema).describe("Known permission keys."),
+  })
+  .describe("Permission catalog data.");
 export const V1RetentionResultSchema = z
   .strictObject({
     pruned: z.number().int().min(0).describe("Number of versions pruned by retention."),
@@ -587,3 +689,11 @@ export const V1RetentionResponseSchema = V1DataResponseSchema(V1RetentionResultS
 export const V1TokenListResponseSchema = V1ListResponseSchema(V1ApiTokenSchema);
 export const V1TokenResponseSchema = V1DataResponseSchema(V1ApiTokenSchema);
 export const V1TokenSecretResponseSchema = V1DataResponseSchema(V1TokenSecretDataSchema);
+export const V1PermissionCatalogResponseSchema = V1DataResponseSchema(
+  V1PermissionCatalogDataSchema,
+);
+export const V1UserListResponseSchema = V1ListResponseSchema(V1UserSchema);
+export const V1UserResponseSchema = V1DataResponseSchema(V1UserSchema);
+export const V1GroupListResponseSchema = V1ListResponseSchema(V1GroupSchema);
+export const V1GroupResponseSchema = V1DataResponseSchema(V1GroupSchema);
+export const V1PermissionGrantListResponseSchema = V1ListResponseSchema(V1TokenGrantSchema);

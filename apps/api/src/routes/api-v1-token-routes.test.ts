@@ -13,13 +13,26 @@ const visibleTokensForPrincipal = mock(
       ok: false,
       decision: { allowed: false, code: "unauthenticated", reason: "login required" },
     }) as
-      | { ok: true; value: Array<{ token: Record<string, unknown>; ownerUsername: string | null }> }
+      | {
+          ok: true;
+          value: Array<{
+            token: Record<string, unknown>;
+            ownerUsername: string | null;
+            grants: unknown[];
+          }>;
+        }
       | { ok: false; decision: Decision },
 );
 const getApiTokenById = mock(async () => null as { id: string; orgId: string } | null);
 const getApiTokenWithOwner = mock(
-  async () => null as { token: Record<string, unknown>; ownerUsername: string | null } | null,
+  async () =>
+    null as {
+      token: Record<string, unknown>;
+      ownerUsername: string | null;
+      grants: unknown[];
+    } | null,
 );
+const getTokenGrants = mock(async () => [] as unknown[]);
 const tokenResourceDecision = mock(
   async (): Promise<Decision> => ({ allowed: false, code: "forbidden", reason: "no" }),
 );
@@ -55,8 +68,6 @@ function tokenRow() {
     tokenPrefix: "hoot_x",
     type: "personal",
     orgId: "00000000-0000-4000-8000-000000000001",
-    grants: [],
-    role: null,
     expiresAt: null,
     revokedAt: null,
     revokedByUserId: null,
@@ -75,12 +86,12 @@ mock.module("@hootifactory/auth", () => ({
   createApiToken,
   getApiTokenById,
   getApiTokenWithOwner,
+  getTokenGrants,
   principalActor: () => ({ userId: "user_1", tokenId: null }),
-  resolveCreateApiTokenRequest: (body: { name: string }) => ({
+  resolveCreateApiTokenRequest: (body: { name: string; grants?: unknown[]; type?: string }) => ({
     name: body.name,
-    type: "personal",
-    grants: [],
-    requestedRole: undefined,
+    type: body.type ?? "personal",
+    grants: body.grants ?? [],
     expiresAt: null,
   }),
   revokeToken,
@@ -92,6 +103,7 @@ mock.module("@hootifactory/auth", () => ({
   // Present so api-v1-access (pulled via api-v1-helpers) links, even though the
   // token routes never invoke generic authorization.
   authorize: async () => ({ allowed: false, code: "unauthenticated" }),
+  authorizePermission: async () => ({ allowed: false, code: "unauthenticated" }),
   createRequestAuthorizer: () => async () => ({ allowed: false, code: "unauthenticated" }),
   getOrganizationById: async () => null,
   listAccessibleOrgs: async () => [],
@@ -111,6 +123,7 @@ const { registerApiV1TokenRoutes } = await import("./api-v1-token-routes");
 const ORG_ID = "00000000-0000-4000-8000-000000000001";
 const TOKEN_ID = "00000000-0000-4000-8000-000000000002";
 const user: Principal = { kind: "user", userId: "user_1", username: "alice" };
+const tokenCreateBody = { name: "ci", grants: [{ permission: "org.read" }] };
 
 function appWith(principal: Principal = { kind: "anonymous" }) {
   const router = new Hono<AppEnv>();
@@ -140,6 +153,7 @@ describe("api v1 token routes", () => {
       visibleTokensForPrincipal,
       getApiTokenById,
       getApiTokenWithOwner,
+      getTokenGrants,
       tokenResourceDecision,
       revokeToken,
       rotateToken,
@@ -154,7 +168,7 @@ describe("api v1 token routes", () => {
   test("GET tokens lists visible tokens", async () => {
     visibleTokensForPrincipal.mockResolvedValueOnce({
       ok: true,
-      value: [{ token: tokenRow(), ownerUsername: "alice" }],
+      value: [{ token: tokenRow(), ownerUsername: "alice", grants: [] }],
     });
     const res = await appWith(user).fetch(new Request(`http://localhost/orgs/${ORG_ID}/tokens`));
     expect(res.status).toBe(200);
@@ -168,35 +182,20 @@ describe("api v1 token routes", () => {
   });
 
   test("POST token requires a user principal", async () => {
-    const res = await appWith().fetch(
-      postJson(`/orgs/${ORG_ID}/tokens`, {
-        name: "ci",
-        grants: [{ resource: "org", actions: ["read"] }],
-      }),
-    );
+    const res = await appWith().fetch(postJson(`/orgs/${ORG_ID}/tokens`, tokenCreateBody));
     expect(res.status).toBe(401);
   });
 
   test("POST token denies unauthorized creation", async () => {
     requireUserResult = { ok: true, principal: user };
-    const res = await appWith(user).fetch(
-      postJson(`/orgs/${ORG_ID}/tokens`, {
-        name: "ci",
-        grants: [{ resource: "org", actions: ["read"] }],
-      }),
-    );
+    const res = await appWith(user).fetch(postJson(`/orgs/${ORG_ID}/tokens`, tokenCreateBody));
     expect(res.status).toBe(403);
   });
 
   test("POST token creates and returns a secret", async () => {
     requireUserResult = { ok: true, principal: user };
     authorizeTokenCreation.mockResolvedValueOnce({ allowed: true });
-    const res = await appWith(user).fetch(
-      postJson(`/orgs/${ORG_ID}/tokens`, {
-        name: "ci",
-        grants: [{ resource: "org", actions: ["read"] }],
-      }),
-    );
+    const res = await appWith(user).fetch(postJson(`/orgs/${ORG_ID}/tokens`, tokenCreateBody));
     expect(res.status).toBe(201);
     const body = (await res.json()) as { data: { secret: string } };
     expect(body.data.secret).toBe("hoot_secret");
@@ -208,7 +207,11 @@ describe("api v1 token routes", () => {
   });
 
   test("GET token returns metadata when authorized", async () => {
-    getApiTokenWithOwner.mockResolvedValueOnce({ token: tokenRow(), ownerUsername: "alice" });
+    getApiTokenWithOwner.mockResolvedValueOnce({
+      token: tokenRow(),
+      ownerUsername: "alice",
+      grants: [],
+    });
     tokenResourceDecision.mockResolvedValueOnce({ allowed: true });
     const res = await appWith(user).fetch(new Request(`http://localhost/tokens/${TOKEN_ID}`));
     expect(res.status).toBe(200);

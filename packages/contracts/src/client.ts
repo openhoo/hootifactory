@@ -3,6 +3,7 @@ import type {
   ApiTokenDto,
   AssetDto,
   AuthMethodsDto,
+  GroupDto,
   HootifactoryApiClient,
   OrgDto,
   PackageDto,
@@ -10,8 +11,11 @@ import type {
   PackageVersionDto,
   PaginationMeta,
   PaginationQuery,
+  PermissionCatalogEntryDto,
   RegistryModuleDto,
   RepositoryDto,
+  TokenGrantDto,
+  UserDto,
 } from "./legacy";
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
@@ -89,6 +93,9 @@ function querySuffix(query: object = {}): string {
   return params.size ? `?${params.toString()}` : "";
 }
 
+type DataEnvelope<T> = { data: T };
+type ListEnvelope<T> = { data: T[]; pagination: PaginationMeta };
+
 export function createHootifactoryClient(
   fetchFn: FetchLike = globalThis.fetch.bind(globalThis),
 ): HootifactoryApiClient {
@@ -148,5 +155,97 @@ export function createHootifactoryClient(
       request<{ token: ApiTokenDto; secret: string }>("POST", `/api/orgs/${orgId}/tokens`, data),
     revokeToken: (orgId: string, id: string) =>
       request("DELETE", `/api/orgs/${orgId}/tokens/${id}`),
+    permissionCatalog: async () => {
+      const res = await request<DataEnvelope<{ permissions: PermissionCatalogEntryDto[] }>>(
+        "GET",
+        "/api/v1/permissions",
+      );
+      return res.data;
+    },
+    users: async (query) => {
+      const res = await request<ListEnvelope<UserDto>>("GET", `/api/v1/users${querySuffix(query)}`);
+      return { users: res.data, pagination: res.pagination };
+    },
+    createUser: async (data) => {
+      const res = await request<DataEnvelope<{ user: UserDto; temporaryPassword: string | null }>>(
+        "POST",
+        "/api/v1/users",
+        data,
+      );
+      return res.data;
+    },
+    updateUser: async (userId, data) => {
+      const res = await request<DataEnvelope<UserDto>>("PATCH", `/api/v1/users/${userId}`, data);
+      return { user: res.data };
+    },
+    setUserActive: async (userId, active) => {
+      const res = await request<DataEnvelope<UserDto>>("POST", `/api/v1/users/${userId}/active`, {
+        active,
+      });
+      return { user: res.data };
+    },
+    resetUserPassword: async (userId, mode) => {
+      const res = await request<DataEnvelope<{ ok: true; temporaryPassword: string | null }>>(
+        "POST",
+        `/api/v1/users/${userId}/password`,
+        { mode },
+      );
+      return res.data;
+    },
+    orgMembers: async (orgId, query) => {
+      const res = await request<ListEnvelope<UserDto>>(
+        "GET",
+        `/api/v1/orgs/${orgId}/memberships${querySuffix(query)}`,
+      );
+      return { users: res.data, pagination: res.pagination };
+    },
+    addOrgMember: (orgId, userId) =>
+      request("POST", `/api/v1/orgs/${orgId}/memberships`, { userId }),
+    removeOrgMember: (orgId, userId) =>
+      request("DELETE", `/api/v1/orgs/${orgId}/memberships/${userId}`),
+    groups: async (orgId, query) => {
+      const res = await request<ListEnvelope<GroupDto>>(
+        "GET",
+        `/api/v1/orgs/${orgId}/groups${querySuffix(query)}`,
+      );
+      return { groups: res.data, pagination: res.pagination };
+    },
+    createGroup: async (orgId, data) => {
+      const res = await request<DataEnvelope<GroupDto>>(
+        "POST",
+        `/api/v1/orgs/${orgId}/groups`,
+        data,
+      );
+      return { group: res.data };
+    },
+    updateGroup: async (orgId, groupId, data) => {
+      const res = await request<DataEnvelope<GroupDto>>(
+        "PATCH",
+        `/api/v1/orgs/${orgId}/groups/${groupId}`,
+        data,
+      );
+      return { group: res.data };
+    },
+    deleteGroup: (orgId, groupId) => request("DELETE", `/api/v1/orgs/${orgId}/groups/${groupId}`),
+    groupMembers: async (orgId, groupId, query) => {
+      const res = await request<ListEnvelope<UserDto>>(
+        "GET",
+        `/api/v1/orgs/${orgId}/groups/${groupId}/members${querySuffix(query)}`,
+      );
+      return { users: res.data, pagination: res.pagination };
+    },
+    addGroupMember: (orgId, groupId, userId) =>
+      request("POST", `/api/v1/orgs/${orgId}/groups/${groupId}/members`, { userId }),
+    removeGroupMember: (orgId, groupId, userId) =>
+      request("DELETE", `/api/v1/orgs/${orgId}/groups/${groupId}/members/${userId}`),
+    groupPermissions: async (orgId, groupId, query) => {
+      const res = await request<ListEnvelope<TokenGrantDto>>(
+        "GET",
+        `/api/v1/orgs/${orgId}/groups/${groupId}/permissions${querySuffix(query)}`,
+      );
+      return { grants: res.data, pagination: res.pagination };
+    },
+    replaceGroupPermissions: (orgId, groupId, grants) =>
+      request("PUT", `/api/v1/orgs/${orgId}/groups/${groupId}/permissions`, { grants }),
   };
 }

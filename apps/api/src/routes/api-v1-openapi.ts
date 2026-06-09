@@ -98,7 +98,7 @@ export function doc(options: ApiV1DocOptions) {
     tags: [options.tag],
     operationId: options.operationId,
     summary: options.summary,
-    description: options.description,
+    description: options.description ?? options.summary,
     parameters: parameters.length > 0 ? parameters : undefined,
     requestBody: options.requestBody
       ? {

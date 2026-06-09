@@ -110,11 +110,12 @@ test.describe("repositories", () => {
 
   test("unsupported modules are rejected", async ({ baseURL }) => {
     const owner = await setupOwner(baseURL!);
-    for (const moduleId of ["generic", "maven"]) {
-      const res = await createRepo(owner.ctx, owner.orgId, { name: uniq("repo"), moduleId });
-      expect(res.status()).toBe(400);
-      expect(await res.text()).toContain("unsupported registry module");
-    }
+    const res = await createRepo(owner.ctx, owner.orgId, {
+      name: uniq("repo"),
+      moduleId: "definitely-not-a-registry",
+    });
+    expect(res.status()).toBe(400);
+    expect(await res.text()).toContain("unsupported registry module");
   });
 
   test("invalid repository kind and visibility are rejected", async ({ baseURL }) => {
@@ -172,7 +173,7 @@ test.describe("repositories", () => {
         await createToken(owner.ctx, owner.orgId, {
           name: "viewer-bot",
           type: "robot",
-          role: "viewer",
+          grants: [{ permission: "repository.read", repository: "*" }],
         })
       ).json()
     ).secret as string;
