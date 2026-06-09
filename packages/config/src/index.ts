@@ -296,7 +296,7 @@ const EnvSchema = z
     SCANNER_ENABLED: boolish.default(false),
     SCANNER_TIMEOUT_MS: positiveInt(120_000),
     SCANNER_CLI_RUNTIME: z.enum(SCANNER_CLI_RUNTIMES).default("docker"),
-    SCANNER_DOCKER_COMMAND: z.string().default("docker"),
+    SCANNER_DOCKER_COMMAND: z.enum(["docker", "podman"]).default("docker"),
     SCANNER_DOCKER_MEMORY: dockerSize.default("1g"),
     SCANNER_DOCKER_CPUS: dockerCpus.default("2"),
     SCANNER_DOCKER_PIDS_LIMIT: positiveInt(512),
