@@ -1,3 +1,4 @@
+import { env } from "@hootifactory/config";
 import { BoundedLruCache } from "@hootifactory/core";
 import * as client from "openid-client";
 import { z } from "zod";
@@ -15,6 +16,7 @@ function claimsRecord(value: unknown): Record<string, unknown> {
 
 function oidcDiscoveryOptions(issuer: string): client.DiscoveryRequestOptions | undefined {
   if (!issuer.startsWith("http://")) return undefined;
+  if (env.NODE_ENV === "production") return undefined;
   return { execute: [client.allowInsecureRequests] };
 }
 
