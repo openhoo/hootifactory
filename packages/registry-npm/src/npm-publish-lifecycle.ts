@@ -50,6 +50,10 @@ export async function handleNpmPublish(
   req: Request,
   ctx: RegistryRequestContext,
 ): Promise<Response> {
+  const contentLength = req.headers.get("content-length");
+  if (contentLength !== null && parseInt(contentLength, 10) > ctx.limits.maxUploadBytes) {
+    return Response.json({ error: "payload too large" }, { status: 413 });
+  }
   const rawBody = await req.json().catch(() => null);
   const parsed = parseNpmPublishRequest(name, rawBody);
   if (!parsed.ok) {
