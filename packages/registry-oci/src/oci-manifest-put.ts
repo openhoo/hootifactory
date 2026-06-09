@@ -1,4 +1,4 @@
-import { computeDigest, Errors, isValidDigest } from "@hootifactory/registry";
+import { computeDigest, Errors, isValidDigest, RegistryError } from "@hootifactory/registry";
 import {
   assertTag,
   type ManifestReference,
@@ -11,6 +11,8 @@ import {
   validateManifest,
 } from "./oci-validation";
 import { bodyBytes } from "./upload-state";
+
+export const MAX_OCI_MANIFEST_BYTES = 10 * 1024 * 1024;
 
 export interface OciManifestPutRequest {
   ref: ManifestReference;
@@ -31,6 +33,13 @@ export async function parseOciManifestPutRequest(
   req: Request,
 ): Promise<OciManifestPutRequest> {
   const ref = parseReference(reference);
+  const contentLength = Number(req.headers.get("content-length"));
+  if (contentLength > MAX_OCI_MANIFEST_BYTES) {
+    throw new RegistryError(413, "MANIFEST_INVALID", "manifest body exceeds maximum size", {
+      maxBytes: MAX_OCI_MANIFEST_BYTES,
+      actualBytes: contentLength,
+    });
+  }
   const bytes = await bodyBytes(req);
   const digest = computeDigest(bytes);
   if (ref.kind === "digest" && ref.value !== digest) {
