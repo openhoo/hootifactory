@@ -1,21 +1,18 @@
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "@tanstack/react-router";
 import { Boxes, ChevronDown, Package, Plus, Search, Terminal } from "lucide-react";
 import { useMemo, useState } from "react";
 import {
   Code,
   EmptyState,
-  Field,
   ModuleBadge,
   PageTitle,
   Pill,
-  SubmitButton,
   VisibilityPill,
 } from "@/components/common";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import {
   Table,
   TableBody,
@@ -24,40 +21,19 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { useOrg, useRepos } from "@/features/orgs/context";
+import { useRepos } from "@/features/orgs/context";
 import { Loading } from "@/layout/app-shell";
-import { api, apiErrorMessage } from "@/lib/api";
+import { api } from "@/lib/api";
 import { snippetsFor } from "@/lib/module";
+import { CreateRepositoryWizard } from "./create-wizard";
 
 const PACKAGE_PAGE_SIZE = 50;
 
 export function ReposPage() {
-  const { selected } = useOrg();
-  const qc = useQueryClient();
   const [showCreate, setShowCreate] = useState(false);
-  const [name, setName] = useState("");
-  const modules = useQuery({
-    queryKey: ["registry-modules"],
-    queryFn: () => api.registryModules(),
-  });
-  const moduleOptions = modules.data?.modules ?? [];
-  const [moduleId, setModuleId] = useState("");
   const [query, setQuery] = useState("");
-  const [error, setError] = useState("");
 
   const repos = useRepos();
-
-  const create = useMutation({
-    mutationFn: () =>
-      api.createRepo(selected!.id, { name, moduleId: moduleId || moduleOptions[0]?.id }),
-    onSuccess: async () => {
-      await qc.invalidateQueries({ queryKey: ["repos", selected?.id] });
-      setShowCreate(false);
-      setName("");
-      setError("");
-    },
-    onError: (e) => setError(apiErrorMessage(e)),
-  });
 
   const all = repos.data?.repositories ?? [];
   const filtered = useMemo(() => {
@@ -81,7 +57,7 @@ export function ReposPage() {
                 aria-label="Search repositories"
               />
             </div>
-            <Button onClick={() => setShowCreate((s) => !s)} data-testid="new-repo">
+            <Button onClick={() => setShowCreate(true)} data-testid="new-repo">
               <Plus />
               New repository
             </Button>
@@ -91,48 +67,7 @@ export function ReposPage() {
         Repositories
       </PageTitle>
 
-      {showCreate && (
-        <Card className="mb-4 animate-in fade-in slide-in-from-top-2 duration-300">
-          <CardContent>
-            <form
-              className="flex flex-wrap items-end gap-3"
-              onSubmit={(e) => {
-                e.preventDefault();
-                create.mutate();
-              }}
-            >
-              <div className="w-52">
-                <Field label="Name">
-                  <Input
-                    className="h-9 w-full"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    data-testid="repo-name"
-                  />
-                </Field>
-              </div>
-              <Field label="Module">
-                <NativeSelect
-                  className="[&>select]:h-9"
-                  value={moduleId || moduleOptions[0]?.id || ""}
-                  onChange={(e) => setModuleId(e.target.value)}
-                  data-testid="repo-module"
-                >
-                  {moduleOptions.map((module) => (
-                    <NativeSelectOption key={module.id} value={module.id}>
-                      {module.displayName}
-                    </NativeSelectOption>
-                  ))}
-                </NativeSelect>
-              </Field>
-              <SubmitButton pending={create.isPending} className="h-9" data-testid="repo-create">
-                Create
-              </SubmitButton>
-              {error && <span className="self-center text-sm text-destructive">{error}</span>}
-            </form>
-          </CardContent>
-        </Card>
-      )}
+      <CreateRepositoryWizard open={showCreate} onOpenChange={setShowCreate} />
 
       {repos.isLoading ? (
         <Loading />

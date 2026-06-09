@@ -23,30 +23,25 @@ test.describe("web UI (browser)", () => {
     // dashboard renders
     await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
 
-    // create a repository
+    // create a repository through the guided wizard
     await page.getByRole("link", { name: "Repositories" }).click();
     await page.getByTestId("new-repo").click();
-    const moduleSelect = page.getByTestId("repo-module");
-    await expect(moduleSelect).toBeVisible();
-    expect(
-      await moduleSelect.locator("option").evaluateAll((options) =>
-        options.map((option) => ({
-          label: option.textContent?.trim() ?? "",
-          value: option.getAttribute("value") ?? "",
-        })),
-      ),
-    ).toEqual([
-      { label: "npm", value: "npm" },
-      { label: "OCI", value: "docker" },
-      { label: "PyPI", value: "pypi" },
-      { label: "Go", value: "go" },
-      { label: "Cargo", value: "cargo" },
-      { label: "NuGet", value: "nuget" },
-      { label: "oci", value: "oci" },
-      { label: "helm", value: "helm" },
-    ]);
+
+    // step 1 — every installed format is offered as a selectable card
+    for (const id of ["npm", "docker", "pypi", "go", "cargo", "nuget", "oci", "helm"]) {
+      await expect(page.getByTestId(`repo-format-${id}`)).toBeVisible();
+    }
+    await page.getByTestId("repo-format-docker").click();
+    await page.getByTestId("repo-step-next").click();
+
+    // step 2 — accept the default type (hosted) and visibility (private)
+    await page.getByTestId("repo-step-next").click();
+
+    // step 3 — name it
     await page.getByTestId("repo-name").fill("uirepo");
-    await page.getByTestId("repo-module").selectOption("docker");
+    await page.getByTestId("repo-step-next").click();
+
+    // step 4 — review and create
     await page.getByTestId("repo-create").click();
 
     // it appears in the table
