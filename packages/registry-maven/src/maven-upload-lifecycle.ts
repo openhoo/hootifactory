@@ -27,8 +27,10 @@ export async function handleMavenUpload(
 
   if (!primaryPom) {
     if (!req.body) return new Response("empty request body", { status: 400 });
+    const contentLength = parseInt(req.headers.get("content-length") ?? "", 10);
     const stored = await ctx.data.content.storeBlobStreamWithRef({
       data: req.body,
+      contentLength: Number.isFinite(contentLength) ? contentLength : undefined,
       kind: MAVEN_FILE_KIND,
       scope: path,
       mediaType,

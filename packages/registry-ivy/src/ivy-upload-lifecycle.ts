@@ -39,8 +39,10 @@ export async function handleIvyUpload(
         message: "empty request body",
       });
     }
+    const contentLength = parseInt(req.headers.get("content-length") ?? "", 10);
     const stored = await ctx.data.content.storeBlobStreamWithRef({
       data: req.body,
+      contentLength: Number.isFinite(contentLength) ? contentLength : undefined,
       kind: IVY_FILE_KIND,
       scope: path,
       mediaType,

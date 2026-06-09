@@ -190,9 +190,11 @@ class GitLfsAdapterState {
     // non-LFS `singleError` shape — the git-lfs client decodes error bodies into a
     // struct keyed on `message`, so the diagnostic must live there.
     try {
+      const contentLength = parseInt(req.headers.get("content-length") ?? "", 10);
       await ctx.data.content.storeBlobStreamWithRef({
         data: req.body ?? emptyStream(),
         expectedDigest: digest,
+        contentLength: Number.isFinite(contentLength) ? contentLength : undefined,
         mediaType: "application/octet-stream",
         kind: LFS_BLOB_KIND,
         scope: LFS_BLOB_SCOPE,

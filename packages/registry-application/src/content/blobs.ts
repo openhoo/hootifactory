@@ -298,11 +298,30 @@ export async function storeBlobStreamWithRef(
   opts: {
     data: ReadableStream<Uint8Array>;
     expectedDigest?: string;
+    contentLength?: number;
     mediaType?: string;
     kind: BlobRefKind;
     scope: string;
   },
 ): Promise<StoredBlob> {
+  if (opts.contentLength != null) {
+    if (opts.expectedDigest) {
+      const [existingOrgRef] = await db
+        .select({ id: blobRefs.id })
+        .from(blobRefs)
+        .innerJoin(repositories, eq(blobRefs.repositoryId, repositories.id))
+        .where(
+          and(
+            eq(repositories.orgId, ctx.repo.orgId),
+            eq(blobRefs.digest, opts.expectedDigest),
+          ),
+        )
+        .limit(1);
+      if (!existingOrgRef) await assertStorageQuota(ctx, opts.contentLength);
+    } else {
+      await assertStorageQuota(ctx, opts.contentLength);
+    }
+  }
   const put = await uploadBlobStream(opts.data, opts.expectedDigest);
   try {
     return await db.transaction(async (tx) => {

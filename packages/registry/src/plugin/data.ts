@@ -246,6 +246,7 @@ export interface StoreBlobWithRefInput {
 export interface StoreBlobStreamWithRefInput {
   data: ReadableStream<Uint8Array>;
   expectedDigest?: string;
+  contentLength?: number;
   mediaType?: string;
   kind: RegistryBlobRefKind;
   scope: string;
