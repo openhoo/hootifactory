@@ -16,6 +16,14 @@ export async function handleNugetPublish(
   req: Request,
   ctx: RegistryRequestContext,
 ): Promise<Response> {
+  const declared = req.headers.get("content-length");
+  if (declared) {
+    const length = parseInt(declared, 10);
+    if (!Number.isNaN(length) && length > ctx.limits.maxUploadBytes) {
+      return new Response(null, { status: 413 });
+    }
+  }
+
   const parsed = await parseNugetPublishRequest(req);
   if (!parsed.ok) {
     return Response.json({ error: parsed.error.error }, { status: parsed.error.status });
