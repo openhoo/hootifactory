@@ -119,7 +119,7 @@ cp .env.example .env
 
 bun run compose:up        # Postgres + MinIO + Mailpit (infra only)
 bun run db:migrate
-bun run db:seed           # creates a demo org + owner; prints dev credentials + an owner token
+bun run db:seed           # creates a demo org + owner (dev: admin / admin); prints an owner token
 
 bun run dev               # API on :3000
 bun run dev:web           # web UI on :5173 (proxies /v2, /api, /token → :3000)
@@ -129,7 +129,7 @@ bun run dev:mail          # mail worker (Mailpit UI on :8025)
 
 ### First steps in the UI
 
-1. Open the web UI and sign in with the seeded owner (dev: printed by `db:seed`).
+1. Open the web UI and sign in with the seeded owner (dev: `admin` / `admin`).
 2. **Create a repository** — pick a format module (e.g. `npm`) and a name (e.g. `libs`).
 3. **Tokens → New token** — mint a scoped `hoot_…` API token. **Copy the secret once** (it's shown a single time).
 4. Use that token as `$TOKEN` in the snippets below.

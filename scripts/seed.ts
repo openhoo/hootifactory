@@ -1,28 +1,34 @@
 /**
  * Seed a demo org + owner user. Idempotent for org/user/membership.
+ * In dev/test the owner password defaults to "admin" (override with SEED_PASS)
+ * and is reset on every run so local logins stay predictable as admin / admin.
  * Non-production runs mint and print a fresh owner token for local setup.
- * Production runs never print passwords or token secrets.
+ * Production runs never print passwords or token secrets and never rewrite an
+ * existing user's password.
  *
  *   bun run db:seed
  */
-import { randomBytes } from "node:crypto";
 import { createApiToken, hashPassword } from "@hootifactory/auth";
 import { and, db, eq, memberships, organizations, users } from "@hootifactory/db";
 
 const isProduction = process.env.NODE_ENV === "production";
+
+// Well-known local-dev password so you can sign in without copying a generated
+// value. Only ever used outside production, and only when SEED_PASS is unset.
+const DEV_DEFAULT_PASSWORD = "admin";
 
 function envNonEmpty(name: string): string | null {
   const value = process.env[name]?.trim();
   return value ? value : null;
 }
 
-function seedPassword(): { value: string; generated: boolean } {
+function seedPassword(): { value: string; source: "env" | "dev-default" } {
   const explicit = process.env.SEED_PASS;
-  if (explicit && explicit.length > 0) return { value: explicit, generated: false };
+  if (explicit && explicit.length > 0) return { value: explicit, source: "env" };
   if (isProduction) {
     throw new Error("SEED_PASS is required when running db:seed with NODE_ENV=production");
   }
-  return { value: randomBytes(24).toString("base64url"), generated: true };
+  return { value: DEV_DEFAULT_PASSWORD, source: "dev-default" };
 }
 
 async function main() {
@@ -46,7 +52,7 @@ async function main() {
   if (!org) throw new Error("org creation failed");
 
   let [user] = await db.select().from(users).where(eq(users.username, username)).limit(1);
-  let createdUser = false;
+  let userState: "created" | "reset" | "unchanged" = "unchanged";
   if (!user) {
     [user] = await db
       .insert(users)
@@ -57,8 +63,17 @@ async function main() {
         passwordHash: await hashPassword(password.value),
       })
       .returning();
-    createdUser = true;
+    userState = "created";
     console.log(`created user ${username}`);
+  } else if (!isProduction) {
+    // Keep local logins predictable: re-seeding always resets the owner to the
+    // seed password. Production never silently rewrites an existing password.
+    await db
+      .update(users)
+      .set({ passwordHash: await hashPassword(password.value) })
+      .where(eq(users.id, user.id));
+    userState = "reset";
+    console.log(`reset password for user ${username}`);
   }
   if (!user) throw new Error("user creation failed");
 
@@ -83,14 +98,19 @@ async function main() {
 
   console.log("\n── seed complete ──────────────────────────────");
   console.log(`  org:    ${org.slug}  (${org.id})`);
-  if (createdUser) {
+  if (isProduction) {
     console.log(
-      isProduction
+      userState === "created"
         ? `  login:  ${username}  (password set from SEED_PASS)`
-        : `  login:  ${username} / ${password.value}${password.generated ? "  (generated)" : ""}`,
+        : `  login:  ${username}  (existing user; password unchanged)`,
     );
   } else {
-    console.log(`  login:  ${username}  (existing user; password unchanged)`);
+    const tags = [
+      password.source === "dev-default" ? "dev default" : null,
+      userState === "reset" ? "password reset" : null,
+    ].filter(Boolean);
+    const suffix = tags.length > 0 ? `  (${tags.join("; ")})` : "";
+    console.log(`  login:  ${username} / ${password.value}${suffix}`);
   }
   console.log(token ? `  token:  ${token.secret}` : "  token:  not minted in production");
   console.log("───────────────────────────────────────────────");
