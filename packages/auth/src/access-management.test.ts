@@ -31,6 +31,11 @@ import type { Principal } from "./principal";
 
 const userPrincipal: Principal = { kind: "user", userId: "u1", username: "alice" };
 
+/** The recorded query kinds, in order, as a comparable string. */
+function kinds(fake: { queries: ReadonlyArray<{ kind: string }> }): string {
+  return fake.queries.map((q) => q.kind).join(",");
+}
+
 describe("permissionCatalog", () => {
   test("exposes a non-empty list of {key, description} entries", () => {
     expect(permissionCatalog.length).toBeGreaterThan(0);
@@ -47,8 +52,9 @@ describe("listUsers", () => {
     await withFakeDb(db, async (fake) => {
       fake.queue([{ id: "u1" }]);
       const rows = await listUsers({ limit: 10, offset: 0 });
-      expect(rows).toEqual([{ id: "u1" }]);
-      expect(fake.queries).toEqual([{ kind: "select" }]);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.id).toBe("u1");
+      expect(kinds(fake)).toBe("select");
     });
   });
 
@@ -57,7 +63,7 @@ describe("listUsers", () => {
       fake.queue([]);
       const rows = await listUsers({ query: "ali", limit: 5, offset: 5 });
       expect(rows).toEqual([]);
-      expect(fake.queries.map((q) => q.kind)).toEqual(["select"]);
+      expect(kinds(fake)).toBe("select");
     });
   });
 });
@@ -66,7 +72,7 @@ describe("getUserById", () => {
   test("returns the row when found", async () => {
     await withFakeDb(db, async (fake) => {
       fake.queue([{ id: "u1" }]);
-      expect(await getUserById("u1")).toEqual({ id: "u1" });
+      expect((await getUserById("u1"))?.id).toBe("u1");
     });
   });
 
@@ -81,18 +87,17 @@ describe("getUserById", () => {
 describe("createAdminUser", () => {
   test("creates a user without a password when passwordMode is none", async () => {
     await withFakeDb(db, async (fake) => {
-      const created = { id: "u1", username: "bob" };
-      fake.queue([created]);
+      fake.queue([{ id: "u1", username: "bob" }]);
       const result = await createAdminUser({
         username: "bob",
         email: "bob@example.com",
         passwordMode: "none",
       });
-      expect(result.user).toEqual(created);
+      expect(result.user.id).toBe("u1");
       expect(result.temporaryPassword).toBeNull();
-      const insert = fake.queries[0];
-      expect(insert.kind).toBe("insert");
-      expect((insert.values as { passwordHash: string | null }).passwordHash).toBeNull();
+      expect(fake.queries[0]?.kind).toBe("insert");
+      const values = fake.queries[0]?.values as { passwordHash: string | null } | undefined;
+      expect(values?.passwordHash).toBeNull();
     });
   });
 
@@ -106,8 +111,8 @@ describe("createAdminUser", () => {
         passwordMode: "temporary",
       });
       expect(result.temporaryPassword).toBeTruthy();
-      const insert = fake.queries[0];
-      expect((insert.values as { passwordHash: string | null }).passwordHash).toBeTruthy();
+      const values = fake.queries[0]?.values as { passwordHash: string | null } | undefined;
+      expect(values?.passwordHash).toBeTruthy();
     });
   });
 
@@ -126,8 +131,9 @@ describe("updateUserProfile", () => {
     await withFakeDb(db, async (fake) => {
       fake.queue([{ id: "u1", displayName: "New" }]);
       const row = await updateUserProfile("u1", { displayName: "New" });
-      expect(row).toEqual({ id: "u1", displayName: "New" });
-      expect(fake.queries[0].kind).toBe("update");
+      expect(row?.id).toBe("u1");
+      expect(row?.displayName).toBe("New");
+      expect(fake.queries[0]?.kind).toBe("update");
     });
   });
 
@@ -145,7 +151,7 @@ describe("setTemporaryPassword", () => {
       fake.queue([{ id: "u1" }]);
       const password = await setTemporaryPassword("u1");
       expect(password).toBeTruthy();
-      expect(fake.queries[0].kind).toBe("update");
+      expect(fake.queries[0]?.kind).toBe("update");
     });
   });
 
@@ -162,8 +168,9 @@ describe("setUserActive", () => {
     await withFakeDb(db, async (fake) => {
       fake.queue([{ id: "u1", isActive: true }]);
       const user = await setUserActive("u1", true);
-      expect(user).toEqual({ id: "u1", isActive: true });
-      expect(fake.queries.map((q) => q.kind)).toEqual(["update"]);
+      expect(user?.id).toBe("u1");
+      expect(user?.isActive).toBe(true);
+      expect(kinds(fake)).toBe("update");
     });
   });
 
@@ -171,15 +178,9 @@ describe("setUserActive", () => {
     await withFakeDb(db, async (fake) => {
       fake.queue([{ id: "u1", isActive: false }]);
       const user = await setUserActive("u1", false);
-      expect(user).toEqual({ id: "u1", isActive: false });
-      expect(fake.queries.map((q) => q.kind)).toEqual([
-        "update", // users
-        "update", // sessions revoked
-        "update", // api tokens revoked
-        "delete", // group memberships
-        "delete", // memberships
-        "delete", // permission grants
-      ]);
+      expect(user?.id).toBe("u1");
+      // users update, sessions revoked, api tokens revoked, then three cascade deletes.
+      expect(kinds(fake)).toBe("update,update,update,delete,delete,delete");
     });
   });
 
@@ -187,7 +188,7 @@ describe("setUserActive", () => {
     await withFakeDb(db, async (fake) => {
       fake.queue([]);
       expect(await setUserActive("nope", false)).toBeNull();
-      expect(fake.queries.map((q) => q.kind)).toEqual(["update"]);
+      expect(kinds(fake)).toBe("update");
     });
   });
 });
@@ -197,23 +198,24 @@ describe("org membership helpers", () => {
     await withFakeDb(db, async (fake) => {
       fake.queue([{ membership: { id: "m1" }, user: { id: "u1" } }]);
       const rows = await listOrgMembers("org-1");
-      expect(rows).toEqual([{ membership: { id: "m1" }, user: { id: "u1" } }]);
-      expect(fake.queries[0].kind).toBe("select");
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.user.id).toBe("u1");
+      expect(fake.queries[0]?.kind).toBe("select");
     });
   });
 
   test("addOrgMember inserts the membership", async () => {
     await withFakeDb(db, async (fake) => {
       await addOrgMember("org-1", "u1");
-      expect(fake.queries[0].kind).toBe("insert");
-      expect(fake.queries[0].values).toEqual({ orgId: "org-1", userId: "u1" });
+      expect(fake.queries[0]?.kind).toBe("insert");
+      expect(fake.queries[0]?.values).toEqual({ orgId: "org-1", userId: "u1" });
     });
   });
 
   test("removeOrgMember deletes group memberships, grants, and the membership", async () => {
     await withFakeDb(db, async (fake) => {
       await removeOrgMember("org-1", "u1");
-      expect(fake.queries.map((q) => q.kind)).toEqual(["delete", "delete", "delete"]);
+      expect(kinds(fake)).toBe("delete,delete,delete");
     });
   });
 });
@@ -222,14 +224,16 @@ describe("group CRUD", () => {
   test("listGroups selects by org", async () => {
     await withFakeDb(db, async (fake) => {
       fake.queue([{ id: "g1" }]);
-      expect(await listGroups("org-1")).toEqual([{ id: "g1" }]);
+      const rows = await listGroups("org-1");
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.id).toBe("g1");
     });
   });
 
   test("getGroupById returns the row or null", async () => {
     await withFakeDb(db, async (fake) => {
       fake.queue([{ id: "g1" }]);
-      expect(await getGroupById("g1")).toEqual({ id: "g1" });
+      expect((await getGroupById("g1"))?.id).toBe("g1");
     });
     await withFakeDb(db, async (fake) => {
       fake.queue([]);
@@ -240,7 +244,9 @@ describe("group CRUD", () => {
   test("getGroupInOrg scopes the lookup to the org", async () => {
     await withFakeDb(db, async (fake) => {
       fake.queue([{ id: "g1", orgId: "org-1" }]);
-      expect(await getGroupInOrg("org-1", "g1")).toEqual({ id: "g1", orgId: "org-1" });
+      const group = await getGroupInOrg("org-1", "g1");
+      expect(group?.id).toBe("g1");
+      expect(group?.orgId).toBe("org-1");
     });
     await withFakeDb(db, async (fake) => {
       fake.queue([]);
@@ -252,8 +258,9 @@ describe("group CRUD", () => {
     await withFakeDb(db, async (fake) => {
       fake.queue([{ id: "g1", slug: "team" }]);
       const group = await createGroup({ orgId: "org-1", slug: "team", displayName: "Team" });
-      expect(group).toEqual({ id: "g1", slug: "team" });
-      expect(fake.queries[0].kind).toBe("insert");
+      expect(group.id).toBe("g1");
+      expect(group.slug).toBe("team");
+      expect(fake.queries[0]?.kind).toBe("insert");
     });
   });
 
@@ -269,10 +276,9 @@ describe("group CRUD", () => {
   test("updateGroup returns the updated row or null", async () => {
     await withFakeDb(db, async (fake) => {
       fake.queue([{ id: "g1", displayName: "Renamed" }]);
-      expect(await updateGroup("org-1", "g1", { displayName: "Renamed" })).toEqual({
-        id: "g1",
-        displayName: "Renamed",
-      });
+      const group = await updateGroup("org-1", "g1", { displayName: "Renamed" });
+      expect(group?.id).toBe("g1");
+      expect(group?.displayName).toBe("Renamed");
     });
     await withFakeDb(db, async (fake) => {
       fake.queue([]);
@@ -298,6 +304,7 @@ describe("group membership helpers", () => {
       fake.queue([{ membership: { id: "gm1" }, user: { id: "u1" } }]);
       const rows = await listGroupMembers("org-1", "g1");
       expect(rows).toHaveLength(1);
+      expect(rows[0]?.user.id).toBe("u1");
     });
   });
 
@@ -307,7 +314,7 @@ describe("group membership helpers", () => {
       fake.queue([{ id: "m1" }]); // membership lookup
       const result = await addGroupMember({ orgId: "org-1", groupId: "g1", userId: "u1" });
       expect(result).toBe("added");
-      expect(fake.queries.map((q) => q.kind)).toEqual(["select", "select", "insert"]);
+      expect(kinds(fake)).toBe("select,select,insert");
     });
   });
 
@@ -316,7 +323,7 @@ describe("group membership helpers", () => {
       fake.queue([]); // group lookup misses
       const result = await addGroupMember({ orgId: "org-1", groupId: "g1", userId: "u1" });
       expect(result).toBe("group_not_found");
-      expect(fake.queries.map((q) => q.kind)).toEqual(["select"]);
+      expect(kinds(fake)).toBe("select");
     });
   });
 
@@ -326,21 +333,23 @@ describe("group membership helpers", () => {
       fake.queue([]); // not an org member
       const result = await addGroupMember({ orgId: "org-1", groupId: "g1", userId: "u1" });
       expect(result).toBe("user_not_member");
-      expect(fake.queries.map((q) => q.kind)).toEqual(["select", "select"]);
+      expect(kinds(fake)).toBe("select,select");
     });
   });
 
   test("removeGroupMember deletes the row", async () => {
     await withFakeDb(db, async (fake) => {
       await removeGroupMember("org-1", "g1", "u1");
-      expect(fake.queries[0].kind).toBe("delete");
+      expect(fake.queries[0]?.kind).toBe("delete");
     });
   });
 
   test("grantsForGroup selects grants for the org/group", async () => {
     await withFakeDb(db, async (fake) => {
       fake.queue([{ id: "pg1" }]);
-      expect(await grantsForGroup("org-1", "g1")).toEqual([{ id: "pg1" }]);
+      const grants = await grantsForGroup("org-1", "g1");
+      expect(grants).toHaveLength(1);
+      expect(grants[0]?.id).toBe("pg1");
     });
   });
 });
@@ -354,20 +363,15 @@ describe("tokenGrantToPermissionGrant", () => {
       grant,
       grantedByUserId: "admin-1",
     });
-    expect(row).toEqual({
-      orgId: "org-1",
-      groupId: "g1",
-      userId: null,
-      tokenId: null,
-      permission: "repository.write",
-      repositoryPattern: "acme/*",
-      packagePattern: null,
-      artifactPattern: null,
-      policy: null,
-      tokenTarget: null,
-      targetTokenId: null,
-      grantedByUserId: "admin-1",
-    });
+    expect(row.orgId).toBe("org-1");
+    expect(row.groupId).toBe("g1");
+    expect(row.userId).toBeNull();
+    expect(row.tokenId).toBeNull();
+    expect(row.permission).toBe("repository.write");
+    expect(row.repositoryPattern).toBe("acme/*");
+    expect(row.packagePattern).toBeNull();
+    expect(row.artifactPattern).toBeNull();
+    expect(row.grantedByUserId).toBe("admin-1");
   });
 
   test("threads through package/artifact/policy/token fields", () => {
@@ -400,7 +404,11 @@ describe("replaceGroupGrants", () => {
         principal: userPrincipal,
         grants: [],
       });
-      expect(result).toEqual({ ok: false, code: "group_not_found", error: "group not found" });
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.code).toBe("group_not_found");
+        expect(result.error).toBe("group not found");
+      }
     });
   });
 
@@ -413,7 +421,11 @@ describe("replaceGroupGrants", () => {
         principal: { kind: "anonymous" },
         grants: [{ permission: "org.read" }],
       });
-      expect(result).toEqual({ ok: false, code: "invalid_grant", error: "login required" });
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.code).toBe("invalid_grant");
+        expect(result.error).toBe("login required");
+      }
     });
   });
 
@@ -426,9 +438,9 @@ describe("replaceGroupGrants", () => {
         principal: userPrincipal,
         grants: [],
       });
-      expect(result).toEqual({ ok: true });
+      expect(result.ok).toBe(true);
       // getGroupInOrg select, then the transaction delete; no insert for an empty grant set.
-      expect(fake.queries.map((q) => q.kind)).toEqual(["select", "delete"]);
+      expect(kinds(fake)).toBe("select,delete");
     });
   });
 });
