@@ -2,138 +2,23 @@ import { describe, expect, test } from "bun:test";
 import { createTestRegistryContext, createTestRouteMatch } from "../testing";
 import type { HttpMethod, RegistryPlugin, RouteMatch } from "./adapter";
 import {
-  defineRegistryPlugin,
-  delegateRegistryPlugin,
   type RegistryAdapterPermissionInput,
-  RegistryPluginBase,
   readOnlyPermission,
   registryAdapter,
-  registryAppRoutes,
-  registryCapabilities,
   registryPermissions,
-  registryPlugin,
-  registryRoute,
-  registryRoutes,
-  registryScan,
 } from "./plugin";
 
-describe("defineRegistryPlugin", () => {
-  test("builds a RegistryPlugin from route specs", async () => {
-    const plugin = defineRegistryPlugin({
-      id: "npm",
-      capabilities: {
-        contentAddressable: false,
-        resumableUploads: false,
-        proxyable: true,
-        virtualizable: true,
-      },
-      routes: [
-        registryRoute({
-          method: "GET",
-          pattern: "/:pkg+",
-          handlerId: "packument",
-          permission: readOnlyPermission(),
-          handler: ({ params }) => Response.json({ package: params.pkg }),
-        }),
-      ],
-    });
-    const [entry] = plugin.routes();
-    expect(entry).toEqual({ method: "GET", pattern: "/:pkg+", handlerId: "packument" });
-
-    const match = createTestRouteMatch(entry!, { pkg: "@scope/pkg" }, "/@scope/pkg");
-    expect(plugin.requiredPermission("GET", match, createTestRegistryContext())).toEqual({
-      action: "read",
-    });
-    const res = await plugin.handle(
-      match,
-      new Request("https://registry.example.test/@scope/pkg"),
-      createTestRegistryContext(),
-    );
-    expect(await res.json()).toEqual({ package: "@scope/pkg" });
-  });
-
-  test("uses default read/write permission when a route has no override", () => {
-    const plugin = defineRegistryPlugin({
-      id: "pypi",
-      capabilities: {
-        contentAddressable: false,
-        resumableUploads: false,
-        proxyable: false,
-        virtualizable: true,
-      },
-      routes: [
-        registryRoute({
-          method: "POST",
-          pattern: "/legacy/",
-          handlerId: "upload",
-          handler: () => new Response(null, { status: 200 }),
-        }),
-      ],
-    });
-    const [entry] = plugin.routes();
-    const match = createTestRouteMatch(entry!);
-    expect(plugin.requiredPermission("POST", match, createTestRegistryContext())).toEqual({
-      action: "write",
-    });
-  });
-
-  test("declares routes with method-specific sugar", async () => {
-    const plugin = defineRegistryPlugin({
-      id: "cargo",
-      capabilities: {
-        contentAddressable: false,
-        resumableUploads: false,
-        proxyable: false,
-        virtualizable: true,
-      },
-      routes: (route) => [
-        route.get("/config.json", "config", () => Response.json({ ok: true }), {
-          permission: readOnlyPermission(),
-        }),
-      ],
-    });
-    const [entry] = plugin.routes();
-
-    expect(entry).toEqual({ method: "GET", pattern: "/config.json", handlerId: "config" });
-    const match = createTestRouteMatch(entry!);
-    expect(plugin.requiredPermission("GET", match, createTestRegistryContext())).toEqual({
-      action: "read",
-    });
-    const res = await plugin.handle(
-      match,
-      new Request("https://registry.example.test/config.json"),
-      createTestRegistryContext(),
-    );
-    expect(await res.json()).toEqual({ ok: true });
-  });
-
-  test("preserves explicit route parameter generics for dynamic patterns", async () => {
-    const pattern: string = "/:pkg+";
-    const plugin = registryPlugin("npm")
-      .capabilities("virtualizable")
-      .get<{ pkg: string }>(pattern, "packument", ({ params }) =>
-        Response.json({ package: params.pkg }),
-      )
-      .build();
-    const [entry] = plugin.routes();
-    const match = createTestRouteMatch(entry!, { pkg: "@scope/pkg" }, "/@scope/pkg");
-    const res = await plugin.handle(
-      match,
-      new Request("https://registry.example.test/@scope/pkg"),
-      createTestRegistryContext(),
-    );
-
-    expect(await res.json()).toEqual({ package: "@scope/pkg" });
-  });
-
-  test("builds plugins with a fluent builder", async () => {
-    const plugin = registryPlugin("npm")
-      .capabilities("proxyable", "virtualizable")
+describe("registryAdapter builder", () => {
+  test("builds plugins with default permission and auth challenge sugar", async () => {
+    const plugin = registryAdapter("npm")
+      .module({ capabilities: ["proxyable", "virtualizable"] })
       .defaultPermission(({ params }) =>
         readOnlyPermission({ type: "package", packageName: params.pkg }),
       )
       .authChallenge(() => ({ header: 'Basic realm="test"', status: 401 }))
-      .get("/:pkg+", "packument", ({ params }) => Response.json({ package: params.pkg }))
+      .routes((route) => [
+        route.get("/:pkg+", "packument", ({ params }) => Response.json({ package: params.pkg })),
+      ])
       .build();
     const [entry] = plugin.routes();
 
@@ -155,129 +40,7 @@ describe("defineRegistryPlugin", () => {
     expect(await res.json()).toEqual({ package: "left-pad" });
   });
 
-  test("builds plugins with fluent route-list factories", () => {
-    const plugin = registryPlugin("go")
-      .capabilities(registryCapabilities("virtualizable"))
-      .routes((route) => [
-        route.get("/:module+/@latest", "latest", () => new Response("latest")),
-        route.put(
-          "/:module+/@v/:version",
-          "upload",
-          ({ params }) => new Response(`${params.module}@${params.version}`, { status: 201 }),
-        ),
-      ])
-      .build();
-
-    expect(plugin.routes()).toEqual([
-      { method: "GET", pattern: "/:module+/@latest", handlerId: "latest" },
-      { method: "PUT", pattern: "/:module+/@v/:version", handlerId: "upload" },
-    ]);
-  });
-
-  test("builds module metadata, auth, route flags, app routes, and hooks with sugar", async () => {
-    const calls: string[] = [];
-    const plugin = registryPlugin("npm")
-      .module({
-        displayName: "npm",
-        mountSegment: "npm",
-        capabilities: ["proxyable", "virtualizable"],
-        compressible: {
-          handlers: ["packument"],
-          contentTypes: ["application/json"],
-        },
-        appRoutes: registryAppRoutes((route) => [
-          route.methods(["GET", "HEAD"], ["/v2", "/v2/"], () => new Response("ok")),
-        ]),
-      })
-      .basicAuth()
-      .defaultPermission(registryPermissions.packageParam("pkg"))
-      .beforeHandle(({ params }) => {
-        calls.push(params.pkg ?? "");
-      })
-      .routes((route) => [
-        route.searchGet("/-/v1/search", "search", () => Response.json({ objects: [] })),
-        route.serviceIndex("/v3/index.json", "serviceIndex", () => Response.json({ version: "3" })),
-        route.metadataGet("/:pkg+", "packument", ({ params }) =>
-          Response.json({ package: params.pkg }),
-        ),
-        route.immutableGet("/:pkg+/-/:file", "tarball", () => new Response("bytes")),
-        ...route.prefix("/api", [
-          route.post("/publish", "publish", () => new Response(null, { status: 201 })),
-        ]),
-      ])
-      .build();
-
-    expect(plugin.capabilities).toEqual({
-      contentAddressable: false,
-      resumableUploads: false,
-      proxyable: true,
-      virtualizable: true,
-    });
-    expect([...plugin.compressibleHandlers]).toEqual(["packument"]);
-    expect([...plugin.compressibleContentTypes]).toEqual(["application/json"]);
-    expect(plugin.appRoutes?.().map((route) => `${route.method} ${route.pattern}`)).toEqual([
-      "GET /v2",
-      "GET /v2/",
-      "HEAD /v2",
-      "HEAD /v2/",
-    ]);
-    expect(plugin.routes()).toEqual([
-      { method: "GET", pattern: "/-/v1/search", handlerId: "search", searchable: true },
-      { method: "GET", pattern: "/v3/index.json", handlerId: "serviceIndex", serviceIndex: true },
-      {
-        method: "GET",
-        pattern: "/:pkg+",
-        handlerId: "packument",
-        metadataMergeable: true,
-        proxyRefreshTrigger: true,
-      },
-      {
-        method: "GET",
-        pattern: "/:pkg+/-/:file",
-        handlerId: "tarball",
-        immutableContentAddressed: true,
-      },
-      { method: "POST", pattern: "/api/publish", handlerId: "publish" },
-    ]);
-
-    const [search, , packument] = plugin.routes();
-    expect(
-      plugin.requiredPermission("GET", createTestRouteMatch(search!), createTestRegistryContext()),
-    ).toEqual({
-      action: "read",
-    });
-    const match = createTestRouteMatch(packument!, { pkg: "left-pad" }, "/left-pad");
-    expect(plugin.requiredPermission("GET", match, createTestRegistryContext())).toEqual({
-      action: "read",
-      resource: { type: "package", packageName: "left-pad" },
-    });
-    expect(plugin.authChallenge?.(readOnlyPermission(), createTestRegistryContext())).toEqual({
-      header: 'Basic realm="hootifactory"',
-      status: 401,
-    });
-    const res = await plugin.handle(
-      match,
-      new Request("https://registry.example.test/left-pad"),
-      createTestRegistryContext(),
-    );
-    expect(await res.json()).toEqual({ package: "left-pad" });
-    expect(calls).toEqual(["left-pad"]);
-  });
-
   test("lets explicit route options override shortcut defaults", () => {
-    const lowLevel = registryPlugin("npm")
-      .capabilities("virtualizable")
-      .routes((route) => [
-        route.searchGet("/-/v1/search", "search", () => new Response(null), {
-          searchable: false,
-        }),
-        route.metadataGet("/:pkg+", "packument", () => new Response(null), {
-          packageParam: "pkg",
-          proxyRefreshTrigger: false,
-        }),
-      ])
-      .build();
-
     const adapter = registryAdapter("npm")
       .module({ capabilities: ["virtualizable"] })
       .routes((route) => [
@@ -307,8 +70,48 @@ describe("defineRegistryPlugin", () => {
         packageParam: "pkg",
       },
     ];
-    expect(lowLevel.routes()).toEqual(expected);
     expect(adapter.routes()).toEqual(expected);
+  });
+
+  test("module() merges later inputs field-by-field (later values win)", () => {
+    const plugin = registryAdapter("npm")
+      .module({
+        displayName: "first",
+        mountSegment: "npm",
+        capabilities: ["virtualizable"],
+        compressibleHandlers: ["a"],
+      })
+      .module({ displayName: "second", compressibleContentTypes: ["application/json"] })
+      .routes((route) => [route.get("/x", "x", () => new Response(null))])
+      .build();
+
+    expect(plugin.displayName).toBe("second");
+    expect(plugin.mountSegment).toBe("npm");
+    expect([...plugin.compressibleHandlers]).toEqual(["a"]);
+    expect([...plugin.compressibleContentTypes]).toEqual(["application/json"]);
+  });
+
+  test("compressible takes precedence over compressibleHandlers/compressibleContentTypes", () => {
+    const plugin = registryAdapter("npm")
+      .module({
+        capabilities: ["virtualizable"],
+        compressible: { handlers: ["packument"], contentTypes: ["application/json"] },
+        compressibleHandlers: ["ignored"],
+        compressibleContentTypes: ["text/plain"],
+      })
+      .routes((route) => [route.get("/x", "x", () => new Response(null))])
+      .build();
+
+    expect([...plugin.compressibleHandlers]).toEqual(["packument"]);
+    expect([...plugin.compressibleContentTypes]).toEqual(["application/json"]);
+  });
+
+  test("missing capabilities is a build-time error", () => {
+    expect(() =>
+      registryAdapter("npm")
+        .routes((route) => [route.get("/x", "x", () => new Response(null))])
+        .build(),
+    ).toThrow(/registry module npm is missing capabilities/);
   });
 
   test("distinguishes adapter permission factories from runtime resolvers", () => {
@@ -359,103 +162,6 @@ describe("defineRegistryPlugin", () => {
         createTestRegistryContext(),
       ),
     ).toEqual({ action: "write", repositoryName: "stateful-repo" });
-  });
-
-  test("delegates through RegistryPluginBase", async () => {
-    class TestAdapter extends RegistryPluginBase {
-      readonly id = "go" as const;
-      protected readonly plugin: RegistryPlugin = registryPlugin(this.id)
-        .module({ capabilities: ["virtualizable"] })
-        .get("/:module+/@latest", "latest", ({ params }) => new Response(params.module))
-        .build();
-    }
-
-    const adapter = new TestAdapter();
-    const [entry] = adapter.routes();
-    const match = createTestRouteMatch(entry!, { module: "example.com/demo" });
-    const res = await adapter.handle(
-      match,
-      new Request("https://registry.example.test/example.com/demo/@latest"),
-      createTestRegistryContext(),
-    );
-
-    expect(adapter.displayName).toBe("go");
-    expect(adapter.requiredPermission("GET", match, createTestRegistryContext())).toEqual({
-      action: "read",
-    });
-    expect(await res.text()).toBe("example.com/demo");
-  });
-
-  test("builds scan providers from dependency and digest-path sugar", () => {
-    const scan = registryScan({
-      defaultOsvEcosystem: "npm",
-      purlType: "npm",
-      dependencies: (metadata) => ({ leftpad: String(metadata.leftpad ?? "1.0.0") }),
-      referencedDigestPaths: ["dist.blobDigest", "files"],
-      referencedDigests: (metadata) =>
-        typeof metadata.extraDigest === "string" ? [metadata.extraDigest] : [],
-    });
-
-    expect(scan.dependencyGraph?.({ metadata: { leftpad: "1.2.3" } })).toEqual({
-      deps: { leftpad: "1.2.3" },
-      osvEcosystem: "npm",
-      purlType: "npm",
-    });
-    expect(
-      scan.referencedDigests?.({
-        dist: { blobDigest: "sha256:a" },
-        files: ["sha256:b", 1, "sha256:c"],
-        extraDigest: "sha256:a",
-      }),
-    ).toEqual(["sha256:a", "sha256:b", "sha256:c"]);
-  });
-
-  test("builds capabilities from sparse flags or overrides", () => {
-    expect(registryCapabilities("contentAddressable", "virtualizable")).toEqual({
-      contentAddressable: true,
-      resumableUploads: false,
-      proxyable: false,
-      virtualizable: true,
-    });
-    expect(registryCapabilities({ proxyable: true })).toEqual({
-      contentAddressable: false,
-      resumableUploads: false,
-      proxyable: true,
-      virtualizable: false,
-    });
-  });
-
-  test("delegates plugin forwarding and optional pre-handle hooks", async () => {
-    const plugin = defineRegistryPlugin({
-      id: "go",
-      capabilities: {
-        contentAddressable: false,
-        resumableUploads: false,
-        proxyable: false,
-        virtualizable: true,
-      },
-      routes: [registryRoutes.get("/:module+/@latest", "latest", () => new Response("latest"))],
-    });
-    const calls: string[] = [];
-    const delegate = delegateRegistryPlugin(plugin, {
-      beforeHandle: ({ params }) => {
-        calls.push(params.module ?? "");
-      },
-    });
-    const [entry] = delegate.routes();
-    const match = createTestRouteMatch(entry!, { module: "example.com/acme/mod" });
-
-    expect(delegate.requiredPermission("GET", match, createTestRegistryContext())).toEqual({
-      action: "read",
-    });
-    const res = await delegate.handle(
-      match,
-      new Request("https://registry.example.test/example.com/acme/mod/@latest"),
-      createTestRegistryContext(),
-    );
-
-    expect(await res.text()).toBe("latest");
-    expect(calls).toEqual(["example.com/acme/mod"]);
   });
 
   test("builds generated adapter classes from stateful fluent definitions", async () => {

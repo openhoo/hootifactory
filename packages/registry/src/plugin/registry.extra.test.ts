@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { registryPlugin } from "./plugin";
+import { registryAdapter } from "./plugin";
 import {
   isImmutableContentPath,
   isRegistryMountPath,
@@ -7,10 +7,13 @@ import {
   registryPlugins,
 } from "./registry";
 
-const npm = registryPlugin("npm")
-  .module({ displayName: "npm", mountSegment: "npm" })
-  .capabilities("proxyable", "virtualizable")
-  .get("/:pkg+", "packument", () => Response.json({ ok: true }))
+const npm = registryAdapter("npm")
+  .module({
+    displayName: "npm",
+    mountSegment: "npm",
+    capabilities: ["proxyable", "virtualizable"],
+  })
+  .routes((route) => [route.get("/:pkg+", "packument", () => Response.json({ ok: true }))])
   .build();
 
 describe("RegistryPluginRegistry — additional behavior", () => {
@@ -74,10 +77,11 @@ describe("isRegistryMountPath", () => {
 describe("isImmutableContentPath — content-addressable module with no immutable routes", () => {
   test("false when a content-addressable module declares no immutable routes", () => {
     const registry = new RegistryPluginRegistry();
-    const caNoImmutable = registryPlugin("docker")
-      .module({ mountSegment: "v2" })
-      .capabilities("contentAddressable")
-      .get("/:name+/manifests/:reference", "getManifest", () => Response.json({ ok: true }))
+    const caNoImmutable = registryAdapter("docker")
+      .module({ mountSegment: "v2", capabilities: ["contentAddressable"] })
+      .routes((route) => [
+        route.get("/:name+/manifests/:reference", "getManifest", () => Response.json({ ok: true })),
+      ])
       .build();
     registry.register(caNoImmutable);
     expect(isImmutableContentPath("/v2/acme/app/manifests/latest", registry)).toBe(false);

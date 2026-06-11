@@ -1,171 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { createTestRegistryContext, createTestRouteMatch } from "../testing";
-import type {
-  RegistryContentAddressableManifestGraph,
-  RegistryPlugin,
-  RegistryScanProvider,
-  RouteMatch,
-} from "./adapter";
-import {
-  artifactPermission,
-  deletePermission,
-  packagePermission,
-  RegistryPluginBase,
-  readOnlyPermission,
-  registryAdapter,
-  registryPermissions,
-  registryPlugin,
-  registryScan,
-  routePermission,
-  writePermission,
-} from "./plugin";
+import type { RegistryScanProvider, RouteMatch } from "./adapter";
+import { readOnlyPermission, registryAdapter, routePermission, writePermission } from "./plugin";
 
 const ctx = createTestRegistryContext();
 
-describe("standalone permission factories", () => {
-  test("readOnly / write / delete / route / package / artifact builders", () => {
-    expect(readOnlyPermission()).toEqual({ action: "read" });
-    expect(readOnlyPermission({ type: "package", packageName: "p" })).toEqual({
-      action: "read",
-      resource: { type: "package", packageName: "p" },
-    });
-    expect(writePermission()).toEqual({ action: "write" });
-    expect(deletePermission("acme/repo")).toEqual({
-      action: "delete",
-      repositoryName: "acme/repo",
-    });
-    expect(deletePermission(undefined, { type: "package", packageName: "p" })).toEqual({
-      action: "delete",
-      repositoryName: undefined,
-      resource: { type: "package", packageName: "p" },
-    });
-    expect(routePermission("write", "acme/repo")).toEqual({
-      action: "write",
-      repositoryName: "acme/repo",
-    });
-    expect(packagePermission("read", "left-pad", "acme/repo")).toEqual({
-      action: "read",
-      repositoryName: "acme/repo",
-      resource: { type: "package", packageName: "left-pad" },
-    });
-    expect(artifactPermission("write", "sha256:a", "acme/repo", "left-pad")).toEqual({
-      action: "write",
-      repositoryName: "acme/repo",
-      resource: { type: "artifact", artifactRef: "sha256:a", packageName: "left-pad" },
-    });
-  });
-});
-
-describe("registryPermissions resolvers", () => {
-  function permInput(method: "GET" | "PUT" | "DELETE", params: Record<string, string>) {
-    const entry = { method, pattern: "/:pkg+", handlerId: "h" };
-    return { method, match: createTestRouteMatch(entry, params), params, ctx };
-  }
-
-  test("read/write/delete/readWrite resolvers", () => {
-    expect(registryPermissions.read()).toEqual({ action: "read" });
-    expect(registryPermissions.write()).toEqual({ action: "write" });
-    expect(registryPermissions.delete("acme")).toEqual({
-      action: "delete",
-      repositoryName: "acme",
-    });
-    expect(registryPermissions.readWrite(permInput("GET", {}))).toEqual({ action: "read" });
-    expect(registryPermissions.readWrite(permInput("PUT", {}))).toEqual({ action: "write" });
-  });
-
-  test("packageParam falls back to read/write when the param is missing or normalizes away", () => {
-    const resolver = registryPermissions.packageParam("pkg");
-    expect(resolver(permInput("GET", {}))).toEqual({ action: "read" });
-    expect(resolver(permInput("GET", { pkg: "left-pad" }))).toEqual({
-      action: "read",
-      resource: { type: "package", packageName: "left-pad" },
-    });
-
-    const dropped = registryPermissions.packageParam("pkg", { normalize: () => null });
-    expect(dropped(permInput("GET", { pkg: "x" }))).toEqual({ action: "read" });
-
-    const withRepo = registryPermissions.packageParam("pkg", { repositoryName: () => "acme/repo" });
-    expect(withRepo(permInput("PUT", { pkg: "left-pad" }))).toEqual({
-      action: "write",
-      repositoryName: "acme/repo",
-      resource: { type: "package", packageName: "left-pad" },
-    });
-  });
-
-  test("artifactParam resolves artifact refs, package params, and fallbacks", () => {
-    const resolver = registryPermissions.artifactParam("ref", { packageParam: "pkg" });
-    expect(resolver(permInput("GET", {}))).toEqual({ action: "read" });
-    expect(resolver(permInput("PUT", { ref: "sha256:a", pkg: "left-pad" }))).toEqual({
-      action: "write",
-      repositoryName: undefined,
-      resource: { type: "artifact", artifactRef: "sha256:a", packageName: "left-pad" },
-    });
-
-    const dropped = registryPermissions.artifactParam("ref", { normalize: () => null });
-    expect(dropped(permInput("GET", { ref: "x" }))).toEqual({ action: "read" });
-
-    const transformed = registryPermissions.artifactParam("ref", {
-      artifactRef: (value) => `oci:${value}`,
-      packageName: () => "explicit-pkg",
-      repositoryName: () => "acme/repo",
-    });
-    expect(transformed(permInput("GET", { ref: "manifest" }))).toEqual({
-      action: "read",
-      repositoryName: "acme/repo",
-      resource: { type: "artifact", artifactRef: "oci:manifest", packageName: "explicit-pkg" },
-    });
-  });
-});
-
-describe("registryScan — direct provider passthroughs", () => {
-  test("uses a directly supplied dependencyGraph verbatim", () => {
-    const graph: RegistryScanProvider["dependencyGraph"] = ({ metadata }) => ({
-      deps: { dep: String(metadata.version ?? "0") },
-    });
-    const provider = registryScan({ dependencyGraph: graph });
-    expect(provider.dependencyGraph?.({ metadata: { version: "2" } })).toEqual({
-      deps: { dep: "2" },
-    });
-  });
-
-  test("carries through a contentAddressableManifestGraph", () => {
-    const manifestGraph: RegistryContentAddressableManifestGraph = {
-      references: () => ({ blobs: ["sha256:b"], manifests: ["sha256:m"] }),
-    };
-    const provider = registryScan({ contentAddressableManifestGraph: manifestGraph });
-    expect(provider.contentAddressableManifestGraph?.references("{}")).toEqual({
-      blobs: ["sha256:b"],
-      manifests: ["sha256:m"],
-    });
-  });
-
-  test("returns an empty provider when no scan inputs are supplied", () => {
-    expect(registryScan({})).toEqual({});
-  });
-});
-
-describe("RegistryPluginBuilder — method sugar and module hooks", () => {
-  test("declares HEAD/PUT/POST/PATCH/DELETE routes via builder sugar", () => {
-    const plugin = registryPlugin("npm")
-      .capabilities("virtualizable")
-      .head("/ping", "ping", () => new Response(null))
-      .put("/:pkg+", "publish", () => new Response(null, { status: 201 }))
-      .post("/-/v1/login", "login", () => new Response(null))
-      .patch("/:pkg+", "patch", () => new Response(null))
-      .delete("/:pkg+", "remove", () => new Response(null))
-      .build();
-
-    expect(plugin.routes().map((r) => `${r.method} ${r.pattern}`)).toEqual([
-      "HEAD /ping",
-      "PUT /:pkg+",
-      "POST /-/v1/login",
-      "PATCH /:pkg+",
-      "DELETE /:pkg+",
-    ]);
-  });
-
+describe("RegistryAdapterBuilder — auth and module hooks", () => {
   test("attaches bearer + virtual/metadata/search/proxy hooks", async () => {
-    const plugin = registryPlugin("docker")
+    const plugin = registryAdapter("docker")
       .module({ mountSegment: "v2", capabilities: ["proxyable", "virtualizable"] })
       .bearerAuth("myrealm")
       .generateMetadata(() => Promise.resolve({ contentType: "application/json", body: "{}" }))
@@ -175,7 +17,7 @@ describe("RegistryPluginBuilder — method sugar and module hooks", () => {
       .search(() => Promise.resolve({ items: [{ name: "x" }], total: 1 }))
       .virtualSearch(() => Promise.resolve(Response.json({ virtual: true })))
       .proxyIngest((name) => Promise.resolve(name === "ok"))
-      .get("/v2", "ping", () => new Response("ok"))
+      .routes((route) => [route.get("/v2", "ping", () => new Response("ok"))])
       .build();
 
     expect(plugin.authChallenge?.(readOnlyPermission(), ctx)).toEqual({
@@ -207,10 +49,10 @@ describe("RegistryPluginBuilder — method sugar and module hooks", () => {
   });
 
   test("registryBearerAuth emits an OCI-style challenge", () => {
-    const plugin = registryPlugin("docker")
+    const plugin = registryAdapter("docker")
       .module({ mountSegment: "v2", capabilities: ["contentAddressable"] })
       .registryBearerAuth({ service: "svc", realmPath: "/auth/token" })
-      .get("/v2", "ping", () => new Response("ok"))
+      .routes((route) => [route.get("/v2", "ping", () => new Response("ok"))])
       .build();
 
     const challenge = plugin.authChallenge?.(
@@ -225,29 +67,21 @@ describe("RegistryPluginBuilder — method sugar and module hooks", () => {
   });
 
   test("metadata({generate, merge}) sets both handlers", async () => {
-    const plugin = registryPlugin("npm")
-      .capabilities("virtualizable")
+    const plugin = registryAdapter("npm")
+      .module({ capabilities: ["virtualizable"] })
       .metadata({
         generate: () => Promise.resolve({ contentType: "application/json", body: "g" }),
         merge: () => Promise.resolve({ contentType: "application/json", body: "m" }),
       })
-      .get("/:pkg+", "packument", () => new Response(null))
+      .routes((route) => [route.get("/:pkg+", "packument", () => new Response(null))])
       .build();
     expect((await plugin.generateMetadata?.("x", ctx))?.body).toBe("g");
     expect((await plugin.mergeMetadata?.([], ctx))?.body).toBe("m");
   });
 
-  test("missing capabilities is a build-time error", () => {
-    expect(() =>
-      registryPlugin("npm")
-        .get("/x", "x", () => new Response(null))
-        .build(),
-    ).toThrow(/missing capabilities/);
-  });
-
   test("module sugar carries repositoryNamePolicy/bearer-token/errorKind/apiKeyHeaders", () => {
     const policy = { validate: (name: string) => name.length > 0, invalidMessage: "bad" };
-    const plugin = registryPlugin("docker")
+    const plugin = registryAdapter("docker")
       .module({
         mountSegment: "v2",
         capabilities: ["contentAddressable"],
@@ -256,12 +90,21 @@ describe("RegistryPluginBuilder — method sugar and module hooks", () => {
         errorResponseKind: "errorsDetail",
         apiKeyHeaders: ["x-key"],
       })
-      .get("/v2", "ping", () => new Response("ok"))
+      .routes((route) => [route.get("/v2", "ping", () => new Response("ok"))])
       .build();
     expect(plugin.repositoryNamePolicy).toBe(policy);
     expect(plugin.acceptsRegistryBearerToken).toBe(true);
     expect(plugin.errorResponseKind).toBe("errorsDetail");
     expect([...plugin.apiKeyHeaders]).toEqual(["x-key"]);
+  });
+
+  test("appRoutes() accepts a literal route array", () => {
+    const plugin = registryAdapter("npm")
+      .module({ capabilities: ["virtualizable"] })
+      .appRoutes([{ method: "GET", pattern: "/v2", handler: () => new Response("ok") }])
+      .routes((route) => [route.get("/x", "x", () => new Response(null))])
+      .build();
+    expect(plugin.appRoutes?.().map((r) => `${r.method} ${r.pattern}`)).toEqual(["GET /v2"]);
   });
 });
 
@@ -571,57 +414,6 @@ describe("adapterClass() generated adapters expose the full descriptor surface",
       .adapterClass();
     const adapter = new Adapter();
     expect(adapter.authChallenge()).toEqual({ header: 'Basic realm="hootifactory"', status: 401 });
-  });
-});
-
-describe("RegistryPluginBase descriptor delegation", () => {
-  class BaseAdapter extends RegistryPluginBase {
-    readonly id = "docker" as const;
-    protected readonly plugin: RegistryPlugin = registryAdapter(this.id)
-      .module({ mountSegment: "v2", capabilities: ["contentAddressable", "virtualizable"] })
-      .generateMetadata(() => Promise.resolve({ contentType: "application/json", body: "g" }))
-      .mergeMetadata(() => Promise.resolve({ contentType: "application/json", body: "m" }))
-      .search(() => Promise.resolve({ items: [], total: 0 }))
-      .virtualSearch(() => Promise.resolve(Response.json({ v: 1 })))
-      .proxyIngest(() => Promise.resolve(true))
-      .routes((route) => [
-        route
-          .get("/v2/:name+", "name")
-          .read()
-          .handle(() => new Response("ok")),
-      ])
-      .build();
-  }
-
-  test("forwards descriptor getters, optional methods, and auth fallback", async () => {
-    const adapter = new BaseAdapter();
-    expect(adapter.displayName).toBe("docker");
-    expect(adapter.mountSegment).toBe("v2");
-    expect(adapter.capabilities.contentAddressable).toBe(true);
-    expect(adapter.errorResponseKind).toBe("registry");
-    expect(adapter.repositoryNamePolicy).toBeUndefined();
-    expect(adapter.acceptsRegistryBearerToken).toBe(false);
-    expect([...adapter.apiKeyHeaders]).toEqual([]);
-    expect([...adapter.compressibleHandlers]).toEqual([]);
-    expect([...adapter.compressibleContentTypes]).toEqual([]);
-    expect(adapter.scan).toBeUndefined();
-    expect(adapter.usageSnippets).toBeUndefined();
-    expect(adapter.appRoutes()).toEqual([]);
-    expect(adapter.authChallenge()).toEqual({ header: 'Basic realm="hootifactory"', status: 401 });
-    expect(typeof adapter.virtualSearch).toBe("function");
-    expect((await adapter.generateMetadata?.("x", ctx))?.body).toBe("g");
-    expect((await adapter.mergeMetadata?.([], ctx))?.body).toBe("m");
-    expect(await adapter.search?.({ text: "x" }, ctx)).toEqual({ items: [], total: 0 });
-    expect(await adapter.proxyIngest?.("x", "https://up.test", ctx)).toBe(true);
-
-    expect(adapter.requiredPermission("PUT")).toEqual({ action: "write" });
-    const [name] = adapter.routes();
-    const res = await adapter.handle(
-      createTestRouteMatch(name!, { name: "acme/app" }),
-      new Request("https://x.test/v2/acme/app"),
-      ctx,
-    );
-    expect(await res.text()).toBe("ok");
   });
 });
 
