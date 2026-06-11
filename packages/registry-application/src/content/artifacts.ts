@@ -9,8 +9,6 @@ import {
   resolveRegistryScanPolicy,
 } from "../governance/scan-policy";
 
-export const REGISTRY_TOKEN_SERVICE = "hootifactory";
-
 type BlobResponseOptions = {
   digest: string;
   contentType: string;
