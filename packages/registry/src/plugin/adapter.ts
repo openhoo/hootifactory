@@ -137,12 +137,6 @@ export interface Logger {
   error(msg: string, meta?: unknown): void;
 }
 
-/** Fetch-through client for proxy/remote repos. */
-export interface UpstreamClient {
-  fetch(path: string, init?: RequestInit): Promise<Response>;
-  readonly baseUrl: string;
-}
-
 /**
  * The per-request bundle of shared services injected into registry plugins.
  * This is the boundary between protocol code and the registry application core.
@@ -164,10 +158,6 @@ export interface RegistryRequestContext {
   authorize(action: Action, resource?: Partial<ResourceRef>): Promise<Decision>;
   /** Register a published artifact and enqueue a scan (no-op when scanning is disabled). */
   enqueueScan(input: EnqueueScanInput): Promise<void>;
-  /** Present only for proxy repos. */
-  upstream?: UpstreamClient;
-  /** Present only for virtual repos, in resolution order. */
-  members?: ResolvedRepo[];
   log: Logger;
 }
 
