@@ -137,6 +137,52 @@ export const permissionGrants = pgTable(
   ],
 );
 
+/** Serialized org membership captured when a user is deactivated. */
+export interface DeactivatedMembershipSnapshot {
+  orgId: string;
+}
+
+/** Serialized group membership captured when a user is deactivated. */
+export interface DeactivatedGroupMembershipSnapshot {
+  orgId: string;
+  groupId: string;
+  source: string;
+  provider: string | null;
+  externalKey: string | null;
+}
+
+/** Serialized user-subject permission grant captured when a user is deactivated. */
+export interface DeactivatedPermissionGrantSnapshot {
+  orgId: string | null;
+  permission: PermissionKey;
+  repositoryId: string | null;
+  repositoryPattern: string | null;
+  packagePattern: string | null;
+  artifactPattern: string | null;
+  policy: PolicyName | null;
+  tokenTarget: TokenTarget | null;
+  targetTokenId: string | null;
+  grantedByUserId: string | null;
+  source: string | null;
+}
+
+/**
+ * What deactivating a user removed (org/group memberships and user-subject
+ * permission grants), kept so reactivation can restore it. One row per
+ * deactivated user; consumed (deleted) on reactivation. Users deactivated
+ * before this table existed have no row, so reactivating them restores
+ * nothing — the legacy fail-safe behavior.
+ */
+export const userDeactivationSnapshots = pgTable("user_deactivation_snapshots", {
+  userId: uuid()
+    .primaryKey()
+    .references(() => users.id, { onDelete: "cascade" }),
+  memberships: jsonb().$type<DeactivatedMembershipSnapshot[]>().notNull().default([]),
+  groupMemberships: jsonb().$type<DeactivatedGroupMembershipSnapshot[]>().notNull().default([]),
+  permissionGrants: jsonb().$type<DeactivatedPermissionGrantSnapshot[]>().notNull().default([]),
+  deactivatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+});
+
 /** Server-side UI sessions (revocable). */
 export const sessions = pgTable(
   "sessions",

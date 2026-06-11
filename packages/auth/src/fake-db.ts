@@ -22,6 +22,8 @@ export interface RecordedQuery {
   set?: unknown;
   /** Whether `.onConflictDoUpdate(...)` was chained. */
   onConflict?: boolean;
+  /** Whether `.onConflictDoNothing(...)` was chained. */
+  onConflictDoNothing?: boolean;
 }
 
 type MutableDbLike = {
@@ -70,6 +72,7 @@ export class FakeDb {
           if (prop === "values") record.values = args[0];
           if (prop === "set") record.set = args[0];
           if (prop === "onConflictDoUpdate") record.onConflict = true;
+          if (prop === "onConflictDoNothing") record.onConflictDoNothing = true;
           return proxy;
         };
       },
