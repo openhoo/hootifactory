@@ -7,7 +7,13 @@ import {
 import { env } from "@hootifactory/config";
 import { assertDigest } from "@hootifactory/core";
 import { artifacts, db, ne, scanOutbox } from "@hootifactory/db";
-import { addSpanEvent, logger, withSpan } from "@hootifactory/observability";
+import {
+  addSpanEvent,
+  captureTelemetryContext,
+  logger,
+  type TelemetryContextCarrier,
+  withSpan,
+} from "@hootifactory/observability";
 import type {
   EnqueueScanInput,
   RegistryDataService,
@@ -47,12 +53,22 @@ export function scanOutboxResetGuard() {
 export async function recordArtifactScanOutbox(
   repo: ResolvedRepo,
   input: EnqueueScanInput,
+  captureTelemetry: () => TelemetryContextCarrier = captureTelemetryContext,
 ): Promise<{ artifactId: string } | null> {
   // Defense-in-depth (issue #308): every current caller passes a server-computed
   // digest, but asserting the canonical "sha256:<64-hex>" shape here makes it an
   // invariant of the enqueue boundary — a malformed digest can never become an
   // artifacts/scan_outbox row (the throw happens before the transaction opens).
   assertDigest(input.digest);
+
+  // Stamp the publish-time telemetry context on the outbox row (issue #341) so
+  // the scan-worker can parent its scan spans to the publish trace, mirroring
+  // the carrier pg-boss email jobs get at enqueue. Stored as NULL when there is
+  // nothing to link (no active trace or correlation ids). `captureTelemetry` is
+  // an injection seam for tests; production callers pass nothing.
+  const captured = captureTelemetry();
+  const telemetry =
+    captured.trace || captured.requestId || captured.correlationId ? captured : null;
   return db.transaction(async (tx) => {
     const [row] = await tx
       .insert(artifacts)
@@ -80,6 +96,7 @@ export async function recordArtifactScanOutbox(
         nextAttemptAt: new Date(),
         lockedAt: null,
         lastError: null,
+        telemetry,
       })
       .onConflictDoUpdate({
         target: [scanOutbox.artifactId],
@@ -92,6 +109,9 @@ export async function recordArtifactScanOutbox(
           nextAttemptAt: new Date(),
           lockedAt: null,
           lastError: null,
+          // A re-publish re-triggers the scan, so the rescan should link to the
+          // trace that requested it, not the original publish.
+          telemetry,
           updatedAt: new Date(),
         },
       });

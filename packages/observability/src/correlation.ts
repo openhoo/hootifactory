@@ -77,6 +77,28 @@ export function captureTelemetryContext(): TelemetryContextCarrier {
   };
 }
 
+/**
+ * Restore a {@link captureTelemetryContext} carrier around `fn`: the carrier's
+ * trace headers are extracted into the active OTel context (so spans created
+ * inside — e.g. via withSpan — parent to the producer's trace, the way
+ * instrumentQueueJob links pg-boss consumers) and its request/correlation ids
+ * are layered onto the correlation store for log stitching. With no carrier
+ * (e.g. a scan_outbox row enqueued outside any traced request) `fn` simply
+ * runs in the current context.
+ */
+export async function withTelemetryContext<T>(
+  carrier: TelemetryContextCarrier | undefined,
+  fn: () => Promise<T>,
+): Promise<T> {
+  if (!carrier) return fn();
+  const restored = propagation.extract(context.active(), carrier.trace ?? {}, recordGetter);
+  const correlation: CorrelationContext = {};
+  if (carrier.requestId) correlation.requestId = carrier.requestId;
+  const correlationId = carrier.correlationId ?? carrier.requestId;
+  if (correlationId) correlation.correlationId = correlationId;
+  return context.with(restored, () => Promise.resolve(withCorrelationContext(correlation, fn)));
+}
+
 export function withLogAttributes<T>(
   attributes: ScalarAttributes,
   fn: () => T | Promise<T>,

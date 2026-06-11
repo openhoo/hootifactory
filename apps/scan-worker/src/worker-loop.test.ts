@@ -266,6 +266,29 @@ describe("processClaimedIntent", () => {
     expect(collab.failures).toEqual([]);
   });
 
+  test("restores the publish-time telemetry context around the scan (issue #341)", async () => {
+    const { mod, collab } = await loadModule({});
+    const restored: unknown[] = [];
+    const telemetry = { requestId: "req-1", correlationId: "corr-1" };
+    await mod.processClaimedIntent(
+      { id: "a", artifactId: "art-a", attempts: 1, telemetry },
+      runtime,
+      5,
+      {
+        ...collab.deps,
+        withTelemetryContext: (async (carrier, fn) => {
+          restored.push(carrier);
+          return fn();
+        }) as NonNullable<ScanLoopDeps["withTelemetryContext"]>,
+      },
+    );
+    // The carrier parsed off the claimed row is what gets restored, and the scan
+    // pipeline + terminal write still run inside it.
+    expect(restored).toEqual([telemetry]);
+    expect(collab.processed).toEqual(["art-a"]);
+    expect(collab.capture.updates[0]?.set.status).toBe("succeeded");
+  });
+
   test("records the failure and marks failed when the pipeline throws", async () => {
     const { mod, collab } = await loadModule({
       processScan: async () => {

@@ -21,6 +21,37 @@ describe("scan outbox row helpers", () => {
     ]);
   });
 
+  test("parses the telemetry carrier stamped on the row at publish time (issue #341)", () => {
+    const telemetry = {
+      trace: { traceparent: "00-abc-def-01" },
+      requestId: "req-1",
+      correlationId: "corr-1",
+    };
+    expect(
+      claimedScanIntentsFromExecute({
+        rows: [{ id: "one", artifactId: "art-1", attempts: 1, telemetry }],
+      }),
+    ).toEqual([{ id: "one", artifactId: "art-1", attempts: 1, telemetry }]);
+  });
+
+  test("degrades absent/malformed/empty telemetry to no carrier without dropping the row", () => {
+    const intents = claimedScanIntentsFromExecute({
+      rows: [
+        { id: "null-telemetry", artifactId: "a", attempts: 1, telemetry: null },
+        { id: "not-an-object", artifactId: "b", attempts: 1, telemetry: "trace-me" },
+        { id: "bad-trace-values", artifactId: "c", attempts: 1, telemetry: { trace: { k: 5 } } },
+        { id: "empty-carrier", artifactId: "d", attempts: 1, telemetry: {} },
+      ],
+    });
+    expect(intents.map((i) => i.id)).toEqual([
+      "null-telemetry",
+      "not-an-object",
+      "bad-trace-values",
+      "empty-carrier",
+    ]);
+    expect(intents.every((i) => i.telemetry === undefined)).toBe(true);
+  });
+
   test("drops malformed execute rows", () => {
     expect(
       claimedScanIntentsFromExecute([

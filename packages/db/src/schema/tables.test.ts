@@ -255,6 +255,9 @@ describe("scanning tables", () => {
     expect(getTableName(schema.scanOutbox)).toBe("scan_outbox");
     expect(column(schema.scanOutbox, "status").default).toBe("pending");
     expect(column(schema.scanOutbox, "attempts").default).toBe(0);
+    // The publish-time telemetry carrier is best-effort linkage: nullable, no default.
+    expect(column(schema.scanOutbox, "telemetry").notNull).toBe(false);
+    expect(column(schema.scanOutbox, "telemetry").default).toBeUndefined();
   });
 
   test("scans default version columns to empty strings", () => {

@@ -85,6 +85,45 @@ describe("recordArtifactScanOutbox", () => {
     });
   });
 
+  test("stamps the captured telemetry carrier on the outbox row (issue #341)", async () => {
+    const carrier = {
+      trace: { traceparent: "00-abc-def-01" },
+      requestId: "req-1",
+      correlationId: "corr-1",
+    };
+    await withFakeDb([[{ id: "art_1" }], []], async (calls) => {
+      const { recordArtifactScanOutbox } = await import("./request-context");
+      await recordArtifactScanOutbox(
+        repo,
+        { digest: "sha256:ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12" },
+        () => carrier,
+      );
+      // The second insert is the scan_outbox row: its values carry the carrier...
+      const values = calls.filter((c) => c.op === "values");
+      const outboxValues = values[1]?.args[0] as { telemetry?: unknown } | undefined;
+      expect(outboxValues?.telemetry).toEqual(carrier);
+      // ...and so does the conflict-update set, so a re-publish re-links the
+      // rescan to the trace that requested it.
+      const conflicts = calls.filter((c) => c.op === "onConflictDoUpdate");
+      const outboxSet = conflicts[1]?.args[0] as { set?: { telemetry?: unknown } } | undefined;
+      expect(outboxSet?.set?.telemetry).toEqual(carrier);
+    });
+  });
+
+  test("stores NULL telemetry when there is no context to link (issue #341)", async () => {
+    await withFakeDb([[{ id: "art_1" }], []], async (calls) => {
+      const { recordArtifactScanOutbox } = await import("./request-context");
+      await recordArtifactScanOutbox(
+        repo,
+        { digest: "sha256:ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12" },
+        () => ({}),
+      );
+      const values = calls.filter((c) => c.op === "values");
+      const outboxValues = values[1]?.args[0] as { telemetry?: unknown } | undefined;
+      expect(outboxValues?.telemetry).toBeNull();
+    });
+  });
+
   test("returns null when the artifact upsert yields no row", async () => {
     const result = await withFakeDb([[]], async (calls) => {
       const { recordArtifactScanOutbox } = await import("./request-context");
