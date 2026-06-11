@@ -1,11 +1,7 @@
 import {
-  type HttpMethod,
-  type Permission,
   type RegistryMetadata,
   type RegistryPlugin,
   type RegistryRequestContext,
-  type RouteMatch,
-  readWritePermission,
   registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
@@ -44,48 +40,6 @@ const MAX_RELEASE_LIMIT = 100;
  * the live stored versions on every read.
  */
 class PuppetAdapterState {
-  requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
-    const permission = readWritePermission(method);
-    const handlerId = match?.entry?.handlerId;
-
-    if (handlerId === "module") {
-      const slug = parsePuppetSlug(match?.params.slug ?? "");
-      if (slug) {
-        return { ...permission, resource: { type: "package", packageName: slug.slug } };
-      }
-    }
-
-    if (handlerId === "release") {
-      const release = parsePuppetReleaseSlug(match?.params.release ?? "");
-      if (release) {
-        return {
-          ...permission,
-          resource: {
-            type: "artifact",
-            packageName: release.slug,
-            artifactRef: puppetBlobScope(release.slug, release.version),
-          },
-        };
-      }
-    }
-
-    if (handlerId === "file") {
-      const ref = fileToRelease(match?.params.filename ?? "");
-      if (ref) {
-        return {
-          ...permission,
-          resource: {
-            type: "artifact",
-            packageName: ref.slug,
-            artifactRef: puppetBlobScope(ref.slug, ref.version),
-          },
-        };
-      }
-    }
-
-    return permission;
-  }
-
   private urlContext(ctx: RegistryRequestContext): PuppetUrlContext {
     return { baseUrl: ctx.baseUrl, mountPath: ctx.repo.mountPath };
   }
@@ -365,9 +319,31 @@ const puppetDefinition = registryAdapter("puppet")
   .bearerAuth()
   .fromState((state) =>
     state
-      .defaultPermission("requiredPermission")
       .metadata({ generate: "generateMetadata", merge: "mergeMetadata" })
       .proxyIngest("proxyIngest"),
+  )
+  .permissions((p) =>
+    p.byParams([
+      p.packageRule({ param: "slug", normalize: (slug) => parsePuppetSlug(slug)?.slug ?? null }),
+      p.artifactRule({
+        param: "release",
+        normalize: (release) => {
+          const parsed = parsePuppetReleaseSlug(release);
+          return parsed ? puppetBlobScope(parsed.slug, parsed.version) : null;
+        },
+        packageName: ({ params }) =>
+          params.release ? parsePuppetReleaseSlug(params.release)?.slug : undefined,
+      }),
+      p.artifactRule({
+        param: "filename",
+        normalize: (filename) => {
+          const ref = fileToRelease(filename);
+          return ref ? puppetBlobScope(ref.slug, ref.version) : null;
+        },
+        packageName: ({ params }) =>
+          params.filename ? fileToRelease(params.filename)?.slug : undefined,
+      }),
+    ]),
   )
   .routes((route) => [
     // Literal `/v3/releases` (list + publish) is declared before the

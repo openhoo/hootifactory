@@ -1,13 +1,9 @@
 import {
   asJsonRecord,
   Errors,
-  type HttpMethod,
-  type Permission,
   parseRegistryInput,
   type RegistryPlugin,
   type RegistryRequestContext,
-  type RouteMatch,
-  readWritePermission,
   registryAdapter,
   serveRegistryBlob,
 } from "@hootifactory/registry";
@@ -16,17 +12,6 @@ import { contentTypeForPath, MavenPathSchema, mavenPackageForPath } from "./mave
 
 /** Maven: a coordinate-addressed file store with POM-driven package projection. */
 class MavenAdapterState {
-  requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
-    const permission = readWritePermission(method);
-    const path = match?.params.path;
-    if (!path) return permission;
-    const pkg = mavenPackageForPath(path);
-    if (pkg) {
-      return { ...permission, resource: { type: "package", packageName: pkg } };
-    }
-    return { ...permission, resource: { type: "artifact", artifactRef: path } };
-  }
-
   upload(path: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const safePath = parseRegistryInput(MavenPathSchema, path, {
       code: "NAME_INVALID",
@@ -91,7 +76,12 @@ const mavenDefinition = registryAdapter("maven")
       .referencedDigests((metadata) => mavenReferencedDigests(metadata)),
   )
   .basicAuth()
-  .fromState((state) => state.defaultPermission("requiredPermission"))
+  .permissions((p) =>
+    p.byParams([
+      p.packageRule({ param: "path", normalize: (path) => mavenPackageForPath(path) }),
+      p.artifactRule({ param: "path" }),
+    ]),
+  )
   .routes((route) => [
     route
       .put("/:path+", "upload")

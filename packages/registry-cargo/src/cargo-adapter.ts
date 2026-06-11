@@ -1,12 +1,8 @@
 import {
   Errors,
-  type HttpMethod,
-  type Permission,
   parseRegistryInput,
   type RegistryPlugin,
   type RegistryRequestContext,
-  type RouteMatch,
-  readWritePermission,
   registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
@@ -43,26 +39,6 @@ function parseCrateVersion(version: string): string {
 
 /** Cargo sparse registry: config.json, sharded index, publish + download. */
 class CargoAdapterState {
-  requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
-    const permission = readWritePermission(method);
-    const crate = match?.params.crate;
-    const version = match?.params.version;
-    if (crate && version && match?.entry?.handlerId === "download") {
-      return {
-        ...permission,
-        resource: {
-          type: "artifact",
-          packageName: crate.toLowerCase(),
-          artifactRef: cargoBlobScope(crate.toLowerCase(), version),
-        },
-      };
-    }
-    if (crate) {
-      return { ...permission, resource: { type: "package", packageName: crate.toLowerCase() } };
-    }
-    return permission;
-  }
-
   findCrate(ctx: RegistryRequestContext, name: string) {
     return ctx.data.packages.findByName(name.toLowerCase());
   }
@@ -185,7 +161,19 @@ const cargoDefinition = registryAdapter("cargo")
       .referencedDigestPaths("crateDigest"),
   )
   .bearerAuth()
-  .fromState((state) => state.defaultPermission("requiredPermission"))
+  .permissions((p) =>
+    p.byParams([
+      p.artifactRule({
+        param: "version",
+        normalize: (version, { match, params }) =>
+          match.entry.handlerId === "download" && params.crate ? version : null,
+        packageName: ({ params }) => params.crate?.toLowerCase(),
+        artifactRef: (version, { params }) =>
+          params.crate ? cargoBlobScope(params.crate.toLowerCase(), version) : null,
+      }),
+      p.packageRule({ param: "crate", normalize: (crate) => crate.toLowerCase() }),
+    ]),
+  )
   .routes((route) => [
     route.get("/config.json", "config").json(({ ctx }) => ({
       dl: `${ctx.baseUrl}/${ctx.repo.mountPath}/api/v1/crates`,

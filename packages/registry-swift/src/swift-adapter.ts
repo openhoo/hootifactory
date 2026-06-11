@@ -1,13 +1,9 @@
 import {
   Errors,
-  type HttpMethod,
-  type Permission,
   parseRegistryInput,
   RegistryError,
   type RegistryPlugin,
   type RegistryRequestContext,
-  type RouteMatch,
-  readWritePermission,
   registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
@@ -68,26 +64,6 @@ function parseVersion(version: string): string {
 
 /** Swift Package Registry (SE-0292): the protocol SwiftPM speaks. */
 class SwiftAdapterState {
-  requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
-    const permission = readWritePermission(method);
-    const scope = match?.params.scope;
-    const name = match?.params.name;
-    if (!scope || !name) return permission;
-    const packageName = swiftPermissionName(scope, name);
-    const ref = match?.params.ref;
-    if (ref?.endsWith(".zip")) {
-      return {
-        ...permission,
-        resource: {
-          type: "artifact",
-          packageName,
-          artifactRef: swiftArchiveScope(scope, name, ref.slice(0, -".zip".length)),
-        },
-      };
-    }
-    return { ...permission, resource: { type: "package", packageName } };
-  }
-
   async aroundHandle(next: () => Promise<Response>): Promise<Response> {
     try {
       return withContentVersion(await next());
@@ -316,7 +292,27 @@ const swiftDefinition = registryAdapter("swift")
       }),
   )
   .bearerAuth()
-  .fromState((state) => state.aroundHandle("aroundHandle").defaultPermission("requiredPermission"))
+  .fromState((state) => state.aroundHandle("aroundHandle"))
+  .permissions((p) =>
+    p.byParams([
+      p.artifactRule({
+        param: "ref",
+        normalize: (ref, { params }) =>
+          params.scope && params.name && ref.endsWith(".zip") ? ref : null,
+        packageName: ({ params }) =>
+          params.scope && params.name ? swiftPermissionName(params.scope, params.name) : undefined,
+        artifactRef: (ref, { params }) =>
+          params.scope && params.name
+            ? swiftArchiveScope(params.scope, params.name, ref.slice(0, -".zip".length))
+            : null,
+      }),
+      p.packageRule({
+        param: "name",
+        normalize: (name, { params }) =>
+          params.scope ? swiftPermissionName(params.scope, name) : null,
+      }),
+    ]),
+  )
   .routes((route) => [
     route
       .get("/identifiers", "identifiers")

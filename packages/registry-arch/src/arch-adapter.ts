@@ -1,14 +1,10 @@
 import {
   Errors,
-  type HttpMethod,
   ifNoneMatch,
-  type Permission,
   parseRegistryInput,
   type RegistryPackageHandle,
   type RegistryPlugin,
   type RegistryRequestContext,
-  type RouteMatch,
-  readWritePermission,
   registryAdapter,
   serveRegistryBlob,
 } from "@hootifactory/registry";
@@ -66,16 +62,6 @@ function dbFileNames(repo: string): Set<string> {
  * `PUT` of a package, and exposes an AUR-style `GET /rpc/?type=info` endpoint.
  */
 class ArchAdapterState {
-  requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
-    const permission = readWritePermission(method);
-    const file = match?.params.file;
-    const repo = match?.params.repo;
-    if (file && repo && isValidArchRepo(repo) && isArchPkgFile(file)) {
-      return { ...permission, resource: { type: "artifact", artifactRef: file } };
-    }
-    return permission;
-  }
-
   /**
    * Collect the CANONICAL sync-DB entries: exactly one per package name — the
    * highest version under pacman `vercmp` ordering. A real pacman sync DB (as
@@ -252,7 +238,15 @@ const archDefinition = registryAdapter("arch")
       typeof metadata.blobDigest === "string" ? [metadata.blobDigest] : [],
   })
   .basicAuth()
-  .fromState((state) => state.defaultPermission("requiredPermission"))
+  .permissions((p) =>
+    p.byParams([
+      p.artifactRule({
+        param: "file",
+        normalize: (file, { params }) =>
+          params.repo && isValidArchRepo(params.repo) && isArchPkgFile(file) ? file : null,
+      }),
+    ]),
+  )
   .routes((route) => [
     // `/rpc/` is a literal prefix declared before the `/:repo/...` catch-alls
     // (the route-matcher tries routes in declared order).

@@ -1,13 +1,9 @@
 import {
   Errors,
-  type HttpMethod,
   ifNoneMatch,
-  type Permission,
   type RegistryPackageHandle,
   type RegistryPlugin,
   type RegistryRequestContext,
-  type RouteMatch,
-  readWritePermission,
   registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
@@ -30,15 +26,6 @@ const REPODATA_XML = "application/xml";
  * with a filename fallback). One plugin backs the `rpm`, `yum`, and `dnf` ids.
  */
 class RpmAdapterState {
-  requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
-    const permission = readWritePermission(method);
-    const file = match?.params.file;
-    if (file) {
-      return { ...permission, resource: { type: "artifact", artifactRef: file } };
-    }
-    return permission;
-  }
-
   /** Collect every live RPM version across all packages as primary entries. */
   async collectPackages(ctx: RegistryRequestContext): Promise<RpmPrimaryPackage[]> {
     const pkgs: RegistryPackageHandle[] = await ctx.data.packages.list();
@@ -132,7 +119,7 @@ const rpmDefinition = registryAdapter("rpm")
       ),
   )
   .basicAuth()
-  .fromState((state) => state.defaultPermission("requiredPermission"))
+  .permissions((p) => p.byParams([p.artifactRule({ param: "file" })]))
   .routes((route) => [
     route
       .get("/repodata/repomd.xml", "repomd")

@@ -27,7 +27,10 @@ import {
   deletePermission,
   type packagePermission,
   type RegistryArtifactPermissionParamOptions,
+  type RegistryArtifactRuleOptions,
+  type RegistryPackageRuleOptions,
   type RegistryPermissionParamOptions,
+  type RegistryPermissionRule,
   readOnlyPermission,
   registryPermissions,
   type routePermission,
@@ -183,6 +186,9 @@ export interface RegistryAdapterPermissionDsl {
     name: string,
     options?: RegistryArtifactPermissionParamOptions,
   ): RegistryPermissionResolver;
+  packageRule(options: RegistryPackageRuleOptions): RegistryPermissionRule;
+  artifactRule(options: RegistryArtifactRuleOptions): RegistryPermissionRule;
+  byParams(rules: readonly RegistryPermissionRule[]): RegistryPermissionResolver;
   default(resolver: RegistryAdapterDefaultPermission<any>): void;
 }
 
@@ -248,6 +254,20 @@ function createPermissionDsl(
     artifactParam: (...args) => {
       markUsed();
       return registryPermissions.artifactParam(...args);
+    },
+    packageRule: (options) => {
+      markUsed();
+      return registryPermissions.packageRule(options);
+    },
+    artifactRule: (options) => {
+      markUsed();
+      return registryPermissions.artifactRule(options);
+    },
+    byParams: (rules) => {
+      markUsed();
+      const resolver = registryPermissions.byParams(rules);
+      setDefault?.(resolver as RegistryAdapterDefaultPermission<any>);
+      return resolver;
     },
     default: (resolver) => {
       markUsed();

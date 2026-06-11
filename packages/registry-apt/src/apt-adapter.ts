@@ -1,15 +1,11 @@
 import {
   asJsonRecord,
   Errors,
-  type HttpMethod,
   ifNoneMatch,
-  type Permission,
   parseRegistryInput,
   type RegistryAssetRow,
   type RegistryPlugin,
   type RegistryRequestContext,
-  type RouteMatch,
-  readWritePermission,
   registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
@@ -36,15 +32,6 @@ interface SnapshotCacheEntry {
 /** APT (Debian): pool upload/download + generated Release/Packages indexes. */
 class AptAdapterState {
   readonly snapshotCache = new Map<string, SnapshotCacheEntry>();
-
-  requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
-    const permission = readWritePermission(method);
-    const path = match?.params.path;
-    if (path) {
-      return { ...permission, resource: { type: "artifact", artifactRef: `pool/${path}` } };
-    }
-    return permission;
-  }
 
   async listDebAssets(ctx: RegistryRequestContext): Promise<RegistryAssetRow[]> {
     const all: RegistryAssetRow[] = [];
@@ -233,7 +220,9 @@ const aptDefinition = registryAdapter("apt")
       .referencedDigestPaths("debDigest"),
   )
   .basicAuth()
-  .fromState((state) => state.defaultPermission("requiredPermission"))
+  .permissions((p) =>
+    p.byParams([p.artifactRule({ param: "path", artifactRef: (path) => `pool/${path}` })]),
+  )
   .routes((route) => [
     route
       .get("/dists/:suite/Release", "release")

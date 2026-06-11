@@ -1,10 +1,6 @@
 import {
-  type HttpMethod,
-  type Permission,
   type RegistryPlugin,
   type RegistryRequestContext,
-  type RouteMatch,
-  readWritePermission,
   registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
@@ -59,39 +55,6 @@ function parsePositiveInt(value: string | null, fallback: number, max?: number):
  * (`POST /api/v3/artifacts/collections/`).
  */
 class AnsibleAdapterState {
-  requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
-    const permission = readWritePermission(method);
-    const namespace = match?.params.namespace;
-    const name = match?.params.name;
-    const filename = match?.params.filename;
-    if (match?.entry?.handlerId === "download" && filename) {
-      const split = splitArtifactFile(filename);
-      if (split) {
-        const fqcn = collectionFqcn(split.namespace, split.name);
-        return {
-          ...permission,
-          resource: {
-            type: "artifact",
-            packageName: fqcn,
-            artifactRef: ansibleBlobScope(fqcn, split.version),
-          },
-        };
-      }
-    }
-    if (
-      namespace &&
-      name &&
-      AnsibleNamespaceSchema.safeParse(namespace).success &&
-      AnsibleNameSchema.safeParse(name).success
-    ) {
-      return {
-        ...permission,
-        resource: { type: "package", packageName: collectionFqcn(namespace, name) },
-      };
-    }
-    return permission;
-  }
-
   /** `GET /api/` — the discovery document advertising the available API versions. */
   root(): Response {
     return Response.json({
@@ -351,7 +314,33 @@ const ansibleDefinition = registryAdapter("ansible")
       typeof metadata.artifactDigest === "string" ? [metadata.artifactDigest] : [],
   })
   .bearerAuth()
-  .fromState((state) => state.defaultPermission("requiredPermission"))
+  .permissions((p) =>
+    p.byParams([
+      p.artifactRule({
+        param: "filename",
+        normalize: (filename) => {
+          const split = splitArtifactFile(filename);
+          return split
+            ? ansibleBlobScope(collectionFqcn(split.namespace, split.name), split.version)
+            : null;
+        },
+        packageName: ({ params }) => {
+          if (!params.filename) return undefined;
+          const split = splitArtifactFile(params.filename);
+          return split ? collectionFqcn(split.namespace, split.name) : undefined;
+        },
+      }),
+      p.packageRule({
+        param: "name",
+        normalize: (name, { params }) =>
+          params.namespace &&
+          AnsibleNamespaceSchema.safeParse(params.namespace).success &&
+          AnsibleNameSchema.safeParse(name).success
+            ? collectionFqcn(params.namespace, name)
+            : null,
+      }),
+    ]),
+  )
   .routes((route) => [
     // Discovery prelude.
     route.get("/api/", "root").calls((state) => state.root()),

@@ -1,11 +1,7 @@
 import {
-  type HttpMethod,
-  type Permission,
   parseRegistryInput,
   type RegistryPlugin,
   type RegistryRequestContext,
-  type RouteMatch,
-  readWritePermission,
   registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
@@ -59,32 +55,6 @@ function parseProvider(provider: string): string {
  * live versions on read.
  */
 class VagrantAdapterState {
-  requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
-    const permission = readWritePermission(method);
-    const user = match?.params.user;
-    const box = match?.params.box;
-    if (!user || !box) return permission;
-    if (!isValidNameSegment(user) || !isValidNameSegment(box)) return permission;
-    const name = boxName(user, box);
-    const version = match?.params.version;
-    const provider = match?.params.provider;
-    if (
-      version &&
-      provider &&
-      (match?.entry?.handlerId === "download" || match?.entry?.handlerId === "publish")
-    ) {
-      return {
-        ...permission,
-        resource: {
-          type: "artifact",
-          packageName: name,
-          artifactRef: `${name}@${version}/${provider}`,
-        },
-      };
-    }
-    return { ...permission, resource: { type: "package", packageName: name } };
-  }
-
   private base(ctx: RegistryRequestContext): string {
     return `${ctx.baseUrl}/${ctx.repo.mountPath}`;
   }
@@ -267,7 +237,30 @@ const vagrantDefinition = registryAdapter("vagrant")
     referencedDigests: (metadata) => vagrantReferencedDigests(metadata),
   })
   .basicAuth()
-  .fromState((state) => state.defaultPermission("requiredPermission"))
+  .permissions((p) =>
+    p.byParams([
+      p.artifactRule({
+        param: "provider",
+        normalize: (provider, { params }) =>
+          params.user &&
+          params.box &&
+          isValidNameSegment(params.user) &&
+          isValidNameSegment(params.box) &&
+          params.version
+            ? `${boxName(params.user, params.box)}@${params.version}/${provider}`
+            : null,
+        packageName: ({ params }) =>
+          params.user && params.box ? boxName(params.user, params.box) : undefined,
+      }),
+      p.packageRule({
+        param: "box",
+        normalize: (box, { params }) =>
+          params.user && isValidNameSegment(params.user) && isValidNameSegment(box)
+            ? boxName(params.user, box)
+            : null,
+      }),
+    ]),
+  )
   .routes((route) => [
     // Vagrant-Cloud-compatible read alias for short-name resolution. Declared
     // first: its `/api/v1/box` literal prefix makes it the most specific pattern,

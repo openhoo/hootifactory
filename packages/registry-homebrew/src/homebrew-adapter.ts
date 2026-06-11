@@ -1,13 +1,9 @@
 import {
   Errors,
-  type HttpMethod,
-  type Permission,
   parseRegistryInput,
   type RegistryPackageHandle,
   type RegistryPlugin,
   type RegistryRequestContext,
-  type RouteMatch,
-  readWritePermission,
   registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
@@ -43,28 +39,6 @@ function stripJsonSuffix(value: string): string | null {
  * a hootifactory PUT extension for publishing bottles.
  */
 class HomebrewAdapterState {
-  requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
-    const permission = readWritePermission(method);
-    const file = match?.params.file;
-    if (file) {
-      // A bottle filename's `<name>-<ver>.<tag>` stem is ambiguous to split (both
-      // name and version admit `-`/`.`), so we identify the artifact by its full
-      // filename ref and leave `packageName` unset rather than guess a wrong one.
-      if (isValidBottleFileName(file)) {
-        return { ...permission, resource: { type: "artifact", artifactRef: file } };
-      }
-      return permission;
-    }
-    const nameOrVersion = match?.params.name;
-    if (nameOrVersion) {
-      // The formula read route carries `:name.json`; the publish route's `:name`
-      // is the bare formula name. Strip the suffix only when present.
-      const name = stripJsonSuffix(nameOrVersion) ?? nameOrVersion;
-      return { ...permission, resource: { type: "package", packageName: name } };
-    }
-    return permission;
-  }
-
   base(ctx: RegistryRequestContext): string {
     return `${ctx.baseUrl}/${ctx.repo.mountPath}`;
   }
@@ -175,7 +149,15 @@ const homebrewDefinition = registryAdapter("homebrew")
       .referencedDigests((metadata) => homebrewReferencedDigests(metadata)),
   )
   .basicAuth()
-  .fromState((state) => state.defaultPermission("requiredPermission"))
+  .permissions((p) =>
+    p.byParams([
+      p.artifactRule({
+        param: "file",
+        normalize: (file) => (isValidBottleFileName(file) ? file : null),
+      }),
+      p.packageRule({ param: "name", normalize: (name) => stripJsonSuffix(name) ?? name }),
+    ]),
+  )
   .routes((route) => [
     route
       .get("/api/formula.json", "formulaIndex")

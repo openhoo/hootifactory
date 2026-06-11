@@ -1,14 +1,10 @@
 import {
   Errors,
-  type HttpMethod,
-  type Permission,
   parseRegistryInput,
   type RegistryPackageHandle,
   type RegistryPackageVersionRow,
   type RegistryPlugin,
   type RegistryRequestContext,
-  type RouteMatch,
-  readWritePermission,
   registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
@@ -65,31 +61,6 @@ function parseChocolateyVersion(version: string): string {
  * (multipart or raw) and derives id/version from the embedded nuspec.
  */
 class ChocolateyAdapterState {
-  requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
-    const permission = readWritePermission(method);
-    const id = match?.params.id?.toLowerCase();
-    const version = match?.params.version;
-    const odataKey = match?.params.resource ? parseODataKey(match.params.resource) : null;
-    const keyedId = id ?? odataKey?.id.toLowerCase();
-    const keyedVersion = version ?? odataKey?.version;
-    if (keyedId && keyedVersion) {
-      // Normalize the version so the artifact ref matches the stored asset scope
-      // (which is keyed by the normalized version). Fall back to the raw value if
-      // it cannot be normalized so the authorize check still scopes to an artifact.
-      const norm = normalizeChocolateyVersion(keyedVersion) ?? keyedVersion;
-      return {
-        ...permission,
-        resource: {
-          type: "artifact",
-          packageName: keyedId,
-          artifactRef: chocolateyBlobScope(keyedId, norm),
-        },
-      };
-    }
-    if (keyedId) return { ...permission, resource: { type: "package", packageName: keyedId } };
-    return permission;
-  }
-
   base(ctx: RegistryRequestContext): string {
     return `${ctx.baseUrl}/${ctx.repo.mountPath}`;
   }
@@ -331,7 +302,31 @@ const chocolateyDefinition = registryAdapter("chocolatey")
       .referencedDigestPaths("nupkgDigest"),
   )
   .basicAuth()
-  .fromState((state) => state.defaultPermission("requiredPermission"))
+  .permissions((p) =>
+    p.byParams([
+      p.artifactRule({
+        param: "version",
+        normalize: (version, { params }) => {
+          if (!params.id) return null;
+          const norm = normalizeChocolateyVersion(version) ?? version;
+          return chocolateyBlobScope(params.id.toLowerCase(), norm);
+        },
+        packageName: ({ params }) => params.id?.toLowerCase(),
+      }),
+      p.artifactRule({
+        param: "resource",
+        normalize: (resource) => {
+          const key = parseODataKey(resource);
+          if (!key) return null;
+          const norm = normalizeChocolateyVersion(key.version) ?? key.version;
+          return chocolateyBlobScope(key.id.toLowerCase(), norm);
+        },
+        packageName: ({ params }) =>
+          params.resource ? parseODataKey(params.resource)?.id.toLowerCase() : undefined,
+      }),
+      p.packageRule({ param: "id", normalize: (id) => id.toLowerCase() }),
+    ]),
+  )
   .routes((route) => [
     route.get("/api/v2", "serviceDoc").calls((state, { ctx }) => state.serviceDoc(ctx)),
     route.get("/api/v2/", "serviceDoc").calls((state, { ctx }) => state.serviceDoc(ctx)),

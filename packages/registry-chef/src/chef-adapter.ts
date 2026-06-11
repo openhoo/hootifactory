@@ -1,13 +1,9 @@
 import {
-  type HttpMethod,
-  type Permission,
   parseRegistryInput,
   type RegistryMetadata,
   type RegistryPackageHandle,
   type RegistryPlugin,
   type RegistryRequestContext,
-  type RouteMatch,
-  readWritePermission,
   registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
@@ -52,30 +48,6 @@ function parseCookbookVersion(version: string): string {
  * Proxyable (mirrors supermarket.chef.io) and virtualizable.
  */
 class ChefAdapterState {
-  requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
-    const permission = readWritePermission(method);
-    const nameRaw = match?.params.name;
-    const name = nameRaw && ChefCookbookNameSchema.safeParse(nameRaw).success ? nameRaw : null;
-    const versionRaw = match?.params.version;
-    if (name && versionRaw && match?.entry.handlerId === "download") {
-      const version = ChefVersionSchema.safeParse(chefVersionFromSegment(versionRaw)).success
-        ? chefVersionFromSegment(versionRaw)
-        : versionRaw;
-      return {
-        ...permission,
-        resource: {
-          type: "artifact",
-          packageName: name,
-          artifactRef: chefBlobScope(name, version),
-        },
-      };
-    }
-    if (name) {
-      return { ...permission, resource: { type: "package", packageName: name } };
-    }
-    return permission;
-  }
-
   /** All live versions of a cookbook, paired with their parsed metadata. */
   private async storedVersions(
     pkg: RegistryPackageHandle,
@@ -412,9 +384,28 @@ const chefDefinition = registryAdapter("chef")
   .basicAuth()
   .fromState((state) =>
     state
-      .defaultPermission("requiredPermission")
       .metadata({ generate: "buildCookbookMetadata", merge: "mergeCookbookMetadata" })
       .proxyIngest("ingestProxy"),
+  )
+  .permissions((p) =>
+    p.byParams([
+      p.artifactRule({
+        param: "version",
+        normalize: (versionRaw, { match, params }) => {
+          if (match.entry.handlerId !== "download") return null;
+          if (!params.name || !ChefCookbookNameSchema.safeParse(params.name).success) return null;
+          const version = ChefVersionSchema.safeParse(chefVersionFromSegment(versionRaw)).success
+            ? chefVersionFromSegment(versionRaw)
+            : versionRaw;
+          return chefBlobScope(params.name, version);
+        },
+        packageName: ({ params }) => params.name,
+      }),
+      p.packageRule({
+        param: "name",
+        normalize: (name) => (ChefCookbookNameSchema.safeParse(name).success ? name : null),
+      }),
+    ]),
   )
   .routes((route) => [
     // `/universe` is a literal segment declared before the `:name` catch-alls.

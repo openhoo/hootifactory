@@ -1,11 +1,7 @@
 import {
-  type HttpMethod,
-  type Permission,
   parseRegistryInput,
   type RegistryPlugin,
   type RegistryRequestContext,
-  type RouteMatch,
-  readWritePermission,
   registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
@@ -95,41 +91,6 @@ function parseSpecsTail(tail: string): SpecsPathParts | null {
  * and the newline `GET /all_pods.txt` pod listing.
  */
 class CocoapodsAdapterState {
-  requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
-    const permission = readWritePermission(method);
-    const handlerId = match?.entry?.handlerId;
-    if (handlerId === "download") {
-      const pod = match?.params.pod;
-      const version = match?.params.version;
-      const filename = match?.params.filename;
-      if (pod && version && filename && PodNameSchema.safeParse(pod).success) {
-        return {
-          ...permission,
-          resource: {
-            type: "artifact",
-            packageName: pod,
-            artifactRef: cocoapodsBlobScope(pod, version, filename),
-          },
-        };
-      }
-      return permission;
-    }
-    if (handlerId === "podspec") {
-      const parts = match?.params.tail ? parseSpecsTail(match.params.tail) : null;
-      if (parts) {
-        return { ...permission, resource: { type: "package", packageName: parts.pod } };
-      }
-      return permission;
-    }
-    if (handlerId === "publish") {
-      const pod = match?.params.pod;
-      if (pod && PodNameSchema.safeParse(pod).success) {
-        return { ...permission, resource: { type: "package", packageName: pod } };
-      }
-    }
-    return permission;
-  }
-
   private base(ctx: RegistryRequestContext): string {
     return `${ctx.baseUrl}/${ctx.repo.mountPath}`;
   }
@@ -307,7 +268,23 @@ const cocoapodsDefinition = registryAdapter("cocoapods")
       typeof metadata.blobDigest === "string" ? [metadata.blobDigest] : [],
   })
   .basicAuth()
-  .fromState((state) => state.defaultPermission("requiredPermission"))
+  .permissions((p) =>
+    p.byParams([
+      p.artifactRule({
+        param: "filename",
+        normalize: (filename, { params }) =>
+          params.pod && params.version && PodNameSchema.safeParse(params.pod).success
+            ? cocoapodsBlobScope(params.pod, params.version, filename)
+            : null,
+        packageName: ({ params }) => params.pod,
+      }),
+      p.packageRule({ param: "tail", normalize: (tail) => parseSpecsTail(tail)?.pod ?? null }),
+      p.packageRule({
+        param: "pod",
+        normalize: (pod) => (PodNameSchema.safeParse(pod).success ? pod : null),
+      }),
+    ]),
+  )
   .routes((route) => [
     // Literal/static routes first so they cannot be shadowed by the single-segment
     // `/:shardFile` (GET) or `/:pod` (PUT) routes.

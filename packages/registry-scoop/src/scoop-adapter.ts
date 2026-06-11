@@ -1,12 +1,8 @@
 import {
   Errors,
-  type HttpMethod,
-  type Permission,
   parseRegistryInput,
   type RegistryPlugin,
   type RegistryRequestContext,
-  type RouteMatch,
-  readWritePermission,
   registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
@@ -41,38 +37,6 @@ function parseAppVersion(version: string): string {
  * accept a `PUT /<app>` of the manifest + artifact and host the blob ourselves.
  */
 class ScoopAdapterState {
-  requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
-    const permission = readWritePermission(method);
-    const app = this.appFromMatch(match);
-    const version = match?.params.version;
-    const filename = match?.params.filename;
-    if (app && version && filename && match?.entry?.handlerId === "download") {
-      return {
-        ...permission,
-        resource: {
-          type: "artifact",
-          packageName: app,
-          artifactRef: scoopBlobScope(app, version, filename),
-        },
-      };
-    }
-    if (app) {
-      return { ...permission, resource: { type: "package", packageName: app } };
-    }
-    return permission;
-  }
-
-  /** Resolve the app name from a match, stripping the `.json` suffix on manifest reads. */
-  appFromMatch(match?: RouteMatch): string | null {
-    const raw = match?.params.app;
-    if (!raw) return null;
-    const stripped =
-      match?.entry?.handlerId === "manifest" && raw.toLowerCase().endsWith(".json")
-        ? raw.slice(0, -".json".length)
-        : raw;
-    return isValidName(stripped) ? stripped : null;
-  }
-
   /** `GET /index.json` — `{<app>: {version}}` over live packages + their latest version. */
   async index(req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const names = await ctx.data.packages.listNames();
@@ -158,6 +122,16 @@ function isValidName(name: string): boolean {
   return ScoopAppNameSchema.safeParse(name).success;
 }
 
+/** App name a route param addresses, stripping the `.json` suffix on manifest reads. */
+function scoopAppName(app: string | undefined, handlerId: string): string | null {
+  if (!app) return null;
+  const stripped =
+    handlerId === "manifest" && app.toLowerCase().endsWith(".json")
+      ? app.slice(0, -".json".length)
+      : app;
+  return isValidName(stripped) ? stripped : null;
+}
+
 const scoopDefinition = registryAdapter("scoop")
   .stateClass(ScoopAdapterState)
   .module((module) =>
@@ -170,7 +144,23 @@ const scoopDefinition = registryAdapter("scoop")
   )
   .scan((scan) => scan.referencedDigestPaths("blobDigest"))
   .basicAuth()
-  .fromState((state) => state.defaultPermission("requiredPermission"))
+  .permissions((p) =>
+    p.byParams([
+      p.artifactRule({
+        param: "filename",
+        normalize: (filename, { match, params }) => {
+          const app = scoopAppName(params.app, match.entry.handlerId);
+          return app && params.version ? scoopBlobScope(app, params.version, filename) : null;
+        },
+        packageName: ({ match, params }) =>
+          scoopAppName(params.app, match.entry.handlerId) ?? undefined,
+      }),
+      p.packageRule({
+        param: "app",
+        normalize: (app, { match }) => scoopAppName(app, match.entry.handlerId),
+      }),
+    ]),
+  )
   .routes((route) => [
     // `/index.json` is a literal segment declared before `/:app` so it cannot be
     // shadowed by the app-manifest route (route-matcher tries routes in order).

@@ -1,12 +1,8 @@
 import {
-  type HttpMethod,
-  type Permission,
   parseRegistryInput,
   type RegistryPackageHandle,
   type RegistryPlugin,
   type RegistryRequestContext,
-  type RouteMatch,
-  readWritePermission,
   registryAdapter,
   serveRegistryBlob,
 } from "@hootifactory/registry";
@@ -87,31 +83,6 @@ function parseReference(
  * keyed by reference+revision+filename, modelled as a hootifactory version row.
  */
 class ConanAdapterState {
-  requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
-    const permission = readWritePermission(method);
-    const { name, version, user, channel } = match?.params ?? {};
-    if (!name || !version || !user || !channel) return permission;
-    const packageName = referenceToPackageName({ name, version, user, channel });
-    const filename = match?.params.filename;
-    const rrev = match?.params.rrev;
-    if (filename && rrev) {
-      const pkgid = match?.params.pkgid;
-      const prev = match?.params.prev;
-      const scope = conanFileScope({
-        reference: packageName,
-        rrev,
-        packageId: pkgid,
-        prev,
-        filename,
-      });
-      return {
-        ...permission,
-        resource: { type: "artifact", packageName, artifactRef: scope },
-      };
-    }
-    return { ...permission, resource: { type: "package", packageName } };
-  }
-
   private async findRecipe(ctx: RegistryRequestContext, reference: ConanReference) {
     return ctx.data.packages.findByName(referenceToPackageName(reference));
   }
@@ -382,7 +353,39 @@ const conanDefinition = registryAdapter("conan")
     },
   })
   .registryBearerAuth({ service: REGISTRY_TOKEN_SERVICE })
-  .fromState((state) => state.defaultPermission("requiredPermission"))
+  .permissions((p) =>
+    p.byParams([
+      p.artifactRule({
+        param: "filename",
+        normalize: (filename, { params }) => {
+          const { name, version, user, channel, rrev } = params;
+          if (!name || !version || !user || !channel || !rrev) return null;
+          return conanFileScope({
+            reference: referenceToPackageName({ name, version, user, channel }),
+            rrev,
+            packageId: params.pkgid,
+            prev: params.prev,
+            filename,
+          });
+        },
+        packageName: ({ params }) => {
+          const { name, version, user, channel } = params;
+          return name && version && user && channel
+            ? referenceToPackageName({ name, version, user, channel })
+            : undefined;
+        },
+      }),
+      p.packageRule({
+        param: "channel",
+        normalize: (channel, { params }) => {
+          const { name, version, user } = params;
+          return name && version && user
+            ? referenceToPackageName({ name, version, user, channel })
+            : null;
+        },
+      }),
+    ]),
+  )
   .routes((route) => [
     // ── prelude ────────────────────────────────────────────────────────────
     route.get("/v1/ping", "ping").handle(() => conanPing()),

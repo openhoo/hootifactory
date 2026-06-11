@@ -1,12 +1,8 @@
 import {
   Errors,
-  type HttpMethod,
-  type Permission,
   parseRegistryInput,
   type RegistryPlugin,
   type RegistryRequestContext,
-  type RouteMatch,
-  readWritePermission,
   registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
@@ -24,26 +20,6 @@ import {
 
 /** Go module proxy (GOPROXY protocol) + a custom upload endpoint for hosted modules. */
 class GoAdapterState {
-  requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
-    const permission = readWritePermission(method);
-    const moduleName = match?.params.module ? decodeBang(match.params.module) : null;
-    const file = match?.params.file;
-    if (moduleName && file?.endsWith(".zip")) {
-      return {
-        ...permission,
-        resource: {
-          type: "artifact",
-          packageName: moduleName,
-          artifactRef: `${moduleName}@${file}`,
-        },
-      };
-    }
-    if (moduleName) {
-      return { ...permission, resource: { type: "package", packageName: moduleName } };
-    }
-    return permission;
-  }
-
   parseModule(input: string): string {
     return parseRegistryInput(GoModuleSchema, decodeBang(input), {
       code: "NAME_INVALID",
@@ -196,7 +172,24 @@ const goDefinition = registryAdapter("go")
       .referencedDigestPaths("zipDigest"),
   )
   .basicAuth()
-  .fromState((state) => state.defaultPermission("requiredPermission"))
+  .permissions((p) =>
+    p.byParams([
+      p.artifactRule({
+        param: "file",
+        normalize: (file, { params }) => {
+          const moduleName = params.module ? decodeBang(params.module) : null;
+          return moduleName && file.endsWith(".zip") ? file : null;
+        },
+        packageName: ({ params }) =>
+          params.module ? (decodeBang(params.module) ?? undefined) : undefined,
+        artifactRef: (file, { params }) => {
+          const moduleName = params.module ? decodeBang(params.module) : null;
+          return moduleName ? `${moduleName}@${file}` : null;
+        },
+      }),
+      p.packageRule({ param: "module", normalize: (module) => decodeBang(module) }),
+    ]),
+  )
   .routes((route) => [
     route
       .get("/:module+/@v/list", "list")

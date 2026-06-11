@@ -1,11 +1,7 @@
 import {
-  type HttpMethod,
-  type Permission,
   parseRegistryInput,
   type RegistryPlugin,
   type RegistryRequestContext,
-  type RouteMatch,
-  readWritePermission,
   registryAdapter,
   serveRegistryBlob,
   textEtag,
@@ -36,19 +32,6 @@ interface SimpleRootCacheEntry {
 
 class PypiAdapterState {
   readonly simpleRootCache = new Map<string, SimpleRootCacheEntry>();
-
-  requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
-    const permission = readWritePermission(method);
-    const project = match?.params.project;
-    const filename = match?.params.filename;
-    if (filename) {
-      return { ...permission, resource: { type: "artifact", artifactRef: filename } };
-    }
-    if (project) {
-      return { ...permission, resource: { type: "package", packageName: normalizeName(project) } };
-    }
-    return permission;
-  }
 
   simpleRootCacheKey(ctx: RegistryRequestContext, variant: SimpleRootVariant): string {
     return `${ctx.repo.id}:${variant}`;
@@ -217,7 +200,12 @@ const pypiDefinition = registryAdapter("pypi")
     ),
   )
   .basicAuth()
-  .fromState((state) => state.defaultPermission("requiredPermission"))
+  .permissions((p) =>
+    p.byParams([
+      p.artifactRule({ param: "filename" }),
+      p.packageRule({ param: "project", normalize: (project) => normalizeName(project) }),
+    ]),
+  )
   .routes((route) => [
     route.get("/simple/", "simpleRoot").calls((state, { req, ctx }) => state.simpleRoot(req, ctx)),
     route

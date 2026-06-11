@@ -1,14 +1,10 @@
 import {
   asJsonRecord,
   Errors,
-  type HttpMethod,
-  type Permission,
   parseRegistryInput,
   type RegistryPlugin,
   type RegistryRequestContext,
   type RegistryVersionMetadataRow,
-  type RouteMatch,
-  readWritePermission,
   registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
@@ -38,19 +34,6 @@ interface VersionsCacheEntry {
 /** RubyGems: `.gem` push/yank + the compact-index protocol (`/versions`, `/info/<gem>`). */
 class RubygemsAdapterState {
   readonly versionsCache = new Map<string, VersionsCacheEntry>();
-
-  requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
-    const permission = readWritePermission(method);
-    const filename = match?.params.filename;
-    const gem = match?.params.gem;
-    if (filename) {
-      return { ...permission, resource: { type: "artifact", artifactRef: filename } };
-    }
-    if (gem) {
-      return { ...permission, resource: { type: "package", packageName: gem } };
-    }
-    return permission;
-  }
 
   cacheKey(ctx: RegistryRequestContext): string {
     return ctx.repo.id;
@@ -233,7 +216,9 @@ const rubygemsDefinition = registryAdapter("rubygems")
       .referencedDigestPaths("gemDigest"),
   )
   .basicAuth()
-  .fromState((state) => state.defaultPermission("requiredPermission"))
+  .permissions((p) =>
+    p.byParams([p.artifactRule({ param: "filename" }), p.packageRule({ param: "gem" })]),
+  )
   .routes((route) => [
     route.post("/api/v1/gems", "push").calls((state, { req, ctx }) => state.push(req, ctx)),
     route.delete("/api/v1/gems/yank", "yank").calls((state, { req, ctx }) => state.yank(req, ctx)),
