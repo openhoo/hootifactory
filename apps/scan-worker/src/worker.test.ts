@@ -12,12 +12,18 @@ import type { ScannerRuntime } from "@hootifactory/scanner";
  * (queue / observability / plugin loaders) are stubbed at the module level. The loop
  * body's real work lives in worker-loop.ts (unit-tested separately); here we only
  * assert the entrypoint wires config + scheduler + cycle correctly.
+ *
+ * The "shutdown drain" suite below additionally exercises the #317 fix — cleanup
+ * must await the in-flight loop iteration (bounded by a grace period) — using
+ * ONLY dependency injection: the queue lifecycle collaborators are injected
+ * through ScanWorkerDeps, no further mock.module.
  */
 
 interface Captured {
   readyStates: boolean[];
   cleanedUp: boolean;
   unknownWarned: boolean;
+  warnings: string[];
   scheduledTasks: string[];
   ranDueCount: number;
   cycleCount: number;
@@ -28,6 +34,7 @@ const captured: Captured = {
   readyStates: [],
   cleanedUp: false,
   unknownWarned: false,
+  warnings: [],
   scheduledTasks: [],
   ranDueCount: 0,
   cycleCount: 0,
@@ -45,6 +52,7 @@ await (async () => {
       ...realObs.logger,
       info: () => {},
       warn: (msg: string) => {
+        captured.warnings.push(msg);
         if (msg.includes("unknown scanners")) captured.unknownWarned = true;
       },
       error: () => {},
@@ -146,5 +154,116 @@ describe("scan worker entrypoint wiring", () => {
       concurrency: 4,
       maxAttempts: 5,
     });
+  });
+});
+
+/** A promise the test settles on demand (the loop's scan cycle hangs on it). */
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve: () => void = () => {};
+  const promise = new Promise<void>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
+interface ShutdownHarness {
+  /** runScanWorker's own promise; settles once the loop exits. */
+  run: Promise<void>;
+  /** Unblock the in-flight runScanCycle. */
+  finishCycle: () => void;
+  /**
+   * Simulate runtime.ts's shutdown(): flip isShuttingDown() first, then run the
+   * cleanup that runScanWorker registered, returning its completion promise.
+   */
+  triggerCleanup: () => Promise<void>;
+}
+
+/**
+ * Start runScanWorker with EVERY collaborator injected through ScanWorkerDeps
+ * (no mock.module): a controllable runScanCycle that blocks mid-iteration, plus
+ * fake health-server / shutdown-controller / scheduler lifecycles so the test
+ * owns isShuttingDown() and can invoke the registered cleanup directly. Resolves
+ * once the first cycle is in flight.
+ */
+async function startShutdownHarness(options: {
+  shutdownGraceMs: number;
+  cycleNeverSettles?: boolean;
+}): Promise<ShutdownHarness> {
+  const { runScanWorker } = await import("./worker");
+  const cycleStarted = deferred();
+  const cycleGate = deferred();
+  let shuttingDown = false;
+  let cleanup: (() => void | Promise<void>) | undefined;
+  const run = runScanWorker({
+    scannerRuntimeFromEnv: () =>
+      ({
+        options: {},
+        scanners: [{ plugin: { id: "heuristic" }, available: true, config: null }],
+      }) as unknown as ScannerRuntime,
+    reapExpiredUploads: async () => {},
+    sweepBlobs: async () => {},
+    reclaimStuckScans: async () => {},
+    runScanCycle: async () => {
+      cycleStarted.resolve();
+      if (options.cycleNeverSettles) {
+        await new Promise<void>(() => {});
+      } else {
+        await cycleGate.promise;
+      }
+      return 0;
+    },
+    startHealthServer: () => ({ server: null, setReady: () => {} }),
+    installShutdownHandlers: (config) => {
+      cleanup = config.cleanup;
+      return {
+        shutdown: async () => {},
+        isShuttingDown: () => shuttingDown,
+      };
+    },
+    createMaintenanceScheduler: () => ({
+      runDue: async () => {},
+      nextRunAt: () => undefined,
+    }),
+    shutdownGraceMs: options.shutdownGraceMs,
+  });
+  await cycleStarted.promise;
+  return {
+    run,
+    finishCycle: cycleGate.resolve,
+    triggerCleanup: () => {
+      shuttingDown = true;
+      if (!cleanup) throw new Error("installShutdownHandlers was not invoked");
+      return Promise.resolve(cleanup());
+    },
+  };
+}
+
+describe("scan worker shutdown drain (#317)", () => {
+  test("cleanup waits for the in-flight scan cycle before completing", async () => {
+    const harness = await startShutdownHarness({ shutdownGraceMs: 5_000 });
+    let cleanupSettled = false;
+    const cleanupRun = harness.triggerCleanup().then(() => {
+      cleanupSettled = true;
+    });
+    // Give cleanup ample macrotask turns to (incorrectly) settle while the
+    // claimed batch is still mid-scan.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(cleanupSettled).toBe(false);
+    harness.finishCycle();
+    await cleanupRun;
+    expect(cleanupSettled).toBe(true);
+    // The drained iteration is done and isShuttingDown() is true: the loop exits.
+    await harness.run;
+  });
+
+  test("cleanup completes after the grace period when the cycle never settles", async () => {
+    const harness = await startShutdownHarness({
+      shutdownGraceMs: 25,
+      cycleNeverSettles: true,
+    });
+    // Must resolve (bounded by the grace race) even though the cycle hangs
+    // forever — the SIGTERM path can never be allowed to hang the process.
+    await harness.triggerCleanup();
+    expect(captured.warnings.some((msg) => msg.includes("grace period expired"))).toBe(true);
   });
 });

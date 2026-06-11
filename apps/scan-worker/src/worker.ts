@@ -1,9 +1,9 @@
 import { env } from "@hootifactory/config";
 import { initializeObservability, logger } from "@hootifactory/observability";
 import {
-  createMaintenanceScheduler,
-  installShutdownHandlers,
-  startHealthServer,
+  createMaintenanceScheduler as defaultCreateMaintenanceScheduler,
+  installShutdownHandlers as defaultInstallShutdownHandlers,
+  startHealthServer as defaultStartHealthServer,
 } from "@hootifactory/queue";
 import { loadConfiguredRegistryPlugins } from "@hootifactory/registry-runtime";
 import { loadConfiguredScanners } from "@hootifactory/scanner-runtime";
@@ -19,10 +19,11 @@ import {
 const workerRole = "scan-worker";
 
 /**
- * Loop collaborators, all defaulting to the real `./pipeline` / `./worker-loop`
- * implementations so production behavior is unchanged. The unit test injects fakes
- * here instead of mutating the process-global module registry with `mock.module`,
- * which leaked into the sibling pipeline/worker-loop suites and made them flaky.
+ * Loop collaborators, all defaulting to the real `./pipeline` / `./worker-loop` /
+ * `@hootifactory/queue` implementations so production behavior is unchanged. The
+ * unit test injects fakes here instead of mutating the process-global module
+ * registry with `mock.module`, which leaked into the sibling pipeline/worker-loop
+ * suites and made them flaky.
  */
 export interface ScanWorkerDeps {
   scannerRuntimeFromEnv?: typeof defaultScannerRuntimeFromEnv;
@@ -30,6 +31,15 @@ export interface ScanWorkerDeps {
   sweepBlobs?: typeof defaultSweepBlobs;
   reclaimStuckScans?: typeof defaultReclaimStuckScans;
   runScanCycle?: typeof defaultRunScanCycle;
+  startHealthServer?: typeof defaultStartHealthServer;
+  installShutdownHandlers?: typeof defaultInstallShutdownHandlers;
+  createMaintenanceScheduler?: typeof defaultCreateMaintenanceScheduler;
+  /**
+   * Override for the shutdown drain grace period. Production derives it from
+   * SCANNER_TIMEOUT_MS (see runScanWorker); tests inject a small value so the
+   * expiry path doesn't take minutes to exercise.
+   */
+  shutdownGraceMs?: number;
 }
 
 /**
@@ -49,6 +59,10 @@ export async function runScanWorker(deps: ScanWorkerDeps = {}): Promise<void> {
   const sweepBlobs = deps.sweepBlobs ?? defaultSweepBlobs;
   const reclaimStuckScans = deps.reclaimStuckScans ?? defaultReclaimStuckScans;
   const runScanCycle = deps.runScanCycle ?? defaultRunScanCycle;
+  const startHealthServer = deps.startHealthServer ?? defaultStartHealthServer;
+  const installShutdownHandlers = deps.installShutdownHandlers ?? defaultInstallShutdownHandlers;
+  const createMaintenanceScheduler =
+    deps.createMaintenanceScheduler ?? defaultCreateMaintenanceScheduler;
 
   initializeObservability({ serviceRole: workerRole });
   loadConfiguredRegistryPlugins();
@@ -74,6 +88,20 @@ export async function runScanWorker(deps: ScanWorkerDeps = {}): Promise<void> {
   const scanReclaimIntervalSeconds = env.SCAN_RECLAIM_INTERVAL_SECONDS;
   const scanReclaimTimeoutSeconds = env.SCAN_RECLAIM_TIMEOUT_SECONDS;
 
+  // Shutdown drain grace (#317): exiting mid-cycle strands every claimed
+  // scan_outbox row in 'processing' until reclaimStuckScans fires after
+  // SCAN_RECLAIM_TIMEOUT_SECONDS (default 900s), gating enforce-mode downloads
+  // for up to batchSize artifacts on every deploy. So cleanup drains the
+  // in-flight loop iteration, bounded by this grace period: the longest single
+  // await inside a cycle is one scanner pass, capped by SCANNER_TIMEOUT_MS
+  // (default 120s), and a shutdown typically interrupts at most one pass
+  // mid-flight, after which only fast DB row updates remain. The margin covers
+  // those non-scanner awaits (claim/mark writes, maintenance.runDue). Derived
+  // from existing config instead of a new env var; a pathological batch can
+  // still exceed it (~batchSize/concurrency sequential waves), in which case we
+  // log, exit, and leave reclaimStuckScans as the backstop for the remainder.
+  const shutdownGraceMs = deps.shutdownGraceMs ?? env.SCANNER_TIMEOUT_MS + 30_000;
+
   const scannerRuntime = scannerRuntimeFromEnv();
 
   const config: ScanWorkerConfig = {
@@ -90,6 +118,10 @@ export async function runScanWorker(deps: ScanWorkerDeps = {}): Promise<void> {
     scanReclaimTimeoutSeconds,
   };
 
+  // The in-flight loop iteration, drained by cleanup. Starts settled so a
+  // shutdown that fires before the first iteration doesn't wait on anything.
+  let inFlight: Promise<void> = Promise.resolve();
+
   // This worker runs its own claim/process loop (not pg-boss), so it can't use
   // runWorker, but the readiness endpoint and signal/shutdown lifecycle are shared.
   const health = startHealthServer(workerRole);
@@ -98,6 +130,30 @@ export async function runScanWorker(deps: ScanWorkerDeps = {}): Promise<void> {
     cleanup: async () => {
       health.setReady(false);
       await health.server?.stop();
+      // Drain the in-flight iteration so claimed rows reach markSucceeded /
+      // markFailed instead of being stranded (see shutdownGraceMs above). The
+      // race keeps installShutdownHandlers' once-only cleanup bounded — it must
+      // never hang the SIGTERM handler — and awaiting an already-settled
+      // promise is a no-op, so this stays idempotent. A rejected cycle counts
+      // as settled here: its error already propagates through the loop's own
+      // await, and shutdown must not be derailed by it.
+      let graceTimer: ReturnType<typeof setTimeout> | undefined;
+      const drained = await Promise.race([
+        inFlight.then(
+          () => true,
+          () => true,
+        ),
+        new Promise<boolean>((resolve) => {
+          graceTimer = setTimeout(() => resolve(false), shutdownGraceMs);
+        }),
+      ]);
+      clearTimeout(graceTimer);
+      if (!drained) {
+        logger.warn("scan worker shutdown grace period expired with a scan cycle in flight", {
+          shutdownGraceMs,
+          scanReclaimTimeoutSeconds,
+        });
+      }
     },
   });
 
@@ -113,6 +169,7 @@ export async function runScanWorker(deps: ScanWorkerDeps = {}): Promise<void> {
     blobGcIntervalSeconds,
     scanReclaimIntervalSeconds,
     scanReclaimTimeoutSeconds,
+    shutdownGraceMs,
     workerPort: env.WORKER_PORT,
     scanners: scannerRuntime.scanners
       .filter((scanner) => scanner.available)
@@ -139,8 +196,14 @@ export async function runScanWorker(deps: ScanWorkerDeps = {}): Promise<void> {
   ]);
 
   while (!lifecycle.isShuttingDown()) {
-    await maintenance.runDue();
-    await runScanCycle(config, scannerRuntime);
+    // Assigned synchronously after the isShuttingDown() check, so cleanup —
+    // which can only start after the flag flips, and the flag can only flip
+    // between iterations — always observes the latest iteration's promise.
+    inFlight = (async () => {
+      await maintenance.runDue();
+      await runScanCycle(config, scannerRuntime);
+    })();
+    await inFlight;
   }
 }
 
