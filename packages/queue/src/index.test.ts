@@ -5,9 +5,6 @@ import { type BossFactory, enqueue, getBoss, QUEUES, stopBoss, work } from "./in
 describe("queue contracts", () => {
   test("uses stable durable queue names", () => {
     expect(QUEUES).toEqual({
-      scanArtifact: "scan.artifact",
-      gcSweep: "gc.sweep",
-      retentionApply: "retention.apply",
       emailSend: "email.send",
     });
     expect(new Set(Object.values(QUEUES)).size).toBe(Object.keys(QUEUES).length);
@@ -89,10 +86,10 @@ describe("getBoss lifecycle", () => {
 describe("enqueue / work / stopBoss", () => {
   test("enqueue sends the payload + options to the named queue", async () => {
     await getBoss(factory); // seed the singleton with the fake
-    const id = await enqueue(QUEUES.scanArtifact, { artifactId: "a1" }, { priority: 5 });
+    const id = await enqueue(QUEUES.emailSend, { template: "t1" }, { priority: 5 });
     expect(id).toBe("job-1");
     expect(instances[0]?.sent).toEqual([
-      { queue: "scan.artifact", data: { artifactId: "a1" }, options: { priority: 5 } },
+      { queue: "email.send", data: { template: "t1" }, options: { priority: 5 } },
     ]);
   });
 

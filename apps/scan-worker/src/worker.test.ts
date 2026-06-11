@@ -54,7 +54,6 @@ await (async () => {
   const realQueue = await import("@hootifactory/queue");
   await mock.module("@hootifactory/queue", () => ({
     ...realQueue,
-    intEnv: (_name: string, fallback: number) => fallback,
     startHealthServer: () => ({
       server: { stop: async () => {} },
       setReady: (ready: boolean) => captured.readyStates.push(ready),
