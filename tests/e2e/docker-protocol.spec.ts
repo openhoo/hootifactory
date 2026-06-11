@@ -186,7 +186,7 @@ function uploadSessionState(uuid: string): {
   return JSON.parse(out);
 }
 
-function reapExpiredUploadSessions(): { aborted: number } {
+function reapExpiredUploadSessions(): { aborted: number; cleaned: number } {
   const out = execFileSync(
     "bun",
     [
@@ -1036,11 +1036,18 @@ test.describe("docker registry protocol authorization", () => {
     });
 
     expireUploadSession(upload.uuid);
-    expect(reapExpiredUploadSessions()).toEqual({ aborted: 1 });
+    const reaped = reapExpiredUploadSessions();
+    expect(reaped.aborted).toBe(1);
+    // The cleanup phase also retries aborted rows left by sibling tests, so the
+    // cleaned count is only bounded from below.
+    expect(reaped.cleaned).toBeGreaterThanOrEqual(1);
+    // The two-phase reaper deletes the session row entirely once its staged
+    // storage is cleaned up (an `aborted` row only survives a FAILED cleanup,
+    // as the retry token).
     expect(uploadSessionState(upload.uuid)).toMatchObject({
-      chunkExists: [false],
-      state: "aborted",
-      storageExists: false,
+      chunkExists: [],
+      state: null,
+      storageExists: null,
     });
 
     const status = await owner.ctx.get(upload.path);
