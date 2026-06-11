@@ -246,10 +246,21 @@ describe("Swift adapter handlers", () => {
       return true;
     };
     let servedDigest: string | undefined;
-    ctx.data.content.serveBlobIfClean = async ({ digest, contentType, extraHeaders }) => {
+    ctx.data.content.serveBlobIfClean = async ({
+      digest,
+      contentType,
+      downloadFilename,
+      extraHeaders,
+    }) => {
       servedDigest = digest;
+      // Mirrors the platform: the attachment disposition is built from
+      // `downloadFilename`, never from a module-supplied extra header.
       return new Response("zip-bytes", {
-        headers: { "content-type": contentType, ...extraHeaders },
+        headers: {
+          "content-type": contentType,
+          ...extraHeaders,
+          "content-disposition": `attachment; filename="${downloadFilename ?? digest}"`,
+        },
       });
     };
 

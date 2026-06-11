@@ -92,3 +92,74 @@ describe("serveBlobIfClean", () => {
     expect(await res.text()).toBe("BYTES");
   });
 });
+
+describe("blob security headers are non-overridable", () => {
+  test("extraHeaders cannot downgrade the attachment disposition or nosniff", async () => {
+    const res = await serveBlobWithScanGate(
+      ctxForBlobResponse(),
+      {
+        digest: "sha256:deadbeef",
+        contentType: "text/html",
+        extraHeaders: {
+          "content-disposition": "inline",
+          "x-content-type-options": "off",
+        },
+        blocked: () => new Response("blocked by scan policy", { status: 403 }),
+      },
+      async () => false,
+    );
+    expect(res.headers.get("content-disposition")).toBe('attachment; filename="sha256_deadbeef"');
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+  });
+
+  test("differently-cased extra headers cannot smuggle a second disposition value", async () => {
+    // `Headers` merges duplicate keys case-insensitively, so a mixed-case
+    // override must be dropped entirely rather than merely out-ordered.
+    const res = await serveBlobWithScanGate(
+      ctxForBlobResponse(),
+      {
+        digest: "sha256:deadbeef",
+        contentType: "application/octet-stream",
+        extraHeaders: {
+          "Content-Disposition": "inline",
+          "X-Content-Type-Options": "off",
+        },
+        blocked: () => new Response("blocked by scan policy", { status: 403 }),
+      },
+      async () => false,
+    );
+    expect(res.headers.get("content-disposition")).toBe('attachment; filename="sha256_deadbeef"');
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+  });
+
+  test("legitimately overridable headers (etag) still win over the defaults", async () => {
+    const res = await serveBlobWithScanGate(
+      ctxForBlobResponse(),
+      {
+        digest: "sha256:deadbeef",
+        contentType: "application/octet-stream",
+        extraHeaders: { etag: '"shasum-etag"', "x-checksum-md5": "abc123" },
+        blocked: () => new Response("blocked by scan policy", { status: 403 }),
+      },
+      async () => false,
+    );
+    expect(res.headers.get("etag")).toBe('"shasum-etag"');
+    expect(res.headers.get("x-checksum-md5")).toBe("abc123");
+  });
+
+  test("downloadFilename customizes — and sanitizes — the attachment filename", async () => {
+    const res = await serveBlobWithScanGate(
+      ctxForBlobResponse(),
+      {
+        digest: "sha256:deadbeef",
+        contentType: "application/zip",
+        downloadFilename: 'Linked"List\r\n-1.0.0.zip',
+        blocked: () => new Response("blocked by scan policy", { status: 403 }),
+      },
+      async () => false,
+    );
+    expect(res.headers.get("content-disposition")).toBe(
+      'attachment; filename="Linked_List__-1.0.0.zip"',
+    );
+  });
+});

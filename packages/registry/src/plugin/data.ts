@@ -194,6 +194,12 @@ export interface RegistryUploadSessionMutations {
 export interface RegistryBlobResponseOptions {
   digest: string;
   contentType: string;
+  /**
+   * Filename for the `content-disposition: attachment` response header
+   * (defaults to the digest). The attachment disposition and
+   * `x-content-type-options: nosniff` cannot be overridden via `extraHeaders`.
+   */
+  downloadFilename?: string;
   extraHeaders?: Record<string, string>;
   blocked: () => Response;
   notModified?: () => Response | null;
