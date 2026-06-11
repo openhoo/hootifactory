@@ -7,6 +7,7 @@ name: CI
 #   3. typecheck   — `tsc --noEmit` passes across every package
 #   4. architecture — plugin/package import boundaries hold
 #   5. coverage    — unit tests pass and every package meets the per-package line-coverage floor
+#   6. integration — DB/MinIO-backed integration tests pass against a freshly migrated database
 on:
   pull_request:
     # `edited` re-runs commit-lint when the PR title changes (it becomes the
@@ -129,10 +130,88 @@ jobs:
       - name: Enforce per-package coverage threshold
         run: bun run scripts/coverage-gate.ts
 
+  integration:
+    name: Integration tests (postgres + minio)
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgres://hootifactory:hootifactory@localhost:5432/hootifactory
+      S3_ENDPOINT: http://localhost:9000
+      S3_REGION: us-east-1
+      S3_BUCKET: hootifactory
+      S3_ACCESS_KEY_ID: hootifactory
+      S3_SECRET_ACCESS_KEY: hootifactory
+      S3_FORCE_PATH_STYLE: "true"
+    services:
+      # Same pinned image as docker-compose.yml. The job blocks on the health
+      # check before any step runs, so no extra wait step is needed.
+      postgres:
+        image: postgres:18@sha256:8ff36f3c66371cba71d20ceedccfc3de9669a68737607888c4ef0af93abe8e39
+        env:
+          POSTGRES_USER: hootifactory
+          POSTGRES_PASSWORD: hootifactory
+          POSTGRES_DB: hootifactory
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U hootifactory -d hootifactory"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Cache bun install
+        uses: actions/cache@v5
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+          restore-keys: ${{ runner.os }}-bun-
+      - run: bun install --frozen-lockfile
+      # MinIO cannot be a `services:` container because service containers cannot
+      # override the image command and minio/minio needs `server /data`. Same
+      # pinned image as docker-compose.yml.
+      - name: Start MinIO
+        run: >-
+          docker run -d --name minio -p 9000:9000
+          -e MINIO_ROOT_USER=hootifactory
+          -e MINIO_ROOT_PASSWORD=hootifactory
+          minio/minio:latest@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+          server /data
+      # Mirrors the compose `minio-setup` one-shot: wait for MinIO, then create
+      # the bucket with the `mc` client already shipped in the minio image.
+      - name: Wait for MinIO and create bucket
+        run: |
+          ready=""
+          for _ in $(seq 1 60); do
+            if curl -fsS http://localhost:9000/minio/health/live >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [ -z "$ready" ]; then
+            echo "::error::MinIO did not become healthy"
+            docker logs minio
+            exit 1
+          fi
+          docker exec minio sh -c \
+            'mc alias set local http://127.0.0.1:9000 hootifactory hootifactory && mc mb --ignore-existing "local/hootifactory"'
+      # Applies the full migration chain to the empty service database — the same
+      # from-scratch path a fresh deployment takes (catches regressions like the
+      # squashed-away blob_refs trigger from #300/#301).
+      - name: Migrate database from scratch
+        run: bun run db:migrate
+      # Runs every package's *.integration.test.ts against the migrated Postgres
+      # and the MinIO bucket (blob GC/refcount invariants, retention, storage).
+      - name: Run integration tests
+        run: bun run test:integration
+
   gate:
     name: PR gate
     # The single required status check: point branch protection here.
-    needs: [commit-lint, lint, typecheck, architecture, coverage]
+    needs: [commit-lint, lint, typecheck, architecture, coverage, integration]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -143,6 +222,7 @@ jobs:
           echo "typecheck=${{ needs.typecheck.result }}"
           echo "architecture=${{ needs.architecture.result }}"
           echo "coverage=${{ needs.coverage.result }}"
+          echo "integration=${{ needs.integration.result }}"
           # commit-lint is legitimately skipped on push / merge_group events.
           case "${{ needs.commit-lint.result }}" in
             success|skipped) ;;
@@ -152,4 +232,5 @@ jobs:
           [ "${{ needs.typecheck.result }}" = "success" ] || { echo "::error::typecheck did not pass"; exit 1; }
           [ "${{ needs.architecture.result }}" = "success" ] || { echo "::error::architecture did not pass"; exit 1; }
           [ "${{ needs.coverage.result }}" = "success" ] || { echo "::error::coverage did not pass"; exit 1; }
+          [ "${{ needs.integration.result }}" = "success" ] || { echo "::error::integration did not pass"; exit 1; }
           echo "All required gates passed."
