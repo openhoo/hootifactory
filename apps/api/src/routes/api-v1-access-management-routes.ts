@@ -231,6 +231,8 @@ export function registerApiV1AccessManagementRoutes(apiV1Router: Hono<AppEnv>) {
       operationId: "setUserActive",
       summary: "Activate or deactivate user",
       tag: "Access",
+      description:
+        "Deactivation revokes the user's sessions and API tokens and removes their org/group memberships and permission grants, snapshotting the removed access first. Reactivation restores the snapshotted memberships and grants (skipping any whose org, group, repository, or token has since been deleted) and consumes the snapshot. Users deactivated before snapshots existed are reactivated without any access restored.",
       pathParams: V1UserIdParamsSchema,
       requestBody: { schema: V1SetUserActiveRequestSchema },
       response: { description: "Updated user.", schema: V1UserResponseSchema },

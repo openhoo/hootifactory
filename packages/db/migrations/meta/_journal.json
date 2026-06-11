@@ -29,6 +29,13 @@
       "when": 1781202656944,
       "tag": "0003_email_deliveries_sent_at_confirmation",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1781204506414,
+      "tag": "0004_striped_vance_astro",
+      "breakpoints": true
     }
   ]
 }

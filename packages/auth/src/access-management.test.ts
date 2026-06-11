@@ -189,23 +189,257 @@ describe("setTemporaryPassword", () => {
 });
 
 describe("setUserActive", () => {
-  test("reactivating issues only the user update", async () => {
+  // The deactivation query order: users update, sessions revoked, api tokens
+  // revoked, three snapshot selects (group memberships, org memberships,
+  // grants), the snapshot insert, then three cascade deletes.
+  const DEACTIVATION_KINDS =
+    "update,update,update,select,select,select,insert,delete,delete,delete";
+
+  function groupMembershipRow(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "gm-1",
+      orgId: "org-1",
+      groupId: "g-1",
+      userId: "u1",
+      source: "local",
+      provider: null,
+      externalKey: null,
+      createdAt: new Date("2026-06-01T00:00:00.000Z"),
+      updatedAt: new Date("2026-06-01T00:00:00.000Z"),
+      ...overrides,
+    };
+  }
+
+  test("reactivating without a snapshot restores nothing (legacy deactivations)", async () => {
     await withFakeDb(db, async (fake) => {
       fake.queue([{ id: "u1", isActive: true }]);
+      fake.queue([]); // no snapshot row to consume
       const user = await setUserActive("u1", true);
       expect(user?.id).toBe("u1");
       expect(user?.isActive).toBe(true);
-      expect(kinds(fake)).toBe("update");
+      expect(kinds(fake)).toBe("update,delete");
     });
   });
 
-  test("deactivating cascades session/token/membership/grant cleanup", async () => {
+  test("deactivating snapshots memberships and grants before deleting them", async () => {
     await withFakeDb(db, async (fake) => {
       fake.queue([{ id: "u1", isActive: false }]);
+      fake.queue([]); // sessions revocation update
+      fake.queue([]); // api tokens revocation update
+      fake.queue([groupMembershipRow()]); // group memberships select
+      fake.queue([{ id: "m-1", orgId: "org-1", userId: "u1" }]); // memberships select
+      fake.queue([
+        grantRow({ id: "pg-user", userId: "u1", grantedByUserId: "admin-1" }),
+        grantRow({
+          id: "pg-admin",
+          orgId: null,
+          userId: "u1",
+          permission: "system.admin",
+          source: "bootstrap",
+        }),
+      ]); // grants select
       const user = await setUserActive("u1", false);
       expect(user?.id).toBe("u1");
-      // users update, sessions revoked, api tokens revoked, then three cascade deletes.
-      expect(kinds(fake)).toBe("update,update,update,delete,delete,delete");
+      expect(kinds(fake)).toBe(DEACTIVATION_KINDS);
+      const snapshotInsert = fake.queries.find((q) => q.kind === "insert");
+      expect(snapshotInsert?.onConflictDoNothing).toBe(true);
+      expect(snapshotInsert?.values).toEqual({
+        userId: "u1",
+        memberships: [{ orgId: "org-1" }],
+        groupMemberships: [
+          { orgId: "org-1", groupId: "g-1", source: "local", provider: null, externalKey: null },
+        ],
+        permissionGrants: [
+          {
+            orgId: "org-1",
+            permission: "repository.write",
+            repositoryId: null,
+            repositoryPattern: null,
+            packagePattern: null,
+            artifactPattern: null,
+            policy: null,
+            tokenTarget: null,
+            targetTokenId: null,
+            grantedByUserId: "admin-1",
+            source: null,
+          },
+          {
+            orgId: null,
+            permission: "system.admin",
+            repositoryId: null,
+            repositoryPattern: null,
+            packagePattern: null,
+            artifactPattern: null,
+            policy: null,
+            tokenTarget: null,
+            targetTokenId: null,
+            grantedByUserId: null,
+            source: "bootstrap",
+          },
+        ],
+        deactivatedAt: expect.any(Date),
+      });
+    });
+  });
+
+  test("deactivating an already-deactivated user keeps the original snapshot", async () => {
+    await withFakeDb(db, async (fake) => {
+      fake.queue([{ id: "u1", isActive: false }]);
+      // The first deactivation already emptied memberships and grants, so the
+      // three snapshot selects return nothing and the insert carries empty
+      // arrays — ON CONFLICT DO NOTHING preserves the original snapshot.
+      const user = await setUserActive("u1", false);
+      expect(user?.id).toBe("u1");
+      expect(kinds(fake)).toBe(DEACTIVATION_KINDS);
+      const snapshotInsert = fake.queries.find((q) => q.kind === "insert");
+      expect(snapshotInsert?.onConflictDoNothing).toBe(true);
+      expect(snapshotInsert?.values).toEqual({
+        userId: "u1",
+        memberships: [],
+        groupMemberships: [],
+        permissionGrants: [],
+        deactivatedAt: expect.any(Date),
+      });
+    });
+  });
+
+  test("reactivating restores the snapshot, skips deleted references, and consumes it", async () => {
+    await withFakeDb(db, async (fake) => {
+      fake.queue([{ id: "u1", isActive: true }]); // users update
+      fake.queue([
+        {
+          userId: "u1",
+          memberships: [{ orgId: "org-1" }, { orgId: "org-gone" }],
+          groupMemberships: [
+            { orgId: "org-1", groupId: "g-1", source: "local", provider: null, externalKey: null },
+            {
+              orgId: "org-1",
+              groupId: "g-gone",
+              source: "oidc",
+              provider: "oidc",
+              externalKey: "team-a",
+            },
+          ],
+          permissionGrants: [
+            {
+              orgId: null,
+              permission: "system.admin",
+              repositoryId: null,
+              repositoryPattern: null,
+              packagePattern: null,
+              artifactPattern: null,
+              policy: null,
+              tokenTarget: null,
+              targetTokenId: null,
+              grantedByUserId: null,
+              source: "bootstrap",
+            },
+            {
+              orgId: "org-1",
+              permission: "repository.write",
+              repositoryId: "repo-1",
+              repositoryPattern: null,
+              packagePattern: null,
+              artifactPattern: null,
+              policy: null,
+              tokenTarget: null,
+              targetTokenId: null,
+              grantedByUserId: "ghost",
+              source: null,
+            },
+            {
+              orgId: "org-gone",
+              permission: "repository.read",
+              repositoryId: null,
+              repositoryPattern: null,
+              packagePattern: null,
+              artifactPattern: null,
+              policy: null,
+              tokenTarget: null,
+              targetTokenId: null,
+              grantedByUserId: "admin-1",
+              source: null,
+            },
+          ],
+          deactivatedAt: new Date("2026-06-01T00:00:00.000Z"),
+        },
+      ]); // snapshot delete ... returning
+      fake.queue([{ id: "org-1" }]); // organizations select: org-gone deleted
+      fake.queue([]); // memberships insert
+      fake.queue([{ id: "g-1", orgId: "org-1" }]); // groups select: g-gone deleted
+      fake.queue([]); // group memberships insert
+      fake.queue([{ id: "repo-1" }]); // repositories select
+      fake.queue([{ id: "admin-1" }]); // granter users select: ghost deleted
+      fake.queue([]); // permission grants insert
+
+      const user = await setUserActive("u1", true);
+      expect(user?.id).toBe("u1");
+      expect(kinds(fake)).toBe("update,delete,select,insert,select,insert,select,select,insert");
+
+      const inserts = fake.queries.filter((q) => q.kind === "insert");
+      expect(inserts.every((q) => q.onConflictDoNothing)).toBe(true);
+      expect(inserts[0]?.values).toEqual([{ orgId: "org-1", userId: "u1" }]);
+      expect(inserts[1]?.values).toEqual([
+        {
+          orgId: "org-1",
+          groupId: "g-1",
+          userId: "u1",
+          source: "local",
+          provider: null,
+          externalKey: null,
+        },
+      ]);
+      expect(inserts[2]?.values).toEqual([
+        {
+          userId: "u1",
+          orgId: null,
+          permission: "system.admin",
+          repositoryId: null,
+          repositoryPattern: null,
+          packagePattern: null,
+          artifactPattern: null,
+          policy: null,
+          tokenTarget: null,
+          targetTokenId: null,
+          grantedByUserId: null,
+          source: "bootstrap",
+        },
+        {
+          userId: "u1",
+          orgId: "org-1",
+          permission: "repository.write",
+          repositoryId: "repo-1",
+          repositoryPattern: null,
+          packagePattern: null,
+          artifactPattern: null,
+          policy: null,
+          tokenTarget: null,
+          targetTokenId: null,
+          // The granting user was deleted while u1 was inactive; the grant is
+          // restored with a null granter instead of a dangling FK.
+          grantedByUserId: null,
+          source: null,
+        },
+      ]);
+    });
+  });
+
+  test("reactivating restores nothing when the snapshot is empty", async () => {
+    await withFakeDb(db, async (fake) => {
+      fake.queue([{ id: "u1", isActive: true }]);
+      fake.queue([
+        {
+          userId: "u1",
+          memberships: [],
+          groupMemberships: [],
+          permissionGrants: [],
+          deactivatedAt: new Date("2026-06-01T00:00:00.000Z"),
+        },
+      ]);
+      const user = await setUserActive("u1", true);
+      expect(user?.isActive).toBe(true);
+      // No org/group/grant references to look up and nothing to insert.
+      expect(kinds(fake)).toBe("update,delete");
     });
   });
 
