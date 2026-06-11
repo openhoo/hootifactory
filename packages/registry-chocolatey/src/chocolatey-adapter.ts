@@ -5,6 +5,7 @@ import {
   type RegistryPackageVersionRow,
   type RegistryPlugin,
   type RegistryRequestContext,
+  type RegistryRouteParamSpec,
   registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
@@ -54,6 +55,19 @@ function parseChocolateyVersion(version: string): string {
     status: 404,
   });
 }
+
+const idParam: RegistryRouteParamSpec = {
+  schema: ChocolateyIdSchema,
+  code: "NAME_INVALID",
+  message: "invalid package id",
+};
+
+const versionParam: RegistryRouteParamSpec = {
+  schema: ChocolateyVersionInputSchema,
+  code: "MANIFEST_UNKNOWN",
+  message: "invalid package version",
+  status: 404,
+};
 
 /**
  * Chocolatey registry: the NuGet OData v2 (Atom/XML) feed protocol that the
@@ -219,8 +233,6 @@ class ChocolateyAdapterState {
     req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
-    id = parseChocolateyId(id);
-    version = parseChocolateyVersion(version);
     const norm = normalizeChocolateyVersion(version);
     if (!norm) throw Errors.notFound();
     const pkg = await this.findPkg(ctx, id);
@@ -239,8 +251,6 @@ class ChocolateyAdapterState {
   }
 
   async unlist(id: string, version: string, ctx: RegistryRequestContext): Promise<Response> {
-    id = parseChocolateyId(id);
-    version = parseChocolateyVersion(version);
     const norm = normalizeChocolateyVersion(version);
     if (!norm) throw Errors.notFound();
     const pkg = await this.findPkg(ctx, id);
@@ -345,10 +355,12 @@ const chocolateyDefinition = registryAdapter("chocolatey")
       .calls((state, { req, ctx }) => state.chocolateySearch(req, ctx)),
     route
       .get("/api/v2/package/:id/:version", "download")
+      .params({ id: idParam, version: versionParam })
       .calls((state, { params, req, ctx }) => state.download(params.id, params.version, req, ctx)),
     route.put("/api/v2/package", "publish").calls((state, { req, ctx }) => state.publish(req, ctx)),
     route
       .delete("/api/v2/package/:id/:version", "unlist")
+      .params({ id: idParam, version: versionParam })
       .calls((state, { params, ctx }) => state.unlist(params.id, params.version, ctx)),
     // The OData key segment `Packages(Id='X',Version='Y')` is one path segment;
     // the matcher only extracts params that are a whole segment, so this catch-all

@@ -16,6 +16,7 @@ import {
   type SearchQuery,
   type SearchResult,
 } from "./adapter";
+import { validateRegistryRouteParams } from "./route-params";
 import type {
   AnyRegistryRouteSpec,
   RegistryBeforeHandleHook,
@@ -110,9 +111,10 @@ class DefinedRegistryPlugin implements RegistryPlugin {
       // Carry every RouteEntry field (method/pattern/handlerId + declarative
       // flags) into the compiled entry by stripping only the spec-only members,
       // so a newly-added RouteEntry flag is never silently dropped here.
-      const { permission, handler, ...entry } = spec;
+      const { permission, handler, params, ...entry } = spec;
       void permission;
       void handler;
+      void params;
       return entry;
     });
     routes.forEach((spec, index) => {
@@ -137,7 +139,11 @@ class DefinedRegistryPlugin implements RegistryPlugin {
     ctx: RegistryRequestContext,
   ): Permission {
     const spec = this.specFor(match);
-    const input = { method, match, params: match.params, ctx };
+    // Param validation runs BEFORE the permission resolver: a failing param
+    // short-circuits to the parse error (RegistryError) before authorization,
+    // and the resolver only ever observes validated/normalized params.
+    const params = validateRegistryRouteParams(spec.params, match.params);
+    const input = { method, match, params, ctx };
     return (
       resolveRoutePermission(spec.permission, input) ??
       this.input.defaultPermission?.(input) ??
@@ -147,10 +153,20 @@ class DefinedRegistryPlugin implements RegistryPlugin {
 
   handle(match: RouteMatch, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const spec = this.specFor(match);
-    const input = { match, params: match.params, req, ctx };
+    // Re-validate here as well (hosts may call handle without
+    // requiredPermission): the handler observes validated params and a failing
+    // param rejects with the parseRegistryInput-shaped RegistryError.
     return Promise.resolve()
-      .then(() => this.input.beforeHandle?.(input))
-      .then(() => spec.handler(input));
+      .then(() => ({
+        match,
+        params: validateRegistryRouteParams(spec.params, match.params),
+        req,
+        ctx,
+      }))
+      .then(async (input) => {
+        await this.input.beforeHandle?.(input);
+        return spec.handler(input);
+      });
   }
 
   private specFor(match: RouteMatch): AnyRegistryRouteSpec {

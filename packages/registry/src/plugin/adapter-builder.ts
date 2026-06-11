@@ -36,6 +36,7 @@ import {
   type routePermission,
   writePermission,
 } from "./permissions";
+import { registryRouteParamDefaults } from "./route-params";
 import type {
   MaybePromise,
   RegistryPermissionInput,
@@ -43,7 +44,9 @@ import type {
   RegistryRouteInput,
   RegistryRouteList,
   RegistryRouteOptions,
+  RegistryRouteParamErrorOptions,
   RegistryRouteParams,
+  RegistryRouteParamsShape,
   RegistryRouteSpec,
 } from "./route-types";
 import { joinRoutePattern, registryRoute } from "./routes-dsl";
@@ -340,6 +343,20 @@ export class RegistryAdapterRouteBuilder<
 
   immutableContent(): this {
     this.options.immutableContentAddressed = true;
+    return this;
+  }
+
+  /**
+   * Declare per-param zod schemas validated BEFORE both permission resolution
+   * (including `byParams` rules) and the handler. A failing param
+   * short-circuits the request to the parse error `parseRegistryInput` raises
+   * today (status 400 / code "UNSUPPORTED" / message "invalid request" unless
+   * overridden per param or via `defaults`). Schema outputs must be strings;
+   * at runtime `params` carries the validated/normalized outputs, while the
+   * static `Params` type stays string-typed (documented in route-types).
+   */
+  params(shape: RegistryRouteParamsShape<Params>, defaults?: RegistryRouteParamErrorOptions): this {
+    this.options.params = defaults ? registryRouteParamDefaults(shape, defaults) : shape;
     return this;
   }
 

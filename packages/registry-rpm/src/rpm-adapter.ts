@@ -4,6 +4,7 @@ import {
   type RegistryPackageHandle,
   type RegistryPlugin,
   type RegistryRequestContext,
+  type RegistryRouteParamSpec,
   registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
@@ -101,6 +102,17 @@ function parseRpmFile(file: string): string {
   return parsed.data;
 }
 
+/**
+ * Publish-route `:file` param. Download keeps its in-handler `parseRpmFile`
+ * instead: a non-`.rpm` download path is a 404 miss, not a 400 malformed
+ * request.
+ */
+const fileParam: RegistryRouteParamSpec = {
+  schema: RpmFileSchema,
+  code: "NAME_INVALID",
+  message: "invalid RPM filename",
+};
+
 const rpmDefinition = registryAdapter("rpm")
   .stateClass(RpmAdapterState)
   .module((module) =>
@@ -132,9 +144,11 @@ const rpmDefinition = registryAdapter("rpm")
       .calls((state, { params, req, ctx }) => state.download(params.file, req, ctx)),
     route
       .put("/packages/:file", "publish")
+      .params({ file: fileParam })
       .calls((state, { params, req, ctx }) => state.publish(params.file, req, ctx)),
     route
       .post("/packages/:file", "publish")
+      .params({ file: fileParam })
       .calls((state, { params, req, ctx }) => state.publish(params.file, req, ctx)),
     route
       .post("/", "publishRoot")

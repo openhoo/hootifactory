@@ -1,7 +1,6 @@
 import { parseRegistryInput } from "@hootifactory/registry";
 import {
   WingetFilenameSchema,
-  WingetPackageIdentifierSchema,
   WingetPublishManifestSchema,
   type WingetVersionMeta,
 } from "./winget-validation";
@@ -43,15 +42,9 @@ function sanitizeFilename(name: string | undefined): string {
  * binary part.
  */
 export async function parseWingetPublishRequest(
-  packageIdentifierRaw: string,
+  packageIdentifier: string,
   req: Request,
 ): Promise<WingetPublishPlanResult> {
-  const packageIdentifier = parseRegistryInput(
-    WingetPackageIdentifierSchema,
-    packageIdentifierRaw,
-    { code: "NAME_INVALID", message: "invalid PackageIdentifier" },
-  );
-
   const contentType = req.headers.get("content-type") ?? "";
   if (!contentType.includes("multipart/form-data")) {
     return {

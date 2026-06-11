@@ -1,3 +1,4 @@
+import type { RegistryErrorCode, ZodType } from "@hootifactory/core";
 import type {
   HttpMethod,
   Permission,
@@ -53,9 +54,50 @@ export type RegistryBeforeHandleHook<
   Params extends Record<string, string> = Record<string, string>,
 > = (input: RegistryRouteInput<Params>) => MaybePromise<void>;
 
+/**
+ * Error overrides applied when a route param fails its schema. Defaults match
+ * `parseRegistryInput`: status 400, code "UNSUPPORTED", message "invalid
+ * request", detail = the zod issue tree.
+ */
+export interface RegistryRouteParamErrorOptions {
+  code?: RegistryErrorCode;
+  message?: string;
+  status?: number;
+}
+
+/**
+ * A route-param schema accepts the raw string path segment and must output a
+ * string (transforms may normalize, e.g. lowercase). The schema OUTPUT is what
+ * permission resolvers and handlers observe in `params`; the static `Params`
+ * type intentionally stays `string`-typed (validated-but-string-typed) rather
+ * than threading per-schema output types through `RegistryRouteParams`.
+ */
+export type RegistryRouteParamSchema = ZodType<string, string>;
+
+/** A param schema plus per-param error overrides. */
+export interface RegistryRouteParamSpec extends RegistryRouteParamErrorOptions {
+  schema: RegistryRouteParamSchema;
+}
+
+export type RegistryRouteParamInput = RegistryRouteParamSchema | RegistryRouteParamSpec;
+
+/** Map of route-param name -> schema (or schema + error overrides). */
+export type RegistryRouteParamsShape<
+  Params extends Record<string, string> = Record<string, string>,
+> = {
+  readonly [K in keyof Params]?: RegistryRouteParamInput;
+};
+
 export interface RegistryRouteSpec<Params extends Record<string, string> = Record<string, string>>
   extends RouteEntry {
   permission?: RegistryPermissionResolver<Params>;
+  /**
+   * Per-param schemas validated BEFORE permission resolution and BEFORE the
+   * handler. A failing param short-circuits the request to the parse error
+   * (the same `RegistryError` `parseRegistryInput` raises), and the permission
+   * resolver and handler both observe the validated/normalized outputs.
+   */
+  params?: RegistryRouteParamsShape<Params>;
   handler: RegistryRouteHandler<Params>;
 }
 

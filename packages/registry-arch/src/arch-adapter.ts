@@ -1,10 +1,10 @@
 import {
   Errors,
   ifNoneMatch,
-  parseRegistryInput,
   type RegistryPackageHandle,
   type RegistryPlugin,
   type RegistryRequestContext,
+  type RegistryRouteParamSpec,
   registryAdapter,
   serveRegistryBlob,
 } from "@hootifactory/registry";
@@ -25,19 +25,17 @@ import { aurRequestedNames, aurSearchTerm, buildAurResponse, matchesAurSearch } 
 const DB_GZIP = { "content-type": "application/gzip" } as const;
 const PKG_CONTENT_TYPE = "application/octet-stream";
 
-function parseRepo(repo: string): string {
-  return parseRegistryInput(ArchRepoSchema, repo, {
-    code: "NAME_INVALID",
-    message: "invalid repository",
-  });
-}
+const repoParam: RegistryRouteParamSpec = {
+  schema: ArchRepoSchema,
+  code: "NAME_INVALID",
+  message: "invalid repository",
+};
 
-function parseArch(arch: string): string {
-  return parseRegistryInput(ArchArchSchema, arch, {
-    code: "NAME_INVALID",
-    message: "invalid arch",
-  });
-}
+const archParam: RegistryRouteParamSpec = {
+  schema: ArchArchSchema,
+  code: "NAME_INVALID",
+  message: "invalid arch",
+};
 
 /**
  * Whether a `:file` segment names the sync DB (`<repo>.db` / `<repo>.db.tar.gz`).
@@ -92,19 +90,16 @@ class ArchAdapterState {
 
   /** `GET /<repo>/os/<arch>/<file>` — sync DB, or a package blob, by extension. */
   async fetch(
-    repoRaw: string,
-    archRaw: string,
-    fileRaw: string,
+    repo: string,
+    file: string,
     req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
-    const repo = parseRepo(repoRaw);
-    parseArch(archRaw);
-    if (dbFileNames(repo).has(fileRaw)) {
+    if (dbFileNames(repo).has(file)) {
       return this.serveDb(req, ctx);
     }
-    if (isArchPkgFile(fileRaw)) {
-      return this.download(fileRaw, req, ctx);
+    if (isArchPkgFile(file)) {
+      return this.download(file, req, ctx);
     }
     throw Errors.notFound();
   }
@@ -136,16 +131,8 @@ class ArchAdapterState {
     });
   }
 
-  async publish(
-    repoRaw: string,
-    archRaw: string,
-    fileRaw: string,
-    req: Request,
-    ctx: RegistryRequestContext,
-  ): Promise<Response> {
-    parseRepo(repoRaw);
-    parseArch(archRaw);
-    return handleArchPublish(fileRaw, req, ctx);
+  async publish(file: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
+    return handleArchPublish(file, req, ctx);
   }
 
   /**
@@ -254,14 +241,12 @@ const archDefinition = registryAdapter("arch")
     route.get("/rpc", "rpc").calls((state, { req, ctx }) => state.rpc(req, ctx)),
     route
       .get("/:repo/os/:arch/:file", "fetch")
-      .calls((state, { params, req, ctx }) =>
-        state.fetch(params.repo, params.arch, params.file, req, ctx),
-      ),
+      .params({ repo: repoParam, arch: archParam })
+      .calls((state, { params, req, ctx }) => state.fetch(params.repo, params.file, req, ctx)),
     route
       .put("/:repo/os/:arch/:file", "publish")
-      .calls((state, { params, req, ctx }) =>
-        state.publish(params.repo, params.arch, params.file, req, ctx),
-      ),
+      .params({ repo: repoParam, arch: archParam })
+      .calls((state, { params, req, ctx }) => state.publish(params.file, req, ctx)),
   ]);
 
 export class ArchAdapter extends archDefinition.adapterClass() {}

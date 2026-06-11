@@ -4,9 +4,9 @@ import {
   ifNoneMatch,
   immutableRegistryBlobCacheControl,
   type Permission,
-  parseRegistryInput,
   type RegistryPlugin,
   type RegistryRequestContext,
+  type RegistryRouteParamSpec,
   type RouteMatch,
   registryAdapter,
 } from "@hootifactory/registry";
@@ -39,6 +39,18 @@ const UPLOAD_CONTROL_HANDLERS = new Set([
 const REGISTRY_TOKEN_SERVICE = "hootifactory";
 const OCI_REPOSITORY_NAME_RE =
   /^[a-z0-9]+(?:(?:\.|_|__|-+)[a-z0-9]+)*(?:\/[a-z0-9]+(?:(?:\.|_|__|-+)[a-z0-9]+)*)*$/;
+
+const subjectDigestParam: RegistryRouteParamSpec = {
+  schema: OciDigestSchema,
+  code: "DIGEST_INVALID",
+  message: "invalid subject digest",
+};
+
+const blobDigestParam: RegistryRouteParamSpec = {
+  schema: OciDigestSchema,
+  code: "DIGEST_INVALID",
+  message: "invalid blob digest",
+};
 
 class DockerAdapterState {
   /** Full docker name "org/repo/image" for scope matching against the JWT. */
@@ -151,10 +163,6 @@ class DockerAdapterState {
     req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
-    digest = parseRegistryInput(OciDigestSchema, digest, {
-      code: "DIGEST_INVALID",
-      message: "invalid subject digest",
-    });
     const { artifactType: artifactTypeFilter } = parseOciReferrersQuery(req.url);
     const pkg = await ctx.data.packages.findByName(image);
     if (!pkg) return buildOciReferrersResponse({ manifests: [], artifactTypeFilter });
@@ -188,10 +196,6 @@ class DockerAdapterState {
     ctx: RegistryRequestContext,
     headOnly: boolean,
   ): Promise<Response> {
-    digest = parseRegistryInput(OciDigestSchema, digest, {
-      code: "DIGEST_INVALID",
-      message: "invalid blob digest",
-    });
     const blob = await ctx.data.content.getBlobRef({ digest, kind: "oci_layer", scope: image });
     if (!blob) throw Errors.blobUnknown({ digest });
     // Defense-in-depth: a layer reachable only through blocked manifests is blocked too.
@@ -210,10 +214,6 @@ class DockerAdapterState {
   }
 
   async deleteBlob(image: string, digest: string, ctx: RegistryRequestContext): Promise<Response> {
-    digest = parseRegistryInput(OciDigestSchema, digest, {
-      code: "DIGEST_INVALID",
-      message: "invalid blob digest",
-    });
     await deleteOciBlobReference(ctx, { image, digest });
     return new Response(null, {
       status: 202,
@@ -255,6 +255,7 @@ const dockerDefinition = registryAdapter("docker")
       .calls((state, { params, req, ctx }) => state.tagsList(params.name, req, ctx)),
     route
       .get("/:name+/referrers/:digest", "referrers")
+      .params({ digest: subjectDigestParam })
       .calls((state, { params, req, ctx }) =>
         state.referrers(params.name, params.digest, req, ctx),
       ),
@@ -293,16 +294,19 @@ const dockerDefinition = registryAdapter("docker")
       .handle(({ params, ctx }) => cancelUpload(params.name, params.uuid, ctx)),
     route
       .head("/:name+/blobs/:digest", "headBlob")
+      .params({ digest: blobDigestParam })
       .calls((state, { params, req, ctx }) =>
         state.getBlob(params.name, params.digest, req, ctx, true),
       ),
     route
       .immutableGet("/:name+/blobs/:digest", "getBlob")
+      .params({ digest: blobDigestParam })
       .calls((state, { params, req, ctx }) =>
         state.getBlob(params.name, params.digest, req, ctx, false),
       ),
     route
       .delete("/:name+/blobs/:digest", "deleteBlob")
+      .params({ digest: blobDigestParam })
       .calls((state, { params, ctx }) => state.deleteBlob(params.name, params.digest, ctx)),
   ]);
 

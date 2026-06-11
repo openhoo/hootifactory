@@ -270,6 +270,30 @@ describe("RPM adapter", () => {
     });
   });
 
+  test("publish rejects an invalid :file param before permissions and the handler", async () => {
+    const ctx = rpmCtx();
+    const adapter = new RpmAdapter();
+    const match = {
+      entry: { method: "PUT", pattern: "/packages/:file", handlerId: "publish" },
+      params: { file: "../../etc/passwd" },
+      path: "/packages/../../etc/passwd",
+    } satisfies RouteMatch;
+    // 400-before-403: garbage params short-circuit permission resolution too.
+    expect(() => adapter.requiredPermission("PUT", match)).toThrow(
+      expect.objectContaining({ status: 400, code: "NAME_INVALID" }),
+    );
+    await expect(
+      adapter.handle(
+        match,
+        new Request("https://registry.test/packages/x", {
+          method: "PUT",
+          body: new Uint8Array([1, 2, 3]),
+        }),
+        ctx,
+      ),
+    ).rejects.toMatchObject({ status: 400, code: "NAME_INVALID" });
+  });
+
   test("publish returns 409 when the version already exists", async () => {
     const ctx = rpmCtx();
     const rpm = buildMinimalRpm({

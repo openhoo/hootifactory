@@ -76,16 +76,12 @@ class ComposerAdapterState {
   }
 
   async download(path: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
-    const distPath = parseRegistryInput(ComposerDistPathSchema, path, {
-      code: "NAME_INVALID",
-      message: "invalid composer dist path",
-    });
-    const asset = await ctx.data.assets.findByScope({ role: COMPOSER_DIST_KIND, scope: distPath });
+    const asset = await ctx.data.assets.findByScope({ role: COMPOSER_DIST_KIND, scope: path });
     if (!asset) throw Errors.notFound();
     return serveRegistryBlob(ctx, {
       digest: asset.digest,
       kind: COMPOSER_DIST_KIND,
-      scope: distPath,
+      scope: path,
       contentType: "application/zip",
       redirect: req.method === "GET",
       blocked: () => new Response("dist blocked by scan policy", { status: 403 }),
@@ -161,6 +157,13 @@ const composerDefinition = registryAdapter("composer")
       ),
     route
       .get("/dist/:path+", "download")
+      .params({
+        path: {
+          schema: ComposerDistPathSchema,
+          code: "NAME_INVALID",
+          message: "invalid composer dist path",
+        },
+      })
       .calls((state, { params, req, ctx }) => state.download(params.path, req, ctx)),
     route
       .put("/packages/:vendor/:package", "upload")

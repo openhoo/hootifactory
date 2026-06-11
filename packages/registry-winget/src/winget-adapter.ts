@@ -3,6 +3,7 @@ import {
   parseRegistryInput,
   type RegistryPlugin,
   type RegistryRequestContext,
+  type RegistryRouteParamSpec,
   registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
@@ -33,13 +34,26 @@ const WINGET_SOURCE_SUPPORTED_VERSIONS = ["1.0.0", "1.1.0"] as const;
 const WINGET_SEARCH_PACKAGE_BATCH_SIZE = 250;
 const WINGET_SEARCH_DEFAULT_LIMIT = 250;
 
-function parsePackageIdentifier(identifier: string): string {
-  return parseRegistryInput(WingetPackageIdentifierSchema, identifier, {
-    code: "NAME_INVALID",
-    message: "invalid PackageIdentifier",
-  });
-}
+const packageIdentifierParam: RegistryRouteParamSpec = {
+  schema: WingetPackageIdentifierSchema,
+  code: "NAME_INVALID",
+  message: "invalid PackageIdentifier",
+};
 
+const versionParam: RegistryRouteParamSpec = {
+  schema: WingetVersionSchema,
+  code: "MANIFEST_UNKNOWN",
+  message: "invalid PackageVersion",
+  status: 404,
+};
+
+const filenameParam: RegistryRouteParamSpec = {
+  schema: WingetFilenameSchema,
+  code: "NAME_INVALID",
+  message: "invalid installer filename",
+};
+
+/** Still parsed in-handler: validates the `?Version` query param, not a route param. */
 function parseVersion(version: string): string {
   return parseRegistryInput(WingetVersionSchema, version, {
     code: "MANIFEST_UNKNOWN",
@@ -86,11 +100,10 @@ class WingetAdapterState {
   }
 
   async packageManifests(
-    packageIdentifierRaw: string,
+    packageIdentifier: string,
     req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
-    const packageIdentifier = parsePackageIdentifier(packageIdentifierRaw);
     const requestedVersion = this.requestedVersion(req);
     const pkg = await ctx.data.packages.findByName(packageIdentifier.toLowerCase());
     if (!pkg) return this.notFoundEnvelope();
@@ -212,18 +225,12 @@ class WingetAdapterState {
   }
 
   async download(
-    packageIdentifierRaw: string,
-    versionRaw: string,
-    filenameRaw: string,
+    packageIdentifier: string,
+    version: string,
+    filename: string,
     req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
-    const packageIdentifier = parsePackageIdentifier(packageIdentifierRaw);
-    const version = parseVersion(versionRaw);
-    const filename = parseRegistryInput(WingetFilenameSchema, filenameRaw, {
-      code: "NAME_INVALID",
-      message: "invalid installer filename",
-    });
     const pkg = await ctx.data.packages.findByName(packageIdentifier.toLowerCase());
     if (!pkg) return this.notFoundEnvelope();
     const row = await ctx.data.versions.findLive(pkg, version);
@@ -241,11 +248,11 @@ class WingetAdapterState {
   }
 
   async publish(
-    packageIdentifierRaw: string,
+    packageIdentifier: string,
     req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
-    return handleWingetPublish(packageIdentifierRaw, req, ctx);
+    return handleWingetPublish(packageIdentifier, req, ctx);
   }
 }
 
@@ -283,14 +290,21 @@ const wingetDefinition = registryAdapter("winget")
       .calls((state, { req, ctx }) => state.manifestSearch(req, ctx)),
     route
       .get("/api/packageManifests/:packageIdentifier", "packageManifests")
+      .params({ packageIdentifier: packageIdentifierParam })
       .calls((state, { params, req, ctx }) =>
         state.packageManifests(params.packageIdentifier, req, ctx),
       ),
     route
       .put("/api/packageManifests/:packageIdentifier", "publish")
+      .params({ packageIdentifier: packageIdentifierParam })
       .calls((state, { params, req, ctx }) => state.publish(params.packageIdentifier, req, ctx)),
     route
       .get("/api/installers/:packageIdentifier/:version/:filename", "download")
+      .params({
+        packageIdentifier: packageIdentifierParam,
+        version: versionParam,
+        filename: filenameParam,
+      })
       .calls((state, { params, req, ctx }) =>
         state.download(params.packageIdentifier, params.version, params.filename, req, ctx),
       ),

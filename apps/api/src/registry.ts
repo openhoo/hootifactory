@@ -8,7 +8,9 @@ import {
 import {
   Errors,
   type HttpMethod,
+  RegistryError,
   registryErrorResponseForModule,
+  registryErrorToModuleResponse,
   registryPlugins,
 } from "@hootifactory/registry";
 import {
@@ -126,23 +128,44 @@ export async function handleRegistryRequest(c: Context<AppEnv>): Promise<Respons
           }
           const ctx = buildRegistryRequestContext(repo, principal);
 
-          const authorization = await withSpan(
-            "registry.authorize",
-            {
-              "auth.principal.kind": principal.kind,
-              "registry.repository.name": repo.name,
-            },
-            async (span) => {
-              const result = await authorizeRoute(adapter, method, match, ctx);
-              span.setAttributes({
-                "auth.action": result.permission.action,
-                "auth.decision": result.decision.allowed ? "allowed" : "denied",
-                "auth.decision.code": result.decision.code,
-                "registry.permission.repository": result.repositoryName,
+          let authorization: Awaited<ReturnType<typeof authorizeRoute>>;
+          try {
+            authorization = await withSpan(
+              "registry.authorize",
+              {
+                "auth.principal.kind": principal.kind,
+                "registry.repository.name": repo.name,
+              },
+              async (span) => {
+                const result = await authorizeRoute(adapter, method, match, ctx);
+                span.setAttributes({
+                  "auth.action": result.permission.action,
+                  "auth.decision": result.decision.allowed ? "allowed" : "denied",
+                  "auth.decision.code": result.decision.code,
+                  "registry.permission.repository": result.repositoryName,
+                });
+                return result;
+              },
+            );
+          } catch (err) {
+            // Route-level param validation runs inside requiredPermission, so a
+            // garbage param surfaces here as a RegistryError BEFORE authorization
+            // (400 parse error rather than 401/403). Render it with the module's
+            // error shape, exactly as a handler-thrown RegistryError would be.
+            if (err instanceof RegistryError) {
+              const response = registryErrorToModuleResponse(adapter, err);
+              recordOutcome(response.status, "error");
+              logger.debug("registry route param validation failed", {
+                repo: repo.name,
+                moduleId: repo.moduleId,
+                handler: match.entry.handlerId,
+                code: err.code,
+                status: err.status,
               });
-              return result;
-            },
-          );
+              return response;
+            }
+            throw err;
+          }
           const { decision, permission: perm } = authorization;
           setActiveSpanAttributes({ "auth.action": perm.action });
 
