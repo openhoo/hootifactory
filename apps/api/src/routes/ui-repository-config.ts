@@ -58,7 +58,7 @@ export function registerRepositoryConfigRoutes(router: Hono<AppEnv>): void {
       }
       throw err;
     }
-    audit({
+    audit(c, {
       orgId: guard.repo.orgId,
       action: "repository.member.add",
       result: AUDIT_RESULT.success,
@@ -85,7 +85,7 @@ export function registerRepositoryConfigRoutes(router: Hono<AppEnv>): void {
       return c.json({ error: upstreamUrl.error }, upstreamUrl.status);
     }
     await addUpstream(guard.repo.id, upstreamUrl.url, body.priority ?? 0);
-    audit({
+    audit(c, {
       orgId: guard.repo.orgId,
       action: "repository.upstream.add",
       result: AUDIT_RESULT.success,

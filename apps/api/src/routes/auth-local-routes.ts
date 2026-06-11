@@ -85,7 +85,7 @@ export function registerLocalAuthRoutes(router: Hono<AppEnv>): void {
         "auth.retry_after_seconds": passwordAuth.retryAfter,
       });
       logger.warn("login rejected by throttle", { ip, retryAfter: passwordAuth.retryAfter });
-      audit({
+      audit(c, {
         action: "auth.login",
         result: AUDIT_RESULT.failure,
         ip,
@@ -98,7 +98,7 @@ export function registerLocalAuthRoutes(router: Hono<AppEnv>): void {
     if (passwordAuth.kind === "invalid") {
       addSpanEvent("auth.login_failed", { "auth.failed_attempts": passwordAuth.failure.count });
       logger.warn("login failed", { ip, attempts: passwordAuth.failure.count });
-      audit({
+      audit(c, {
         action: "auth.login",
         result: AUDIT_RESULT.failure,
         ip,
@@ -113,7 +113,7 @@ export function registerLocalAuthRoutes(router: Hono<AppEnv>): void {
     const { principal } = passwordAuth;
     setActiveSpanAttributes({ "enduser.id": principal.userId, "auth.event": "login" });
     logger.info("login succeeded", { userId: principal.userId, ip });
-    audit({
+    audit(c, {
       action: "auth.login",
       result: AUDIT_RESULT.success,
       ip,

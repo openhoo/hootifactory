@@ -78,7 +78,7 @@ export function registerApiV1PolicyRoutes(apiV1Router: Hono<AppEnv>) {
         mode: parsedBody.data.mode,
         blockOnSeverity: parsedBody.data.blockOnSeverity ?? null,
       });
-      audit({
+      audit(c, {
         orgId: params.data.orgId,
         action: "scan_policy.create",
         result: AUDIT_RESULT.success,
@@ -140,7 +140,7 @@ export function registerApiV1PolicyRoutes(apiV1Router: Hono<AppEnv>) {
         maxStorageBytes: parsedBody.data.maxStorageBytes ?? null,
         maxArtifacts: parsedBody.data.maxArtifacts ?? null,
       });
-      audit({
+      audit(c, {
         orgId: params.data.orgId,
         action: "quota.set",
         result: AUDIT_RESULT.success,
@@ -184,7 +184,7 @@ export function registerApiV1PolicyRoutes(apiV1Router: Hono<AppEnv>) {
       );
       if (!parsedBody.ok) return parsedBody.response;
       const pruned = await applyRetention(repo.id, parsedBody.data.keepLastN);
-      audit({
+      audit(c, {
         orgId: repo.orgId,
         action: "retention.apply",
         result: AUDIT_RESULT.success,

@@ -180,7 +180,7 @@ export function registerApiV1AccessManagementRoutes(apiV1Router: Hono<AppEnv>) {
       if (!body.ok) return body.response;
       try {
         const created = await createAdminUser(body.data);
-        audit({
+        audit(c, {
           action: "user.create",
           result: AUDIT_RESULT.success,
           resourceType: "user",
@@ -244,7 +244,7 @@ export function registerApiV1AccessManagementRoutes(apiV1Router: Hono<AppEnv>) {
       if (!body.ok) return body.response;
       const user = await setUserActive(params.data.userId, body.data.active);
       if (!user) return errorResponse(c, 404, "NOT_FOUND", "user not found");
-      audit({
+      audit(c, {
         action: body.data.active ? "user.reactivate" : "user.deactivate",
         result: AUDIT_RESULT.success,
         resourceType: "user",

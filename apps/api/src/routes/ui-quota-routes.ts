@@ -31,7 +31,7 @@ export function registerQuotaRoutes(router: Hono<AppEnv>): void {
     const maxStorageBytes = parsedBody.data.maxStorageBytes ?? null;
     const maxArtifacts = parsedBody.data.maxArtifacts ?? null;
     await setOrgQuota(orgId, { maxStorageBytes, maxArtifacts });
-    audit({
+    audit(c, {
       orgId,
       action: "quota.set",
       result: AUDIT_RESULT.success,
