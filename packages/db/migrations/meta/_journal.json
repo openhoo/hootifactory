@@ -22,6 +22,13 @@
       "when": 1781202085790,
       "tag": "0002_worried_lockheed",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1781202656944,
+      "tag": "0003_email_deliveries_sent_at_confirmation",
+      "breakpoints": true
     }
   ]
 }

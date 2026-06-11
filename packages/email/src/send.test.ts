@@ -56,7 +56,7 @@ describe("deliverEmail", () => {
     expect(message.messageId).toBe("<key-123@hootifactory.local>");
   });
 
-  test("omits the message id when no delivery key is supplied", async () => {
+  test("stamps the message id for oidc-link jobs too (deliveryKey is mandatory)", async () => {
     const transport = fakeTransport();
     await deliverEmail(
       {
@@ -65,10 +65,11 @@ describe("deliverEmail", () => {
         providerName: "Okta",
         linkUrl: "https://hoot.test/link?token=xyz",
         expiresAt: "2026-06-01T12:00:00.000Z",
+        deliveryKey: "oidc-link-xyz",
       },
       transport as unknown as Transporter,
     );
-    expect(transport.sent[0]!.messageId).toBeUndefined();
+    expect(transport.sent[0]!.messageId).toBe("<oidc-link-xyz@hootifactory.local>");
   });
 
   test("throws when the SMTP server rejects every recipient", async () => {
@@ -80,6 +81,7 @@ describe("deliverEmail", () => {
           to: "a@b.test",
           resetUrl: "https://hoot.test/reset",
           expiresAt: "2026-06-01T12:00:00.000Z",
+          deliveryKey: "key-reset",
         },
         transport as unknown as Transporter,
       ),
@@ -97,6 +99,7 @@ describe("deliverEmail", () => {
           to: "ok@b.test",
           resetUrl: "https://hoot.test/reset",
           expiresAt: "2026-06-01T12:00:00.000Z",
+          deliveryKey: "key-reset",
         },
         transport as unknown as Transporter,
       ),
@@ -116,6 +119,7 @@ describe("deliverEmail", () => {
           to: "a@b.test",
           resetUrl: "https://hoot.test/reset",
           expiresAt: "2026-06-01T12:00:00.000Z",
+          deliveryKey: "key-reset",
         },
         transport as unknown as Transporter,
       ),
@@ -133,6 +137,7 @@ describe("sendEmail", () => {
         to: "a@b.test",
         resetUrl: "https://hoot.test/reset",
         expiresAt: "2026-06-01T12:00:00.000Z",
+        deliveryKey: "key-reset",
       }),
     ).resolves.toBeUndefined();
   });

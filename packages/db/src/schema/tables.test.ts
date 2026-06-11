@@ -164,9 +164,13 @@ describe("auth tables", () => {
     expect(column(schema.authThrottleBuckets, "count").default).toBe(0);
   });
 
-  test("email_deliveries track delivery keys", () => {
+  test("email_deliveries track delivery keys with a nullable confirmation stamp", () => {
     expect(getTableName(schema.emailDeliveries)).toBe("email_deliveries");
     expect(varcharLength(schema.emailDeliveries, "deliveryKey")).toBe(256);
+    // sentAt is a post-send confirmation: claims start unconfirmed (NULL), so
+    // it must be nullable with no insert-time default.
+    expect(column(schema.emailDeliveries, "sentAt").notNull).toBe(false);
+    expect(column(schema.emailDeliveries, "sentAt").hasDefault).toBe(false);
   });
 
   test("external identities are wired", () => {
