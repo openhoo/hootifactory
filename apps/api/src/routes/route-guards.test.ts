@@ -124,71 +124,36 @@ describe("api v1 token guards", () => {
   });
 });
 
-describe("ui route guards", () => {
-  test("GET /api/me returns 401 for anonymous callers", async () => {
-    expect((await fetchJson("/api/me")).status).toBe(401);
-  });
-
-  test("GET /api/orgs returns an empty list for anonymous callers", async () => {
-    const { status, body } = await fetchJson("/api/orgs");
-    expect(status).toBe(200);
-    expect(body).toEqual({ orgs: [] });
-  });
-
-  test("GET /api/registry-modules lists registered modules", async () => {
-    const { status, body } = await fetchJson("/api/registry-modules");
-    expect(status).toBe(200);
-    const modules = (body as { modules: Array<{ id: string }> }).modules;
-    expect(modules.length).toBeGreaterThan(0);
-    expect(modules.some((m) => m.id === "npm")).toBe(true);
-  });
-
-  test("GET /api/orgs/:orgId/repositories rejects malformed org ids and denies anonymous", async () => {
-    expect((await fetchJson("/api/orgs/bad/repositories")).status).toBe(400);
-    expect((await fetchJson(`/api/orgs/${UUID}/repositories`)).status).toBe(401);
-  });
-
-  test("POST /api/orgs/:orgId/repositories rejects malformed bodies", async () => {
-    expect((await fetchJson(`/api/orgs/${UUID}/repositories`, postJson({}))).status).toBe(400);
-  });
-
-  test("ui content routes reject malformed ids", async () => {
-    expect((await fetchJson("/api/repositories/bad")).status).toBe(400);
-    expect((await fetchJson("/api/repositories/bad/packages")).status).toBe(400);
-    expect((await fetchJson("/api/packages/bad/versions")).status).toBe(400);
-    expect((await fetchJson("/api/repositories/bad/artifacts")).status).toBe(400);
-    expect((await fetchJson("/api/artifacts/bad/findings")).status).toBe(400);
-  });
-
-  test("ui repository-config routes reject malformed ids", async () => {
-    expect((await fetchJson("/api/repositories/bad/members", postJson({}))).status).toBe(400);
-    expect((await fetchJson("/api/repositories/bad/upstreams", postJson({}))).status).toBe(400);
-    expect((await fetchJson("/api/repositories/bad/retention/apply", postJson({}))).status).toBe(
-      400,
-    );
-  });
-
-  test("ui governance routes deny anonymous on valid org ids and reject malformed ids", async () => {
-    expect((await fetchJson("/api/orgs/bad/quota")).status).toBe(400);
-    expect((await fetchJson(`/api/orgs/${UUID}/quota`)).status).toBe(401);
-    expect((await fetchJson(`/api/orgs/${UUID}/quota`, postJson({}))).status).toBe(401);
+describe("api v1 organization-creation and registry-module guards", () => {
+  test("POST /api/v1/orgs requires a user principal", async () => {
     expect(
-      (await fetchJson(`/api/orgs/${UUID}/scan-policies`, postJson({ mode: "enforce" }))).status,
+      (await fetchJson("/api/v1/orgs", postJson({ slug: "acme", displayName: "Acme" }))).status,
     ).toBe(401);
   });
 
-  test("ui token routes deny anonymous and reject malformed ids", async () => {
-    expect((await fetchJson("/api/orgs/bad/tokens")).status).toBe(400);
-    expect((await fetchJson(`/api/orgs/${UUID}/tokens`)).status).toBe(401);
-    expect((await fetchJson(`/api/orgs/${UUID}/tokens`, postJson({ name: "ci" }))).status).toBe(
-      401,
+  test("POST /api/v1/orgs/:orgId/repositories rejects malformed bodies", async () => {
+    expect((await fetchJson(`/api/v1/orgs/${UUID}/repositories`, postJson({}))).status).toBe(400);
+  });
+
+  test("GET /api/v1/registry-modules lists registered modules", async () => {
+    const { status, body } = await fetchJson("/api/v1/registry-modules");
+    expect(status).toBe(200);
+    const modules = (body as { data: { modules: Array<{ id: string }> } }).data.modules;
+    expect(modules.length).toBeGreaterThan(0);
+    expect(modules.some((m) => m.id === "npm")).toBe(true);
+  });
+});
+
+describe("removed legacy management api", () => {
+  test("no route is mounted on the legacy /api management paths", () => {
+    // Asserted against the routing table rather than by dispatching: a request
+    // to a legacy path now falls through to the registry catch-all, whose
+    // outcome depends on repository resolution (a DB concern covered by the
+    // integration/e2e suites). Only /api/v1 and /api/auth may exist under /api.
+    const legacy = app.routes.filter(
+      (route) => /^\/api(?!\/v1\b|\/auth\b)(\/|$)/.test(route.path) && route.method !== "ALL",
     );
-    // DELETE of a valid (non-malformed) token id loads the token from the DB
-    // before the authorization gate runs, so it is not a DB-free guard path and
-    // is covered hermetically by ui-tokens.test.ts ("DELETE token returns 404
-    // when not found"). Asserting it here only passed by accident when a sibling
-    // token test's process-global `mock.module("@hootifactory/auth")` happened to
-    // be active, which races under `bun test --parallel`.
+    expect(legacy.map((route) => `${route.method} ${route.path}`)).toEqual([]);
   });
 });
 

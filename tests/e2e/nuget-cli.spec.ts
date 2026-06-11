@@ -104,9 +104,9 @@ test.describe("nuget registry (Dockerized real dotnet)", () => {
           visibility: "public",
         })
       ).json()
-    ).repository as { mountPath: string };
+    ).data as { mountPath: string };
     const secret = (await (await createToken(owner.ctx, owner.orgId, { name: "nuget" })).json())
-      .secret as string;
+      .data.secret as string;
 
     const id = Date.now().toString(36);
     const packageId = `Hoot.Dotnet${id}`;
@@ -182,9 +182,9 @@ test.describe("nuget registry (Dockerized real dotnet)", () => {
           visibility: "public",
         })
       ).json()
-    ).repository as { mountPath: string };
+    ).data as { mountPath: string };
     const secret = (await (await createToken(owner.ctx, owner.orgId, { name: "nuget" })).json())
-      .secret as string;
+      .data.secret as string;
 
     const id = Date.now().toString(36);
     const depId = `Hoot.Dependency${id}`;
@@ -364,7 +364,7 @@ test.describe("nuget registry extended scenarios (Dockerized real dotnet)", () =
       visibility: "public",
     });
     const secret = (await (await createToken(owner.ctx, owner.orgId, { name: "nuget" })).json())
-      .secret as string;
+      .data.secret as string;
     const source = nugetSource(baseURL!, repo.mountPath);
 
     const packageId = `Hoot.Prerelease${Date.now().toString(36)}${randomUUID().slice(0, 8)}`;
@@ -401,7 +401,7 @@ test.describe("nuget registry extended scenarios (Dockerized real dotnet)", () =
       visibility: "public",
     });
     const secret = (await (await createToken(owner.ctx, owner.orgId, { name: "nuget" })).json())
-      .secret as string;
+      .data.secret as string;
     const source = nugetSource(baseURL!, repo.mountPath);
 
     const packageId = `Hoot.Range${Date.now().toString(36)}${randomUUID().slice(0, 8)}`;
@@ -433,7 +433,7 @@ test.describe("nuget registry extended scenarios (Dockerized real dotnet)", () =
       visibility: "public",
     });
     const secret = (await (await createToken(owner.ctx, owner.orgId, { name: "nuget" })).json())
-      .secret as string;
+      .data.secret as string;
     const source = nugetSource(baseURL!, repo.mountPath);
 
     const packageId = `Hoot.Unlist${Date.now().toString(36)}${randomUUID().slice(0, 8)}`;
@@ -510,7 +510,7 @@ test.describe("nuget registry extended scenarios (Dockerized real dotnet)", () =
       visibility: "public",
     });
     const secret = (await (await createToken(owner.ctx, owner.orgId, { name: "nuget" })).json())
-      .secret as string;
+      .data.secret as string;
 
     const sourceA = nugetSource(baseURL!, repoA.mountPath);
     const sourceB = nugetSource(baseURL!, repoB.mountPath);
@@ -558,7 +558,7 @@ test.describe("nuget registry extended scenarios (Dockerized real dotnet)", () =
       visibility: "public",
     });
     const secret = (await (await createToken(owner.ctx, owner.orgId, { name: "nuget" })).json())
-      .secret as string;
+      .data.secret as string;
     const source = nugetSource(baseURL!, repo.mountPath);
 
     const packageId = `Hoot.Dup${Date.now().toString(36)}${randomUUID().slice(0, 8)}`;
@@ -629,7 +629,7 @@ test.describe("nuget registry error and edge scenarios (Dockerized real dotnet)"
       visibility: "public",
     });
     const secret = (await (await createToken(owner.ctx, owner.orgId, { name: "nuget" })).json())
-      .secret as string;
+      .data.secret as string;
     const source = nugetSource(baseURL!, repo.mountPath);
 
     const packageId = `Hoot.MissingVersion${Date.now().toString(36)}${randomUUID().slice(0, 8)}`;
@@ -663,7 +663,7 @@ test.describe("nuget registry error and edge scenarios (Dockerized real dotnet)"
       visibility: "public",
     });
     const secret = (await (await createToken(owner.ctx, owner.orgId, { name: "nuget" })).json())
-      .secret as string;
+      .data.secret as string;
     const source = nugetSource(baseURL!, repo.mountPath);
 
     const packageId = `Hoot.UnlistResolve${Date.now().toString(36)}${randomUUID().slice(0, 8)}`;

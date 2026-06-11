@@ -1,4 +1,4 @@
-import { authorize, createRequestAuthorizer } from "@hootifactory/auth";
+import { authorize, createRequestAuthorizer, type Principal } from "@hootifactory/auth";
 import { mapWithBoundedConcurrency } from "@hootifactory/core";
 import type { ResolvedRepo } from "@hootifactory/registry";
 import {
@@ -18,6 +18,21 @@ import type { AppEnv } from "../types";
 import { authorizationDenied, errorResponse } from "./api-v1-responses";
 
 type ManagedPolicyName = Exclude<PolicyName, "*">;
+
+type UserPrincipalResult =
+  | { ok: true; principal: Extract<Principal, { kind: "user" }> }
+  | { ok: false; response: Response };
+
+export function requireUserPrincipal(c: Context<AppEnv>): UserPrincipalResult {
+  const p = c.get("principal");
+  if (p.kind !== "user") {
+    return {
+      ok: false,
+      response: errorResponse(c, 401, "UNAUTHENTICATED", "login required"),
+    };
+  }
+  return { ok: true, principal: p };
+}
 
 export async function requireOrg(c: Context<AppEnv>, orgId: string, action: Action) {
   const decision = await authorize(c.get("principal"), action, { type: "org", orgId });

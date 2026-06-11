@@ -109,7 +109,7 @@ test.describe("pypi registry (Dockerized real pip/twine)", () => {
     expect(
       (await createRepo(owner.ctx, owner.orgId, { name: repo, moduleId: "pypi" })).status(),
     ).toBe(201);
-    const secret = (await (await createToken(owner.ctx, owner.orgId, { name: "pypi" })).json())
+    const secret = (await (await createToken(owner.ctx, owner.orgId, { name: "pypi" })).json()).data
       .secret as string;
 
     const pkg = `hootpkg${Date.now().toString(36)}`;
@@ -192,7 +192,7 @@ test.describe("pypi registry (Dockerized real pip/twine)", () => {
       (await createRepo(owner.ctx, owner.orgId, { name: repo, moduleId: "pypi" })).status(),
     ).toBe(201);
     const secret = (await (await createToken(owner.ctx, owner.orgId, { name: "twine" })).json())
-      .secret as string;
+      .data.secret as string;
 
     const pkg = `hoottwine${Date.now().toString(36)}`;
     const ver = "1.0.0";
@@ -315,7 +315,7 @@ test.describe("pypi registry extended scenarios (Dockerized real pip/twine)", ()
     ).toBe(201);
     const secret = (
       await (await createToken(owner.ctx, owner.orgId, { name: "pypi-sdist" })).json()
-    ).secret as string;
+    ).data.secret as string;
 
     const pkg = `hootsdist${Date.now().toString(36)}${randomUUID().slice(0, 8)}`;
     const ver = "1.0.0";
@@ -398,7 +398,7 @@ where = ["src"]
     ).toBe(201);
     const secret = (
       await (await createToken(owner.ctx, owner.orgId, { name: "pypi-specifier" })).json()
-    ).secret as string;
+    ).data.secret as string;
 
     const pkg = `hootspec${Date.now().toString(36)}${randomUUID().slice(0, 8)}`;
     const work = mkdtempSync(join(tmpdir(), "hoot-pypi-spec-"));
@@ -443,7 +443,7 @@ where = ["src"]
     ).toBe(201);
     const secret = (
       await (await createToken(owner.ctx, owner.orgId, { name: "pypi-skip-existing" })).json()
-    ).secret as string;
+    ).data.secret as string;
 
     const pkg = `hootskip${Date.now().toString(36)}${randomUUID().slice(0, 8)}`;
     const ver = "1.0.0";
@@ -518,7 +518,7 @@ where = ["src"]
     ).toBe(201);
     const secret = (
       await (await createToken(owner.ctx, owner.orgId, { name: "pypi-deptree" })).json()
-    ).secret as string;
+    ).data.secret as string;
 
     const id = `${Date.now().toString(36)}${randomUUID().slice(0, 8)}`;
     const dep = `hootdep${id}`;
@@ -581,7 +581,7 @@ where = ["src"]
 
     const secret = (
       await (await createToken(owner.ctx, owner.orgId, { name: "pypi-virtual" })).json()
-    ).secret as string;
+    ).data.secret as string;
 
     const id = `${Date.now().toString(36)}${randomUUID().slice(0, 8)}`;
     const pkgA = `hootva${id}`;
@@ -654,7 +654,7 @@ test.describe("pypi registry error and edge scenarios (Dockerized real pip/twine
     ).toBe(201);
     const secret = (
       await (await createToken(owner.ctx, owner.orgId, { name: "pypi-missing-pkg" })).json()
-    ).secret as string;
+    ).data.secret as string;
 
     const pkg = `hootmissing${Date.now().toString(36)}${randomUUID().slice(0, 8)}`;
     const work = mkdtempSync(join(tmpdir(), "hoot-pypi-missing-"));
@@ -700,7 +700,7 @@ test.describe("pypi registry error and edge scenarios (Dockerized real pip/twine
     ).toBe(201);
     const secret = (
       await (await createToken(owner.ctx, owner.orgId, { name: "pypi-missing-ver" })).json()
-    ).secret as string;
+    ).data.secret as string;
 
     const pkg = `hootmver${Date.now().toString(36)}${randomUUID().slice(0, 8)}`;
     const ver = "1.0.0";
@@ -806,7 +806,7 @@ test.describe("pypi registry error and edge scenarios (Dockerized real pip/twine
     ).toBe(201);
     const secret = (
       await (await createToken(owner.ctx, owner.orgId, { name: "pypi-require-hashes" })).json()
-    ).secret as string;
+    ).data.secret as string;
 
     const pkg = `hoothash${Date.now().toString(36)}${randomUUID().slice(0, 8)}`;
     const ver = "1.0.0";
@@ -890,7 +890,7 @@ test.describe("pypi registry error and edge scenarios (Dockerized real pip/twine
     ).toBe(201);
     const secret = (
       await (await createToken(owner.ctx, owner.orgId, { name: "pypi-private" })).json()
-    ).secret as string;
+    ).data.secret as string;
 
     const pkg = `hootpriv${Date.now().toString(36)}${randomUUID().slice(0, 8)}`;
     const ver = "1.0.0";

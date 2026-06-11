@@ -91,16 +91,16 @@ test.describe("governance: quotas + retention", () => {
       { maxStorageBytes: 1.5 },
       { maxStorageBytes: "1000" },
     ]) {
-      const res = await owner.ctx.post(`/api/orgs/${owner.orgId}/quota`, { data });
+      const res = await owner.ctx.post(`/api/v1/orgs/${owner.orgId}/quota`, { data });
       expect(res.status()).toBe(400);
     }
 
-    const unset = await owner.ctx.post(`/api/orgs/${owner.orgId}/quota`, {
+    const unset = await owner.ctx.post(`/api/v1/orgs/${owner.orgId}/quota`, {
       data: { maxStorageBytes: null },
     });
     expect(unset.status()).toBe(200);
-    const quota = await (await owner.ctx.get(`/api/orgs/${owner.orgId}/quota`)).json();
-    expect(quota.maxStorageBytes).toBeNull();
+    const quota = await (await owner.ctx.get(`/api/v1/orgs/${owner.orgId}/quota`)).json();
+    expect(quota.data.maxStorageBytes).toBeNull();
   });
 
   test("storage quota blocks publishes over the limit", async ({ baseURL }) => {
@@ -110,23 +110,23 @@ test.describe("governance: quotas + retention", () => {
       await (
         await createRepo(owner.ctx, owner.orgId, { name: "quota-npm", moduleId: "npm" })
       ).json()
-    ).repository as { mountPath: string };
-    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "t" })).json())
+    ).data as { mountPath: string };
+    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "t" })).json()).data
       .secret as string;
     const id = Date.now().toString(36);
 
     // tiny quota -> publish rejected
-    await owner.ctx.post(`/api/orgs/${owner.orgId}/quota`, { data: { maxStorageBytes: 10 } });
+    await owner.ctx.post(`/api/v1/orgs/${owner.orgId}/quota`, { data: { maxStorageBytes: 10 } });
     expect(publish(baseURL!, repo.mountPath, token, `qp${id}a`, "1.0.0").ok).toBe(false);
 
     // generous quota -> publish succeeds; usage is tracked
-    await owner.ctx.post(`/api/orgs/${owner.orgId}/quota`, {
+    await owner.ctx.post(`/api/v1/orgs/${owner.orgId}/quota`, {
       data: { maxStorageBytes: 100_000_000 },
     });
     expect(publish(baseURL!, repo.mountPath, token, `qp${id}b`, "1.0.0").ok).toBe(true);
 
-    const quota = await (await owner.ctx.get(`/api/orgs/${owner.orgId}/quota`)).json();
-    expect(quota.usedStorageBytes).toBeGreaterThan(0);
+    const quota = await (await owner.ctx.get(`/api/v1/orgs/${owner.orgId}/quota`)).json();
+    expect(quota.data.usedStorageBytes).toBeGreaterThan(0);
   });
 
   test("storage quota is charged per org even when CAS bytes dedupe globally", async ({
@@ -138,30 +138,30 @@ test.describe("governance: quotas + retention", () => {
       await (
         await createRepo(first.ctx, first.orgId, { name: "quota-oci", moduleId: "docker" })
       ).json()
-    ).repository as { mountPath: string };
+    ).data as { mountPath: string };
     const secondRepo = (
       await (
         await createRepo(second.ctx, second.orgId, { name: "quota-oci", moduleId: "docker" })
       ).json()
-    ).repository as { mountPath: string };
+    ).data as { mountPath: string };
     const bytes = Buffer.from("shared quota payload that is larger than ten bytes");
 
     const firstUpload = await uploadOciBlob(first.ctx, firstRepo.mountPath, "app", bytes);
     expect(firstUpload.status()).toBe(201);
 
-    await second.ctx.post(`/api/orgs/${second.orgId}/quota`, { data: { maxStorageBytes: 10 } });
+    await second.ctx.post(`/api/v1/orgs/${second.orgId}/quota`, { data: { maxStorageBytes: 10 } });
     const blocked = await uploadOciBlob(second.ctx, secondRepo.mountPath, "app", bytes);
     expect(blocked.status()).toBe(403);
     expect((await blocked.json()).errors[0].message).toBe("storage quota exceeded");
 
-    await second.ctx.post(`/api/orgs/${second.orgId}/quota`, {
+    await second.ctx.post(`/api/v1/orgs/${second.orgId}/quota`, {
       data: { maxStorageBytes: 1_000_000 },
     });
     const allowed = await uploadOciBlob(second.ctx, secondRepo.mountPath, "app", bytes);
     expect(allowed.status()).toBe(201);
 
-    const quota = await (await second.ctx.get(`/api/orgs/${second.orgId}/quota`)).json();
-    expect(quota.usedStorageBytes).toBe(bytes.byteLength);
+    const quota = await (await second.ctx.get(`/api/v1/orgs/${second.orgId}/quota`)).json();
+    expect(quota.data.usedStorageBytes).toBe(bytes.byteLength);
   });
 
   test("storage quota blocks cross-org OCI blob mounts before adding a target ref", async ({
@@ -169,23 +169,23 @@ test.describe("governance: quotas + retention", () => {
   }) => {
     const owner = await setupOwner(baseURL!);
     const targetSlug = uniq("target-org");
-    const targetOrgRes = await owner.ctx.post("/api/orgs", {
+    const targetOrgRes = await owner.ctx.post("/api/v1/orgs", {
       data: { slug: targetSlug, displayName: `Org ${targetSlug}` },
     });
     expect(targetOrgRes.status()).toBe(201);
-    const targetOrg = (await targetOrgRes.json()).org as { id: string };
+    const targetOrg = (await targetOrgRes.json()).data as { id: string };
     const sourceRepoName = uniq("source-oci");
     const targetRepoName = uniq("target-oci");
     const sourceRepo = (
       await (
         await createRepo(owner.ctx, owner.orgId, { name: sourceRepoName, moduleId: "docker" })
       ).json()
-    ).repository as { mountPath: string };
+    ).data as { mountPath: string };
     const targetRepo = (
       await (
         await createRepo(owner.ctx, targetOrg.id, { name: targetRepoName, moduleId: "docker" })
       ).json()
-    ).repository as { mountPath: string };
+    ).data as { mountPath: string };
     const bytes = Buffer.from("mounted payload that must be charged to target org");
     const digest = sha256(bytes);
 
@@ -198,20 +198,20 @@ test.describe("governance: quotas + retention", () => {
       digest,
     )}&from=${encodeURIComponent(mountFrom)}`;
 
-    await owner.ctx.post(`/api/orgs/${targetOrg.id}/quota`, { data: { maxStorageBytes: 10 } });
+    await owner.ctx.post(`/api/v1/orgs/${targetOrg.id}/quota`, { data: { maxStorageBytes: 10 } });
     const blocked = await owner.ctx.post(mountUrl);
     expect(blocked.status()).toBe(403);
     expect((await blocked.json()).errors[0].message).toBe("storage quota exceeded");
 
-    await owner.ctx.post(`/api/orgs/${targetOrg.id}/quota`, {
+    await owner.ctx.post(`/api/v1/orgs/${targetOrg.id}/quota`, {
       data: { maxStorageBytes: 1_000_000 },
     });
     const allowed = await owner.ctx.post(mountUrl);
     expect(allowed.status()).toBe(201);
     expect(allowed.headers()["docker-content-digest"]).toBe(digest);
 
-    const quota = await (await owner.ctx.get(`/api/orgs/${targetOrg.id}/quota`)).json();
-    expect(quota.usedStorageBytes).toBe(bytes.byteLength);
+    const quota = await (await owner.ctx.get(`/api/v1/orgs/${targetOrg.id}/quota`)).json();
+    expect(quota.data.usedStorageBytes).toBe(bytes.byteLength);
 
     const mountedBlob = await owner.ctx.get(`/${targetRepo.mountPath}/app/blobs/${digest}`);
     expect(mountedBlob.status()).toBe(200);
@@ -224,8 +224,8 @@ test.describe("governance: quotas + retention", () => {
     const repoRes = await (
       await createRepo(owner.ctx, owner.orgId, { name: "ret-npm", moduleId: "npm" })
     ).json();
-    const repo = repoRes.repository as { id: string; mountPath: string };
-    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "t" })).json())
+    const repo = repoRes.data as { id: string; mountPath: string };
+    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "t" })).json()).data
       .secret as string;
     const pkg = `retpkg${Date.now().toString(36)}`;
 
@@ -249,17 +249,17 @@ test.describe("governance: quotas + retention", () => {
       200,
     );
 
-    const invalid = await owner.ctx.post(`/api/repositories/${repo.id}/retention/apply`, {
+    const invalid = await owner.ctx.post(`/api/v1/repositories/${repo.id}/retention/apply`, {
       data: { keepLastN: 0 },
     });
     expect(invalid.status()).toBe(400);
 
     const applied = await (
-      await owner.ctx.post(`/api/repositories/${repo.id}/retention/apply`, {
+      await owner.ctx.post(`/api/v1/repositories/${repo.id}/retention/apply`, {
         data: { keepLastN: 2 },
       })
     ).json();
-    expect(applied.pruned).toBe(1);
+    expect(applied.data.pruned).toBe(1);
 
     const after = await (await owner.ctx.get(`/${repo.mountPath}/${pkg}`)).json();
     expect(Object.keys(after.versions)).toHaveLength(2);
@@ -272,16 +272,18 @@ test.describe("governance: quotas + retention", () => {
     ).json();
     expect(listedTags).toEqual({ latest: "1.0.2" });
 
-    const packagesRes = await owner.ctx.get(`/api/repositories/${repo.id}/packages`);
+    const packagesRes = await owner.ctx.get(`/api/v1/repositories/${repo.id}/packages`);
     const packagesBody = (await packagesRes.json()) as {
-      packages: { id: string; name: string; latestVersion: string | null }[];
+      data: { id: string; name: string; latestVersion: string | null }[];
     };
-    const listed = packagesBody.packages.find((p) => p.name === pkg);
+    const listed = packagesBody.data.find((p) => p.name === pkg);
     expect(listed?.latestVersion).toBe("1.0.2");
 
-    const versionsRes = await owner.ctx.get(`/api/packages/${listed!.id}/versions`);
-    const versionsBody = (await versionsRes.json()) as { versions: { version: string }[] };
-    expect(versionsBody.versions.map((v) => v.version).sort()).toEqual(["1.0.1", "1.0.2"]);
+    const versionsRes = await owner.ctx.get(`/api/v1/packages/${listed!.id}/versions`);
+    const versionsBody = (await versionsRes.json()) as {
+      data: { versions: { version: string }[] };
+    };
+    expect(versionsBody.data.versions.map((v) => v.version).sort()).toEqual(["1.0.1", "1.0.2"]);
     expect(publish(baseURL!, repo.mountPath, token, pkg, "1.0.0").ok).toBe(false);
   });
 
@@ -294,7 +296,7 @@ test.describe("governance: quotas + retention", () => {
           moduleId: "docker",
         })
       ).json()
-    ).repository as { id: string; mountPath: string };
+    ).data as { id: string; mountPath: string };
     const image = uniq("quota-reactivation");
     const config = Buffer.from("{}");
     const layer = Buffer.from("quota reactivation layer");
@@ -308,7 +310,7 @@ test.describe("governance: quotas + retention", () => {
 
     expect((await uploadOciBlob(owner.ctx, repo.mountPath, image, config)).status()).toBe(201);
     expect((await uploadOciBlob(owner.ctx, repo.mountPath, image, layer)).status()).toBe(201);
-    await owner.ctx.post(`/api/orgs/${owner.orgId}/quota`, { data: { maxArtifacts: 2 } });
+    await owner.ctx.post(`/api/v1/orgs/${owner.orgId}/quota`, { data: { maxArtifacts: 2 } });
 
     for (const tag of ["v1", "v2"]) {
       expect(
@@ -328,24 +330,24 @@ test.describe("governance: quotas + retention", () => {
     expect((await quotaState()).usedArtifacts).toBe(2);
 
     const applied = await (
-      await owner.ctx.post(`/api/repositories/${repo.id}/retention/apply`, {
+      await owner.ctx.post(`/api/v1/repositories/${repo.id}/retention/apply`, {
         data: { keepLastN: 1 },
       })
     ).json();
-    expect(applied.pruned).toBe(1);
+    expect(applied.data.pruned).toBe(1);
     expect((await quotaState()).usedArtifacts).toBe(1);
 
-    const packagesRes = await owner.ctx.get(`/api/repositories/${repo.id}/packages`);
+    const packagesRes = await owner.ctx.get(`/api/v1/repositories/${repo.id}/packages`);
     const packagesBody = (await packagesRes.json()) as {
-      packages: { id: string; name: string }[];
+      data: { id: string; name: string }[];
     };
-    const pkg = packagesBody.packages.find((row) => row.name === image);
+    const pkg = packagesBody.data.find((row) => row.name === image);
     expect(pkg).toBeTruthy();
-    const versionsRes = await owner.ctx.get(`/api/packages/${pkg!.id}/versions`);
+    const versionsRes = await owner.ctx.get(`/api/v1/packages/${pkg!.id}/versions`);
     const versionsBody = (await versionsRes.json()) as {
-      versions: { version: string }[];
+      data: { versions: { version: string }[] };
     };
-    const liveVersions = new Set(versionsBody.versions.map((version) => version.version));
+    const liveVersions = new Set(versionsBody.data.versions.map((version) => version.version));
     const prunedTag = ["v1", "v2"].find((tag) => !liveVersions.has(tag));
     expect(prunedTag).toBeTruthy();
 
@@ -386,7 +388,7 @@ test.describe("governance: quotas + retention", () => {
           moduleId: "docker",
         })
       ).json()
-    ).repository as { mountPath: string };
+    ).data as { mountPath: string };
     const image = uniq("quota-delete");
     const config = Buffer.from("{}");
     const layer = Buffer.from("quota delete layer");
@@ -400,7 +402,7 @@ test.describe("governance: quotas + retention", () => {
 
     expect((await uploadOciBlob(owner.ctx, repo.mountPath, image, config)).status()).toBe(201);
     expect((await uploadOciBlob(owner.ctx, repo.mountPath, image, layer)).status()).toBe(201);
-    await owner.ctx.post(`/api/orgs/${owner.orgId}/quota`, { data: { maxArtifacts: 1 } });
+    await owner.ctx.post(`/api/v1/orgs/${owner.orgId}/quota`, { data: { maxArtifacts: 1 } });
 
     const pushed = await putOciManifest(
       owner.ctx,

@@ -21,6 +21,7 @@ import {
 } from "@hootifactory/contracts";
 import type { Hono } from "hono";
 import type { AppEnv } from "../types";
+import { tokenDto } from "./api-v1-dto";
 import {
   authorizationDenied,
   dataResponse,
@@ -30,14 +31,13 @@ import {
   OrgIdParamsSchema,
   OrgTokenParamsSchema,
   PaginationQuerySchema,
+  requireUserPrincipal,
   TokenIdParamsSchema,
   validateJsonV1,
   validatePagination,
   validateV1,
 } from "./api-v1-helpers";
 import { AUDIT_RESULT, audit } from "./http";
-import { tokenDto } from "./ui-dto";
-import { requireUserPrincipal } from "./ui-repository-access";
 
 export function registerApiV1TokenRoutes(apiV1Router: Hono<AppEnv>) {
   apiV1Router.get(
@@ -93,7 +93,7 @@ export function registerApiV1TokenRoutes(apiV1Router: Hono<AppEnv>) {
       const params = validateV1(c, OrgIdParamsSchema, c.req.param(), "invalid path parameters");
       if (!params.ok) return params.response;
       const user = requireUserPrincipal(c);
-      if (!user.ok) return errorResponse(c, 401, "UNAUTHENTICATED", "login required");
+      if (!user.ok) return user.response;
       const decision = await authorizeTokenCreation(user.principal, params.data.orgId);
       if (!decision.allowed) return authorizationDenied(c, decision);
       const parsedBody = await validateJsonV1(

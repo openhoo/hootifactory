@@ -50,7 +50,7 @@ test.describe("rubygems registry (Dockerized real gem)", () => {
       visibility: "public",
     });
     const token = (await (await createToken(owner.ctx, owner.orgId, { name: "rubygems" })).json())
-      .secret as string;
+      .data.secret as string;
 
     const source = `${dockerReachableUrl(baseURL!)}/${repo.mountPath}`;
     const id = Date.now().toString(36);

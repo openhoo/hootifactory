@@ -1,6 +1,6 @@
-import type { RepositoryRow } from "./ui-repository-access";
+import type { ResolvedRepo } from "@hootifactory/registry";
 
-type VirtualMemberRepo = Pick<RepositoryRow, "id" | "orgId" | "moduleId" | "kind">;
+type VirtualMemberRepo = Pick<ResolvedRepo, "id" | "orgId" | "moduleId" | "kind">;
 
 type ValidationResult = { ok: true } | { ok: false; status: 400 | 404; error: string };
 

@@ -157,7 +157,7 @@ test.describe("concurrent publishes", () => {
       await (
         await createRepo(owner.ctx, owner.orgId, { name: uniq("concurrent-npm"), moduleId: "npm" })
       ).json()
-    ).repository as { id: string; mountPath: string };
+    ).data as { id: string; mountPath: string };
     const pkg = `pkg-${Date.now().toString(36)}`;
     const version = "1.0.0";
     const first = Buffer.from("first publish payload");
@@ -195,8 +195,8 @@ test.describe("concurrent publishes", () => {
           visibility: "public",
         })
       ).json()
-    ).repository as { id: string; mountPath: string };
-    const secret = (await (await createToken(owner.ctx, owner.orgId, { name: "pypi" })).json())
+    ).data as { id: string; mountPath: string };
+    const secret = (await (await createToken(owner.ctx, owner.orgId, { name: "pypi" })).json()).data
       .secret as string;
     const anon = await anonContext(baseURL!);
     const pkg = `pypirace${Date.now().toString(36)}`;
@@ -250,8 +250,8 @@ test.describe("concurrent publishes", () => {
           visibility: "public",
         })
       ).json()
-    ).repository as { id: string; mountPath: string };
-    const secret = (await (await createToken(owner.ctx, owner.orgId, { name: "pypi" })).json())
+    ).data as { id: string; mountPath: string };
+    const secret = (await (await createToken(owner.ctx, owner.orgId, { name: "pypi" })).json()).data
       .secret as string;
     const anon = await anonContext(baseURL!);
     const pkg = `pypidup${Date.now().toString(36)}`;

@@ -289,7 +289,7 @@ test.describe("OIDC SSO", () => {
     await provider.start();
     try {
       const owner = await setupOwner(baseURL!);
-      const org = await owner.ctx.post("/api/orgs", {
+      const org = await owner.ctx.post("/api/v1/orgs", {
         data: { slug: ORG_SLUG, displayName: "OIDC E2E" },
       });
       expect([201, 409]).toContain(org.status());

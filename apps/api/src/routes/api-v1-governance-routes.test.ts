@@ -24,6 +24,10 @@ const repo: RepoRow = {
 const virtualRepo: RepoRow = { ...repo, id: "repo_v", kind: "virtual", name: "virtual" };
 const hostedMember: RepoRow = { ...repo, id: "repo_m", kind: "hosted", name: "member" };
 
+const realConfig = await import("@hootifactory/config");
+const env = { ...realConfig.loadEnv(), AUTH_ALLOW_ORG_CREATION: true };
+mock.module("@hootifactory/config", () => ({ ...realConfig, env }));
+
 let allow = true;
 class VirtualMemberLimitExceededError extends Error {}
 class VirtualMemberOrgMismatchError extends Error {}
@@ -37,6 +41,14 @@ const addUpstream = mock(async () => {});
 const addVirtualMember = mock(async () => {});
 const getOrganizationById = mock(
   async () => ({ id: "org_1", slug: "acme" }) as { id: string; slug: string } | null,
+);
+const createOrganizationWithOwner = mock(
+  async () =>
+    ({ id: "org_new", slug: "acme", displayName: "Acme" }) as {
+      id: string;
+      slug: string;
+      displayName: string;
+    },
 );
 const createRepositoryForPrincipal = mock(
   async () =>
@@ -52,6 +64,7 @@ mock.module("@hootifactory/auth", () => ({
     reason: "denied",
   }),
   createRequestAuthorizer: () => async () => ({ allowed: allow }),
+  createOrganizationWithOwner,
   getOrganizationById,
   listAccessibleOrgs: async () => [],
   httpStatusForDenial: (d: { code?: string }) => (d.code === "unauthenticated" ? 401 : 403),
@@ -220,6 +233,7 @@ describe("api v1 organization routes", () => {
   beforeEach(() => {
     allow = true;
     getOrganizationById.mockResolvedValue({ id: "org_1", slug: "acme" });
+    createOrganizationWithOwner.mockClear();
     createRepositoryForPrincipal.mockResolvedValue({ ok: true, repo });
   });
 
@@ -254,6 +268,49 @@ describe("api v1 organization routes", () => {
     );
     expect(res.status).toBe(201);
     expect(createRepositoryForPrincipal).toHaveBeenCalled();
+  });
+
+  test("POST /orgs creates an organization for a user principal", async () => {
+    const res = await appWithRoutes().fetch(
+      postJson("/orgs", { slug: "acme", displayName: "Acme" }),
+    );
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { data: { id: string; slug: string } };
+    expect(body.data).toMatchObject({ id: "org_new", slug: "acme" });
+    expect(createOrganizationWithOwner).toHaveBeenCalledTimes(1);
+  });
+
+  test("POST /orgs maps unique-slug violations to 409", async () => {
+    createOrganizationWithOwner.mockRejectedValueOnce(
+      Object.assign(new Error("duplicate key value violates unique constraint"), {
+        code: "23505",
+      }),
+    );
+    const res = await appWithRoutes().fetch(
+      postJson("/orgs", { slug: "acme", displayName: "Acme" }),
+    );
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("CONFLICT");
+  });
+
+  test("POST /orgs rejects malformed slugs", async () => {
+    const res = await appWithRoutes().fetch(
+      postJson("/orgs", { slug: "Not A Slug", displayName: "Acme" }),
+    );
+    expect(res.status).toBe(400);
+  });
+
+  test("POST /orgs returns 403 when org creation is disabled", async () => {
+    env.AUTH_ALLOW_ORG_CREATION = false;
+    try {
+      const res = await appWithRoutes().fetch(
+        postJson("/orgs", { slug: "acme", displayName: "Acme" }),
+      );
+      expect(res.status).toBe(403);
+    } finally {
+      env.AUTH_ALLOW_ORG_CREATION = true;
+    }
   });
 
   test("POST /orgs/:orgId/repositories surfaces service errors", async () => {

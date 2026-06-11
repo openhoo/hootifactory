@@ -198,7 +198,7 @@ export async function publishCargoFixture(
     visibility: "public",
   });
   const token = (await (await createToken(owner.ctx, owner.orgId, { name: "tr-cargo" })).json())
-    .secret as string;
+    .data.secret as string;
   const anon = await anonContext(baseURL);
   const crate = `hootcrate${SUFFIX()}`;
   for (let i = 0; i < versions; i++) {
@@ -297,7 +297,7 @@ export async function publishPypiFixture(
     moduleId: "pypi",
     visibility: "public",
   });
-  const token = (await (await createToken(owner.ctx, owner.orgId, { name: "tr-pypi" })).json())
+  const token = (await (await createToken(owner.ctx, owner.orgId, { name: "tr-pypi" })).json()).data
     .secret as string;
   const anon = await anonContext(baseURL);
   const pkg = `hootpy${SUFFIX()}`;

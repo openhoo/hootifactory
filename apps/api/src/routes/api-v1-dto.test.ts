@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { ApiTokenRow } from "@hootifactory/auth";
 import type { ResolvedRepo } from "@hootifactory/registry";
-import { repositoryDto, tokenDto } from "./ui-dto";
+import { repositoryDto, tokenDto } from "./api-v1-dto";
 
 const createdAt = new Date("2026-01-02T03:04:05.000Z");
 const updatedAt = new Date("2026-01-03T03:04:05.000Z");

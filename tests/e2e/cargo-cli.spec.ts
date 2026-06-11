@@ -33,8 +33,8 @@ test.describe("cargo sparse registry (Dockerized real cargo)", () => {
           visibility: "public",
         })
       ).json()
-    ).repository as { mountPath: string };
-    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "cargo" })).json())
+    ).data as { mountPath: string };
+    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "cargo" })).json()).data
       .secret as string;
 
     const registryUrl = `${dockerReachableUrl(baseURL!)}/${repo.mountPath}/`;
@@ -116,8 +116,8 @@ test.describe("cargo sparse registry (Dockerized real cargo)", () => {
           visibility: "public",
         })
       ).json()
-    ).repository as { mountPath: string };
-    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "cargo" })).json())
+    ).data as { mountPath: string };
+    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "cargo" })).json()).data
       .secret as string;
 
     const registryUrl = `${dockerReachableUrl(baseURL!)}/${repo.mountPath}/`;
@@ -304,7 +304,7 @@ test.describe("cargo sparse registry extended scenarios (Dockerized real cargo)"
       moduleId: "cargo",
       visibility: "public",
     });
-    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "cargo" })).json())
+    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "cargo" })).json()).data
       .secret as string;
     const { env, registryUrl } = cargoEnv(
       baseURL!,
@@ -337,7 +337,7 @@ test.describe("cargo sparse registry extended scenarios (Dockerized real cargo)"
       moduleId: "cargo",
       visibility: "public",
     });
-    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "cargo" })).json())
+    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "cargo" })).json()).data
       .secret as string;
     const { env, registryUrl } = cargoEnv(baseURL!, repo.mountPath, token, "hoot-cargo-yank-home-");
 
@@ -375,7 +375,7 @@ test.describe("cargo sparse registry extended scenarios (Dockerized real cargo)"
       moduleId: "cargo",
       visibility: "public",
     });
-    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "cargo" })).json())
+    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "cargo" })).json()).data
       .secret as string;
     const { env, registryUrl } = cargoEnv(
       baseURL!,
@@ -418,7 +418,7 @@ test.describe("cargo sparse registry extended scenarios (Dockerized real cargo)"
       moduleId: "cargo",
       visibility: "public",
     });
-    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "cargo" })).json())
+    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "cargo" })).json()).data
       .secret as string;
     const { env, registryUrl } = cargoEnv(
       baseURL!,
@@ -454,7 +454,7 @@ test.describe("cargo sparse registry extended scenarios (Dockerized real cargo)"
       kind: "virtual",
       visibility: "public",
     });
-    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "cargo" })).json())
+    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "cargo" })).json()).data
       .secret as string;
 
     const memberEnv = cargoEnv(baseURL!, member.mountPath, token, "hoot-cargo-virt-member-home-");
@@ -486,7 +486,7 @@ test.describe("cargo sparse registry error and edge scenarios (Dockerized real c
       moduleId: "cargo",
       visibility: "public",
     });
-    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "cargo" })).json())
+    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "cargo" })).json()).data
       .secret as string;
     const { env, registryUrl } = cargoEnv(baseURL!, repo.mountPath, token, "hoot-cargo-dup-home-");
 
@@ -512,7 +512,7 @@ test.describe("cargo sparse registry error and edge scenarios (Dockerized real c
       name: "crates-noauth-cli",
       moduleId: "cargo",
     });
-    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "cargo" })).json())
+    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "cargo" })).json()).data
       .secret as string;
     const { env, registryUrl } = cargoEnv(
       baseURL!,
@@ -563,7 +563,7 @@ test.describe("cargo sparse registry error and edge scenarios (Dockerized real c
       name: "crates-missing-cli",
       moduleId: "cargo",
     });
-    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "cargo" })).json())
+    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "cargo" })).json()).data
       .secret as string;
     const { env, registryUrl } = cargoEnv(
       baseURL!,
@@ -598,7 +598,7 @@ test.describe("cargo sparse registry error and edge scenarios (Dockerized real c
       moduleId: "cargo",
       visibility: "public",
     });
-    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "cargo" })).json())
+    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "cargo" })).json()).data
       .secret as string;
     const { env, registryUrl } = cargoEnv(
       baseURL!,

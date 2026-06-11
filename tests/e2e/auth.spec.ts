@@ -10,12 +10,12 @@ test.describe("authentication", () => {
     });
     expect(reg.status()).toBe(201);
 
-    const me = await ctx.get("/api/me");
+    const me = await ctx.get("/api/v1/me");
     expect(me.status()).toBe(200);
-    expect((await me.json()).authenticated).toBe(true);
+    expect((await me.json()).data.authenticated).toBe(true);
 
     expect((await ctx.post("/api/auth/logout")).status()).toBe(200);
-    expect((await ctx.get("/api/me")).status()).toBe(401);
+    expect((await ctx.get("/api/v1/me")).status()).toBe(401);
   });
 
   test("register too-short password -> 400", async ({ baseURL }) => {
@@ -109,21 +109,21 @@ test.describe("authentication", () => {
 
     for (let i = 0; i < 5; i++) {
       const basic = Buffer.from(`${owner.username}:wrong-password-${i}`).toString("base64");
-      const res = await anon.get("/api/me", {
+      const res = await anon.get("/api/v1/me", {
         headers: { ...headers, authorization: `Basic ${basic}` },
       });
       expect(res.status()).toBe(401);
     }
 
     const throttledBasic = Buffer.from(`${owner.username}:still-wrong`).toString("base64");
-    const throttled = await anon.get("/api/me", {
+    const throttled = await anon.get("/api/v1/me", {
       headers: { ...headers, authorization: `Basic ${throttledBasic}` },
     });
     expect(throttled.status()).toBe(429);
     expect(throttled.headers()["retry-after"]).toMatch(/^\d+$/);
 
     const blockedValidBasic = Buffer.from(`${owner.username}:${owner.password}`).toString("base64");
-    const recovered = await anon.get("/api/me", {
+    const recovered = await anon.get("/api/v1/me", {
       headers: { ...headers, authorization: `Basic ${blockedValidBasic}` },
     });
     expect(recovered.status()).toBe(429);
@@ -141,31 +141,31 @@ test.describe("authentication", () => {
 
   test("anonymous /api/me -> 401", async ({ baseURL }) => {
     const anon = await anonContext(baseURL!);
-    expect((await anon.get("/api/me")).status()).toBe(401);
+    expect((await anon.get("/api/v1/me")).status()).toBe(401);
   });
 
   test("bearer token auth resolves token principal", async ({ baseURL }) => {
     const owner = await setupOwner(baseURL!);
     const tokRes = await createToken(owner.ctx, owner.orgId, { name: "ci" });
-    const secret = (await tokRes.json()).secret as string;
+    const secret = (await tokRes.json()).data.secret as string;
 
     const anon = await anonContext(baseURL!);
-    const me = await anon.get("/api/me", { headers: { authorization: `Bearer ${secret}` } });
+    const me = await anon.get("/api/v1/me", { headers: { authorization: `Bearer ${secret}` } });
     expect(me.status()).toBe(200);
     const body = await me.json();
-    expect(body.principal.kind).toBe("token");
-    expect(body.principal.orgId).toBe(owner.orgId);
+    expect(body.data.principal.kind).toBe("token");
+    expect(body.data.principal.orgId).toBe(owner.orgId);
   });
 
   test("basic auth with token-as-password works", async ({ baseURL }) => {
     const owner = await setupOwner(baseURL!);
-    const secret = (await (await createToken(owner.ctx, owner.orgId, { name: "ci2" })).json())
+    const secret = (await (await createToken(owner.ctx, owner.orgId, { name: "ci2" })).json()).data
       .secret as string;
     const anon = await anonContext(baseURL!);
     const basic = Buffer.from(`__token__:${secret}`).toString("base64");
-    const me = await anon.get("/api/me", { headers: { authorization: `Basic ${basic}` } });
+    const me = await anon.get("/api/v1/me", { headers: { authorization: `Basic ${basic}` } });
     expect(me.status()).toBe(200);
-    expect((await me.json()).principal.kind).toBe("token");
+    expect((await me.json()).data.principal.kind).toBe("token");
   });
 
   test("basic auth decodes UTF-8 usernames and passwords", async ({ baseURL }) => {
@@ -179,14 +179,14 @@ test.describe("authentication", () => {
 
     const anon = await anonContext(baseURL!);
     const basic = Buffer.from(`${username}:${password}`, "utf8").toString("base64");
-    const me = await anon.get("/api/me", { headers: { authorization: `Basic ${basic}` } });
+    const me = await anon.get("/api/v1/me", { headers: { authorization: `Basic ${basic}` } });
     expect(me.status()).toBe(200);
-    expect((await me.json()).principal.username).toBe(username);
+    expect((await me.json()).data.principal.username).toBe(username);
   });
 
   test("garbage bearer -> 401 on /api/me", async ({ baseURL }) => {
     const anon = await anonContext(baseURL!);
-    const me = await anon.get("/api/me", { headers: { authorization: "Bearer hoot_garbage" } });
+    const me = await anon.get("/api/v1/me", { headers: { authorization: "Bearer hoot_garbage" } });
     expect(me.status()).toBe(401);
   });
 
@@ -194,15 +194,15 @@ test.describe("authentication", () => {
     baseURL,
   }) => {
     const owner = await setupOwner(baseURL!);
-    expect((await owner.ctx.get("/api/me")).status()).toBe(200);
+    expect((await owner.ctx.get("/api/v1/me")).status()).toBe(200);
 
-    const bearer = await owner.ctx.get("/api/me", {
+    const bearer = await owner.ctx.get("/api/v1/me", {
       headers: { authorization: "Bearer hoot_garbage" },
     });
     expect(bearer.status()).toBe(401);
 
     const basic = Buffer.from(`${owner.username}:wrong-password`).toString("base64");
-    const basicRes = await owner.ctx.get("/api/me", {
+    const basicRes = await owner.ctx.get("/api/v1/me", {
       headers: { authorization: `Basic ${basic}` },
     });
     expect(basicRes.status()).toBe(401);

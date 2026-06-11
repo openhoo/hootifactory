@@ -41,7 +41,7 @@ test.describe("registry dispatch", () => {
             moduleId: item.moduleId,
           })
         ).json()
-      ).repository as { mountPath: string };
+      ).data as { mountPath: string };
       const res = await anon.get(item.path(repo.mountPath));
       expect(res.status()).toBe(401);
       const body = await res.json();

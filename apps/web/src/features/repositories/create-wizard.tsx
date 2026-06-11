@@ -1,4 +1,4 @@
-import type { RegistryModuleDto } from "@hootifactory/contracts/legacy";
+import type { V1RegistryModule } from "@hootifactory/contracts";
 import { REPO_KINDS, type RepoKind, VISIBILITIES, type Visibility } from "@hootifactory/types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Boxes, Globe, Lock, Search } from "lucide-react";
@@ -79,7 +79,7 @@ export function validateStep(
 
 /** Keep the chosen kind only if the (new) module supports it; otherwise reset to hosted. */
 export function selectModuleNextKind(
-  module: RegistryModuleDto | undefined,
+  module: V1RegistryModule | undefined,
   kind: RepoKind,
 ): RepoKind {
   if (kind === "proxy" && module?.capabilities.proxyable) return "proxy";
@@ -132,7 +132,7 @@ const VIS_DESC: Record<Visibility, string> = {
 };
 
 function kindAvailability(
-  module: RegistryModuleDto | undefined,
+  module: V1RegistryModule | undefined,
 ): Record<RepoKind, { available: boolean; reason?: string }> {
   return {
     hosted: { available: true },
@@ -334,7 +334,7 @@ function renderFormatStep({
   error,
 }: {
   modules: { isLoading: boolean; isError: boolean; refetch: () => unknown };
-  moduleOptions: RegistryModuleDto[];
+  moduleOptions: V1RegistryModule[];
   query: string;
   setQuery: (q: string) => void;
   value: string;
@@ -429,7 +429,7 @@ function renderTypeStep({
 }: {
   form: RepoFormState;
   setForm: Dispatch<SetStateAction<RepoFormState>>;
-  module: RegistryModuleDto | undefined;
+  module: V1RegistryModule | undefined;
 }): ReactNode {
   const avail = kindAvailability(module);
   return (
@@ -585,7 +585,7 @@ function renderReviewStep({
   serverError,
 }: {
   form: RepoFormState;
-  module: RegistryModuleDto | undefined;
+  module: V1RegistryModule | undefined;
   serverError: string;
 }): ReactNode {
   const rows: { label: string; value: ReactNode }[] = [

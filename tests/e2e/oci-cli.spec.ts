@@ -29,7 +29,7 @@ test.describe("oci registry (Dockerized real ORAS)", () => {
     expect(
       (await createRepo(owner.ctx, owner.orgId, { name: "artifacts", moduleId: "oci" })).status(),
     ).toBe(201);
-    const secret = (await (await createToken(owner.ctx, owner.orgId, { name: "oras" })).json())
+    const secret = (await (await createToken(owner.ctx, owner.orgId, { name: "oras" })).json()).data
       .secret as string;
 
     const work = mkdtempSync(join(tmpdir(), "hoot-oci-"));
@@ -163,7 +163,7 @@ test.describe("oci registry extended scenarios (Dockerized real ORAS)", () => {
     ).toBe(201);
     const secret = (
       await (await createToken(owner.ctx, owner.orgId, { name: "oras-multi" })).json()
-    ).secret as string;
+    ).data.secret as string;
     const auth = ["--plain-http", "--no-tty", "-u", "__token__", "-p", secret];
 
     const work = mkdtempSync(join(tmpdir(), "hoot-oci-multi-"));
@@ -212,7 +212,7 @@ test.describe("oci registry extended scenarios (Dockerized real ORAS)", () => {
     ).toBe(201);
     const secret = (
       await (await createToken(owner.ctx, owner.orgId, { name: "oras-annot" })).json()
-    ).secret as string;
+    ).data.secret as string;
     const auth = ["--plain-http", "--no-tty", "-u", "__token__", "-p", secret];
 
     const work = mkdtempSync(join(tmpdir(), "hoot-oci-annot-"));
@@ -268,7 +268,7 @@ test.describe("oci registry extended scenarios (Dockerized real ORAS)", () => {
       (await createRepo(owner.ctx, owner.orgId, { name: repoB, moduleId: "oci" })).status(),
     ).toBe(201);
     const secret = (await (await createToken(owner.ctx, owner.orgId, { name: "oras-copy" })).json())
-      .secret as string;
+      .data.secret as string;
     const auth = ["--plain-http", "--no-tty", "-u", "__token__", "-p", secret];
 
     const work = mkdtempSync(join(tmpdir(), "hoot-oci-copy-"));
@@ -335,7 +335,7 @@ test.describe("oci registry extended scenarios (Dockerized real ORAS)", () => {
       (await createRepo(owner.ctx, owner.orgId, { name: repo, moduleId: "oci" })).status(),
     ).toBe(201);
     const secret = (await (await createToken(owner.ctx, owner.orgId, { name: "oras-tag" })).json())
-      .secret as string;
+      .data.secret as string;
     const auth = ["--plain-http", "--no-tty", "-u", "__token__", "-p", secret];
 
     const work = mkdtempSync(join(tmpdir(), "hoot-oci-tag-"));
@@ -373,7 +373,7 @@ test.describe("oci registry extended scenarios (Dockerized real ORAS)", () => {
     ).toBe(201);
     const secret = (
       await (await createToken(owner.ctx, owner.orgId, { name: "oras-referrers" })).json()
-    ).secret as string;
+    ).data.secret as string;
     const auth = ["--plain-http", "--no-tty", "-u", "__token__", "-p", secret];
 
     const work = mkdtempSync(join(tmpdir(), "hoot-oci-referrers-"));
@@ -480,7 +480,7 @@ test.describe("oci registry extended scenarios (Dockerized real ORAS)", () => {
     });
     const secret = (
       await (await createToken(owner.ctx, owner.orgId, { name: "oras-virtual" })).json()
-    ).secret as string;
+    ).data.secret as string;
     const auth = ["--plain-http", "--no-tty", "-u", "__token__", "-p", secret];
 
     const work = mkdtempSync(join(tmpdir(), "hoot-oci-virtual-"));
@@ -515,7 +515,7 @@ test.describe("oci registry error and edge scenarios (Dockerized real ORAS)", ()
     ).toBe(201);
     const secret = (
       await (await createToken(owner.ctx, owner.orgId, { name: "oras-missing-tag" })).json()
-    ).secret as string;
+    ).data.secret as string;
     const auth = ["--plain-http", "--no-tty", "-u", "__token__", "-p", secret];
 
     const work = mkdtempSync(join(tmpdir(), "hoot-oci-missing-tag-"));
@@ -551,7 +551,7 @@ test.describe("oci registry error and edge scenarios (Dockerized real ORAS)", ()
     ).toBe(201);
     const secret = (
       await (await createToken(owner.ctx, owner.orgId, { name: "oras-no-referrers" })).json()
-    ).secret as string;
+    ).data.secret as string;
     const auth = ["--plain-http", "--no-tty", "-u", "__token__", "-p", secret];
 
     const work = mkdtempSync(join(tmpdir(), "hoot-oci-no-referrers-"));
@@ -600,7 +600,7 @@ test.describe("oci registry error and edge scenarios (Dockerized real ORAS)", ()
     ).toBe(201);
     const secret = (
       await (await createToken(owner.ctx, owner.orgId, { name: "oras-bad-token" })).json()
-    ).secret as string;
+    ).data.secret as string;
     const auth = ["--plain-http", "--no-tty", "-u", "__token__", "-p", secret];
 
     const work = mkdtempSync(join(tmpdir(), "hoot-oci-bad-token-"));
@@ -636,7 +636,7 @@ test.describe("oci registry error and edge scenarios (Dockerized real ORAS)", ()
     ).toBe(201);
     const secret = (
       await (await createToken(owner.ctx, owner.orgId, { name: "oras-missing-manifest" })).json()
-    ).secret as string;
+    ).data.secret as string;
     const auth = ["--plain-http", "--no-tty", "-u", "__token__", "-p", secret];
 
     const work = mkdtempSync(join(tmpdir(), "hoot-oci-missing-manifest-"));

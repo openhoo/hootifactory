@@ -92,7 +92,7 @@ test.describe("cocoapods registry (Dockerized real pod)", () => {
       visibility: "public",
     });
     const token = (await (await createToken(owner.ctx, owner.orgId, { name: "cocoapods" })).json())
-      .secret as string;
+      .data.secret as string;
 
     const id = Date.now().toString(36);
     const podName = `HootPod${id}`; // [A-Za-z0-9][A-Za-z0-9+._-]*

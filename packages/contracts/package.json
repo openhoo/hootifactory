@@ -4,9 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts",
-    "./client": "./src/client.ts",
-    "./legacy": "./src/legacy.ts"
+    ".": "./src/index.ts"
   },
   "scripts": {
     "test": "bun run test:unit",

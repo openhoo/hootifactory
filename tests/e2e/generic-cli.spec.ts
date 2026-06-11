@@ -28,7 +28,7 @@ test.describe("generic registry (Dockerized real curl)", () => {
       visibility: "public",
     });
     const token = (await (await createToken(owner.ctx, owner.orgId, { name: "generic" })).json())
-      .secret as string;
+      .data.secret as string;
 
     const repoUrl = `${dockerReachableUrl(baseURL!)}/${repo.mountPath}`;
     const objectPath = "releases/1.0/app.bin";

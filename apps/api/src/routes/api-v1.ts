@@ -5,6 +5,7 @@ import { registerApiV1AccessManagementRoutes } from "./api-v1-access-management-
 import { registerApiV1ContentRoutes } from "./api-v1-content-routes";
 import { registerApiV1OrganizationRoutes } from "./api-v1-organization-routes";
 import { registerApiV1PolicyRoutes } from "./api-v1-policy-routes";
+import { registerApiV1RegistryModuleRoutes } from "./api-v1-registry-module-routes";
 import { registerApiV1RepositoryConfigRoutes } from "./api-v1-repository-config-routes";
 import { registerApiV1TokenRoutes } from "./api-v1-token-routes";
 
@@ -68,6 +69,7 @@ apiV1Router.get(
 
 registerApiV1AccessManagementRoutes(apiV1Router);
 registerApiV1OrganizationRoutes(apiV1Router);
+registerApiV1RegistryModuleRoutes(apiV1Router);
 registerApiV1ContentRoutes(apiV1Router);
 
 registerApiV1PolicyRoutes(apiV1Router);

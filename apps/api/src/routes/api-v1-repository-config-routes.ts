@@ -22,9 +22,12 @@ import {
   validateJsonV1,
   validateV1,
 } from "./api-v1-helpers";
+import { validateProxyUpstreamParent, validateProxyUpstreamUrl } from "./api-v1-upstreams";
+import {
+  validateVirtualMemberCandidate,
+  validateVirtualMemberParent,
+} from "./api-v1-virtual-members";
 import { AUDIT_RESULT, audit } from "./http";
-import { validateProxyUpstreamParent, validateProxyUpstreamUrl } from "./ui-upstreams";
-import { validateVirtualMemberCandidate, validateVirtualMemberParent } from "./ui-virtual-members";
 
 export function registerApiV1RepositoryConfigRoutes(apiV1Router: Hono<AppEnv>) {
   apiV1Router.post(

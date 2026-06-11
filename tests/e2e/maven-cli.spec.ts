@@ -31,7 +31,7 @@ test.describe("maven registry (Dockerized real mvn)", () => {
       moduleId: "maven",
       visibility: "public",
     });
-    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "maven" })).json())
+    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "maven" })).json()).data
       .secret as string;
 
     const repoUrl = `${dockerReachableUrl(baseURL!)}/${repo.mountPath}`;

@@ -57,16 +57,16 @@ async function pollArtifact(
 ): Promise<{ id: string; state: string; policyDecision: Record<string, unknown> | null }> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const res = await ctx.get(`/api/repositories/${repoId}/artifacts`);
+    const res = await ctx.get(`/api/v1/repositories/${repoId}/artifacts`);
     const body = (await res.json()) as {
-      artifacts: {
+      data: {
         id: string;
         name: string;
         state: string;
         policyDecision: Record<string, unknown> | null;
       }[];
     };
-    const found = body.artifacts.find((a) => a.name === name);
+    const found = body.data.find((a) => a.name === name);
     if (found && found.state !== "pending") return found;
     await new Promise((r) => setTimeout(r, 400));
   }
@@ -294,7 +294,7 @@ test.describe("scanning + policy gates", () => {
       { repositoryPattern: "*", mode: "deny", blockOnSeverity: "high" },
       { repositoryPattern: "*", mode: "audit", blockOnSeverity: "severe" },
     ]) {
-      const res = await owner.ctx.post(`/api/orgs/${owner.orgId}/scan-policies`, { data });
+      const res = await owner.ctx.post(`/api/v1/orgs/${owner.orgId}/scan-policies`, { data });
       expect(res.status()).toBe(400);
     }
   });
@@ -314,7 +314,7 @@ test.describe("scanning + policy gates", () => {
       { repositoryPattern: exactRepoName, mode: "audit", blockOnSeverity: "high" },
     ]) {
       expect(
-        (await owner.ctx.post(`/api/orgs/${owner.orgId}/scan-policies`, { data })).status(),
+        (await owner.ctx.post(`/api/v1/orgs/${owner.orgId}/scan-policies`, { data })).status(),
       ).toBe(201);
     }
 
@@ -322,12 +322,12 @@ test.describe("scanning + policy gates", () => {
       await (
         await createRepo(owner.ctx, owner.orgId, { name: exactRepoName, moduleId: "npm" })
       ).json()
-    ).repository as { id: string; mountPath: string };
+    ).data as { id: string; mountPath: string };
     const targetRepo = (
       await (
         await createRepo(owner.ctx, owner.orgId, { name: targetRepoName, moduleId: "npm" })
       ).json()
-    ).repository as { id: string; mountPath: string };
+    ).data as { id: string; mountPath: string };
 
     const exactPkg = `exactpkg${id}`;
     const targetPkg = `targetpkg${id}`;
@@ -356,12 +356,12 @@ test.describe("scanning + policy gates", () => {
     const owner = await setupOwner(baseURL!);
     const repo = (
       await (await createRepo(owner.ctx, owner.orgId, { name: "scanrepo", moduleId: "npm" })).json()
-    ).repository as { id: string; mountPath: string };
+    ).data as { id: string; mountPath: string };
 
-    await owner.ctx.post(`/api/orgs/${owner.orgId}/scan-policies`, {
+    await owner.ctx.post(`/api/v1/orgs/${owner.orgId}/scan-policies`, {
       data: { repositoryPattern: "scanrepo", mode: "enforce", blockOnSeverity: "high" },
     });
-    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "t" })).json())
+    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "t" })).json()).data
       .secret as string;
 
     const id = Date.now().toString(36);
@@ -374,10 +374,10 @@ test.describe("scanning + policy gates", () => {
     // vulnerable -> blocked, with a critical finding
     const vulnArt = await pollArtifact(owner.ctx, repo.id, vulnPkg);
     expect(vulnArt.state).toBe("blocked");
-    const f = (await (await owner.ctx.get(`/api/artifacts/${vulnArt.id}/findings`)).json()) as {
-      findings: { vulnId: string; severity: string }[];
+    const f = (await (await owner.ctx.get(`/api/v1/artifacts/${vulnArt.id}/findings`)).json()) as {
+      data: { vulnId: string; severity: string }[];
     };
-    expect(f.findings.some((x) => x.vulnId === "HOOT-2024-0001" && x.severity === "critical")).toBe(
+    expect(f.data.some((x) => x.vulnId === "HOOT-2024-0001" && x.severity === "critical")).toBe(
       true,
     );
 
@@ -411,7 +411,7 @@ test.describe("scanning + policy gates", () => {
           visibility: "public",
         })
       ).json()
-    ).repository as { id: string; mountPath: string; name: string };
+    ).data as { id: string; mountPath: string; name: string };
 
     const pkg = `publicvuln${Date.now().toString(36)}`;
     await publishRawNpm(owner.ctx, repo.mountPath, pkg, { "evil-dep": "1.0.0" });
@@ -423,10 +423,8 @@ test.describe("scanning + policy gates", () => {
     const artifactsBody = await artifacts.json();
     expect(artifactsBody.data).toContainEqual(expect.objectContaining({ id: art.id }));
 
-    const anonV1Findings = await anon.get(`/api/v1/artifacts/${art.id}/findings`);
-    expect(anonV1Findings.status()).toBe(401);
-    const anonUiFindings = await anon.get(`/api/artifacts/${art.id}/findings`);
-    expect(anonUiFindings.status()).toBe(401);
+    const anonFindings = await anon.get(`/api/v1/artifacts/${art.id}/findings`);
+    expect(anonFindings.status()).toBe(401);
 
     const ownerFindings = await owner.ctx.get(`/api/v1/artifacts/${art.id}/findings`);
     expect(ownerFindings.status()).toBe(200);
@@ -442,8 +440,8 @@ test.describe("scanning + policy gates", () => {
           grants: [{ permission: "repository.read", repository: repo.name }],
         })
       ).json()
-    ).secret as string;
-    const scopedFindings = await anon.get(`/api/artifacts/${art.id}/findings`, {
+    ).data.secret as string;
+    const scopedFindings = await anon.get(`/api/v1/artifacts/${art.id}/findings`, {
       headers: { authorization: `Bearer ${scopedSecret}` },
     });
     expect(scopedFindings.status()).toBe(200);
@@ -457,8 +455,8 @@ test.describe("scanning + policy gates", () => {
       await (
         await createRepo(owner.ctx, owner.orgId, { name: "pending-npm", moduleId: "npm" })
       ).json()
-    ).repository as { id: string; mountPath: string };
-    await owner.ctx.post(`/api/orgs/${owner.orgId}/scan-policies`, {
+    ).data as { id: string; mountPath: string };
+    await owner.ctx.post(`/api/v1/orgs/${owner.orgId}/scan-policies`, {
       data: { repositoryPattern: "pending-npm", mode: "enforce", blockOnSeverity: "high" },
     });
 
@@ -483,7 +481,7 @@ test.describe("scanning + policy gates", () => {
       await (
         await createRepo(owner.ctx, owner.orgId, { name: "failure-npm", moduleId: "npm" })
       ).json()
-    ).repository as { id: string; mountPath: string };
+    ).data as { id: string; mountPath: string };
 
     const pkg = `failurepkg${Date.now().toString(36)}`;
     await publishRawNpm(owner.ctx, repo.mountPath, pkg, {});
@@ -501,10 +499,10 @@ test.describe("scanning + policy gates", () => {
       error: "forced scan failure",
     });
     const listed = (
-      (await (await owner.ctx.get(`/api/repositories/${repo.id}/artifacts`)).json()) as {
-        artifacts: { id: string; policyDecision: Record<string, unknown> | null }[];
+      (await (await owner.ctx.get(`/api/v1/repositories/${repo.id}/artifacts`)).json()) as {
+        data: { id: string; policyDecision: Record<string, unknown> | null }[];
       }
-    ).artifacts.find((artifact) => artifact.id === art.id);
+    ).data.find((artifact) => artifact.id === art.id);
     expect(listed?.policyDecision).toMatchObject({
       scanStatus: "failed",
       error: "forced scan failure",
@@ -519,8 +517,8 @@ test.describe("scanning + policy gates", () => {
       await (
         await createRepo(owner.ctx, owner.orgId, { name: "scan-containers", moduleId: "docker" })
       ).json()
-    ).repository as { id: string; mountPath: string };
-    await owner.ctx.post(`/api/orgs/${owner.orgId}/scan-policies`, {
+    ).data as { id: string; mountPath: string };
+    await owner.ctx.post(`/api/v1/orgs/${owner.orgId}/scan-policies`, {
       data: { repositoryPattern: "scan-containers", mode: "enforce", blockOnSeverity: "high" },
     });
 
@@ -531,10 +529,12 @@ test.describe("scanning + policy gates", () => {
 
     const art = await pollArtifact(owner.ctx, repo.id, image);
     expect(art.state).toBe("blocked");
-    const findings = (await (await owner.ctx.get(`/api/artifacts/${art.id}/findings`)).json()) as {
-      findings: { vulnId: string; severity: string; type: string }[];
+    const findings = (await (
+      await owner.ctx.get(`/api/v1/artifacts/${art.id}/findings`)
+    ).json()) as {
+      data: { vulnId: string; severity: string; type: string }[];
     };
-    expect(findings.findings).toEqual(
+    expect(findings.data).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ type: "malware", vulnId: "EICAR-TEST", severity: "critical" }),
       ]),
@@ -570,8 +570,8 @@ test.describe("scanning + policy gates", () => {
       await (
         await createRepo(owner.ctx, owner.orgId, { name: "scan-shared", moduleId: "docker" })
       ).json()
-    ).repository as { id: string; mountPath: string };
-    await owner.ctx.post(`/api/orgs/${owner.orgId}/scan-policies`, {
+    ).data as { id: string; mountPath: string };
+    await owner.ctx.post(`/api/v1/orgs/${owner.orgId}/scan-policies`, {
       data: { repositoryPattern: "scan-shared", mode: "enforce", blockOnSeverity: "high" },
     });
 
@@ -630,8 +630,8 @@ test.describe("scanning + policy gates", () => {
     const owner = await setupOwner(baseURL!);
     const repo = (
       await (await createRepo(owner.ctx, owner.orgId, { name: "scan-oci", moduleId: "oci" })).json()
-    ).repository as { id: string; mountPath: string };
-    await owner.ctx.post(`/api/orgs/${owner.orgId}/scan-policies`, {
+    ).data as { id: string; mountPath: string };
+    await owner.ctx.post(`/api/v1/orgs/${owner.orgId}/scan-policies`, {
       data: { repositoryPattern: "scan-oci", mode: "enforce", blockOnSeverity: "high" },
     });
 
@@ -662,12 +662,12 @@ test.describe("scanning + policy gates", () => {
       await (
         await createRepo(owner.ctx, owner.orgId, { name: "dedupe-a", moduleId: "docker" })
       ).json()
-    ).repository as { id: string; mountPath: string };
+    ).data as { id: string; mountPath: string };
     const secondRepo = (
       await (
         await createRepo(owner.ctx, owner.orgId, { name: "dedupe-b", moduleId: "docker" })
       ).json()
-    ).repository as { id: string; mountPath: string };
+    ).data as { id: string; mountPath: string };
 
     const image = `dedupe${Date.now().toString(36)}`;
     const configBytes = Buffer.from("{}");

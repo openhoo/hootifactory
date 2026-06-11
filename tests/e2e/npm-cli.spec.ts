@@ -21,7 +21,7 @@ test.describe("npm registry (Dockerized real CLI)", () => {
     expect(
       (await createRepo(owner.ctx, owner.orgId, { name: repoName, moduleId: "npm" })).status(),
     ).toBe(201);
-    const secret = (await (await createToken(owner.ctx, owner.orgId, { name: "npm" })).json())
+    const secret = (await (await createToken(owner.ctx, owner.orgId, { name: "npm" })).json()).data
       .secret as string;
 
     const registry = `${dockerReachableUrl(baseURL!)}/npm/${owner.orgSlug}/${repoName}/`;
@@ -66,7 +66,7 @@ test.describe("npm registry (Dockerized real CLI)", () => {
       (await createRepo(owner.ctx, owner.orgId, { name: repoName, moduleId: "npm" })).status(),
     ).toBe(201);
     const secret = (await (await createToken(owner.ctx, owner.orgId, { name: "npm-tags" })).json())
-      .secret as string;
+      .data.secret as string;
 
     const registry = `${dockerReachableUrl(baseURL!)}/npm/${owner.orgSlug}/${repoName}/`;
     const npmrc = [
@@ -124,7 +124,7 @@ test.describe("npm registry (Dockerized real CLI)", () => {
     ).toBe(201);
     const secret = (
       await (await createToken(owner.ctx, owner.orgId, { name: "npm-scope-config" })).json()
-    ).secret as string;
+    ).data.secret as string;
 
     const registry = `${dockerReachableUrl(baseURL!)}/npm/${owner.orgSlug}/${repoName}/`;
     const id = Date.now().toString(36);
@@ -221,7 +221,7 @@ test.describe("npm registry (Dockerized real CLI)", () => {
       (await createRepo(owner.ctx, owner.orgId, { name: repoName, moduleId: "npm" })).status(),
     ).toBe(201);
     const secret = (await (await createToken(owner.ctx, owner.orgId, { name: "npm-tag" })).json())
-      .secret as string;
+      .data.secret as string;
 
     const registry = `${dockerReachableUrl(baseURL!)}/npm/${owner.orgSlug}/${repoName}/`;
     const npmrc = [
@@ -387,7 +387,7 @@ test.describe("npm registry extended scenarios (Dockerized real CLI)", () => {
     ).toBe(201);
     const secret = (
       await (await createToken(owner.ctx, owner.orgId, { name: "npm-semver" })).json()
-    ).secret as string;
+    ).data.secret as string;
     const env = npmEnv(baseURL!, owner.orgSlug, repoName, secret);
 
     const pkg = `e2e-semver-${Date.now().toString(36)}`;
@@ -423,7 +423,7 @@ test.describe("npm registry extended scenarios (Dockerized real CLI)", () => {
     ).toBe(201);
     const secret = (
       await (await createToken(owner.ctx, owner.orgId, { name: "npm-deptree" })).json()
-    ).secret as string;
+    ).data.secret as string;
     const env = npmEnv(baseURL!, owner.orgSlug, repoName, secret);
 
     const id = Date.now().toString(36);
@@ -449,7 +449,7 @@ test.describe("npm registry extended scenarios (Dockerized real CLI)", () => {
     ).toBe(201);
     const secret = (
       await (await createToken(owner.ctx, owner.orgId, { name: "npm-ci-audit" })).json()
-    ).secret as string;
+    ).data.secret as string;
     const env = npmEnv(baseURL!, owner.orgSlug, repoName, secret);
 
     const pkg = `e2e-ci-${Date.now().toString(36)}`;
@@ -481,7 +481,7 @@ test.describe("npm registry extended scenarios (Dockerized real CLI)", () => {
     ).toBe(201);
     const secret = (
       await (await createToken(owner.ctx, owner.orgId, { name: "npm-search-cli" })).json()
-    ).secret as string;
+    ).data.secret as string;
     const env = npmEnv(baseURL!, owner.orgSlug, repoName, secret);
 
     // search matches a substring of the package name; embed a unique token there
@@ -530,7 +530,7 @@ test.describe("npm registry extended scenarios (Dockerized real CLI)", () => {
     ).toBe(201);
     const secret = (
       await (await createToken(owner.ctx, owner.orgId, { name: `npm-proxy-${suffix}` })).json()
-    ).secret as string;
+    ).data.secret as string;
 
     const pkg = `e2e-proxy-${suffix}`;
     const upstreamEnv = npmEnvForMountPath(baseURL!, upstream.mountPath, secret);
@@ -567,7 +567,7 @@ test.describe("npm registry extended scenarios (Dockerized real CLI)", () => {
     ).toBe(201);
     const secret = (
       await (await createToken(owner.ctx, owner.orgId, { name: "npm-prerelease" })).json()
-    ).secret as string;
+    ).data.secret as string;
     const env = npmEnv(baseURL!, owner.orgSlug, repoName, secret);
 
     const pkg = `e2e-prerelease-${Date.now().toString(36)}`;
@@ -601,7 +601,7 @@ test.describe("npm registry error and edge scenarios (Dockerized real CLI)", () 
     ).toBe(201);
     const secret = (
       await (await createToken(owner.ctx, owner.orgId, { name: `npm-republish-${suffix}` })).json()
-    ).secret as string;
+    ).data.secret as string;
     const env = npmEnv(baseURL!, owner.orgSlug, repoName, secret);
 
     const pkg = `e2e-republish-${suffix}`;
@@ -634,7 +634,7 @@ test.describe("npm registry error and edge scenarios (Dockerized real CLI)", () 
       await (
         await createToken(owner.ctx, owner.orgId, { name: `npm-missing-pkg-${suffix}` })
       ).json()
-    ).secret as string;
+    ).data.secret as string;
     const env = npmEnv(baseURL!, owner.orgSlug, repoName, secret);
 
     // empty repo: nothing was ever published here
@@ -667,7 +667,7 @@ test.describe("npm registry error and edge scenarios (Dockerized real CLI)", () 
       await (
         await createToken(owner.ctx, owner.orgId, { name: `npm-missing-ver-${suffix}` })
       ).json()
-    ).secret as string;
+    ).data.secret as string;
     const env = npmEnv(baseURL!, owner.orgSlug, repoName, secret);
 
     const pkg = `e2e-missing-ver-${suffix}`;
@@ -736,7 +736,7 @@ test.describe("npm registry error and edge scenarios (Dockerized real CLI)", () 
     ).toBe(201);
     const secret = (
       await (await createToken(owner.ctx, owner.orgId, { name: `npm-private-${suffix}` })).json()
-    ).secret as string;
+    ).data.secret as string;
     const env = npmEnv(baseURL!, owner.orgSlug, repoName, secret);
 
     // publish with a valid token so the package genuinely exists
@@ -777,7 +777,7 @@ test.describe("npm registry error and edge scenarios (Dockerized real CLI)", () 
       await (
         await createToken(owner.ctx, owner.orgId, { name: `npm-view-missing-${suffix}` })
       ).json()
-    ).secret as string;
+    ).data.secret as string;
     const env = npmEnv(baseURL!, owner.orgSlug, repoName, secret);
 
     // empty repo: this package was never published
@@ -813,7 +813,7 @@ test.describe("npm registry streaming & concurrency (Dockerized real CLI)", () =
     ).toBe(201);
     const secret = (
       await (await createToken(owner.ctx, owner.orgId, { name: `npm-fanout-${suffix}` })).json()
-    ).secret as string;
+    ).data.secret as string;
     const env = npmEnv(baseURL!, owner.orgSlug, repoName, secret);
 
     // Publish several independent packages, then install them all at once so the

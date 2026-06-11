@@ -314,7 +314,7 @@ test.describe("docker registry protocol authorization", () => {
           grants: [{ permission: "repository.read", repository: imageName }],
         })
       ).json()
-    ).secret as string;
+    ).data.secret as string;
     const anon = await anonContext(baseURL!);
     const jwt = await registryToken(anon, `repository:${imageName}:pull`, secret);
 
@@ -330,7 +330,7 @@ test.describe("docker registry protocol authorization", () => {
       await (
         await createRepo(owner.ctx, owner.orgId, { name: "containers", moduleId: "docker" })
       ).json()
-    ).repository as { mountPath: string };
+    ).data as { mountPath: string };
 
     const configDigest = await uploadBlob(owner.ctx, repo.mountPath, "app", Buffer.from("{}"));
     const layerDigest = await uploadBlob(owner.ctx, repo.mountPath, "app", Buffer.from("layer-a"));
@@ -351,7 +351,7 @@ test.describe("docker registry protocol authorization", () => {
           grants: [{ permission: "repository.read", repository: "containers" }],
         })
       ).json()
-    ).secret as string;
+    ).data.secret as string;
     const repoNameOnlyJwt = await registryToken(
       anon,
       `repository:${owner.orgSlug}/containers/app:pull`,
@@ -394,7 +394,7 @@ test.describe("docker registry protocol authorization", () => {
           ],
         })
       ).json()
-    ).secret as string;
+    ).data.secret as string;
     const appJwt = await registryToken(
       anon,
       `repository:${owner.orgSlug}/containers/app:pull`,
@@ -417,7 +417,7 @@ test.describe("docker registry protocol authorization", () => {
           ],
         })
       ).json()
-    ).secret as string;
+    ).data.secret as string;
     const otherJwt = await registryToken(
       anon,
       `repository:${owner.orgSlug}/containers/other:pull`,
@@ -452,7 +452,7 @@ test.describe("docker registry protocol authorization", () => {
           ],
         })
       ).json()
-    ).secret as string;
+    ).data.secret as string;
     const otherDeleteJwt = await registryToken(
       anon,
       `repository:${owner.orgSlug}/containers/other:pull,delete`,
@@ -499,7 +499,7 @@ test.describe("docker registry protocol authorization", () => {
       await (
         await createRepo(owner.ctx, owner.orgId, { name: "containers", moduleId: "docker" })
       ).json()
-    ).repository as { mountPath: string };
+    ).data as { mountPath: string };
 
     const configDigest = await uploadBlob(owner.ctx, repo.mountPath, "strict", Buffer.from("{}"));
     const layerDigest = await uploadBlob(
@@ -605,7 +605,7 @@ test.describe("docker registry protocol authorization", () => {
       await (
         await createRepo(owner.ctx, owner.orgId, { name: "containers", moduleId: "docker" })
       ).json()
-    ).repository as { mountPath: string };
+    ).data as { mountPath: string };
 
     const appConfigDigest = await uploadBlob(owner.ctx, repo.mountPath, "app", Buffer.from("{}"));
     const appLayerDigest = await uploadBlob(
@@ -768,7 +768,7 @@ test.describe("docker registry protocol authorization", () => {
       await (
         await createRepo(owner.ctx, owner.orgId, { name: "artifacts", moduleId: "oci" })
       ).json()
-    ).repository as { mountPath: string };
+    ).data as { mountPath: string };
 
     const payload = Buffer.from("artifact payload");
     const payloadDigest = await uploadBlob(owner.ctx, repo.mountPath, "demo", payload);
@@ -810,7 +810,7 @@ test.describe("docker registry protocol authorization", () => {
       await (
         await createRepo(owner.ctx, owner.orgId, { name: "containers", moduleId: "docker" })
       ).json()
-    ).repository as { mountPath: string };
+    ).data as { mountPath: string };
 
     const bytes = Buffer.from("0123456789abcdef");
     const digest = await uploadBlob(owner.ctx, repo.mountPath, "ranges", bytes);
@@ -872,7 +872,7 @@ test.describe("docker registry protocol authorization", () => {
       await (
         await createRepo(owner.ctx, owner.orgId, { name: "containers", moduleId: "docker" })
       ).json()
-    ).repository as { mountPath: string };
+    ).data as { mountPath: string };
 
     const upload = await startUpload(owner.ctx, repo.mountPath, "resumable");
     const readSecret = (
@@ -887,7 +887,7 @@ test.describe("docker registry protocol authorization", () => {
           ],
         })
       ).json()
-    ).secret as string;
+    ).data.secret as string;
     const anon = await anonContext(baseURL!);
     const readJwt = await registryToken(
       anon,
@@ -989,8 +989,8 @@ test.describe("docker registry protocol authorization", () => {
           moduleId: "docker",
         })
       ).json()
-    ).repository as { mountPath: string };
-    await owner.ctx.post(`/api/orgs/${owner.orgId}/quota`, { data: { maxStorageBytes: 4 } });
+    ).data as { mountPath: string };
+    await owner.ctx.post(`/api/v1/orgs/${owner.orgId}/quota`, { data: { maxStorageBytes: 4 } });
 
     const upload = await startUpload(owner.ctx, repo.mountPath, "quota-patch");
     const rejected = await owner.ctx.patch(upload.path, {
@@ -1017,7 +1017,7 @@ test.describe("docker registry protocol authorization", () => {
           moduleId: "docker",
         })
       ).json()
-    ).repository as { mountPath: string };
+    ).data as { mountPath: string };
 
     const upload = await startUpload(owner.ctx, repo.mountPath, "abandoned");
     const chunk = Buffer.from("abandoned bytes");
@@ -1054,8 +1054,8 @@ test.describe("docker registry protocol authorization", () => {
       await (
         await createRepo(owner.ctx, owner.orgId, { name: "quota-containers", moduleId: "docker" })
       ).json()
-    ).repository as { mountPath: string };
-    await owner.ctx.post(`/api/orgs/${owner.orgId}/quota`, { data: { maxStorageBytes: 1 } });
+    ).data as { mountPath: string };
+    await owner.ctx.post(`/api/v1/orgs/${owner.orgId}/quota`, { data: { maxStorageBytes: 1 } });
 
     const bytes = Buffer.from("stream quota rollback payload");
     const digest = sha256(bytes);
@@ -1076,7 +1076,7 @@ test.describe("docker registry connection & streaming transport", () => {
   async function dockerRepo(owner: Awaited<ReturnType<typeof setupOwner>>, name: string) {
     const res = await createRepo(owner.ctx, owner.orgId, { name, moduleId: "docker" });
     expect(res.status()).toBe(201);
-    return ((await res.json()).repository as { mountPath: string }).mountPath;
+    return ((await res.json()).data as { mountPath: string }).mountPath;
   }
 
   async function patchChunk(

@@ -33,7 +33,7 @@ test.describe("npm protocol publish validation", () => {
       await (
         await createRepo(owner.ctx, owner.orgId, { name: uniq("npm-proto"), moduleId: "npm" })
       ).json()
-    ).repository as { mountPath: string };
+    ).data as { mountPath: string };
     const pkg = `badpub${Date.now().toString(36)}`;
     const encoded = Buffer.from("tarball").toString("base64");
 
@@ -98,7 +98,7 @@ test.describe("npm protocol publish validation", () => {
       await (
         await createRepo(owner.ctx, owner.orgId, { name: uniq("npm-default-tag"), moduleId: "npm" })
       ).json()
-    ).repository as { id: string; mountPath: string };
+    ).data as { id: string; mountPath: string };
     const pkg = `defaulttag${Date.now().toString(36)}`;
     const bytes = Buffer.from("default tag tarball");
     const res = await owner.ctx.put(`/${repo.mountPath}/${pkg}`, {
@@ -142,8 +142,8 @@ test.describe("npm protocol publish validation", () => {
       createHash("sha1").update(bytes).digest("hex"),
     );
 
-    const packages = await (await owner.ctx.get(`/api/repositories/${repo.id}/packages`)).json();
-    expect(packages.packages.find((p: { name: string }) => p.name === pkg)?.latestVersion).toBe(
+    const packages = await (await owner.ctx.get(`/api/v1/repositories/${repo.id}/packages`)).json();
+    expect(packages.data.find((p: { name: string }) => p.name === pkg)?.latestVersion).toBe(
       "1.0.0",
     );
   });
@@ -156,7 +156,7 @@ test.describe("npm protocol publish validation", () => {
       await (
         await createRepo(owner.ctx, owner.orgId, { name: uniq("npm-deprecate"), moduleId: "npm" })
       ).json()
-    ).repository as { mountPath: string };
+    ).data as { mountPath: string };
     const pkg = `deprecate${Date.now().toString(36)}`;
     const bytes = Buffer.from("deprecate tarball");
 
@@ -207,7 +207,7 @@ test.describe("npm protocol publish validation", () => {
       await (
         await createRepo(owner.ctx, owner.orgId, { name: uniq("npm-latest-tag"), moduleId: "npm" })
       ).json()
-    ).repository as { id: string; mountPath: string };
+    ).data as { id: string; mountPath: string };
     const pkg = `latesttag${Date.now().toString(36)}`;
 
     for (const version of ["1.0.0", "1.1.0"]) {
@@ -237,8 +237,8 @@ test.describe("npm protocol publish validation", () => {
       data: `"1.1.0"`,
     });
     expect(setLatest.status()).toBe(200);
-    let packages = await (await owner.ctx.get(`/api/repositories/${repo.id}/packages`)).json();
-    expect(packages.packages.find((p: { name: string }) => p.name === pkg)?.latestVersion).toBe(
+    let packages = await (await owner.ctx.get(`/api/v1/repositories/${repo.id}/packages`)).json();
+    expect(packages.data.find((p: { name: string }) => p.name === pkg)?.latestVersion).toBe(
       "1.1.0",
     );
 
@@ -246,9 +246,7 @@ test.describe("npm protocol publish validation", () => {
       `/${repo.mountPath}/-/package/${pkg}/dist-tags/latest`,
     );
     expect(deleteLatest.status()).toBe(200);
-    packages = await (await owner.ctx.get(`/api/repositories/${repo.id}/packages`)).json();
-    expect(
-      packages.packages.find((p: { name: string }) => p.name === pkg)?.latestVersion,
-    ).toBeNull();
+    packages = await (await owner.ctx.get(`/api/v1/repositories/${repo.id}/packages`)).json();
+    expect(packages.data.find((p: { name: string }) => p.name === pkg)?.latestVersion).toBeNull();
   });
 });

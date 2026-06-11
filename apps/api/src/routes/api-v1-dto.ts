@@ -1,9 +1,11 @@
 import type { ApiTokenRow } from "@hootifactory/auth";
-import type { ApiTokenDto, RepositoryDto, WireTimestamp } from "@hootifactory/contracts/legacy";
+import type { V1ApiToken, V1Repository } from "@hootifactory/contracts";
 import type { ResolvedRepo } from "@hootifactory/registry";
 import type { TokenGrant } from "@hootifactory/types";
 
 type RepositoryRow = ResolvedRepo;
+
+type WireTimestamp = string;
 
 function wireTimestamp(value: Date | string): WireTimestamp {
   return value instanceof Date ? value.toISOString() : value;
@@ -13,7 +15,7 @@ function nullableWireTimestamp(value: Date | string | null): WireTimestamp | nul
   return value ? wireTimestamp(value) : null;
 }
 
-export function repositoryDto(repo: RepositoryRow): RepositoryDto {
+export function repositoryDto(repo: RepositoryRow): V1Repository {
   return {
     id: repo.id,
     orgId: repo.orgId,
@@ -32,7 +34,7 @@ export function tokenDto(
   token: ApiTokenRow,
   ownerUsername?: string | null,
   grants: TokenGrant[] = [],
-): ApiTokenDto {
+): V1ApiToken {
   return {
     id: token.id,
     ownerUserId: token.ownerUserId,
@@ -40,7 +42,12 @@ export function tokenDto(
     name: token.name,
     prefix: token.tokenPrefix,
     type: token.type,
-    grants,
+    // Tokens can never carry system.admin (creation rejects it in packages/auth
+    // tokens.ts), so this filter is a type-level narrowing to the V1 wire enum,
+    // not a behavior change.
+    grants: grants.flatMap((grant) =>
+      grant.permission === "system.admin" ? [] : [{ ...grant, permission: grant.permission }],
+    ),
     expiresAt: nullableWireTimestamp(token.expiresAt),
     revokedAt: nullableWireTimestamp(token.revokedAt),
     revokedByUserId: token.revokedByUserId,

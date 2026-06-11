@@ -25,7 +25,7 @@ test.describe("cran registry (Dockerized real R)", () => {
       moduleId: "cran",
       visibility: "public",
     });
-    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "cran" })).json())
+    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "cran" })).json()).data
       .secret as string;
     expect(token.startsWith("hoot_")).toBe(true);
 

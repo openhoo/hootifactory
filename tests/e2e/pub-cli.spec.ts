@@ -26,7 +26,7 @@ test.describe("pub hosted registry (Dockerized real dart pub)", () => {
       moduleId: "pub",
       visibility: "public",
     });
-    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "pub" })).json())
+    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "pub" })).json()).data
       .secret as string;
 
     // pub matches the stored token by host+path, so the publish_to / token-add /

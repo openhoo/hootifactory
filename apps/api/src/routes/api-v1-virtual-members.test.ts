@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { validateVirtualMemberCandidate, validateVirtualMemberParent } from "./ui-virtual-members";
+import {
+  validateVirtualMemberCandidate,
+  validateVirtualMemberParent,
+} from "./api-v1-virtual-members";
 
 const virtualNpm = { id: "virtual", orgId: "org_a", moduleId: "npm", kind: "virtual" } as const;
 

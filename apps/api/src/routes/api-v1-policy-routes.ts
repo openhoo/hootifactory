@@ -13,6 +13,7 @@ import {
   upsertScanPolicy,
 } from "@hootifactory/registry-platform/governance";
 import { applyRetention } from "@hootifactory/registry-platform/repositories";
+import { isValidRepositoryPattern } from "@hootifactory/scan-core";
 import type { Hono } from "hono";
 import type { AppEnv } from "../types";
 import {
@@ -27,7 +28,6 @@ import {
   validateV1,
 } from "./api-v1-helpers";
 import { AUDIT_RESULT, audit } from "./http";
-import { isValidScanPolicyPattern } from "./ui-schemas";
 
 export function registerApiV1PolicyRoutes(apiV1Router: Hono<AppEnv>) {
   apiV1Router.post(
@@ -64,7 +64,7 @@ export function registerApiV1PolicyRoutes(apiV1Router: Hono<AppEnv>) {
       );
       if (!parsedBody.ok) return parsedBody.response;
       const repositoryPattern = parsedBody.data.repositoryPattern ?? "*";
-      if (!isValidScanPolicyPattern(repositoryPattern)) {
+      if (!isValidRepositoryPattern(repositoryPattern)) {
         return errorResponse(
           c,
           400,

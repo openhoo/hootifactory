@@ -1,19 +1,21 @@
 export {
+  ApiContractViolationError,
   ApiError,
-  type ApiTokenDto as TokenInfo,
-  type AuthMethodsDto as AuthMethods,
+  type AuthMethods,
   apiErrorMessage,
   createHootifactoryClient,
-  type GroupDto as Group,
-  type OrgDto as Org,
-  type PackageDto as Pkg,
-  type PackageVersionDto as Version,
-  type PermissionCatalogEntryDto as PermissionCatalogEntry,
-  type RepositoryDto as Repo,
-  type TokenGrantDto as TokenGrant,
-  type UserDto as User,
-} from "@hootifactory/contracts/legacy";
+  type OrgSummary as Org,
+  type V1ApiToken as TokenInfo,
+  type V1Group as Group,
+  type V1PackageSummary as Pkg,
+  type V1PackageVersionSummary as Version,
+  type V1PermissionCatalogEntry as PermissionCatalogEntry,
+  type V1RegistryModule as RegistryModule,
+  type V1Repository as Repo,
+  type V1TokenGrant as TokenGrant,
+  type V1User as User,
+} from "@hootifactory/contracts";
 
-import { createHootifactoryClient } from "@hootifactory/contracts/legacy";
+import { createHootifactoryClient } from "@hootifactory/contracts";
 
 export const api = createHootifactoryClient();

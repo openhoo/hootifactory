@@ -79,8 +79,8 @@ export function AccessPage() {
   const canManageGroupPermissions = hasPermission("group.permission.manage");
   const assignablePermissions = useMemo(
     () =>
-      PERMISSION_KEYS.filter(
-        (permission) => permission !== "system.admin" && selectedPermissionSet.has(permission),
+      PERMISSION_KEYS.filter((permission) => permission !== "system.admin").filter((permission) =>
+        selectedPermissionSet.has(permission),
       ),
     [selectedPermissionSet],
   );
@@ -599,7 +599,7 @@ export function AccessPage() {
                         value={newGrant.permission}
                         disabled={!canManageGroupPermissions || assignablePermissions.length === 0}
                         onChange={(event) => {
-                          const permission = event.target.value as PermissionKey;
+                          const permission = event.target.value as TokenGrant["permission"];
                           setNewGrant({
                             permission,
                             ...(grantNeedsRepository(permission) ? { repository: "*" } : {}),

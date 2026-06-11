@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { RegistryModuleDto } from "@hootifactory/contracts/legacy";
+import type { V1RegistryModule } from "@hootifactory/contracts";
 import {
   buildCreatePayload,
   INITIAL_FORM,
@@ -8,7 +8,7 @@ import {
   validateStep,
 } from "./create-wizard";
 
-function moduleWith(caps: Partial<RegistryModuleDto["capabilities"]>): RegistryModuleDto {
+function moduleWith(caps: Partial<V1RegistryModule["capabilities"]>): V1RegistryModule {
   return {
     id: "m",
     displayName: "M",

@@ -27,7 +27,7 @@ test.describe("swift package registry (Dockerized real SwiftPM)", () => {
       moduleId: "swift",
       visibility: "public",
     });
-    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "swift" })).json())
+    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "swift" })).json()).data
       .secret as string;
 
     // The Swift package identity is `<scope>.<name>` (lowercased server-side).
