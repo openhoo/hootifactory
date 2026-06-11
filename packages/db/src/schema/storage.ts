@@ -209,5 +209,9 @@ export const uploadSessions = pgTable(
     expiresAt: timestamp({ withTimezone: true }).notNull(),
     ...timestamps(),
   },
-  (t) => [index("upload_sessions_repo_idx").on(t.repositoryId)],
+  (t) => [
+    index("upload_sessions_repo_idx").on(t.repositoryId),
+    // Supports the reaper scan: state = 'open' AND expires_at <= now().
+    index("upload_sessions_reaper_idx").on(t.expiresAt).where(sql`${t.state} = 'open'`),
+  ],
 );
