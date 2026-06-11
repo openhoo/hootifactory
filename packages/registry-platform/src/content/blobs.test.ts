@@ -18,7 +18,10 @@ function fakeDb(rowsByCall: unknown[][] = [], executeRows: unknown[][] = []) {
         return (resolve: (v: unknown) => unknown) => resolve(rows);
       }
       if (prop === "transaction") {
-        return (cb: (tx: unknown) => Promise<unknown>) => cb(builder);
+        return (cb: (tx: unknown) => Promise<unknown>) => {
+          calls.push({ op: "transaction", args: [] });
+          return cb(builder);
+        };
       }
       if (prop === "execute") {
         return async (...args: unknown[]) => {
@@ -186,6 +189,61 @@ describe("storeBlobWithRef", () => {
       },
     );
     expect(stored).toMatchObject({ blobRefId: "ref_1", refCreated: true, size: 3 });
+  });
+
+  test("a failed CAS put aborts before any transaction is opened", async () => {
+    // The S3 put now happens BEFORE db.transaction: when it fails, only the two
+    // pre-checks ran and no transaction (or advisory lock) was ever opened.
+    await withMocks(
+      {
+        blobStore: {
+          put: async () => {
+            throw new Error("s3 down");
+          },
+        },
+        rowsByCall: [[], [{ used: 0, max: null }]],
+      },
+      async ({ calls }) => {
+        const { storeBlobWithRef } = await import("./blobs");
+        await expect(
+          storeBlobWithRef(createTestRegistryContext(), {
+            data: new Uint8Array([1, 2, 3]),
+            kind: "k",
+            scope: "s",
+          }),
+        ).rejects.toThrow("s3 down");
+        expect(calls.map((c) => c.op)).not.toContain("transaction");
+      },
+    );
+  });
+
+  test("discards the put when the staged object vanished before the tx", async () => {
+    // stat() returning null under the digest lock means the staged object was
+    // GC'd between the put and the tx: the store must fail and discard the put.
+    let discarded = 0;
+    await withMocks(
+      {
+        blobStore: {
+          stat: async () => null,
+          delete: async () => {
+            discarded += 1;
+          },
+        },
+        // existingOrgRef none, quota row, then discard tx: blobs select finds no row.
+        rowsByCall: [[], [{ used: 0, max: null }], []],
+      },
+      async () => {
+        const { storeBlobWithRef } = await import("./blobs");
+        await expect(
+          storeBlobWithRef(createTestRegistryContext(), {
+            data: new Uint8Array([1, 2, 3]),
+            kind: "k",
+            scope: "s",
+          }),
+        ).rejects.toThrow();
+      },
+    );
+    expect(discarded).toBe(1);
   });
 
   test("discards the put and rethrows when the transaction fails", async () => {
