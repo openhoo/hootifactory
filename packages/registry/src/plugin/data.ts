@@ -344,6 +344,11 @@ export interface RegistryDataService {
       opts?: { sizeBytes?: number },
     ): Promise<void>;
     listPublishers(pkg: RegistryPackageHandle): Promise<RegistryVersionPublisherRow[]>;
+    /** Mark every live version of `package` whose content digest matches as deleted. */
+    markPackageVersionsDeletedByDigest(input: {
+      package: RegistryPackageHandle;
+      digest: string;
+    }): Promise<number>;
   };
   tags: {
     listLive(pkg: RegistryPackageHandle): Promise<Record<string, string>>;
@@ -403,84 +408,88 @@ export interface RegistryDataService {
       offset?: number;
     }): Promise<{ assets: RegistryAssetRow[]; total: number }>;
   };
-  contentStore: {
-    createUploadSession(input: {
-      id: string;
-      scope: string;
-      storageKey: string;
-      offsetBytes: number;
-      expiresAt: Date;
-    }): Promise<void>;
-    loadUploadSession(input: {
-      scope: string;
-      uuid: string;
-    }): Promise<RegistryUploadSessionRow | null>;
-    withLockedUploadSession<T>(input: {
-      scope: string;
-      uuid: string;
-      run: (
-        session: RegistryUploadSessionRow | null,
-        mutations: RegistryUploadSessionMutations,
-      ) => Promise<T>;
-    }): Promise<T>;
-    markUploadSessionAborted(input: { scope: string; uuid: string }): Promise<void>;
-    listMountSources(digest: string): Promise<RegistryMountSourceRow[]>;
-    listExistingBlobRefDigests(input: { scope: string; digests: string[] }): Promise<string[]>;
-    listExistingManifestDigests(input: {
-      package: RegistryPackageHandle;
-      digests: string[];
-    }): Promise<string[]>;
-    blobRefExists(input: { scope: string; digest: string }): Promise<boolean>;
-    /**
-     * Atomically upsert a manifest and (re)point its tags in one transaction so a
-     * concurrent unassociated-delete cannot cascade-remove a just-created tag.
-     */
-    commitManifest(input: {
-      package: RegistryPackageHandle;
-      tags: string[];
-      manifest: {
-        digest: string;
-        mediaType: string;
-        artifactType: string | null;
-        subjectDigest: string | null;
-        raw: string;
-        sizeBytes: number;
-        configDigest: string | null;
-      };
-    }): Promise<RegistryManifestHandle>;
-    replaceManifestBlobRefs(input: {
-      package: RegistryPackageHandle;
-      manifest: RegistryManifestHandle;
-      digests: string[];
-    }): Promise<void>;
-    listManifestDigestsReferencingBlob(input: {
-      package: RegistryPackageHandle;
+  /**
+   * Content-addressable store operations. Only meaningful for modules that
+   * declare `capabilities.contentAddressable` — other modules have no
+   * manifest/tag/upload-session rows and must not reach into this namespace.
+   */
+  contentStore: RegistryContentStore;
+}
+
+/**
+ * Manifest, tag, upload-session, and cross-repo-mount operations for
+ * content-addressable modules (`capabilities.contentAddressable`).
+ */
+export interface RegistryContentStore {
+  createUploadSession(input: {
+    id: string;
+    scope: string;
+    storageKey: string;
+    offsetBytes: number;
+    expiresAt: Date;
+  }): Promise<void>;
+  loadUploadSession(input: {
+    scope: string;
+    uuid: string;
+  }): Promise<RegistryUploadSessionRow | null>;
+  withLockedUploadSession<T>(input: {
+    scope: string;
+    uuid: string;
+    run: (
+      session: RegistryUploadSessionRow | null,
+      mutations: RegistryUploadSessionMutations,
+    ) => Promise<T>;
+  }): Promise<T>;
+  markUploadSessionAborted(input: { scope: string; uuid: string }): Promise<void>;
+  listMountSources(digest: string): Promise<RegistryMountSourceRow[]>;
+  listExistingBlobRefDigests(input: { scope: string; digests: string[] }): Promise<string[]>;
+  listExistingManifestDigests(input: {
+    package: RegistryPackageHandle;
+    digests: string[];
+  }): Promise<string[]>;
+  blobRefExists(input: { scope: string; digest: string }): Promise<boolean>;
+  /**
+   * Atomically upsert a manifest and (re)point its tags in one transaction so a
+   * concurrent unassociated-delete cannot cascade-remove a just-created tag.
+   */
+  commitManifest(input: {
+    package: RegistryPackageHandle;
+    tags: string[];
+    manifest: {
       digest: string;
-    }): Promise<string[]>;
-    resolveManifest(input: {
-      package: RegistryPackageHandle;
-      reference: string;
-    }): Promise<RegistryManifestRow | null>;
-    deleteTagsForManifest(input: {
-      package: RegistryPackageHandle;
-      manifest: RegistryManifestHandle;
-    }): Promise<void>;
-    markPackageVersionsDeletedByDigest(input: {
-      package: RegistryPackageHandle;
-      digest: string;
-    }): Promise<number>;
-    deleteManifestIfUnassociated(input: {
-      manifest: RegistryManifestHandle;
-      digest: string;
-    }): Promise<boolean>;
-    deleteTag(input: { package: RegistryPackageHandle; tag: string }): Promise<boolean>;
-    listLiveManifestsForPackage(pkg: RegistryPackageHandle): Promise<RegistryManifestRawRow[]>;
-    listTags(
-      pkg: RegistryPackageHandle,
-      opts?: RegistryTagListOptions,
-    ): Promise<RegistryTagListPage>;
-    listSubjectManifests(subjectDigest: string): Promise<RegistryManifestRow[]>;
-  };
+      mediaType: string;
+      artifactType: string | null;
+      subjectDigest: string | null;
+      raw: string;
+      sizeBytes: number;
+      configDigest: string | null;
+    };
+  }): Promise<RegistryManifestHandle>;
+  replaceManifestBlobRefs(input: {
+    package: RegistryPackageHandle;
+    manifest: RegistryManifestHandle;
+    digests: string[];
+  }): Promise<void>;
+  listManifestDigestsReferencingBlob(input: {
+    package: RegistryPackageHandle;
+    digest: string;
+  }): Promise<string[]>;
+  resolveManifest(input: {
+    package: RegistryPackageHandle;
+    reference: string;
+  }): Promise<RegistryManifestRow | null>;
+  deleteTagsForManifest(input: {
+    package: RegistryPackageHandle;
+    manifest: RegistryManifestHandle;
+  }): Promise<void>;
+  deleteManifestIfUnassociated(input: {
+    manifest: RegistryManifestHandle;
+    digest: string;
+  }): Promise<boolean>;
+  deleteTag(input: { package: RegistryPackageHandle; tag: string }): Promise<boolean>;
+  listLiveManifestsForPackage(pkg: RegistryPackageHandle): Promise<RegistryManifestRawRow[]>;
+  listTags(pkg: RegistryPackageHandle, opts?: RegistryTagListOptions): Promise<RegistryTagListPage>;
+  listSubjectManifests(subjectDigest: string): Promise<RegistryManifestRow[]>;
 }
 
 export type RegistryDataServiceFactory = (ctx: RegistryRequestContext) => RegistryDataService;

@@ -192,7 +192,7 @@ export async function deleteOciManifestReference(
     if (!scoped) throw Errors.manifestUnknown({ reference: opts.reference });
 
     await ctx.data.contentStore.deleteTagsForManifest({ package: pkg, manifest: scoped });
-    await ctx.data.contentStore.markPackageVersionsDeletedByDigest({
+    await ctx.data.versions.markPackageVersionsDeletedByDigest({
       package: pkg,
       digest: opts.reference,
     });

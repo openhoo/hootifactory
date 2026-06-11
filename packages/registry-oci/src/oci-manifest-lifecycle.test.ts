@@ -343,7 +343,7 @@ describe("deleteOciManifestReference", () => {
     ctx.data.contentStore.deleteTagsForManifest = async () => {
       order.push("deleteTags");
     };
-    ctx.data.contentStore.markPackageVersionsDeletedByDigest = async () => {
+    ctx.data.versions.markPackageVersionsDeletedByDigest = async () => {
       order.push("markVersionsDeleted");
       return 1;
     };
@@ -376,7 +376,7 @@ describe("deleteOciManifestReference", () => {
     ctx.data.packages.findByName = async () => pkg;
     ctx.data.contentStore.resolveManifest = async () => manifestRow(raw);
     ctx.data.contentStore.deleteTagsForManifest = async () => {};
-    ctx.data.contentStore.markPackageVersionsDeletedByDigest = async () => 0;
+    ctx.data.versions.markPackageVersionsDeletedByDigest = async () => 0;
     ctx.data.contentStore.deleteManifestIfUnassociated = async () => true;
     // Another live manifest still uses the layer (but not the config).
     ctx.data.contentStore.listLiveManifestsForPackage = async () => [
