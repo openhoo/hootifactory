@@ -4,13 +4,13 @@ import * as registry from "./index";
 describe("@hootifactory/registry barrel", () => {
   test("re-exports the registry SDK public surface", () => {
     // Plugin builders / factories.
-    expect(typeof registry.registryPlugin).toBe("function");
     expect(typeof registry.registryAdapter).toBe("function");
     expect(typeof registry.defineRegistryPlugin).toBe("function");
-    expect(typeof registry.delegateRegistryPlugin).toBe("function");
     expect(typeof registry.registryCapabilities).toBe("function");
     expect(typeof registry.registryScan).toBe("function");
     expect(typeof registry.registryRoute).toBe("function");
+    expect(typeof registry.registryRoutes).toBe("object");
+    expect(typeof registry.registryAppRoutes).toBe("function");
 
     // Permission helpers.
     expect(typeof registry.readWritePermission).toBe("function");
@@ -38,9 +38,9 @@ describe("@hootifactory/registry barrel", () => {
 
   test("exposes a usable plugin factory through the barrel", () => {
     const plugin = registry
-      .registryPlugin("npm")
-      .capabilities("virtualizable")
-      .get("/:pkg+", "packument", () => Response.json({ ok: true }))
+      .registryAdapter("npm")
+      .module({ capabilities: ["virtualizable"] })
+      .routes((route) => [route.get("/:pkg+", "packument", () => Response.json({ ok: true }))])
       .build();
 
     expect(plugin.id).toBe("npm");

@@ -1,21 +1,31 @@
 import { describe, expect, test } from "bun:test";
-import { registryPlugin } from "./plugin";
+import { registryAdapter } from "./plugin";
 import { isImmutableContentPath, RegistryPluginRegistry } from "./registry";
 
-const adapter = registryPlugin("npm")
-  .module({ displayName: "npm", mountSegment: "npm" })
-  .capabilities({ proxyable: true, virtualizable: true })
-  .get("/:pkg+", "packument", () => Response.json({ ok: true }))
-  .put("/:pkg+", "publish", () => Response.json({ ok: true }))
+const adapter = registryAdapter("npm")
+  .module({
+    displayName: "npm",
+    mountSegment: "npm",
+    capabilities: { proxyable: true, virtualizable: true },
+  })
+  .routes((route) => [
+    route.get("/:pkg+", "packument", () => Response.json({ ok: true })),
+    route.put("/:pkg+", "publish", () => Response.json({ ok: true })),
+  ])
   .build();
 
-const contentAddressableAdapter = registryPlugin("docker")
-  .module({ displayName: "OCI", mountSegment: "v2" })
-  .capabilities("contentAddressable", "resumableUploads", "virtualizable")
-  .get("/:name+/blobs/:digest", "getBlob", () => Response.json({ ok: true }), {
-    immutableContentAddressed: true,
+const contentAddressableAdapter = registryAdapter("docker")
+  .module({
+    displayName: "OCI",
+    mountSegment: "v2",
+    capabilities: ["contentAddressable", "resumableUploads", "virtualizable"],
   })
-  .get("/:name+/manifests/:reference", "getManifest", () => Response.json({ ok: true }))
+  .routes((route) => [
+    route.get("/:name+/blobs/:digest", "getBlob", () => Response.json({ ok: true }), {
+      immutableContentAddressed: true,
+    }),
+    route.get("/:name+/manifests/:reference", "getManifest", () => Response.json({ ok: true })),
+  ])
   .build();
 
 describe("RegistryPluginRegistry", () => {
