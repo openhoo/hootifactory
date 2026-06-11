@@ -198,6 +198,12 @@ export function createRegistryDataService(ctx: RegistryRequestContext): Registry
       updateMetadata: (version, metadata, opts) =>
         updatePackageVersionMetadata(version.id, metadata, opts),
       listPublishers: (pkg) => listLiveVersionPublishers(packageId(ctx, pkg)),
+      markPackageVersionsDeletedByDigest: (input) =>
+        markContentPackageVersionsDeletedByDigest({
+          orgId: ctx.repo.orgId,
+          packageId: packageId(ctx, input.package),
+          digest: input.digest,
+        }),
     },
     tags: {
       listLive: (pkg) => listLiveDistTags(packageId(ctx, pkg)),
@@ -342,12 +348,6 @@ export function createRegistryDataService(ctx: RegistryRequestContext): Registry
           manifestId: input.manifest.id,
         });
       },
-      markPackageVersionsDeletedByDigest: (input) =>
-        markContentPackageVersionsDeletedByDigest({
-          orgId: ctx.repo.orgId,
-          packageId: packageId(ctx, input.package),
-          digest: input.digest,
-        }),
       deleteManifestIfUnassociated: (input) => {
         assertManifestInRepo(ctx, input.manifest);
         return deleteContentManifestIfUnassociated(ctx, {

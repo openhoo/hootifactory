@@ -47,6 +47,7 @@ function createTestDataService(): RegistryDataService {
       patch: () => unimplemented("data.versions.patch"),
       updateMetadata: () => Promise.resolve(),
       listPublishers: () => Promise.resolve([]),
+      markPackageVersionsDeletedByDigest: () => Promise.resolve(0),
     },
     tags: {
       listLive: () => Promise.resolve({}),
@@ -100,7 +101,6 @@ function createTestDataService(): RegistryDataService {
       listManifestDigestsReferencingBlob: () => Promise.resolve([]),
       resolveManifest: () => Promise.resolve(null),
       deleteTagsForManifest: () => Promise.resolve(),
-      markPackageVersionsDeletedByDigest: () => Promise.resolve(0),
       deleteManifestIfUnassociated: () => Promise.resolve(false),
       deleteTag: () => Promise.resolve(false),
       listLiveManifestsForPackage: () => Promise.resolve([]),

@@ -487,7 +487,7 @@ describe("Generic adapter", () => {
     const tombstoned: { digest?: string } = {};
     ctx.data.packages.findByName = async (name) => pkgRow(name);
     ctx.data.versions.findLive = async () => versionRow(metaFor("app.bin"));
-    ctx.data.contentStore.markPackageVersionsDeletedByDigest = async ({ digest }) => {
+    ctx.data.versions.markPackageVersionsDeletedByDigest = async ({ digest }) => {
       tombstoned.digest = digest;
       return 1;
     };

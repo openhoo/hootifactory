@@ -152,7 +152,7 @@ class GenericAdapterState {
     if (!meta || !row) throw Errors.notFound();
     // Tombstone every version referencing the blob (so `findLive` stops resolving
     // the path) and release its CAS ref so retention can GC the bytes.
-    await ctx.data.contentStore.markPackageVersionsDeletedByDigest({
+    await ctx.data.versions.markPackageVersionsDeletedByDigest({
       package: pkg,
       digest: meta.blobDigest,
     });
