@@ -196,7 +196,15 @@ export const authThrottleBuckets = pgTable(
   (t) => [index("auth_throttle_buckets_reset_at_idx").on(t.resetAt)],
 );
 
-/** Durable idempotency ledger for at-least-once queued email delivery. */
+/**
+ * Durable idempotency ledger for at-least-once queued email delivery. A row is
+ * a *claim* on a delivery key; `sentAt` is the post-SMTP confirmation and stays
+ * NULL while the send is in flight. A claim whose `sentAt` is still NULL after
+ * a takeover threshold (see the mail worker) is treated as abandoned by a
+ * crashed worker and may be re-claimed, so an unconfirmed claim can never
+ * permanently suppress a retry. `updatedAt` doubles as the claim stamp: it is
+ * set on claim/takeover and gates whose rollback/confirmation may touch the row.
+ */
 export const emailDeliveries = pgTable(
   "email_deliveries",
   {
@@ -204,7 +212,7 @@ export const emailDeliveries = pgTable(
     deliveryKey: varchar({ length: 256 }).notNull(),
     template: varchar({ length: 64 }).notNull(),
     recipient: varchar({ length: 320 }).notNull(),
-    sentAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    sentAt: timestamp({ withTimezone: true }),
     ...timestamps(),
   },
   (t) => [uniqueIndex("email_deliveries_delivery_key_uq").on(t.deliveryKey)],

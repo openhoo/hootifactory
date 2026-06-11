@@ -33,7 +33,7 @@ const defaultBossFactory: BossFactory = () =>
 export async function getBoss(factory: BossFactory = defaultBossFactory): Promise<PgBoss> {
   if (bossInstance) return bossInstance;
   if (!startPromise) {
-    startPromise = (async () => {
+    const starting = (async () => {
       const boss = factory();
       boss.on("error", (err) => logger.error("pg-boss error", { error: err }));
       await withSpan("queue.start", {}, async () => {
@@ -47,6 +47,14 @@ export async function getBoss(factory: BossFactory = defaultBossFactory): Promis
       bossInstance = boss;
       return boss;
     })();
+    startPromise = starting;
+    // A failed start must not poison the singleton: clear the cached promise so
+    // the next caller constructs a fresh boss and retries, instead of replaying
+    // the same rejection until the process restarts. (bossInstance is only set
+    // on success above, so it never holds a half-started boss.)
+    starting.catch(() => {
+      if (startPromise === starting) startPromise = null;
+    });
   }
   return startPromise;
 }
@@ -60,6 +68,19 @@ export async function enqueue<T extends object>(
   return withSpan("queue.enqueue", { "messaging.destination.name": queue }, () =>
     boss.send(queue, data, options),
   );
+}
+
+/**
+ * Mark jobs completed ahead of their batch handler resolving. pg-boss only
+ * fails jobs still below the `completed` state when a batch handler rejects,
+ * so acking each finished job here lets a worker rethrow for the failed
+ * remainder without re-delivering the siblings that already succeeded.
+ */
+export async function completeJobs(queue: string, ids: string[]): Promise<void> {
+  const boss = await getBoss();
+  await withSpan("queue.complete", { "messaging.destination.name": queue }, async () => {
+    await boss.complete(queue, ids);
+  });
 }
 
 export type JobHandler<T extends object> = (jobs: Job<T>[]) => Promise<void>;

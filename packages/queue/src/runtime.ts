@@ -9,7 +9,7 @@ import {
   withSpan,
 } from "@hootifactory/observability";
 import type { Job } from "pg-boss";
-import { stopBoss, work } from "./index";
+import { completeJobs, stopBoss, work } from "./index";
 
 export interface HealthServer {
   /** The Bun server, or null when WORKER_PORT is unset. */
@@ -128,6 +128,7 @@ type WorkerJob<T extends object> = T & { telemetry?: TelemetryContextCarrier };
 export interface RunWorkerDeps {
   work: typeof work;
   stopBoss: typeof stopBoss;
+  completeJobs: typeof completeJobs;
 }
 
 /**
@@ -137,7 +138,7 @@ export interface RunWorkerDeps {
  */
 export async function runWorker<T extends object>(
   config: RunWorkerConfig<T>,
-  deps: RunWorkerDeps = { work, stopBoss },
+  deps: RunWorkerDeps = { work, stopBoss, completeJobs },
 ): Promise<void> {
   const { role, logLabel, queue, batchSize, pollingIntervalSeconds } = config;
 
@@ -168,17 +169,36 @@ export async function runWorker<T extends object>(
           queue,
           async (jobs: Job<WorkerJob<T>>[]) =>
             instrumentQueueBatch(queue, jobs, async () => {
+              // Per-job failure isolation: one bad job must not fail (and thus
+              // re-deliver) its batch siblings. Each successful job is acked
+              // individually before moving on, so the aggregate rethrow below —
+              // which pg-boss turns into a batch-wide fail — only touches the
+              // jobs that are still active (pg-boss skips completed jobs when
+              // failing by id). Ack failures count as job failures: the job is
+              // retried and the handler is expected to be idempotent.
+              const failures: unknown[] = [];
               for (const job of jobs) {
-                await instrumentQueueJob(
-                  queue,
-                  job.data.telemetry,
-                  {
-                    "messaging.message.id": String(job.id),
-                    ...config.jobLogAttributes(job.data),
-                  },
-                  async () => {
-                    await config.handleJob(job.data);
-                  },
+                try {
+                  await instrumentQueueJob(
+                    queue,
+                    job.data.telemetry,
+                    {
+                      "messaging.message.id": String(job.id),
+                      ...config.jobLogAttributes(job.data),
+                    },
+                    async () => {
+                      await config.handleJob(job.data);
+                    },
+                  );
+                  await deps.completeJobs(queue, [String(job.id)]);
+                } catch (err) {
+                  failures.push(err);
+                }
+              }
+              if (failures.length > 0) {
+                throw new AggregateError(
+                  failures,
+                  `${failures.length} of ${jobs.length} ${queue} job(s) failed`,
                 );
               }
             }),
