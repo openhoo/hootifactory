@@ -280,11 +280,18 @@ export async function storeBlobWithRef(
     .where(and(eq(repositories.orgId, ctx.repo.orgId), eq(blobRefs.digest, digest)))
     .limit(1);
   if (!existingOrgRef) await assertStorageQuota(ctx, opts.data.byteLength);
-  let put: BlobPutResult | null = null;
+  // The CAS put happens BEFORE the transaction so a slow S3 PUT cannot idle the
+  // tx past the idle-in-transaction timeout or pin the per-digest advisory lock
+  // (mirrors storeBlobStreamWithRef). The stat re-check under the digest lock
+  // guarantees the bytes still exist at commit time: the GC sweep takes the same
+  // lock before reclaiming, so a deduped object reclaimed between the put and the
+  // tx is detected here instead of committing a dangling blob row.
+  const put = await blobStore.put(opts.data, digest);
   try {
     return await db.transaction(async (tx) => {
-      await lockDigestTx(tx, digest);
-      put = await blobStore.put(opts.data, digest);
+      await lockDigestTx(tx, put.digest);
+      const stat = await blobStore.stat(put.digest);
+      if (!stat) throw Errors.blobUnknown({ digest: put.digest });
       return commitBlobPutTx(tx, ctx, put, opts);
     });
   } catch (err) {

@@ -12,7 +12,10 @@ function fakeDb(rowsByCall: unknown[][] = []) {
         return (resolve: (v: unknown) => unknown) => resolve(rows);
       }
       if (prop === "transaction") {
-        return (cb: (tx: unknown) => Promise<unknown>) => cb(builder);
+        return (cb: (tx: unknown) => Promise<unknown>) => {
+          calls.push({ op: "transaction", args: [] });
+          return cb(builder);
+        };
       }
       if (prop === "execute") return async () => [];
       return (...args: unknown[]) => {
@@ -29,7 +32,12 @@ function fakeDb(rowsByCall: unknown[][] = []) {
 }
 
 async function withMocks<T>(
-  opts: { rowsByCall?: unknown[][]; put?: (...a: unknown[]) => Promise<unknown> },
+  opts: {
+    rowsByCall?: unknown[][];
+    put?: (...a: unknown[]) => Promise<unknown>;
+    stat?: (...a: unknown[]) => Promise<unknown>;
+    delete?: (...a: unknown[]) => Promise<void>;
+  },
   run: (calls: { op: string; args: unknown[] }[]) => Promise<T>,
 ): Promise<T> {
   const realDb = await import("@hootifactory/db");
@@ -47,7 +55,8 @@ async function withMocks<T>(
           size: data.byteLength,
           deduped: false,
         })),
-      delete: async () => {},
+      stat: opts.stat ?? (async () => ({ size: 5 })),
+      delete: opts.delete ?? (async () => {}),
     },
   }));
   return run(calls);
@@ -276,6 +285,60 @@ describe("setDistTag", () => {
 
 describe("upsertPackageVersionWithBlobRef", () => {
   afterEach(() => mock.restore());
+
+  test("a failed CAS put aborts before any transaction is opened", async () => {
+    // The S3 put now happens BEFORE db.transaction: when it fails, no transaction
+    // (and no advisory lock) must ever have been opened.
+    await withMocks(
+      {
+        put: async () => {
+          throw new Error("s3 down");
+        },
+      },
+      async (calls) => {
+        const { upsertPackageVersionWithBlobRef } = await import("./versions");
+        await expect(
+          upsertPackageVersionWithBlobRef(createTestRegistryContext(), {
+            packageId: "p1",
+            version: "1.0.0",
+            metadata: {},
+            sizeBytes: 3,
+            blob: { data: new Uint8Array([1, 2, 3]), kind: "npm_tarball", scope: "demo@1.0.0" },
+          }),
+        ).rejects.toThrow("s3 down");
+        expect(calls.map((c) => c.op)).not.toContain("transaction");
+      },
+    );
+  });
+
+  test("discards the staged blob when the CAS object vanished before the tx", async () => {
+    // stat() returning null under the digest lock means the staged object was
+    // GC'd between the put and the tx: the upsert must fail and discard the put.
+    let discarded = 0;
+    await withMocks(
+      {
+        stat: async () => null,
+        delete: async () => {
+          discarded += 1;
+        },
+        // discardUncommittedBlobPut tx: blobs select finds no recorded row.
+        rowsByCall: [[]],
+      },
+      async () => {
+        const { upsertPackageVersionWithBlobRef } = await import("./versions");
+        await expect(
+          upsertPackageVersionWithBlobRef(createTestRegistryContext(), {
+            packageId: "p1",
+            version: "1.0.0",
+            metadata: {},
+            sizeBytes: 3,
+            blob: { data: new Uint8Array([1, 2, 3]), kind: "npm_tarball", scope: "demo@1.0.0" },
+          }),
+        ).rejects.toThrow();
+      },
+    );
+    expect(discarded).toBe(1);
+  });
 
   test("stores the blob, inserts a ref, and records the version", async () => {
     const result = await withMocks(

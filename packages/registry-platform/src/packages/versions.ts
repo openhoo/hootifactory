@@ -1,3 +1,4 @@
+import { Errors } from "@hootifactory/core";
 import { and, blobRefs, blobs, db, eq, packageVersions, versionTags } from "@hootifactory/db";
 import { computeDigest, type RegistryRequestContext } from "@hootifactory/registry";
 import { blobStore } from "@hootifactory/storage";
@@ -121,18 +122,23 @@ export async function upsertPackageVersionWithBlobRef(
       ? opts.blob.previousDigest
       : null;
   const publisher = publisherOf(ctx);
-  let putForCleanup: { digest: string; deduped: boolean } | null = null;
   let deleteCasAfterCommit: string | null = null;
 
+  // The CAS put happens BEFORE the transaction so a slow S3 PUT cannot idle the
+  // tx past the idle-in-transaction timeout or pin the digest advisory locks
+  // (mirrors storeBlobStreamWithRef). The stat re-check under the digest lock
+  // guarantees the bytes still exist at commit time: the GC sweep takes the same
+  // lock before reclaiming, so a deduped object reclaimed between the put and the
+  // tx is detected here instead of committing a dangling blob row.
+  const put = await blobStore.put(opts.blob.data, digest);
   try {
     const result = await db.transaction(async (tx) => {
       await lockDigestsTx(
         tx,
         [digest, previousDigestInput].filter((d): d is string => !!d),
       );
-      const rawPut = await blobStore.put(opts.blob.data, digest);
-      const put = rawPut;
-      putForCleanup = put;
+      const stat = await blobStore.stat(put.digest);
+      if (!stat) throw Errors.blobUnknown({ digest: put.digest });
       const quota = await lockOrgQuotaTx(tx, ctx.repo.orgId);
       const [existingVersion] = await tx
         .select({ id: packageVersions.id, deletedAt: packageVersions.deletedAt })
@@ -215,7 +221,7 @@ export async function upsertPackageVersionWithBlobRef(
     if (deleteCasAfterCommit) await deleteUnreferencedCasBlob(ctx, deleteCasAfterCommit);
     return { stored: result.stored, versionId: result.versionId };
   } catch (err) {
-    if (!deleteCasAfterCommit) await discardUncommittedBlobPut(ctx, putForCleanup);
+    if (!deleteCasAfterCommit) await discardUncommittedBlobPut(ctx, put);
     throw err;
   }
 }

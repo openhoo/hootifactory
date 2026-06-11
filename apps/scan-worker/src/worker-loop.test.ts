@@ -124,7 +124,7 @@ async function loadModule(opts: {
     reapExpiredContentUploadSessions: async ({ limit }: { limit: number }) => {
       collab.reapCalls.push(limit);
       if (opts.reapThrows) throw new Error("reap failed");
-      return { aborted: 2 };
+      return { aborted: 2, cleaned: 2 };
     },
     sweepUnreferencedCasBlobs: async ({ limit, graceMs }: { limit: number; graceMs: number }) => {
       collab.sweepCalls.push({ batch: limit, grace: graceMs });

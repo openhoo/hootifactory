@@ -13,6 +13,7 @@ import {
   repositories,
 } from "@hootifactory/db";
 import type { RegistryRequestContext } from "@hootifactory/registry";
+import { computeDigest } from "@hootifactory/registry";
 import { createTestRegistryContext, createTestResolvedRepo } from "@hootifactory/registry/testing";
 import { blobStore } from "@hootifactory/storage";
 import { releaseBlobRef, storeBlobWithRef, sweepUnreferencedCasBlobs } from "./blobs";
@@ -204,6 +205,25 @@ describe("blobs CAS refcount/quota/GC (DB + MinIO)", () => {
     await sweepUnreferencedCasBlobs({ limit: 50, graceMs: 60_000 });
     expect(await refState(digest)).toBeNull();
     expect(await blobStore.stat(digest)).toBeNull();
+  });
+
+  test("a failed transaction discards the pre-staged CAS object (no leak)", async () => {
+    // The S3 put now happens BEFORE the transaction. Point the context at a
+    // repository id that does not exist so the blob_refs INSERT violates its FK
+    // and the whole tx rolls back AFTER the object was staged: the compensation
+    // path must delete the staged object and leave no blobs row or quota charge.
+    const ctx = ctxFor(crypto.randomUUID(), orgId);
+    const data = randomBytes();
+    const digest = computeDigest(data);
+    createdDigests.add(digest);
+    const before = await usedStorage(orgId);
+
+    await expect(storeBlobWithRef(ctx, { data, kind: "layer", scope: "boom" })).rejects.toThrow();
+
+    expect(await refState(digest)).toBeNull();
+    expect(await blobRefRows(digest)).toBe(0);
+    expect(await blobStore.stat(digest)).toBeNull();
+    expect(await usedStorage(orgId)).toBe(before);
   });
 
   test("sweep never reclaims a blob reactivated after going pending_delete", async () => {

@@ -121,8 +121,11 @@ export async function reapExpiredUploads(batchSize: number): Promise<void> {
       { "upload_reaper.batch_size": batchSize },
       () => reapExpiredContentUploadSessions({ limit: batchSize }),
     );
-    if (result.aborted > 0) {
-      logger.info("expired upload sessions reaped", { aborted: result.aborted });
+    if (result.aborted > 0 || result.cleaned > 0) {
+      logger.info("expired upload sessions reaped", {
+        aborted: result.aborted,
+        cleaned: result.cleaned,
+      });
     }
   } catch (err) {
     logger.error("expired upload session reaper failed", { error: err });

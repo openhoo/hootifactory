@@ -1,5 +1,6 @@
 import { Errors, parseJsonWithSchema, z } from "@hootifactory/core";
 import { and, blobRefs, db, eq, ne, repositories, sql, uploadSessions } from "@hootifactory/db";
+import { logger } from "@hootifactory/observability";
 import type {
   RegistryBlobRefKind,
   RegistryRequestContext,
@@ -22,7 +23,7 @@ export interface ContentMountSourceRow {
   scope: string;
 }
 
-interface ExpiredUploadSessionRow {
+interface StaleUploadSessionRow {
   id: string;
   storageKey: string;
   multipart: string | null;
@@ -160,37 +161,67 @@ export async function markContentUploadSessionAborted(
 
 export async function reapExpiredContentUploadSessions(
   input: { limit?: number; now?: Date } = {},
-): Promise<{ aborted: number }> {
+): Promise<{ aborted: number; cleaned: number }> {
   const limit = Math.max(1, Math.floor(input.limit ?? 100));
   const now = input.now ?? new Date();
-  return db.transaction(async (tx) => {
-    const sessions = rowsFromExecute(
-      await tx.execute(sql`
-        select id, storage_key as "storageKey", multipart
+
+  // Phase 1 (DB only): flip expired open sessions to 'aborted' in one
+  // auto-committed statement. No S3 I/O happens while the row locks are held, so
+  // a slow object store can no longer idle a transaction past the
+  // idle-in-transaction timeout.
+  const aborted = rowsFromExecute(
+    await db.execute(sql`
+      with expired as (
+        select id
           from upload_sessions
          where state = ${UPLOAD_STATE.open}
            and expires_at <= ${now}
          order by expires_at asc
          limit ${limit}
          for update skip locked
-      `),
-    ).flatMap((row) => {
-      const session = expiredUploadSessionRow(row);
-      return session ? [session] : [];
-    });
+      )
+      update upload_sessions us
+         set state = ${UPLOAD_STATE.aborted}, updated_at = now()
+        from expired
+       where us.id = expired.id
+      returning us.id
+    `),
+  ).length;
 
-    let aborted = 0;
-    for (const session of sessions) {
-      await deleteContentUploadSessionStorage(session);
-      const rows = await tx
-        .update(uploadSessions)
-        .set({ state: UPLOAD_STATE.aborted, updatedAt: new Date() })
-        .where(and(eq(uploadSessions.id, session.id), eq(uploadSessions.state, UPLOAD_STATE.open)))
-        .returning({ id: uploadSessions.id });
-      aborted += rows.length;
-    }
-    return { aborted };
+  // Phase 2 (post-commit): an 'aborted' row means "staged storage may still
+  // exist". Delete the staged objects outside any transaction, then drop only
+  // the rows whose cleanup fully succeeded — rows with a failed delete stay
+  // 'aborted' and are retried on the next reap. This also sweeps sessions
+  // aborted by the protocol abort/expiry paths whose best-effort deletes failed.
+  const candidates = rowsFromExecute(
+    await db.execute(sql`
+      select id, storage_key as "storageKey", multipart
+        from upload_sessions
+       where state = ${UPLOAD_STATE.aborted}
+       order by updated_at asc
+       limit ${limit}
+    `),
+  ).flatMap((row) => {
+    const session = staleUploadSessionRow(row);
+    return session ? [session] : [];
   });
+
+  let cleaned = 0;
+  for (const session of candidates) {
+    if (!(await deleteContentUploadSessionStorage(session))) {
+      logger.warn("upload session staging cleanup failed; will retry on next reap", {
+        uploadSessionId: session.id,
+        storageKey: session.storageKey,
+      });
+      continue;
+    }
+    const rows = await db
+      .delete(uploadSessions)
+      .where(and(eq(uploadSessions.id, session.id), eq(uploadSessions.state, UPLOAD_STATE.aborted)))
+      .returning({ id: uploadSessions.id });
+    cleaned += rows.length;
+  }
+  return { aborted, cleaned };
 }
 
 export async function listContentMountSources(digest: string): Promise<ContentMountSourceRow[]> {
@@ -207,7 +238,7 @@ export async function listContentMountSources(digest: string): Promise<ContentMo
     .where(eq(blobRefs.digest, digest));
 }
 
-function expiredUploadSessionRow(row: unknown): ExpiredUploadSessionRow | null {
+function staleUploadSessionRow(row: unknown): StaleUploadSessionRow | null {
   const id = stringField(row, "id");
   const storageKey = stringField(row, "storageKey") ?? stringField(row, "storage_key");
   const multipart = stringField(row, "multipart");
@@ -223,14 +254,18 @@ function uploadChunkKeys(raw: string | null): string[] {
   });
 }
 
+/**
+ * Delete a session's staged objects (base key + multipart chunks). Returns true
+ * only when every delete succeeded, so callers can defer finalizing the session
+ * row until the staged bytes are actually gone (instead of silently leaking them).
+ */
 async function deleteContentUploadSessionStorage(session: {
   storageKey: string;
   multipart: string | null;
-}): Promise<void> {
-  await blobStore.deleteKey(session.storageKey).catch(() => {});
-  await Promise.all(
-    uploadChunkKeys(session.multipart).map((key) => blobStore.deleteKey(key).catch(() => {})),
-  );
+}): Promise<boolean> {
+  const keys = [session.storageKey, ...uploadChunkKeys(session.multipart)];
+  const results = await Promise.allSettled(keys.map((key) => blobStore.deleteKey(key)));
+  return results.every((result) => result.status === "fulfilled");
 }
 
 async function loadContentUploadSessionWith(

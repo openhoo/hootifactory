@@ -204,12 +204,14 @@ describe("withLockedContentUploadSession", () => {
 describe("reapExpiredContentUploadSessions", () => {
   afterEach(() => mock.restore());
 
-  test("deletes staging objects and aborts each expired session", async () => {
+  test("aborts expired sessions, then deletes storage and rows post-commit", async () => {
     const deletedKeys: string[] = [];
     await withMocks(
       {
-        // The expired-session select uses tx.execute; subsequent update().returning() awaits resolve.
+        // execute #1: phase-1 UPDATE..RETURNING (abort expired open rows);
+        // execute #2: phase-2 select of 'aborted' rows awaiting storage cleanup.
         executeRows: [
+          [{ id: "uuid-1" }],
           [
             {
               id: "uuid-1",
@@ -218,26 +220,48 @@ describe("reapExpiredContentUploadSessions", () => {
             },
           ],
         ],
+        // delete().returning() for the cleaned-up session row.
         rowsByCall: [[{ id: "uuid-1" }]],
         deleteKey: async (k) => {
           deletedKeys.push(k);
         },
       },
-      async () => {
+      async (calls) => {
         const { reapExpiredContentUploadSessions } = await import("./upload-sessions");
         const result = await reapExpiredContentUploadSessions({ limit: 10, now: new Date() });
-        expect(result.aborted).toBe(1);
+        expect(result).toEqual({ aborted: 1, cleaned: 1 });
+        // The session row is gone once its staged storage was deleted.
+        expect(calls.map((c) => c.op)).toContain("delete");
       },
     );
     expect(deletedKeys).toContain("key1");
     expect(deletedKeys).toContain("chunk1");
   });
 
-  test("returns zero when no sessions are expired", async () => {
-    await withMocks({ executeRows: [[]], rowsByCall: [[]] }, async () => {
+  test("keeps the aborted row for retry when a staging delete fails", async () => {
+    await withMocks(
+      {
+        executeRows: [[], [{ id: "uuid-1", storageKey: "key1", multipart: null }]],
+        deleteKey: async () => {
+          throw new Error("s3 down");
+        },
+      },
+      async (calls) => {
+        const { reapExpiredContentUploadSessions } = await import("./upload-sessions");
+        const result = await reapExpiredContentUploadSessions({ limit: 10, now: new Date() });
+        // The cleanup failed, so the row must stay 'aborted' (no DELETE) and be
+        // retried by the next reap instead of silently leaking the staged bytes.
+        expect(result).toEqual({ aborted: 0, cleaned: 0 });
+        expect(calls.map((c) => c.op)).not.toContain("delete");
+      },
+    );
+  });
+
+  test("returns zero when no sessions are expired or awaiting cleanup", async () => {
+    await withMocks({ executeRows: [[], []], rowsByCall: [[]] }, async () => {
       const { reapExpiredContentUploadSessions } = await import("./upload-sessions");
       const result = await reapExpiredContentUploadSessions();
-      expect(result).toEqual({ aborted: 0 });
+      expect(result).toEqual({ aborted: 0, cleaned: 0 });
     });
   });
 });
