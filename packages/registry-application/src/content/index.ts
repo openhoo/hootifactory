@@ -3,7 +3,6 @@ export {
   invalidateScanPolicyCache,
   isArtifactBlocked,
   loadContentAddressableManifestRaw,
-  REGISTRY_TOKEN_SERVICE,
   serveBlobIfClean,
 } from "./artifacts";
 export {

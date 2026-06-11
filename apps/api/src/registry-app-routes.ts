@@ -1,4 +1,4 @@
-import { authorize, issueRegistryToken } from "@hootifactory/auth";
+import { authorize, issueRegistryToken, REGISTRY_TOKEN_SERVICE } from "@hootifactory/auth";
 import { env } from "@hootifactory/config";
 import { withSpan } from "@hootifactory/observability";
 import {
@@ -6,7 +6,6 @@ import {
   type RegistryAppRouteContext,
   registryPlugins,
 } from "@hootifactory/registry";
-import { REGISTRY_TOKEN_SERVICE } from "@hootifactory/registry-application/content";
 import { resolveRepository } from "@hootifactory/registry-application/routing";
 import type { Context } from "hono";
 import { logger } from "./lib/logger";

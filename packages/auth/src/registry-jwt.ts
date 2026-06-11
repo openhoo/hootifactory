@@ -14,6 +14,12 @@ import type { RegistryAccess } from "./principal";
 
 export type { RegistryAccess };
 
+/**
+ * The registry token service name, used as the JWT audience when minting and
+ * verifying registry bearer tokens and advertised in module auth challenges.
+ */
+export const REGISTRY_TOKEN_SERVICE = "hootifactory";
+
 // Validate the wire shape of the access claim instead of trusting a cast: a
 // malformed claim degrades to deny-all rather than throwing a TypeError deep
 // inside the authorization decision (can.ts iterates `a.actions.includes(...)`).

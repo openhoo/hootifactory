@@ -23,6 +23,7 @@ mock.module("@hootifactory/auth", () => ({
   // Present so middleware/authenticate + auth-throttle (transitively in the
   // graph via SESSION_COOKIE) link without re-implementing the auth surface.
   TOKEN_PREFIX: "hoot_",
+  REGISTRY_TOKEN_SERVICE: "hootifactory",
   resolveSession: async () => null,
   resolveToken: async () => null,
   userPrincipalById: async () => null,

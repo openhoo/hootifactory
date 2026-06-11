@@ -9,6 +9,7 @@ import { artifacts, db, ne, scanOutbox } from "@hootifactory/db";
 import { addSpanEvent, logger, withSpan } from "@hootifactory/observability";
 import type {
   EnqueueScanInput,
+  RegistryDataService,
   RegistryRequestContext,
   ResolvedRepo,
 } from "@hootifactory/registry";
@@ -126,10 +127,16 @@ export function buildRegistryRequestContext(
   principal: Principal,
 ): RegistryRequestContext {
   const authorize = createRequestAuthorizer(principal);
+  let data: RegistryDataService | undefined;
   const ctx: RegistryRequestContext = {
     repo,
     principal,
-    data: undefined as never,
+    // Lazily constructed on first access: the data service captures the fully
+    // assembled ctx, and routes that never touch data skip building it.
+    get data() {
+      data ??= createRegistryDataService(ctx);
+      return data;
+    },
     baseUrl: env.REGISTRY_PUBLIC_URL,
     limits: {
       maxUploadBytes: env.REGISTRY_MAX_UPLOAD_BYTES,
@@ -148,6 +155,5 @@ export function buildRegistryRequestContext(
       }),
     enqueueScan: (input: EnqueueScanInput) => enqueueArtifactScan(repo, input),
   };
-  ctx.data = createRegistryDataService(ctx);
   return ctx;
 }

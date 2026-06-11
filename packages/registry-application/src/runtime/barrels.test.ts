@@ -26,7 +26,6 @@ describe("package barrels", () => {
 
   test("content barrel exposes the artifact + blob + upload helpers", async () => {
     const mod = await import("../content");
-    expect(mod.REGISTRY_TOKEN_SERVICE).toBe("hootifactory");
     expect(typeof mod.serveBlobIfClean).toBe("function");
     expect(typeof mod.storeBlobWithRef).toBe("function");
     expect(typeof mod.reapExpiredContentUploadSessions).toBe("function");
