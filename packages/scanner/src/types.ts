@@ -30,6 +30,8 @@ export interface ScannerCapabilities {
 export interface ScannerRuntimeOptions {
   cliRuntime?: ScannerCliRuntime;
   timeoutMs?: number;
+  /** Hard ceiling for buffered scanner stdout (default 32 MiB); past it the scan fails. */
+  maxOutputBytes?: number;
   dockerCommand?: string;
   dockerMemory?: string;
   dockerCpus?: string;
