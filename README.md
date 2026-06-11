@@ -127,6 +127,19 @@ bun run dev:worker        # scan worker (optional; needs SCANNER_ENABLED=true)
 bun run dev:mail          # mail worker (Mailpit UI on :8025)
 ```
 
+### Upgrading across the migration squash
+
+The migration chain was squashed into a single `0000` in June 2026 (pre-1.0). A
+database migrated on the old chain still carries the old `__drizzle_migrations`
+rows; `bun run db:migrate` detects this and refuses to run (re-applying the
+squashed `0000` against a live schema would fail mid-DDL). Two recovery paths:
+
+- **Dev databases**: drop and recreate the database, then `bun run db:migrate`.
+- **Keep the data**: verify the schema is fully migrated on the old chain, then
+  run `bun run db:baseline --yes` — it rewrites the recorded history to mark the
+  current chain as applied **without executing any DDL** — and `bun run
+  db:migrate` from then on applies only genuinely new migrations.
+
 ### First steps in the UI
 
 1. Open the web UI and sign in with the seeded owner (dev: `admin` / `admin`).
