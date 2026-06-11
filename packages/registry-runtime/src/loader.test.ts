@@ -1,118 +1,39 @@
 import { describe, expect, test } from "bun:test";
 import { RegistryPluginRegistry } from "@hootifactory/registry";
 import { loadConfiguredRegistryPlugins } from "./loader";
+import { REGISTRY_PLUGIN_MANIFEST } from "./manifest";
+
+// Expectations are derived from the manifest so adding a plugin (or alias) is a
+// manifest-only change — this test asserts the loader's RULES (membership,
+// primaries-before-aliases ordering, allowlist semantics), not a hand-maintained
+// id list that every new plugin would have to edit.
+const primaryIds = REGISTRY_PLUGIN_MANIFEST.map((entry) => entry.plugin.id);
+const aliasIds = REGISTRY_PLUGIN_MANIFEST.flatMap((entry) => entry.aliases ?? []);
 
 describe("loadConfiguredRegistryPlugins", () => {
-  test("registers every module id (including aliases) when no allowlist is given", () => {
-    const registry = new RegistryPluginRegistry();
-    const { registered } = loadConfiguredRegistryPlugins(registry, { enabled: undefined });
-    for (const id of [
-      "npm",
-      "docker",
-      "gitlfs",
-      "oci",
-      "helm",
-      "pypi",
-      "go",
-      "cargo",
-      "nuget",
-      "rubygems",
-      "composer",
-      "cran",
-      "maven",
-      "ivy",
-      "apt",
-      "pub",
-      "swift",
-      "chocolatey",
-      "cocoapods",
-      "winget",
-      "homebrew",
-      "hex",
-      "scoop",
-      "vagrant",
-      "rpm",
-      "yum",
-      "dnf",
-      "lfs",
-      "terraform",
-      "conan",
-      "conda",
-      "generic",
-      "raw",
-      "alpine",
-      "apk",
-      "nix",
-      "arch",
-      "pacman",
-      "hackage",
-      "puppet",
-      "forge",
-      "chef",
-      "supermarket",
-      "opam",
-      "luarocks",
-    ]) {
-      expect(registry.has(id)).toBe(true);
-    }
-    expect(registered).toContain("oci");
+  test("the manifest has unique module ids across primaries and aliases", () => {
+    const all = [...primaryIds, ...aliasIds];
+    expect(new Set(all).size).toBe(all.length);
+    // Canary against an accidentally emptied manifest: the flagship module ids
+    // (and the OCI plugin's alias wiring) must exist.
+    expect(primaryIds).toContain("npm");
+    expect(primaryIds).toContain("docker");
+    expect(aliasIds).toContain("oci");
+    expect(aliasIds).toContain("helm");
   });
 
-  test("registers primary module ids ahead of aliases, so the module list groups primaries first", () => {
+  test("registers every manifest module id, primaries ahead of aliases", () => {
     const registry = new RegistryPluginRegistry();
-    const { registered } = loadConfiguredRegistryPlugins(registry, { enabled: undefined });
+    const { registered, unknown } = loadConfiguredRegistryPlugins(registry, {
+      enabled: undefined,
+    });
+    for (const id of [...primaryIds, ...aliasIds]) {
+      expect(registry.has(id)).toBe(true);
+    }
     // The registry preserves registration order and the UI module dropdown
-    // reflects it; primaries must precede the alias module ids.
-    expect(registered).toEqual([
-      "npm",
-      "docker",
-      "pypi",
-      "go",
-      "cargo",
-      "nuget",
-      "rubygems",
-      "composer",
-      "cran",
-      "maven",
-      "ivy",
-      "apt",
-      "p2",
-      "pub",
-      "swift",
-      "chocolatey",
-      "cocoapods",
-      "winget",
-      "homebrew",
-      "hex",
-      "scoop",
-      "vagrant",
-      "rpm",
-      "ansible",
-      "gitlfs",
-      "terraform",
-      "conan",
-      "conda",
-      "generic",
-      "alpine",
-      "nix",
-      "arch",
-      "hackage",
-      "puppet",
-      "chef",
-      "opam",
-      "luarocks",
-      "oci",
-      "helm",
-      "yum",
-      "dnf",
-      "galaxy",
-      "lfs",
-      "raw",
-      "apk",
-      "pacman",
-      "forge",
-      "supermarket",
-    ]);
+    // reflects it; every primary id must precede every alias module id.
+    expect(registered).toEqual([...primaryIds, ...aliasIds]);
+    expect(unknown).toEqual([]);
   });
 
   test("honors the allowlist over module ids including aliases", () => {
