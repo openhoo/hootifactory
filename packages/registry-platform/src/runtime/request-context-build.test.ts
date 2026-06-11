@@ -36,6 +36,8 @@ async function withFakeDb<T>(
   return run(calls);
 }
 
+const DIGEST = `sha256:${"ab".repeat(32)}`;
+
 const repo = {
   id: "repo_1",
   orgId: "org_1",
@@ -53,7 +55,7 @@ describe("recordArtifactScanOutbox", () => {
     const result = await withFakeDb([[{ id: "art_1" }], []], async (calls) => {
       const { recordArtifactScanOutbox } = await import("./request-context");
       const r = await recordArtifactScanOutbox(repo, {
-        digest: "sha256:d",
+        digest: DIGEST,
         mediaType: "application/octet-stream",
         name: "demo",
         version: "1.0.0",
@@ -65,10 +67,28 @@ describe("recordArtifactScanOutbox", () => {
     expect(result).toEqual({ artifactId: "art_1" });
   });
 
+  test("rejects a malformed digest before touching the database (issue #308)", async () => {
+    await withFakeDb([[{ id: "art_1" }], []], async (calls) => {
+      const [{ recordArtifactScanOutbox }, { InvalidDigestError }] = await Promise.all([
+        import("./request-context"),
+        import("@hootifactory/core"),
+      ]);
+      await expect(
+        recordArtifactScanOutbox(repo, {
+          digest: "sha256:not-a-digest",
+          name: "demo",
+          version: "1.0.0",
+        }),
+      ).rejects.toBeInstanceOf(InvalidDigestError);
+      // The assertion fires before the transaction opens: nothing was inserted.
+      expect(calls).toHaveLength(0);
+    });
+  });
+
   test("returns null when the artifact upsert yields no row", async () => {
     const result = await withFakeDb([[]], async (calls) => {
       const { recordArtifactScanOutbox } = await import("./request-context");
-      const r = await recordArtifactScanOutbox(repo, { digest: "sha256:d" });
+      const r = await recordArtifactScanOutbox(repo, { digest: DIGEST });
       // Without an artifact row, the outbox upsert must not run.
       expect(calls.filter((c) => c.op === "onConflictDoUpdate")).toHaveLength(1);
       return r;
@@ -124,7 +144,7 @@ describe("buildRegistryRequestContext", () => {
     await withFakeDb([[{ id: "art_1" }], []], async (calls) => {
       const { buildRegistryRequestContext } = await import("./request-context");
       const ctx = buildRegistryRequestContext(repo, { kind: "user", userId: "u1" } as any);
-      await ctx.enqueueScan({ digest: "sha256:d" });
+      await ctx.enqueueScan({ digest: DIGEST });
       // No outbox write happens while scanning is disabled.
       expect(calls.some((c) => c.op === "onConflictDoUpdate")).toBe(false);
     });
@@ -144,7 +164,7 @@ describe("buildRegistryRequestContext", () => {
     await withFakeDb([[{ id: "art_1" }], []], async (calls) => {
       const { buildRegistryRequestContext } = await import("./request-context");
       const ctx = buildRegistryRequestContext(repo, { kind: "user", userId: "u1" } as any);
-      await ctx.enqueueScan({ digest: "sha256:d", name: "demo", version: "1.0.0" });
+      await ctx.enqueueScan({ digest: DIGEST, name: "demo", version: "1.0.0" });
       expect(calls.some((c) => c.op === "onConflictDoUpdate")).toBe(true);
     });
   });

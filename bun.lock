@@ -170,6 +170,7 @@
         "@hootifactory/observability": "workspace:*",
         "@hootifactory/types": "workspace:*",
         "nodemailer": "^8.0.10",
+        "zod": "^4.4.3",
       },
       "devDependencies": {
         "@types/nodemailer": "^8.0.0",

@@ -2,6 +2,34 @@ import { env } from "@hootifactory/config";
 import { logger, withSpan } from "@hootifactory/observability";
 import { EMAIL_TEMPLATE } from "@hootifactory/types";
 import nodemailer, { type Transporter } from "nodemailer";
+import { z } from "zod";
+
+const emailJobBaseShape = {
+  to: z.string().min(1),
+  expiresAt: z.string().min(1),
+  deliveryKey: z.string().min(1),
+};
+
+/**
+ * Wire schema for a queued email. pg-boss job data is plain JSON read back from
+ * the database, so the worker must not trust it to match {@link EmailJob}:
+ * {@link parseEmailJob} validates every payload at the dequeue boundary (issue
+ * #308). Unknown keys (e.g. the telemetry context carrier stamped at enqueue)
+ * are stripped, not rejected.
+ */
+export const EmailJobSchema = z.discriminatedUnion("template", [
+  z.object({
+    template: z.literal(EMAIL_TEMPLATE.passwordReset),
+    resetUrl: z.string().min(1),
+    ...emailJobBaseShape,
+  }),
+  z.object({
+    template: z.literal(EMAIL_TEMPLATE.oidcLink),
+    linkUrl: z.string().min(1),
+    providerName: z.string().min(1),
+    ...emailJobBaseShape,
+  }),
+]);
 
 /**
  * A queued email. `deliveryKey` is mandatory: it is the idempotency identity of
@@ -9,22 +37,30 @@ import nodemailer, { type Transporter } from "nodemailer";
  * Message-ID), so every enqueue site must derive a deterministic key — without
  * one, a re-delivered queue message would double-send.
  */
-export type EmailJob =
-  | {
-      template: typeof EMAIL_TEMPLATE.passwordReset;
-      to: string;
-      resetUrl: string;
-      expiresAt: string;
-      deliveryKey: string;
-    }
-  | {
-      template: typeof EMAIL_TEMPLATE.oidcLink;
-      to: string;
-      linkUrl: string;
-      providerName: string;
-      expiresAt: string;
-      deliveryKey: string;
-    };
+export type EmailJob = z.output<typeof EmailJobSchema>;
+
+/** Thrown when a dequeued email.send payload does not match {@link EmailJobSchema}. */
+export class InvalidEmailJobError extends Error {
+  constructor(detail: string) {
+    super(`invalid email job payload: ${detail}`);
+    this.name = "InvalidEmailJobError";
+  }
+}
+
+/**
+ * Parse an untrusted queue payload into an {@link EmailJob}, throwing a
+ * readable {@link InvalidEmailJobError} (one "path: message" entry per issue)
+ * instead of an opaque ZodError so the failed job's last error explains what
+ * was malformed.
+ */
+export function parseEmailJob(data: unknown): EmailJob {
+  const parsed = EmailJobSchema.safeParse(data);
+  if (parsed.success) return parsed.data;
+  const detail = parsed.error.issues
+    .map((issue) => `${issue.path.join(".") || "(payload)"}: ${issue.message}`)
+    .join("; ");
+  throw new InvalidEmailJobError(detail);
+}
 
 export interface RenderedEmail {
   to: string;
