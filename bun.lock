@@ -13,8 +13,8 @@
         "@hootifactory/db": "workspace:*",
         "@hootifactory/queue": "workspace:*",
         "@hootifactory/registry": "workspace:*",
-        "@hootifactory/registry-application": "workspace:*",
         "@hootifactory/registry-oci": "workspace:*",
+        "@hootifactory/registry-platform": "workspace:*",
         "@hootifactory/scan-core": "workspace:*",
         "@hootifactory/storage": "workspace:*",
         "@hootifactory/types": "workspace:*",
@@ -37,7 +37,7 @@
         "@hootifactory/observability": "workspace:*",
         "@hootifactory/queue": "workspace:*",
         "@hootifactory/registry": "workspace:*",
-        "@hootifactory/registry-application": "workspace:*",
+        "@hootifactory/registry-platform": "workspace:*",
         "@hootifactory/registry-runtime": "workspace:*",
         "@hootifactory/scan-core": "workspace:*",
         "@hootifactory/types": "workspace:*",
@@ -66,7 +66,7 @@
         "@hootifactory/observability": "workspace:*",
         "@hootifactory/queue": "workspace:*",
         "@hootifactory/registry": "workspace:*",
-        "@hootifactory/registry-application": "workspace:*",
+        "@hootifactory/registry-platform": "workspace:*",
         "@hootifactory/registry-runtime": "workspace:*",
         "@hootifactory/scan-core": "workspace:*",
         "@hootifactory/scanner": "workspace:*",
@@ -225,22 +225,6 @@
       "version": "0.0.0",
       "dependencies": {
         "@hootifactory/registry": "workspace:*",
-      },
-    },
-    "packages/registry-application": {
-      "name": "@hootifactory/registry-application",
-      "version": "0.0.0",
-      "dependencies": {
-        "@hootifactory/auth": "workspace:*",
-        "@hootifactory/config": "workspace:*",
-        "@hootifactory/core": "workspace:*",
-        "@hootifactory/db": "workspace:*",
-        "@hootifactory/observability": "workspace:*",
-        "@hootifactory/queue": "workspace:*",
-        "@hootifactory/registry": "workspace:*",
-        "@hootifactory/scan-core": "workspace:*",
-        "@hootifactory/storage": "workspace:*",
-        "@hootifactory/types": "workspace:*",
       },
     },
     "packages/registry-apt": {
@@ -416,6 +400,22 @@
       "version": "0.0.0",
       "dependencies": {
         "@hootifactory/registry": "workspace:*",
+      },
+    },
+    "packages/registry-platform": {
+      "name": "@hootifactory/registry-platform",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hootifactory/auth": "workspace:*",
+        "@hootifactory/config": "workspace:*",
+        "@hootifactory/core": "workspace:*",
+        "@hootifactory/db": "workspace:*",
+        "@hootifactory/observability": "workspace:*",
+        "@hootifactory/queue": "workspace:*",
+        "@hootifactory/registry": "workspace:*",
+        "@hootifactory/scan-core": "workspace:*",
+        "@hootifactory/storage": "workspace:*",
+        "@hootifactory/types": "workspace:*",
       },
     },
     "packages/registry-pub": {
@@ -808,8 +808,6 @@
 
     "@hootifactory/registry-ansible": ["@hootifactory/registry-ansible@workspace:packages/registry-ansible"],
 
-    "@hootifactory/registry-application": ["@hootifactory/registry-application@workspace:packages/registry-application"],
-
     "@hootifactory/registry-apt": ["@hootifactory/registry-apt@workspace:packages/registry-apt"],
 
     "@hootifactory/registry-arch": ["@hootifactory/registry-arch@workspace:packages/registry-arch"],
@@ -859,6 +857,8 @@
     "@hootifactory/registry-opam": ["@hootifactory/registry-opam@workspace:packages/registry-opam"],
 
     "@hootifactory/registry-p2": ["@hootifactory/registry-p2@workspace:packages/registry-p2"],
+
+    "@hootifactory/registry-platform": ["@hootifactory/registry-platform@workspace:packages/registry-platform"],
 
     "@hootifactory/registry-pub": ["@hootifactory/registry-pub@workspace:packages/registry-pub"],
 

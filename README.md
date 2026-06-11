@@ -522,7 +522,7 @@ apps/
 packages/
   config/  types/  core/  db/  storage/  auth/  contracts/  queue/  observability/  scan-core/  email/
   registry/              protocol-neutral registry plugin SDK (contract + helpers)
-  registry-application/  agnostic platform use-cases, sliced: routing · runtime · repositories ·
+  registry-platform/  agnostic platform use-cases, sliced: routing · runtime · repositories ·
                          content · inventory · packages · governance · assets
   registry-runtime/      static plugin manifest + config-driven loader
   registry-{npm,oci,pypi,go,cargo,nuget,rubygems,composer,cran,maven,ivy,apt,p2,pub,swift,
@@ -541,7 +541,7 @@ packages/
 - Registration is a **static manifest** (`registry-runtime` / `scanner-runtime`) — the single place that imports concrete plugins — optionally narrowed at runtime by the `REGISTRY_PLUGINS` / `SCANNERS` operator allowlists. Aliases are module ids, not packages (`docker` -> `oci`/`helm`, `rpm` -> `yum`/`dnf`, `generic` -> `raw`, and so on).
 - **Adding a format = a new `registry-<fmt>` package + one manifest line.** No edit to the app core, the boundary checker, or any sibling plugin.
 
-**Enforced boundaries.** `bun run check:boundaries` discovers plugin packages from the workspace and fails the build if any app or agnostic package imports a concrete format/scanner, re-acquires format-specific identity (e.g. hardcoded `/v2/` grammar or OCI-ish identifiers), or declares workspace dependencies that drift from what it imports. It also validates the `registry-application` slice exports and API v1 contract usage. The boundary check is the source of truth for enforced module rules.
+**Enforced boundaries.** `bun run check:boundaries` discovers plugin packages from the workspace and fails the build if any app or agnostic package imports a concrete format/scanner, re-acquires format-specific identity (e.g. hardcoded `/v2/` grammar or OCI-ish identifiers), or declares workspace dependencies that drift from what it imports. It also validates the `registry-platform` slice exports and API v1 contract usage. The boundary check is the source of truth for enforced module rules.
 
 ## Repositories: hosted, proxy, virtual
 

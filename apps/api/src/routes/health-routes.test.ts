@@ -7,7 +7,7 @@ let readiness = {
   checks: [{ name: "db", ok: true }] as Array<{ name: string; ok: boolean; error?: string }>,
 };
 const checkReadiness = mock(async () => readiness);
-mock.module("@hootifactory/registry-application/runtime", () => ({ checkReadiness }));
+mock.module("@hootifactory/registry-platform/runtime", () => ({ checkReadiness }));
 
 const { healthRouter } = await import("./health");
 

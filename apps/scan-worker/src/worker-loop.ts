@@ -4,7 +4,7 @@ import { logger, withSpan } from "@hootifactory/observability";
 import {
   reapExpiredContentUploadSessions,
   sweepUnreferencedCasBlobs,
-} from "@hootifactory/registry-application/content";
+} from "@hootifactory/registry-platform/content";
 import { SCAN_OUTBOX_STATUS } from "@hootifactory/scan-core";
 import type { ScannerRuntime } from "@hootifactory/scanner";
 import { processScan, recordScanFailure } from "./pipeline";

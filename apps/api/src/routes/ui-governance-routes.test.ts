@@ -31,19 +31,19 @@ const setOrgQuota = mock(async () => {});
 const upsertScanPolicy = mock(async () => ({ id: "pol_1" }));
 const applyRetention = mock(async () => 5);
 
-mock.module("@hootifactory/registry-application/inventory", () => ({
+mock.module("@hootifactory/registry-platform/inventory", () => ({
   countRepositoryArtifacts,
   listRepositoryArtifactSummaries,
   getArtifactWithRepository,
   countArtifactFindings,
   listArtifactFindings,
 }));
-mock.module("@hootifactory/registry-application/governance", () => ({
+mock.module("@hootifactory/registry-platform/governance", () => ({
   getOrgQuota,
   setOrgQuota,
   upsertScanPolicy,
 }));
-mock.module("@hootifactory/registry-application/repositories", () => ({ applyRetention }));
+mock.module("@hootifactory/registry-platform/repositories", () => ({ applyRetention }));
 mock.module("./ui-repository-access", () => ({
   requireRepositoryAccessFromParam: async () => accessResult,
   requireOrgAccess: async () => orgDenied,

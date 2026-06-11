@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { ReadinessDependencyCheck } from "@hootifactory/registry-application/runtime";
+import type { ReadinessDependencyCheck } from "@hootifactory/registry-platform/runtime";
 import { publicReadinessChecks } from "./health";
 
 describe("health routes", () => {

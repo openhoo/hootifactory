@@ -1,7 +1,7 @@
 import {
   type RegistryScanPolicyRow,
   resolveRegistryScanPolicy,
-} from "@hootifactory/registry-application/governance";
+} from "@hootifactory/registry-platform/governance";
 import {
   type ArtifactState,
   maxSeverity,

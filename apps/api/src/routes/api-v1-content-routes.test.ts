@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { Hono } from "hono";
 import type { AppEnv } from "../types";
 
-// Mock the registry-application data layer and authorization so the external
+// Mock the registry-platform data layer and authorization so the external
 // content API handlers run end to end. The real validation/response/access
 // helpers stay in the graph (authorize drives allow/deny).
 type RepoRow = { id: string; orgId: string; name: string; visibility: string } & Record<
@@ -72,7 +72,7 @@ mock.module("@hootifactory/auth", () => ({
   listAccessibleOrgs: async () => [],
   httpStatusForDenial: (d: { code?: string }) => (d.code === "unauthenticated" ? 401 : 403),
 }));
-mock.module("@hootifactory/registry-application/inventory", () => ({
+mock.module("@hootifactory/registry-platform/inventory", () => ({
   countArtifactFindings,
   countLivePackageVersions,
   countRepositoryArtifacts,
@@ -84,14 +84,14 @@ mock.module("@hootifactory/registry-application/inventory", () => ({
   listRepositoryArtifactSummaries,
   listRepositoryPackageSummaries,
 }));
-mock.module("@hootifactory/registry-application/repositories", () => ({
+mock.module("@hootifactory/registry-platform/repositories", () => ({
   findLiveVersion,
   getRepositoryById,
   // Present so api-v1-access (pulled via api-v1-helpers) links.
   countRepositoriesForOrg: async () => 0,
   listRepositoriesForOrg: async () => [],
 }));
-mock.module("@hootifactory/registry-application/assets", () => ({
+mock.module("@hootifactory/registry-platform/assets", () => ({
   listRegistryAssetsForRepository,
 }));
 

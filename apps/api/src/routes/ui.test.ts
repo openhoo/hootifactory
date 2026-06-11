@@ -48,7 +48,7 @@ mock.module("@hootifactory/registry", () => ({
     ],
   },
 }));
-mock.module("@hootifactory/registry-application/repositories", () => ({
+mock.module("@hootifactory/registry-platform/repositories", () => ({
   createRepositoryForPrincipal,
   listRepositoriesForOrg,
 }));

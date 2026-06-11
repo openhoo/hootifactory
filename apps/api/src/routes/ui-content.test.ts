@@ -23,7 +23,7 @@ const countLivePackageVersions = mock(async () => 2);
 const listLivePackageVersionSummaries = mock(async () => [{ version: "1.0.0" }]);
 const getPackageWithRepository = mock(async () => packageRow);
 
-mock.module("@hootifactory/registry-application/inventory", () => ({
+mock.module("@hootifactory/registry-platform/inventory", () => ({
   countRepositoryPackages,
   countLivePackageVersions,
   getPackageWithRepository,

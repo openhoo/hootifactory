@@ -6,7 +6,7 @@ import {
   type RegistryAppRouteContext,
   registryPlugins,
 } from "@hootifactory/registry";
-import { resolveRepository } from "@hootifactory/registry-application/routing";
+import { resolveRepository } from "@hootifactory/registry-platform/routing";
 import type { Context } from "hono";
 import { logger } from "./lib/logger";
 import type { AppEnv } from "./types";

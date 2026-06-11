@@ -3,7 +3,7 @@ import { Hono } from "hono";
 import type { AppEnv } from "../types";
 
 // Covers the external policy + repository-config + organization route handlers.
-// Authorization and the registry-application data layer are mocked so happy and
+// Authorization and the registry-platform data layer are mocked so happy and
 // error branches run without DB.
 type RepoRow = { id: string; orgId: string; name: string; visibility: string } & Record<
   string,
@@ -57,12 +57,12 @@ mock.module("@hootifactory/auth", () => ({
   httpStatusForDenial: (d: { code?: string }) => (d.code === "unauthenticated" ? 401 : 403),
   writeAudit: async () => {},
 }));
-mock.module("@hootifactory/registry-application/governance", () => ({
+mock.module("@hootifactory/registry-platform/governance", () => ({
   getOrgQuota,
   setOrgQuota,
   upsertScanPolicy,
 }));
-mock.module("@hootifactory/registry-application/repositories", () => ({
+mock.module("@hootifactory/registry-platform/repositories", () => ({
   applyRetention,
   addUpstream,
   addVirtualMember,

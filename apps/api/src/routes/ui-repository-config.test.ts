@@ -46,7 +46,7 @@ const addVirtualMember = mock(async () => {});
 mock.module("@hootifactory/auth", () => ({
   authorize: async () => ({ allowed: memberDecisionAllowed, code: "ok" }),
 }));
-mock.module("@hootifactory/registry-application/repositories", () => ({
+mock.module("@hootifactory/registry-platform/repositories", () => ({
   addUpstream,
   addVirtualMember,
   getRepositoryById,

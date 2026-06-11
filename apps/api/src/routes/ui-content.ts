@@ -4,7 +4,7 @@ import {
   getPackageWithRepository,
   listLivePackageVersionSummaries,
   listRepositoryPackageSummaries,
-} from "@hootifactory/registry-application/inventory";
+} from "@hootifactory/registry-platform/inventory";
 import type { Hono } from "hono";
 import type { AppEnv } from "../types";
 import { uuidParams, validateInput, validateParams } from "../validation";

@@ -5,7 +5,7 @@ import { registryPlugins } from "@hootifactory/registry";
 import {
   createRepositoryForPrincipal,
   listRepositoriesForOrg,
-} from "@hootifactory/registry-application/repositories";
+} from "@hootifactory/registry-platform/repositories";
 import { Hono } from "hono";
 import type { AppEnv } from "../types";
 import { uuidParams, validateJsonBody, validateParams } from "../validation";

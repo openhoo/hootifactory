@@ -10,7 +10,7 @@ import {
   getRepositoryById,
   VirtualMemberLimitExceededError,
   VirtualMemberOrgMismatchError,
-} from "@hootifactory/registry-application/repositories";
+} from "@hootifactory/registry-platform/repositories";
 import type { Hono } from "hono";
 import type { AppEnv } from "../types";
 import {

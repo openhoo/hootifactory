@@ -3,7 +3,7 @@ import type { ResolvedRepo } from "@hootifactory/registry";
 import type {
   ArtifactWithRepositoryRow,
   PackageWithRepositoryRow,
-} from "@hootifactory/registry-application/inventory";
+} from "@hootifactory/registry-platform/inventory";
 import type { Context } from "hono";
 import type { AppEnv } from "../types";
 import {

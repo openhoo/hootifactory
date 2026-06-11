@@ -8,7 +8,7 @@ import {
   V1PackageVersionListResponseSchema,
   V1RepositoryDetailResponseSchema,
 } from "@hootifactory/contracts";
-import { listRegistryAssetsForRepository } from "@hootifactory/registry-application/assets";
+import { listRegistryAssetsForRepository } from "@hootifactory/registry-platform/assets";
 import {
   countArtifactFindings,
   countLivePackageVersions,
@@ -18,8 +18,8 @@ import {
   listLivePackageVersionSummaries,
   listRepositoryArtifactSummaries,
   listRepositoryPackageSummaries,
-} from "@hootifactory/registry-application/inventory";
-import { findLiveVersion } from "@hootifactory/registry-application/repositories";
+} from "@hootifactory/registry-platform/inventory";
+import { findLiveVersion } from "@hootifactory/registry-platform/repositories";
 import type { Hono } from "hono";
 import type { AppEnv } from "../types";
 import {

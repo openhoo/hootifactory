@@ -1,4 +1,4 @@
-import { getOrgQuota, setOrgQuota } from "@hootifactory/registry-application/governance";
+import { getOrgQuota, setOrgQuota } from "@hootifactory/registry-platform/governance";
 import type { Hono } from "hono";
 import type { AppEnv } from "../types";
 import { uuidParams, validateJsonBody, validateParams } from "../validation";

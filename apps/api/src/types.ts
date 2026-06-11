@@ -1,6 +1,6 @@
 import type { Principal } from "@hootifactory/auth";
 import type { HttpRequestTelemetry } from "@hootifactory/observability";
-import type { RegistryAuthFailure } from "@hootifactory/registry-application/runtime";
+import type { RegistryAuthFailure } from "@hootifactory/registry-platform/runtime";
 
 export type AuthSource = "authorization" | "registryApiKey" | "session" | "anonymous";
 export type { RegistryAuthFailure };
