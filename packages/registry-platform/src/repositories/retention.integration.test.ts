@@ -13,12 +13,14 @@ import {
   quotas,
   registryAssets,
   repositories,
+  retentionPolicies,
 } from "@hootifactory/db";
 import { computeDigest, type RegistryRequestContext } from "@hootifactory/registry";
 import { createTestRegistryContext, createTestResolvedRepo } from "@hootifactory/registry/testing";
 import { blobStore } from "@hootifactory/storage";
 import { storeBlobWithRef } from "../content/blobs";
 import { applyRetention } from "./retention";
+import { applyDueRetentionPolicies } from "./retention-sweep";
 
 // DB+MinIO-backed coverage for applyRetention's CAS/quota reclamation. The only
 // e2e is Docker-gated and asserts version-count pruning, not storage-byte
@@ -263,5 +265,36 @@ describe("applyRetention CAS/quota reclamation (DB + MinIO)", () => {
     // No storage refund because the org still references the digest.
     expect(await usedStorage()).toBe(beforeStorage);
     expect(await usedArtifacts()).toBe(1);
+  });
+});
+
+describe("applyDueRetentionPolicies scheduled sweep (DB)", () => {
+  test("applies persisted per-repo policies and skips rows the engine cannot run", async () => {
+    const repo3 = await seedRepo("ret-repo-3");
+    const pkg = await seedPackage(repo3, "pkg-sched");
+    const base = Date.parse("2026-03-01T00:00:00.000Z");
+    const v1 = await seedVersion(pkg, "1.0.0", new Date(base));
+    const v2 = await seedVersion(pkg, "2.0.0", new Date(base + 1000));
+    const v3 = await seedVersion(pkg, "3.0.0", new Date(base + 2000));
+    await db.insert(retentionPolicies).values([
+      // The one row the engine supports: prune repo3 down to its newest version.
+      { orgId, repositoryId: repo3, rules: { keepLastN: 1 }, action: "delete" },
+      // Unsupported rule shape: counted as skipped, never misapplied.
+      { orgId, repositoryId: repo3, rules: { maxAgeDays: 30 }, action: "delete" },
+      // Org-wide row (repositoryId null): excluded from the per-repo sweep.
+      { orgId, rules: { keepLastN: 1 }, action: "delete" },
+    ]);
+
+    const result = await applyDueRetentionPolicies({ limit: 100 });
+
+    // Strict per-repo assertions; the counters are lower-bounded because the
+    // sweep reads the whole table and the scratch DB may carry unrelated rows.
+    expect(await versionDeleted(v1)).toBe(true);
+    expect(await versionDeleted(v2)).toBe(true);
+    expect(await versionDeleted(v3)).toBe(false);
+    expect(result.policies).toBeGreaterThanOrEqual(2);
+    expect(result.applied).toBeGreaterThanOrEqual(1);
+    expect(result.skipped).toBeGreaterThanOrEqual(1);
+    expect(result.pruned).toBeGreaterThanOrEqual(2);
   });
 });

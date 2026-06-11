@@ -64,6 +64,8 @@ const baseConfig: ScanWorkerConfig = {
   blobGcIntervalSeconds: 300,
   scanReclaimIntervalSeconds: 300,
   scanReclaimTimeoutSeconds: 900,
+  retentionApplyBatchSize: 100,
+  retentionApplyIntervalSeconds: 3600,
 };
 
 const runtime = { options: {}, scanners: [] } as unknown as ScannerRuntime;
@@ -228,6 +230,25 @@ describe("maintenance tasks", () => {
   test("reclaimStuckScans tolerates a failing update", async () => {
     const { mod, collab } = await loadModule({ updateRejects: true });
     await expect(mod.reclaimStuckScans(900, 5, collab.db)).resolves.toBeUndefined();
+  });
+
+  test("applyRetentionPolicies forwards the batch limit to the policy sweep", async () => {
+    const { mod } = await loadModule({});
+    const sweeps: { limit: number }[] = [];
+    await mod.applyRetentionPolicies(25, async (opts) => {
+      sweeps.push(opts);
+      return { policies: 1, applied: 1, pruned: 2, skipped: 0, failed: 0 };
+    });
+    expect(sweeps).toEqual([{ limit: 25 }]);
+  });
+
+  test("applyRetentionPolicies tolerates a failing sweep", async () => {
+    const { mod } = await loadModule({});
+    await expect(
+      mod.applyRetentionPolicies(10, async () => {
+        throw new Error("policy query failed");
+      }),
+    ).resolves.toBeUndefined();
   });
 });
 

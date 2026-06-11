@@ -114,6 +114,7 @@ await (async () => {
     reapExpiredUploads: async () => {},
     sweepBlobs: async () => {},
     reclaimStuckScans: async () => {},
+    applyRetentionPolicies: async () => {},
     runScanCycle: (async (config: unknown) => {
       captured.cycleCount += 1;
       captured.cycleConfig = config;
@@ -135,11 +136,12 @@ describe("scan worker entrypoint wiring", () => {
     expect(captured.readyStates).toContain(true);
   });
 
-  test("registers the three maintenance tasks with the scheduler", () => {
+  test("registers the four maintenance tasks with the scheduler", () => {
     expect(captured.scheduledTasks).toEqual([
       "upload_sessions.reap_expired",
       "blob_gc.sweep",
       "scan.outbox.reclaim_stuck",
+      "retention.apply",
     ]);
   });
 
@@ -203,6 +205,7 @@ async function startShutdownHarness(options: {
     reapExpiredUploads: async () => {},
     sweepBlobs: async () => {},
     reclaimStuckScans: async () => {},
+    applyRetentionPolicies: async () => {},
     runScanCycle: async () => {
       cycleStarted.resolve();
       if (options.cycleNeverSettles) {
