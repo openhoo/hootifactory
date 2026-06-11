@@ -1,0 +1,1 @@
+CREATE INDEX "upload_sessions_reaper_idx" ON "upload_sessions" USING btree ("expires_at") WHERE "upload_sessions"."state" = 'open';

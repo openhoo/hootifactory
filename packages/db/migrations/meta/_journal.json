@@ -15,6 +15,13 @@
       "when": 1781200505179,
       "tag": "0001_restore_blob_refs_trigger",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1781202085790,
+      "tag": "0002_worried_lockheed",
+      "breakpoints": true
     }
   ]
 }
