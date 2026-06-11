@@ -28,6 +28,7 @@
     "format": "biome check --write .",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "bun run packages/db/src/migrate.ts",
+    "db:baseline": "bun run packages/db/src/baseline.ts",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
     "db:seed": "bun run scripts/seed.ts",
