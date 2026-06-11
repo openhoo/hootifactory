@@ -31,12 +31,7 @@ const workspaceImportPattern =
 // Plugin package names (and the boundary roots that name them) are derived from
 // the workspace at runtime, so adding a registry format or a scanner is purely a
 // new package + a manifest line — never a boundary-checker edit.
-const NON_PLUGIN_REGISTRY = new Set([
-  "registry",
-  "registry-application",
-  "registry-builtins",
-  "registry-runtime",
-]);
+const NON_PLUGIN_REGISTRY = new Set(["registry", "registry-application", "registry-runtime"]);
 const NON_PLUGIN_SCANNER = new Set(["scanner", "scanner-runtime"]);
 
 const failures: string[] = [];
@@ -48,6 +43,11 @@ const scannerPluginRoots = pluginPackages.scanner.flatMap((pkg) => [
   `${pkg.relDir}/src`,
   `${pkg.relDir}/package.json`,
 ]);
+const registryPluginRoots = pluginPackages.registry.flatMap((pkg) => [
+  `${pkg.relDir}/src`,
+  `${pkg.relDir}/package.json`,
+]);
+const registryPluginSrcRoots = pluginPackages.registry.map((pkg) => `${pkg.relDir}/src`);
 const rules = buildRules();
 
 await checkBoundaryRules();
@@ -182,25 +182,14 @@ function buildRules(): BoundaryRule[] {
         /\b(?:format|moduleId)\s*[:=]\s*["'](?:npm|pypi|cargo|nuget|oci|helm|maven|generic)["']/,
         /\b(?:scanner|scannerId)\s*[:=]\s*["'](?:grype|trivy|clamav|osv|syft|heuristic)["']/,
         /\b[Oo]ci[A-Z]/,
-        /["']\/?v2\//,
+        /["']\/?v2["'/]/,
       ],
     },
     {
-      name: "registry package/version adapters stay DB-free",
-      roots: [
-        "packages/registry-cargo/src",
-        "packages/registry-cargo/package.json",
-        "packages/registry-go/src",
-        "packages/registry-go/package.json",
-        "packages/registry-npm/src",
-        "packages/registry-npm/package.json",
-        "packages/registry-nuget/src",
-        "packages/registry-nuget/package.json",
-        "packages/registry-oci/src",
-        "packages/registry-oci/package.json",
-        "packages/registry-pypi/src",
-        "packages/registry-pypi/package.json",
-      ],
+      // Applies to every discovered registry plugin, so a new format package is
+      // covered automatically without a boundary-checker edit.
+      name: "registry plugins stay DB-free",
+      roots: registryPluginRoots,
       forbidden: [/@hootifactory\/db\b/, /\bctx\.db\b/],
     },
     {
@@ -263,14 +252,7 @@ function buildRules(): BoundaryRule[] {
     },
     {
       name: "registry protocol plugins avoid delivery and platform infrastructure",
-      roots: [
-        "packages/registry-cargo/src",
-        "packages/registry-go/src",
-        "packages/registry-npm/src",
-        "packages/registry-nuget/src",
-        "packages/registry-oci/src",
-        "packages/registry-pypi/src",
-      ],
+      roots: registryPluginSrcRoots,
       forbidden: [
         /from\s+["']hono/,
         /from\s+["']react/,
@@ -330,7 +312,7 @@ function buildRules(): BoundaryRule[] {
         /\bociManifestId\b/,
         // The OCI distribution mount prefix is module grammar; it must not appear
         // in any agnostic package (route matching, scope matching, etc.).
-        /["']\/?v2\//,
+        /["']\/?v2["'/]/,
       ],
     },
     {

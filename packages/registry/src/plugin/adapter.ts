@@ -312,7 +312,7 @@ export interface RegistryAppRouteContext {
 /** An app-level route mounted at an absolute path, outside the repo mount tree. */
 export interface RegistryAppRoute {
   method: HttpMethod;
-  /** Absolute request path (e.g. "/v2", "/token"). */
+  /** Absolute request path of a module app-level route (outside any repo mount). */
   pattern: string;
   handler(ctx: RegistryAppRouteContext): Response | Promise<Response>;
 }

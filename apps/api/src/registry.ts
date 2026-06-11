@@ -24,7 +24,7 @@ import {
   serveWebFallback,
 } from "@hootifactory/registry-application/runtime";
 import type { Context } from "hono";
-import { tryHandleAppRoute } from "./registry-app-routes";
+import { registryAppRouteSegments, tryHandleAppRoute } from "./registry-app-routes";
 import { stripBodyForFallbackHead } from "./registry-utils";
 import { compressRegistryResponse } from "./response-compression";
 import type { AppEnv } from "./types";
@@ -57,7 +57,10 @@ export async function handleRegistryRequest(c: Context<AppEnv>): Promise<Respons
     if (c.req.method === "GET") {
       const web = await withSpan("web.spa_fallback", { "url.path": url.pathname }, () =>
         serveWebFallback(url.pathname, {
-          registryMountSegments: registryPlugins.all().map((plugin) => plugin.mountSegment),
+          registryMountSegments: [
+            ...registryPlugins.all().map((plugin) => plugin.mountSegment),
+            ...registryAppRouteSegments(),
+          ],
         }),
       );
       if (web) return web;

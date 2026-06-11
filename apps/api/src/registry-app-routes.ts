@@ -37,6 +37,25 @@ function appRouteMap(): Map<string, AppRouteHandler> {
   });
 }
 
+/**
+ * First path segments owned by module app-level routes (e.g. the OCI plugin's
+ * distribution mount and token service). Fed into the SPA fallback so module
+ * grammar never leaks into the format-agnostic core as a hardcoded list.
+ */
+export function registryAppRouteSegments(): Set<string> {
+  return registryPlugins.derive(
+    "appRouteSegments",
+    () =>
+      new Set(
+        registryPlugins
+          .all()
+          .flatMap((plugin) => (plugin.appRoutes?.() ?? []).map((r) => r.pattern))
+          .map((pattern) => pattern.replace(/^\/+/, "").split("/", 1)[0] ?? "")
+          .filter((segment) => segment.length > 0),
+      ),
+  );
+}
+
 /** Whether an absolute path is served by some module's app-level route table. */
 export function isRegistryAppPath(pathname: string): boolean {
   const patterns = registryPlugins.derive(
