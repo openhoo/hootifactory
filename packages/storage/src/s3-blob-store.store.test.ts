@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { computeDigest } from "./digest";
-import { S3BlobStore } from "./s3-blob-store";
+import { S3BlobStore, type S3BlobStoreOptions } from "./s3-blob-store";
 
 /**
  * Unit tests for S3BlobStore's logic with an in-memory fake S3 backend injected
@@ -91,7 +91,7 @@ function makeFakeClient(store: Map<string, Uint8Array>, ops: FakeFileOps) {
   return { file };
 }
 
-function makeStore() {
+function makeStore(overrides: Partial<S3BlobStoreOptions> = {}) {
   const backend = new Map<string, Uint8Array>();
   const ops: FakeFileOps = { presignCalls: [] };
   const store = new S3BlobStore({
@@ -101,6 +101,7 @@ function makeStore() {
     bucket: "blobs-bucket",
     accessKeyId: "AKIA-test",
     secretAccessKey: "secret-test",
+    ...overrides,
   });
   const fake = makeFakeClient(backend, ops);
   (store as unknown as { client: unknown }).client = fake;
@@ -327,7 +328,72 @@ describe("promoteToBlob", () => {
     expect(await store.getBytes(DIGEST)).toEqual(PAYLOAD);
   });
 
+  test("reports a non-2xx signed copy through onCopyError, then falls back", async () => {
+    const copyErrors: { error: unknown; sourceKey: string; targetKey: string }[] = [];
+    const { store } = makeStore({
+      onCopyError: (error, context) => copyErrors.push({ error, ...context }),
+    });
+    const stagingKey = "uploads/s/chunk";
+    await store.putAtKey(stagingKey, PAYLOAD);
+
+    await withFetch(
+      () => new Response(null, { status: 403 }),
+      async () => {
+        await store.promoteToBlob(stagingKey, DIGEST);
+      },
+    );
+
+    expect(copyErrors).toHaveLength(1);
+    const reported = copyErrors[0];
+    if (!reported) throw new Error("expected a reported copy error");
+    expect(reported.sourceKey).toBe(stagingKey);
+    expect(reported.targetKey).toBe(store.blobKey(DIGEST));
+    expect(reported.error).toBeInstanceOf(Error);
+    expect((reported.error as Error).message).toContain("HTTP 403");
+    // The failure is surfaced, but the streaming fallback still promotes.
+    expect(await store.getBytes(DIGEST)).toEqual(PAYLOAD);
+  });
+
+  test("reports a thrown fetch error through onCopyError, then falls back", async () => {
+    const copyErrors: unknown[] = [];
+    const { store } = makeStore({ onCopyError: (error) => copyErrors.push(error) });
+    const stagingKey = "uploads/s/chunk";
+    await store.putAtKey(stagingKey, PAYLOAD);
+
+    await withFetch(
+      () => {
+        throw new Error("connection refused");
+      },
+      async () => {
+        await store.promoteToBlob(stagingKey, DIGEST);
+      },
+    );
+
+    expect(copyErrors).toHaveLength(1);
+    expect((copyErrors[0] as Error).message).toBe("connection refused");
+    expect(await store.getBytes(DIGEST)).toEqual(PAYLOAD);
+  });
+
+  test("a throwing onCopyError hook does not break the promote fallback", async () => {
+    const { store } = makeStore({
+      onCopyError: () => {
+        throw new Error("hook exploded");
+      },
+    });
+    const stagingKey = "uploads/s/chunk";
+    await store.putAtKey(stagingKey, PAYLOAD);
+
+    await withFetch(
+      () => new Response(null, { status: 500 }),
+      async () => {
+        await store.promoteToBlob(stagingKey, DIGEST);
+      },
+    );
+    expect(await store.getBytes(DIGEST)).toEqual(PAYLOAD);
+  });
+
   test("skips the signed copy entirely when credentials are absent", async () => {
+    let copyErrorCalls = 0;
     const store = new S3BlobStore({
       endpoint: "",
       publicEndpoint: "",
@@ -335,6 +401,9 @@ describe("promoteToBlob", () => {
       bucket: "",
       accessKeyId: "",
       secretAccessKey: "",
+      onCopyError: () => {
+        copyErrorCalls += 1;
+      },
     });
     const backend = new Map<string, Uint8Array>();
     const ops: FakeFileOps = { presignCalls: [] };
@@ -352,8 +421,10 @@ describe("promoteToBlob", () => {
         await store.promoteToBlob(stagingKey, DIGEST);
       },
     );
-    // No endpoint/creds → copyObject returns false without any network call.
+    // No endpoint/creds → copyObject returns false without any network call,
+    // and the expected configuration-based skip is not reported as an error.
     expect(fetched).toBe(false);
+    expect(copyErrorCalls).toBe(0);
     expect(await store.exists(DIGEST)).toBe(true);
   });
 });
