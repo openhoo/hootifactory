@@ -36,6 +36,13 @@
       "when": 1781204506414,
       "tag": "0004_striped_vance_astro",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1781205047805,
+      "tag": "0005_scan_outbox_telemetry",
+      "breakpoints": true
     }
   ]
 }

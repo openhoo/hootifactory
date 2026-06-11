@@ -66,6 +66,18 @@ export const scanOutbox = pgTable(
     nextAttemptAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     lockedAt: timestamp({ withTimezone: true }),
     lastError: text(),
+    /**
+     * Telemetry context carrier stamped at enqueue (publish time) and restored by
+     * the scan-worker, so publish->scan traces link the same way pg-boss email
+     * jobs do. Shape mirrors observability's TelemetryContextCarrier (typed
+     * structurally here so the db package stays observability-free). Nullable:
+     * rows enqueued outside any traced request carry no context.
+     */
+    telemetry: jsonb().$type<{
+      trace?: Record<string, string>;
+      requestId?: string;
+      correlationId?: string;
+    } | null>(),
     ...timestamps(),
   },
   (t) => [

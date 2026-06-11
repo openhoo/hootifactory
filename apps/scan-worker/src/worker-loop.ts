@@ -1,6 +1,6 @@
 import { mapWithBoundedConcurrency } from "@hootifactory/core";
 import { and, db, eq, scanOutbox, sql } from "@hootifactory/db";
-import { logger, withSpan } from "@hootifactory/observability";
+import { logger, withSpan, withTelemetryContext } from "@hootifactory/observability";
 import {
   reapExpiredContentUploadSessions,
   sweepUnreferencedCasBlobs,
@@ -24,6 +24,7 @@ export interface ScanLoopDeps {
   db?: typeof db;
   processScan?: typeof processScan;
   recordScanFailure?: typeof recordScanFailure;
+  withTelemetryContext?: typeof withTelemetryContext;
 }
 
 /** Tunables for the scan-worker claim/process loop and its maintenance sweeps. */
@@ -68,7 +69,7 @@ export async function claimScanIntents(
            updated_at = now()
       from claimed
      where so.id = claimed.id
-    returning so.id, so.artifact_id as "artifactId", so.attempts
+    returning so.id, so.artifact_id as "artifactId", so.attempts, so.telemetry
   `);
   return claimedScanIntentsFromExecute(result);
 }
@@ -221,7 +222,13 @@ export async function reclaimStuckScans(
   }
 }
 
-/** Process one claimed intent: run the scan pipeline then finalize the row. */
+/**
+ * Process one claimed intent: run the scan pipeline then finalize the row.
+ *
+ * The per-artifact span runs inside the telemetry context stamped on the row at
+ * publish time (issue #341), so scan.outbox.process parents to the publish trace
+ * exactly the way instrumentQueueJob links pg-boss email jobs to their enqueue.
+ */
 export async function processClaimedIntent(
   intent: ClaimedScanIntent,
   scannerRuntime: ScannerRuntime,
@@ -231,33 +238,36 @@ export async function processClaimedIntent(
   const dbClient = deps.db ?? db;
   const runScan = deps.processScan ?? processScan;
   const recordFailure = deps.recordScanFailure ?? recordScanFailure;
-  return withSpan(
-    "scan.outbox.process",
-    {
-      "scan.outbox.id": intent.id,
-      "artifact.id": intent.artifactId,
-      "scan.outbox.attempts": intent.attempts,
-    },
-    async () => {
-      try {
-        await runScan(intent.artifactId, scannerRuntime);
-        await markSucceeded(intent, dbClient);
-      } catch (err) {
-        logger.error("scan job failed", {
-          artifactId: intent.artifactId,
-          attempt: intent.attempts,
-          error: err,
-        });
-        await recordFailure(intent.artifactId, err).catch((recordErr) => {
-          logger.error("scan failure recording failed", {
+  const restoreTelemetry = deps.withTelemetryContext ?? withTelemetryContext;
+  return restoreTelemetry(intent.telemetry, () =>
+    withSpan(
+      "scan.outbox.process",
+      {
+        "scan.outbox.id": intent.id,
+        "artifact.id": intent.artifactId,
+        "scan.outbox.attempts": intent.attempts,
+      },
+      async () => {
+        try {
+          await runScan(intent.artifactId, scannerRuntime);
+          await markSucceeded(intent, dbClient);
+        } catch (err) {
+          logger.error("scan job failed", {
             artifactId: intent.artifactId,
-            originalError: err instanceof Error ? err.message : String(err),
-            error: recordErr,
+            attempt: intent.attempts,
+            error: err,
           });
-        });
-        await markFailed(intent, err, maxAttempts, dbClient);
-      }
-    },
+          await recordFailure(intent.artifactId, err).catch((recordErr) => {
+            logger.error("scan failure recording failed", {
+              artifactId: intent.artifactId,
+              originalError: err instanceof Error ? err.message : String(err),
+              error: recordErr,
+            });
+          });
+          await markFailed(intent, err, maxAttempts, dbClient);
+        }
+      },
+    ),
   );
 }
 

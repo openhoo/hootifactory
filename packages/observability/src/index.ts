@@ -5,6 +5,7 @@ export {
   currentCorrelationContext,
   withCorrelationContext,
   withLogAttributes,
+  withTelemetryContext,
 } from "./correlation";
 export { instrumentHttpRequest } from "./http";
 export { logger } from "./logger";

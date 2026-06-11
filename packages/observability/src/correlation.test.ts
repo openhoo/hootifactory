@@ -2,8 +2,10 @@ import { describe, expect, test } from "bun:test";
 import {
   captureTelemetryContext,
   currentCorrelationContext,
+  type TelemetryContextCarrier,
   withCorrelationContext,
   withLogAttributes,
+  withTelemetryContext,
 } from ".";
 import {
   correlationStorage,
@@ -73,6 +75,41 @@ describe("captureTelemetryContext", () => {
       expect(carrier.correlationId).toBe("corr-cap");
       // No active span -> no traceparent injected.
       expect(carrier.trace).toBeUndefined();
+    });
+  });
+});
+
+describe("withTelemetryContext (issue #341)", () => {
+  test("runs fn in the current context when there is no carrier", async () => {
+    expect(await withTelemetryContext(undefined, async () => "ran")).toBe("ran");
+    await withTelemetryContext(undefined, async () => {
+      expect(currentCorrelationContext()).toEqual({});
+    });
+  });
+
+  test("restores request and correlation ids from the carrier", async () => {
+    await withTelemetryContext({ requestId: "req-1", correlationId: "corr-1" }, async () => {
+      const ctx = currentCorrelationContext();
+      expect(ctx.requestId).toBe("req-1");
+      expect(ctx.correlationId).toBe("corr-1");
+    });
+  });
+
+  test("falls back to the requestId when the carrier has no correlationId", async () => {
+    await withTelemetryContext({ requestId: "req-2" }, async () => {
+      expect(currentCorrelationContext().correlationId).toBe("req-2");
+    });
+  });
+
+  test("round-trips a carrier captured by captureTelemetryContext", async () => {
+    let carrier: TelemetryContextCarrier | undefined;
+    withCorrelationContext({ requestId: "req-rt", correlationId: "corr-rt" }, () => {
+      carrier = captureTelemetryContext();
+    });
+    await withTelemetryContext(carrier, async () => {
+      const ctx = currentCorrelationContext();
+      expect(ctx.requestId).toBe("req-rt");
+      expect(ctx.correlationId).toBe("corr-rt");
     });
   });
 });

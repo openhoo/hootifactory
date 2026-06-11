@@ -1,5 +1,6 @@
 import { z } from "@hootifactory/core";
 import { and, eq, scanOutbox } from "@hootifactory/db";
+import type { TelemetryContextCarrier } from "@hootifactory/observability";
 import { SCAN_OUTBOX_STATUS } from "@hootifactory/scan-core";
 
 const ExecuteRowsSchema = z.looseObject({
@@ -11,7 +12,28 @@ const ClaimedScanIntentRowSchema = z.looseObject({
   artifactId: z.unknown().optional(),
   artifact_id: z.unknown().optional(),
   attempts: z.unknown(),
+  telemetry: z.unknown().optional(),
 });
+
+/**
+ * The telemetry context carrier stamped on the row at publish time (issue #341).
+ * Parsed defensively: telemetry is best-effort linkage, so a malformed value must
+ * degrade to "no carrier" rather than fail the claim and block the scan itself.
+ */
+const TelemetryCarrierSchema = z.looseObject({
+  trace: z.record(z.string(), z.string()).optional(),
+  requestId: z.string().optional(),
+  correlationId: z.string().optional(),
+});
+
+function telemetryCarrier(value: unknown): TelemetryContextCarrier | undefined {
+  if (value === null || value === undefined) return undefined;
+  const parsed = TelemetryCarrierSchema.safeParse(value);
+  if (!parsed.success) return undefined;
+  const { trace, requestId, correlationId } = parsed.data;
+  if (!trace && !requestId && !correlationId) return undefined;
+  return { trace, requestId, correlationId };
+}
 
 export interface ClaimedScanIntent {
   id: string;
@@ -27,6 +49,12 @@ export interface ClaimedScanIntent {
    * millisecond precision loss that breaks timestamptz equality round-trips.
    */
   attempts: number;
+  /**
+   * Publish-time telemetry context restored around the per-artifact scan span so
+   * publish->scan traces link. Absent when the row was enqueued outside a traced
+   * request or the stored carrier is malformed.
+   */
+  telemetry?: TelemetryContextCarrier;
 }
 
 function rowsFromExecute(result: unknown): unknown[] {
@@ -47,7 +75,12 @@ function claimedRow(row: unknown): ClaimedScanIntent | null {
         : null;
   const attempts = Number(parsed.data.attempts);
   if (!artifactId || !Number.isFinite(attempts)) return null;
-  return { id: parsed.data.id, artifactId, attempts };
+  return {
+    id: parsed.data.id,
+    artifactId,
+    attempts,
+    telemetry: telemetryCarrier(parsed.data.telemetry),
+  };
 }
 
 export function claimedScanIntentsFromExecute(result: unknown): ClaimedScanIntent[] {
