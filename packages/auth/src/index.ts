@@ -2,6 +2,7 @@ export type { TokenGrant } from "@hootifactory/types";
 export * from "./access-management";
 export * from "./audit";
 export * from "./authorize";
+export * from "./breached-password";
 export * from "./can";
 export * from "./create-token-request";
 export * from "./email-tokens";

@@ -16,6 +16,7 @@ import {
   deleteSessionCookie,
   readSessionCookie,
 } from "./auth-helpers";
+import { breachedPasswordRejection } from "./auth-password-policy";
 import { LoginBodySchema, RegisterBodySchema } from "./auth-schemas";
 import { authenticateUserPasswordWithThrottle, consumeRegistrationAttempt } from "./auth-throttle";
 import { AUDIT_RESULT, audit } from "./http";
@@ -51,6 +52,11 @@ export function registerLocalAuthRoutes(router: Hono<AppEnv>): void {
       return c.json({ error: "too many registration attempts, try again later" }, 429, {
         "retry-after": String(throttle.retryAfter),
       });
+    }
+    const breachedRejection = await breachedPasswordRejection(c, password);
+    if (breachedRejection) {
+      logger.warn("registration rejected for breached password");
+      return breachedRejection;
     }
     try {
       const user = await withSpan("auth.register_user", {}, () =>

@@ -25,6 +25,7 @@ const consumeRegistrationAttempt = mock(
       | { throttled: false; bucket: { count: number; resetAt: number } }
       | { throttled: true; retryAfter: number },
 );
+const breachedPasswordRejection = mock(async (..._args: unknown[]) => null as Response | null);
 
 const env = { ...loadEnv(), AUTH_ALLOW_REGISTRATION: true };
 
@@ -37,6 +38,7 @@ mock.module("./auth-helpers", () => ({
     c.header("set-cookie", "hoot_session=; Max-Age=0"),
   readSessionCookie: () => undefined,
 }));
+mock.module("./auth-password-policy", () => ({ breachedPasswordRejection }));
 mock.module("./auth-throttle", () => ({
   authenticateUserPasswordWithThrottle,
   consumeRegistrationAttempt,
@@ -73,6 +75,7 @@ describe("local auth routes", () => {
     createRequestSession.mockClear();
     authenticateUserPasswordWithThrottle.mockClear();
     consumeRegistrationAttempt.mockClear();
+    breachedPasswordRejection.mockClear();
     env.AUTH_ALLOW_REGISTRATION = true;
   });
 
@@ -120,6 +123,27 @@ describe("local auth routes", () => {
     );
     expect(res.status).toBe(429);
     expect(res.headers.get("retry-after")).toBe("30");
+  });
+
+  test("register rejects passwords found in known breaches", async () => {
+    breachedPasswordRejection.mockImplementationOnce(async () =>
+      Response.json(
+        { error: "this password appears in known data breaches; choose a different one" },
+        { status: 400 },
+      ),
+    );
+    const res = await appWithRoutes().fetch(
+      postJson("/register", {
+        username: "alice",
+        email: "alice@example.test",
+        password: "password1234",
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: "this password appears in known data breaches; choose a different one",
+    });
+    expect(createLocalUser).not.toHaveBeenCalled();
   });
 
   test("register maps unique violations to a 409 conflict", async () => {
