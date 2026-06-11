@@ -1,10 +1,6 @@
 import {
-  type HttpMethod,
-  type Permission,
   type RegistryPlugin,
   type RegistryRequestContext,
-  type RouteMatch,
-  readWritePermission,
   registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
@@ -45,32 +41,6 @@ function parsePubParam<T>(
  * publish flow.
  */
 class PubAdapterState {
-  requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
-    const permission = readWritePermission(method);
-    const pkg = match?.params.package;
-    const file = match?.params.file;
-    if (file?.endsWith(".tar.gz")) {
-      const parsed = PubArchiveFileSchema.safeParse(file);
-      if (parsed.success) {
-        const split = splitArchiveFile(parsed.data);
-        if (split) {
-          return {
-            ...permission,
-            resource: {
-              type: "artifact",
-              packageName: split.packageName,
-              artifactRef: pubBlobScope(split.packageName, split.version),
-            },
-          };
-        }
-      }
-    }
-    if (pkg) {
-      return { ...permission, resource: { type: "package", packageName: pkg.toLowerCase() } };
-    }
-    return permission;
-  }
-
   archiveUrlContext(ctx: RegistryRequestContext): { baseUrl: string; mountPath: string } {
     return { baseUrl: ctx.baseUrl, mountPath: ctx.repo.mountPath };
   }
@@ -208,7 +178,27 @@ const pubDefinition = registryAdapter("pub")
       .referencedDigestPaths("archiveDigest"),
   )
   .bearerAuth()
-  .fromState((state) => state.defaultPermission("requiredPermission"))
+  .permissions((p) =>
+    p.byParams([
+      p.artifactRule({
+        param: "file",
+        normalize: (file) => {
+          if (!file.endsWith(".tar.gz")) return null;
+          const parsed = PubArchiveFileSchema.safeParse(file);
+          if (!parsed.success) return null;
+          const split = splitArchiveFile(parsed.data);
+          return split ? pubBlobScope(split.packageName, split.version) : null;
+        },
+        packageName: ({ params }) => {
+          if (!params.file) return undefined;
+          const parsed = PubArchiveFileSchema.safeParse(params.file);
+          if (!parsed.success) return undefined;
+          return splitArchiveFile(parsed.data)?.packageName;
+        },
+      }),
+      p.packageRule({ param: "package", normalize: (pkg) => pkg.toLowerCase() }),
+    ]),
+  )
   .routes((route) => [
     route
       .get("/api/packages/versions/new", "publishNew")

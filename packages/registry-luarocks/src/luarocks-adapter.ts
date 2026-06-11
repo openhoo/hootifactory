@@ -1,12 +1,8 @@
 import {
   Errors,
-  type HttpMethod,
-  type Permission,
   parseRegistryInput,
   type RegistryPlugin,
   type RegistryRequestContext,
-  type RouteMatch,
-  readWritePermission,
   registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
@@ -56,24 +52,6 @@ const VERSIONED_MANIFESTS = ["manifest-5.1", "manifest-5.2", "manifest-5.3", "ma
 class LuarocksAdapterState {
   /** Bridges the `version.id` from `/upload` to the `/upload_rock/:id` step. */
   private readonly uploadApiVersions = new UploadApiVersionRegistry();
-
-  requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
-    const permission = readWritePermission(method);
-    const filename = match?.params.filename;
-    if (filename) {
-      const parsed = parseArtifactFilename(filename);
-      if (parsed) {
-        return {
-          ...permission,
-          resource: {
-            type: "package",
-            packageName: parsed.rock,
-          },
-        };
-      }
-    }
-    return permission;
-  }
 
   /** `GET /manifest` — the Lua-table manifest regenerated from live versions. */
   async manifest(req: Request, ctx: RegistryRequestContext): Promise<Response> {
@@ -299,7 +277,14 @@ const luarocksDefinition = registryAdapter("luarocks")
     referencedDigests: (metadata) => referencedDigests(metadata),
   })
   .basicAuth()
-  .fromState((state) => state.defaultPermission("requiredPermission"))
+  .permissions((p) =>
+    p.byParams([
+      p.packageRule({
+        param: "filename",
+        normalize: (filename) => parseArtifactFilename(filename)?.rock ?? null,
+      }),
+    ]),
+  )
   .routes((route) => [
     // Literal manifest routes precede the `:filename` catch-all so they win.
     route.get("/manifest", "manifest").calls((state, { req, ctx }) => state.manifest(req, ctx)),

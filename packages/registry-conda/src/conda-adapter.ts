@@ -1,13 +1,9 @@
 import {
-  type HttpMethod,
   ifNoneMatch,
-  type Permission,
   parseRegistryInput,
   type RegistryMetadata,
   type RegistryPlugin,
   type RegistryRequestContext,
-  type RouteMatch,
-  readWritePermission,
   registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
@@ -54,19 +50,6 @@ function parseSubdir(subdir: string): string {
  * subdir's `repodata.json` from the live versions.
  */
 class CondaAdapterState {
-  requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
-    const permission = readWritePermission(method);
-    const subdir = match?.params.subdir;
-    const filename = match?.params.filename;
-    if (subdir && filename && isValidCondaSubdir(subdir)) {
-      return {
-        ...permission,
-        resource: { type: "artifact", artifactRef: condaBlobScope(subdir, filename) },
-      };
-    }
-    return permission;
-  }
-
   /** Collect a subdir's live version metadata across the repo's packages. */
   private async subdirMetas(
     ctx: RegistryRequestContext,
@@ -266,9 +249,19 @@ const condaDefinition = registryAdapter("conda")
   .basicAuth()
   .fromState((state) =>
     state
-      .defaultPermission("requiredPermission")
       .metadata({ generate: "generateMetadata", merge: "mergeMetadata" })
       .proxyIngest("proxyIngest"),
+  )
+  .permissions((p) =>
+    p.byParams([
+      p.artifactRule({
+        param: "filename",
+        normalize: (filename, { params }) =>
+          params.subdir && isValidCondaSubdir(params.subdir)
+            ? condaBlobScope(params.subdir, filename)
+            : null,
+      }),
+    ]),
   )
   .routes((route) => [
     // Literal index routes declared before the `/:subdir/:filename` catch-all.

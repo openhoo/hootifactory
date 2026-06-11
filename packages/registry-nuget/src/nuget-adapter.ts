@@ -1,9 +1,7 @@
 import {
   BoundedLruCache,
   Errors,
-  type HttpMethod,
   ifNoneMatch,
-  type Permission,
   parseRegistryInput,
   type RegistryPackageHandle,
   type RegistryPackageVersionFingerprintRow,
@@ -11,8 +9,6 @@ import {
   type RegistryPlugin,
   type RegistryRequestContext,
   type RegistryVirtualSearchInput,
-  type RouteMatch,
-  readWritePermission,
   registryAdapter,
   serveRegistryBlob,
   textEtag,
@@ -92,21 +88,6 @@ class NugetAdapterState {
   readonly registrationCache = new BoundedLruCache<string, NugetRegistrationCacheEntry>(
     NUGET_REGISTRATION_CACHE_LIMIT,
   );
-
-  requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
-    const permission = readWritePermission(method);
-    const id = match?.params.id?.toLowerCase();
-    const version = match?.params.version;
-    const file = match?.params.file;
-    if (id && version && file) {
-      return {
-        ...permission,
-        resource: { type: "artifact", packageName: id, artifactRef: `${id}.${version}.nupkg` },
-      };
-    }
-    if (id) return { ...permission, resource: { type: "package", packageName: id } };
-    return permission;
-  }
 
   base(ctx: RegistryRequestContext): string {
     return `${ctx.baseUrl}/${ctx.repo.mountPath}`;
@@ -476,8 +457,17 @@ const nugetDefinition = registryAdapter("nuget")
       .referencedDigestPaths("nupkgDigest"),
   )
   .basicAuth()
-  .fromState((state) =>
-    state.virtualSearch("handleVirtualSearch").defaultPermission("requiredPermission"),
+  .fromState((state) => state.virtualSearch("handleVirtualSearch"))
+  .permissions((p) =>
+    p.byParams([
+      p.artifactRule({
+        param: "file",
+        normalize: (file, { params }) => (params.id && params.version ? file : null),
+        packageName: ({ params }) => params.id?.toLowerCase(),
+        artifactRef: (_file, { params }) => `${params.id?.toLowerCase()}.${params.version}.nupkg`,
+      }),
+      p.packageRule({ param: "id", normalize: (id) => id.toLowerCase() }),
+    ]),
   )
   .routes((route) => [
     route

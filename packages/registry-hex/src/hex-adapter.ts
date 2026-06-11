@@ -1,11 +1,7 @@
 import {
-  type HttpMethod,
-  type Permission,
   parseRegistryInput,
   type RegistryPlugin,
   type RegistryRequestContext,
-  type RouteMatch,
-  readWritePermission,
   registryAdapter,
   registryErrorResponseForKind,
   serveRegistryBlob,
@@ -60,29 +56,6 @@ function jsonNotFound(message: string): Response {
  * shipping a protobuf signer (see hex-metadata.ts for the JSON shapes).
  */
 class HexAdapterState {
-  requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
-    const permission = readWritePermission(method);
-    const name = match?.params.name;
-    const filename = match?.params.filename;
-    if (filename) {
-      const split = splitTarballFile(filename);
-      if (split) {
-        return {
-          ...permission,
-          resource: {
-            type: "artifact",
-            packageName: split.name,
-            artifactRef: hexBlobScope(split.name, split.version),
-          },
-        };
-      }
-    }
-    if (name && HexPackageNameSchema.safeParse(name).success) {
-      return { ...permission, resource: { type: "package", packageName: name } };
-    }
-    return permission;
-  }
-
   /** Live releases for a package, oldest-first, with parsed metadata. */
   private async storedReleases(
     name: string,
@@ -247,7 +220,23 @@ const hexDefinition = registryAdapter("hex")
   // which the platform auth middleware handles directly; advertise a bearer
   // challenge for the 401 path.
   .registryBearerAuth()
-  .fromState((state) => state.defaultPermission("requiredPermission"))
+  .permissions((p) =>
+    p.byParams([
+      p.artifactRule({
+        param: "filename",
+        normalize: (filename) => {
+          const split = splitTarballFile(filename);
+          return split ? hexBlobScope(split.name, split.version) : null;
+        },
+        packageName: ({ params }) =>
+          params.filename ? splitTarballFile(params.filename)?.name : undefined,
+      }),
+      p.packageRule({
+        param: "name",
+        normalize: (name) => (HexPackageNameSchema.safeParse(name).success ? name : null),
+      }),
+    ]),
+  )
   .routes((route) => [
     // Publish: static routes declared before the `:name` catch-alls.
     route.post("/api/publish", "publish").calls((state, { req, ctx }) => state.publish(req, ctx)),

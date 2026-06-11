@@ -1,12 +1,8 @@
 import {
   Errors,
-  type HttpMethod,
-  type Permission,
   parseRegistryInput,
   type RegistryPlugin,
   type RegistryRequestContext,
-  type RouteMatch,
-  readWritePermission,
   registryAdapter,
   registryErrorResponseForModule,
   serveRegistryBlob,
@@ -35,19 +31,6 @@ const IVY_ERROR_MODULE = { errorResponseKind: "singleError" as const };
  * served checksum always matches the bytes the registry actually returns.
  */
 class IvyAdapterState {
-  requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
-    const permission = readWritePermission(method);
-    const path = match?.params.path;
-    if (!path) return permission;
-    // Checksum sidecars authorize against the package of the file they cover.
-    const checksum = parseChecksumPath(path);
-    const pkg = ivyPackageForPath(checksum?.base ?? path);
-    if (pkg) {
-      return { ...permission, resource: { type: "package", packageName: pkg } };
-    }
-    return { ...permission, resource: { type: "artifact", artifactRef: path } };
-  }
-
   upload(path: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const safePath = parseRegistryInput(IvyPathSchema, path, {
       code: "NAME_INVALID",
@@ -120,7 +103,15 @@ const ivyDefinition = registryAdapter("ivy")
     referencedDigests: (metadata) => ivyReferencedDigests(metadata),
   })
   .basicAuth()
-  .fromState((state) => state.defaultPermission("requiredPermission"))
+  .permissions((p) =>
+    p.byParams([
+      p.packageRule({
+        param: "path",
+        normalize: (path) => ivyPackageForPath(parseChecksumPath(path)?.base ?? path),
+      }),
+      p.artifactRule({ param: "path" }),
+    ]),
+  )
   .routes((route) => [
     route
       .put("/:path+", "upload")

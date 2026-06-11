@@ -1,13 +1,9 @@
 import {
-  type HttpMethod,
-  type Permission,
   parseRegistryInput,
   type RegistryAppRoute,
   type RegistryAppRouteContext,
   type RegistryPlugin,
   type RegistryRequestContext,
-  type RouteMatch,
-  readWritePermission,
   registryAdapter,
   textResponseWithEtag,
 } from "@hootifactory/registry";
@@ -113,36 +109,6 @@ export function serveTerraformDiscoveryDoc(req: Request, ctx: RegistryRequestCon
  * publish extension (`PUT`) and the host-level service-discovery document.
  */
 class TerraformAdapterState {
-  requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
-    const permission = readWritePermission(method);
-    const packageName = this.packageNameFromMatch(match);
-    if (packageName) {
-      return { ...permission, resource: { type: "package", packageName } };
-    }
-    return permission;
-  }
-
-  /** Resolve the stored package name a matched route addresses, if valid. */
-  private packageNameFromMatch(match?: RouteMatch): string | null {
-    const params = match?.params;
-    if (!params) return null;
-    if (params.name !== undefined) {
-      if (
-        !isIdentifier(params.namespace) ||
-        !isIdentifier(params.name) ||
-        !isIdentifier(params.system)
-      ) {
-        return null;
-      }
-      return modulePackageName(params.namespace, params.name, params.system);
-    }
-    if (params.type !== undefined) {
-      if (!isIdentifier(params.namespace) || !isIdentifier(params.type)) return null;
-      return providerPackageName(params.namespace, params.type);
-    }
-    return null;
-  }
-
   // ── module handlers ────────────────────────────────────────────────────────
 
   moduleVersions(
@@ -320,7 +286,24 @@ const terraformDefinition = registryAdapter("terraform")
     referencedDigests: (metadata) => terraformReferencedDigests(metadata),
   })
   .basicAuth()
-  .fromState((state) => state.defaultPermission("requiredPermission"))
+  .permissions((p) =>
+    p.byParams([
+      p.packageRule({
+        param: "name",
+        normalize: (name, { params }) =>
+          isIdentifier(params.namespace) && isIdentifier(name) && isIdentifier(params.system)
+            ? modulePackageName(params.namespace, name, params.system)
+            : null,
+      }),
+      p.packageRule({
+        param: "type",
+        normalize: (type, { params }) =>
+          isIdentifier(params.namespace) && isIdentifier(type)
+            ? providerPackageName(params.namespace, type)
+            : null,
+      }),
+    ]),
+  )
   .routes((route) => [
     // ── service discovery (repo-scoped) ──────────────────────────────────
     route

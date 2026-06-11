@@ -1,12 +1,8 @@
 import {
-  type HttpMethod,
   ifNoneMatch,
-  type Permission,
   parseRegistryInput,
   type RegistryPlugin,
   type RegistryRequestContext,
-  type RouteMatch,
-  readWritePermission,
   registryAdapter,
   serveRegistryBlob,
 } from "@hootifactory/registry";
@@ -40,22 +36,6 @@ function parseApkFilename(filename: string): string {
  * proxy ingest, so it does not advertise the proxyable capability.
  */
 class AlpineAdapterState {
-  requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
-    const permission = readWritePermission(method);
-    const arch = match?.params.arch;
-    const filename = match?.params.filename;
-    // Scope both the download read and the named-publish write to the concrete
-    // `<arch>/<filename>` artifact so authorization can restrict either to a path.
-    const handlerId = match?.entry?.handlerId;
-    if (arch && filename && (handlerId === "download" || handlerId === "publishNamed")) {
-      return {
-        ...permission,
-        resource: { type: "artifact", artifactRef: alpineBlobScope(arch, filename) },
-      };
-    }
-    return permission;
-  }
-
   /** `GET /<arch>/APKINDEX.tar.gz` — regenerate the index over the arch's live versions. */
   async index(archRaw: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const arch = parseArch(archRaw);
@@ -172,7 +152,15 @@ const alpineDefinition = registryAdapter("alpine")
       typeof metadata.blobDigest === "string" ? [metadata.blobDigest] : [],
   })
   .basicAuth()
-  .fromState((state) => state.defaultPermission("requiredPermission"))
+  .permissions((p) =>
+    p.byParams([
+      p.artifactRule({
+        param: "filename",
+        artifactRef: (filename, { params }) =>
+          params.arch ? alpineBlobScope(params.arch, filename) : null,
+      }),
+    ]),
+  )
   .routes((route) => [
     // `APKINDEX.tar.gz` is a literal second segment declared before `/:arch/:filename`.
     route

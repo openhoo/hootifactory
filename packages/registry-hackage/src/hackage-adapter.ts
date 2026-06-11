@@ -1,12 +1,8 @@
 import {
   Errors,
-  type HttpMethod,
-  type Permission,
   parseRegistryInput,
   type RegistryPlugin,
   type RegistryRequestContext,
-  type RouteMatch,
-  readWritePermission,
   registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
@@ -55,33 +51,6 @@ function parseName(name: string): string {
  * the uploaded sdist and persisted.
  */
 class HackageAdapterState {
-  requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
-    const permission = readWritePermission(method);
-    const id = match?.params.id;
-    if (!id) return permission;
-    const split = splitPackageId(id);
-    if (
-      split &&
-      (match?.entry?.handlerId === "download" || match?.entry?.handlerId === "publish")
-    ) {
-      return {
-        ...permission,
-        resource: {
-          type: "artifact",
-          packageName: split.name,
-          artifactRef: hackageBlobScope(split.name, split.version),
-        },
-      };
-    }
-    // A `summary` read is keyed to the package name: prefer the name from a
-    // `<name>-<version>` id, else treat the bare id as the package name.
-    const packageName = split?.name ?? (HackageNameSchema.safeParse(id).success ? id : null);
-    if (packageName) {
-      return { ...permission, resource: { type: "package", packageName } };
-    }
-    return permission;
-  }
-
   /**
    * The package index tarball, regenerated from live versions. Served gzipped at
    * `01-index.tar.gz` (secure) and `00-index.tar.gz` (legacy), and uncompressed
@@ -300,7 +269,26 @@ const hackageDefinition = registryAdapter("hackage")
       typeof metadata.blobDigest === "string" ? [metadata.blobDigest] : [],
   })
   .basicAuth()
-  .fromState((state) => state.defaultPermission("requiredPermission"))
+  .permissions((p) =>
+    p.byParams([
+      p.artifactRule({
+        param: "id",
+        normalize: (id, { match }) => {
+          const split = splitPackageId(id);
+          return split &&
+            (match.entry.handlerId === "download" || match.entry.handlerId === "publish")
+            ? hackageBlobScope(split.name, split.version)
+            : null;
+        },
+        packageName: ({ params }) => (params.id ? splitPackageId(params.id)?.name : undefined),
+      }),
+      p.packageRule({
+        param: "id",
+        normalize: (id) =>
+          splitPackageId(id)?.name ?? (HackageNameSchema.safeParse(id).success ? id : null),
+      }),
+    ]),
+  )
   .routes((route) => [
     // Literal routes declared before the `/package/:id` catch-alls so they
     // cannot be shadowed (the matcher tries routes in declared order).

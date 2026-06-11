@@ -1,12 +1,8 @@
 import {
   Errors,
-  type HttpMethod,
-  type Permission,
   parseRegistryInput,
   type RegistryPlugin,
   type RegistryRequestContext,
-  type RouteMatch,
-  readWritePermission,
   registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
@@ -65,30 +61,6 @@ interface WingetStoredVersion {
  * winget REST source API has no write path.
  */
 class WingetAdapterState {
-  requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
-    const permission = readWritePermission(method);
-    const packageIdentifier = match?.params.packageIdentifier;
-    const version = match?.params.version;
-    const filename = match?.params.filename;
-    if (packageIdentifier && version && filename) {
-      return {
-        ...permission,
-        resource: {
-          type: "artifact",
-          packageName: packageIdentifier.toLowerCase(),
-          artifactRef: wingetInstallerScope(packageIdentifier, version, filename),
-        },
-      };
-    }
-    if (packageIdentifier) {
-      return {
-        ...permission,
-        resource: { type: "package", packageName: packageIdentifier.toLowerCase() },
-      };
-    }
-    return permission;
-  }
-
   base(ctx: RegistryRequestContext): { baseUrl: string; mountPath: string } {
     return { baseUrl: ctx.baseUrl, mountPath: ctx.repo.mountPath };
   }
@@ -289,7 +261,21 @@ const wingetDefinition = registryAdapter("winget")
   )
   .scan((scan) => scan.osvEcosystem("winget").referencedDigestPaths("installerDigest"))
   .basicAuth()
-  .fromState((state) => state.defaultPermission("requiredPermission"))
+  .permissions((p) =>
+    p.byParams([
+      p.artifactRule({
+        param: "filename",
+        normalize: (filename, { params }) =>
+          params.packageIdentifier && params.version ? filename : null,
+        packageName: ({ params }) => params.packageIdentifier?.toLowerCase(),
+        artifactRef: (filename, { params }) =>
+          params.packageIdentifier && params.version
+            ? wingetInstallerScope(params.packageIdentifier, params.version, filename)
+            : null,
+      }),
+      p.packageRule({ param: "packageIdentifier", normalize: (id) => id.toLowerCase() }),
+    ]),
+  )
   .routes((route) => [
     route.get("/api/information", "information").calls((state, { ctx }) => state.information(ctx)),
     route

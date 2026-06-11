@@ -1,13 +1,9 @@
 import {
   Errors,
-  type HttpMethod,
   ifNoneMatch,
-  type Permission,
   parseRegistryInput,
   type RegistryPlugin,
   type RegistryRequestContext,
-  type RouteMatch,
-  readWritePermission,
   registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
@@ -53,21 +49,6 @@ const INDEX_CONTENT_TYPE = "application/json; charset=utf-8";
  * filtered by a `?prefix=` query). Proxyable (pull-through) and virtualizable.
  */
 class GenericAdapterState {
-  requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
-    const permission = readWritePermission(method);
-    const raw = match?.params.path;
-    if (!raw) return permission;
-    // A read of a stored blob targets the artifact ref; writes/deletes too.
-    return {
-      ...permission,
-      resource: {
-        type: "artifact",
-        packageName: raw,
-        artifactRef: genericBlobScope(raw),
-      },
-    };
-  }
-
   /**
    * `GET /` — list stored paths as JSON. An optional `?prefix=<dir>` query filters
    * to entries under that directory. The body is deterministically ordered so the
@@ -208,7 +189,16 @@ const genericDefinition = registryAdapter("generic")
       typeof metadata.blobDigest === "string" ? [metadata.blobDigest] : [],
   })
   .basicAuth()
-  .fromState((state) => state.defaultPermission("requiredPermission").proxyIngest("proxyIngest"))
+  .fromState((state) => state.proxyIngest("proxyIngest"))
+  .permissions((p) =>
+    p.byParams([
+      p.artifactRule({
+        param: "path",
+        packageName: ({ params }) => params.path,
+        artifactRef: (path) => genericBlobScope(path),
+      }),
+    ]),
+  )
   .routes((route) => [
     // The bare-root listing is declared before the `:path+` catch-alls.
     route.get("/", "index").calls((state, { req, ctx }) => state.index(req, ctx)),

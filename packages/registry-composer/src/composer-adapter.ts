@@ -1,13 +1,9 @@
 import {
   asJsonRecord,
   Errors,
-  type HttpMethod,
-  type Permission,
   parseRegistryInput,
   type RegistryPlugin,
   type RegistryRequestContext,
-  type RouteMatch,
-  readWritePermission,
   registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
@@ -30,24 +26,6 @@ const JSON_HEADERS = { "content-type": "application/json" } as const;
 
 /** Composer/Packagist: `packages.json` + v2 `/p2` metadata + zip dist + a custom upload. */
 class ComposerAdapterState {
-  requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
-    const permission = readWritePermission(method);
-    const path = match?.params.path;
-    if (path) {
-      return { ...permission, resource: { type: "artifact", artifactRef: path } };
-    }
-    const vendor = match?.params.vendor;
-    const pkgParam = match?.params.package;
-    if (vendor && pkgParam) {
-      const { pkg } = stripMetadataSuffix(pkgParam);
-      return {
-        ...permission,
-        resource: { type: "package", packageName: `${vendor}/${pkg}`.toLowerCase() },
-      };
-    }
-    return permission;
-  }
-
   base(ctx: RegistryRequestContext): string {
     return `${ctx.baseUrl}/${ctx.repo.mountPath}`;
   }
@@ -161,7 +139,19 @@ const composerDefinition = registryAdapter("composer")
       .referencedDigestPaths("distDigest"),
   )
   .basicAuth()
-  .fromState((state) => state.defaultPermission("requiredPermission"))
+  .permissions((p) =>
+    p.byParams([
+      p.artifactRule({ param: "path" }),
+      p.packageRule({
+        param: "package",
+        normalize: (pkgParam, { params }) => {
+          if (!params.vendor) return null;
+          const { pkg } = stripMetadataSuffix(pkgParam);
+          return `${params.vendor}/${pkg}`.toLowerCase();
+        },
+      }),
+    ]),
+  )
   .routes((route) => [
     route.get("/packages.json", "root").calls((state, { req, ctx }) => state.root(req, ctx)),
     route

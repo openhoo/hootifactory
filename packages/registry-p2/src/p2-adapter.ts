@@ -1,13 +1,9 @@
 import {
   Errors,
-  type HttpMethod,
   ifNoneMatch,
-  type Permission,
   parseRegistryInput,
   type RegistryPlugin,
   type RegistryRequestContext,
-  type RouteMatch,
-  readWritePermission,
   registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
@@ -46,24 +42,6 @@ const P2_INDEX_BODY = [
  * manifest (Bundle-SymbolicName/Bundle-Version) we parse to derive the unit.
  */
 class P2AdapterState {
-  requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
-    const permission = readWritePermission(method);
-    const filename = match?.params.filename;
-    const handlerId = match?.entry?.handlerId;
-    // Downloads/publishes of a concrete jar are artifact-scoped.
-    if (filename && handlerId && /^(download|publish)/.test(handlerId)) {
-      const kind: P2ArtifactKind = handlerId.endsWith("Feature") ? "feature" : "bundle";
-      const safe = JarFilenameSchema.safeParse(filename);
-      if (safe.success) {
-        return {
-          ...permission,
-          resource: { type: "artifact", artifactRef: p2JarScope(kind, safe.data) },
-        };
-      }
-    }
-    return permission;
-  }
-
   /** Collect every live installable unit across all packages for index regeneration. */
   private async liveUnits(ctx: RegistryRequestContext): Promise<P2VersionMeta[]> {
     const names = await ctx.data.packages.listNames();
@@ -165,7 +143,20 @@ const p2Definition = registryAdapter("p2")
       typeof metadata.blobDigest === "string" ? [metadata.blobDigest] : [],
   })
   .basicAuth()
-  .fromState((state) => state.defaultPermission("requiredPermission"))
+  .permissions((p) =>
+    p.byParams([
+      p.artifactRule({
+        param: "filename",
+        normalize: (filename, { match }) => {
+          const handlerId = match.entry.handlerId;
+          if (!/^(download|publish)/.test(handlerId)) return null;
+          const kind: P2ArtifactKind = handlerId.endsWith("Feature") ? "feature" : "bundle";
+          const safe = JarFilenameSchema.safeParse(filename);
+          return safe.success ? p2JarScope(kind, safe.data) : null;
+        },
+      }),
+    ]),
+  )
   .routes((route) => [
     // Service-discovery probe: a director requests `/p2.index` first to learn
     // the factory order (read `.xml` directly, skip the exhaustive probe).

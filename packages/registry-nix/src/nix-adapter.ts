@@ -1,12 +1,8 @@
 import {
   Errors,
-  type HttpMethod,
-  type Permission,
   parseRegistryInput,
   type RegistryPlugin,
   type RegistryRequestContext,
-  type RouteMatch,
-  readWritePermission,
   registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
@@ -68,31 +64,6 @@ function parseFileHash(hash: string): string {
  * stored metadata.
  */
 class NixAdapterState {
-  requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
-    const permission = readWritePermission(method);
-    const handlerId = match?.entry?.handlerId;
-
-    if (handlerId === "nar" || handlerId === "putNar") {
-      const fileHash = match?.params.filename ? fileHashFromNarParam(match.params.filename) : null;
-      if (fileHash) {
-        const scope = narBlobScope(fileHash);
-        return {
-          ...permission,
-          resource: { type: "artifact", packageName: scope, artifactRef: scope },
-        };
-      }
-      return permission;
-    }
-
-    const storeHash = match?.params.narinfo
-      ? storeHashFromNarInfoParam(match.params.narinfo)
-      : null;
-    if (storeHash && StoreHashSchema.safeParse(storeHash).success) {
-      return { ...permission, resource: { type: "package", packageName: narInfoScope(storeHash) } };
-    }
-    return permission;
-  }
-
   /** `GET /nix-cache-info` — the static cache descriptor. */
   cacheInfo(req: Request): Response {
     return textResponseWithEtag(req, NIX_CACHE_INFO, {
@@ -185,7 +156,31 @@ const nixDefinition = registryAdapter("nix")
       typeof metadata.blobDigest === "string" ? [metadata.blobDigest] : [],
   })
   .basicAuth()
-  .fromState((state) => state.defaultPermission("requiredPermission"))
+  .permissions((p) =>
+    p.byParams([
+      p.artifactRule({
+        param: "filename",
+        normalize: (filename) => {
+          const fileHash = fileHashFromNarParam(filename);
+          return fileHash ? narBlobScope(fileHash) : null;
+        },
+        packageName: ({ params }) => {
+          if (!params.filename) return undefined;
+          const fileHash = fileHashFromNarParam(params.filename);
+          return fileHash ? narBlobScope(fileHash) : undefined;
+        },
+      }),
+      p.packageRule({
+        param: "narinfo",
+        normalize: (narinfo) => {
+          const storeHash = storeHashFromNarInfoParam(narinfo);
+          return storeHash && StoreHashSchema.safeParse(storeHash).success
+            ? narInfoScope(storeHash)
+            : null;
+        },
+      }),
+    ]),
+  )
   .routes((route) => [
     // Literal/static routes before the `:storehash.narinfo` catch-all.
     route.get("/nix-cache-info", "cacheInfo").calls((state, { req }) => state.cacheInfo(req)),

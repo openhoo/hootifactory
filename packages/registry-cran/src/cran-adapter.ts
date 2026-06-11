@@ -1,13 +1,9 @@
 import {
   Errors,
-  type HttpMethod,
   ifNoneMatch,
-  type Permission,
   type RegistryPackageRow,
   type RegistryPlugin,
   type RegistryRequestContext,
-  type RouteMatch,
-  readWritePermission,
   registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
@@ -36,29 +32,6 @@ interface IndexCacheEntry {
  */
 class CranAdapterState {
   private readonly indexCache = new Map<string, IndexCacheEntry>();
-
-  requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
-    const permission = readWritePermission(method);
-    const filename = match?.params.filename;
-    const handlerId = match?.entry?.handlerId;
-    if (
-      filename &&
-      (handlerId === "download" || handlerId === "publish" || handlerId === "archiveDownload")
-    ) {
-      const parts = parseCranTarballFilename(filename);
-      if (parts) {
-        return {
-          ...permission,
-          resource: {
-            type: "artifact",
-            packageName: parts.name,
-            artifactRef: cranBlobScope(parts.name, parts.version),
-          },
-        };
-      }
-    }
-    return permission;
-  }
 
   /** Build (or reuse a cached) `{ text, gz }` PACKAGES index for this repo. */
   private async index(ctx: RegistryRequestContext): Promise<IndexCacheEntry> {
@@ -195,7 +168,19 @@ const cranDefinition = registryAdapter("cran")
       typeof metadata.blobDigest === "string" ? [metadata.blobDigest] : [],
   })
   .basicAuth()
-  .fromState((state) => state.defaultPermission("requiredPermission"))
+  .permissions((p) =>
+    p.byParams([
+      p.artifactRule({
+        param: "filename",
+        normalize: (filename) => {
+          const parts = parseCranTarballFilename(filename);
+          return parts ? cranBlobScope(parts.name, parts.version) : null;
+        },
+        packageName: ({ params }) =>
+          params.filename ? parseCranTarballFilename(params.filename)?.name : undefined,
+      }),
+    ]),
+  )
   .routes((route) => [
     // Literal index routes are declared before the `/:filename` catch-all so
     // they cannot be shadowed (the matcher tries routes in order).

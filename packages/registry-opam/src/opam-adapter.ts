@@ -1,13 +1,9 @@
 import {
   Errors,
-  type HttpMethod,
   ifNoneMatch,
-  type Permission,
   parseRegistryInput,
   type RegistryPlugin,
   type RegistryRequestContext,
-  type RouteMatch,
-  readWritePermission,
   registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
@@ -51,33 +47,6 @@ function parseVersion(version: string): string {
  * repos are git repos PR'd by hand): a `PUT` of an opam manifest + source archive.
  */
 class OpamAdapterState {
-  requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
-    const permission = readWritePermission(method);
-    const handlerId = match?.entry?.handlerId;
-    if (handlerId === "archive") {
-      const name = match?.params.name;
-      const version = match?.params.version;
-      const filename = match?.params.filename;
-      if (name && version && filename && isValidName(name)) {
-        return {
-          ...permission,
-          resource: {
-            type: "artifact",
-            packageName: name,
-            artifactRef: opamBlobScope(name, version, filename),
-          },
-        };
-      }
-    }
-    if (handlerId === "opamFile") {
-      const pkg = match?.params.pkg;
-      if (pkg && isValidName(pkg)) {
-        return { ...permission, resource: { type: "package", packageName: pkg } };
-      }
-    }
-    return permission;
-  }
-
   /** `GET /index.tar.gz` — gzipped tar of the whole repo (repo file + opam files). */
   async index(req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const metas = await this.liveMetas(ctx);
@@ -199,7 +168,19 @@ const opamDefinition = registryAdapter("opam")
       typeof metadata.blobDigest === "string" ? [metadata.blobDigest] : [],
   })
   .basicAuth()
-  .fromState((state) => state.defaultPermission("requiredPermission"))
+  .permissions((p) =>
+    p.byParams([
+      p.artifactRule({
+        param: "filename",
+        normalize: (filename, { params }) =>
+          params.name && params.version && isValidName(params.name)
+            ? opamBlobScope(params.name, params.version, filename)
+            : null,
+        packageName: ({ params }) => params.name,
+      }),
+      p.packageRule({ param: "pkg", normalize: (pkg) => (isValidName(pkg) ? pkg : null) }),
+    ]),
+  )
   .routes((route) => [
     // `/index.tar.gz` is a literal segment declared before the `/packages/...`
     // and `/archives/...` routes (the route-matcher tries routes in order).
