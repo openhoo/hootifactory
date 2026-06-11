@@ -171,8 +171,8 @@ describe("persistScanResult", () => {
 describe("applyPolicyDecision", () => {
   test("loads the policy, evaluates findings, and writes the artifact state", async () => {
     const { db, recorder } = makeDb();
-    const realApp = await import("@hootifactory/registry-application/governance");
-    await mock.module("@hootifactory/registry-application/governance", () => ({
+    const realApp = await import("@hootifactory/registry-platform/governance");
+    await mock.module("@hootifactory/registry-platform/governance", () => ({
       ...realApp,
       resolveRegistryScanPolicy: async () => ({ mode: "enforce", blockOnSeverity: "medium" }),
     }));
@@ -194,8 +194,8 @@ describe("applyPolicyDecision", () => {
 
   test("marks clean when no policy is configured and there are no findings", async () => {
     const { db, recorder } = makeDb();
-    const realApp = await import("@hootifactory/registry-application/governance");
-    await mock.module("@hootifactory/registry-application/governance", () => ({
+    const realApp = await import("@hootifactory/registry-platform/governance");
+    await mock.module("@hootifactory/registry-platform/governance", () => ({
       ...realApp,
       resolveRegistryScanPolicy: async () => null,
     }));

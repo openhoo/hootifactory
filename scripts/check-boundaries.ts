@@ -31,7 +31,7 @@ const workspaceImportPattern =
 // Plugin package names (and the boundary roots that name them) are derived from
 // the workspace at runtime, so adding a registry format or a scanner is purely a
 // new package + a manifest line — never a boundary-checker edit.
-const NON_PLUGIN_REGISTRY = new Set(["registry", "registry-application", "registry-runtime"]);
+const NON_PLUGIN_REGISTRY = new Set(["registry", "registry-platform", "registry-runtime"]);
 const NON_PLUGIN_SCANNER = new Set(["scanner", "scanner-runtime"]);
 
 const failures: string[] = [];
@@ -90,7 +90,7 @@ function buildRules(): BoundaryRule[] {
         /@hootifactory\/config\b/,
         /@hootifactory\/db\b/,
         /@hootifactory\/queue\b/,
-        /@hootifactory\/registry-application\b/,
+        /@hootifactory\/registry-platform\b/,
         /@hootifactory\/scan-core\b/,
         /@hootifactory\/storage\b/,
       ],
@@ -110,7 +110,7 @@ function buildRules(): BoundaryRule[] {
     },
     {
       name: "registry application stays delivery-framework-free",
-      roots: ["packages/registry-application/src", "packages/registry-application/package.json"],
+      roots: ["packages/registry-platform/src", "packages/registry-platform/package.json"],
       forbidden: [/from\s+["']hono/, /from\s+["']react/],
     },
     {
@@ -169,7 +169,7 @@ function buildRules(): BoundaryRule[] {
         "apps/web/src",
         "packages/contracts/src",
         "packages/observability/src",
-        "packages/registry-application/src",
+        "packages/registry-platform/src",
       ],
       ignoreTests: true,
       forbidden: [
@@ -296,7 +296,7 @@ function buildRules(): BoundaryRule[] {
         "packages/auth/src",
         "packages/db/src",
         "packages/contracts/src",
-        "packages/registry-application/src",
+        "packages/registry-platform/src",
       ],
       ignoreTests: true,
       forbidden: [
@@ -374,9 +374,9 @@ async function checkRootPackageImports(): Promise<void> {
   for (const file of await sourceFilesUnder(["apps", "packages"])) {
     const content = await Bun.file(file).text();
     const relative = relativePath(repoRoot, file);
-    if (hasExactWorkspaceImport(content, "@hootifactory/registry-application")) {
+    if (hasExactWorkspaceImport(content, "@hootifactory/registry-platform")) {
       failures.push(
-        `${relative} imports @hootifactory/registry-application root; use a feature-slice subpath`,
+        `${relative} imports @hootifactory/registry-platform root; use a feature-slice subpath`,
       );
     }
     if (
@@ -439,7 +439,7 @@ async function checkWorkspaceShape(): Promise<void> {
 }
 
 async function checkRegistryApplicationShape(): Promise<void> {
-  const src = pathJoin(repoRoot, "packages/registry-application/src");
+  const src = pathJoin(repoRoot, "packages/registry-platform/src");
   const allowedRootFiles = new Set(["index.ts"]);
   const expectedSlices = [
     "content",
@@ -457,17 +457,17 @@ async function checkRegistryApplicationShape(): Promise<void> {
     onlyFiles: true,
   })) {
     if (!allowedRootFiles.has(file)) {
-      failures.push(`registry-application root file ${file} should live in a feature slice`);
+      failures.push(`registry-platform root file ${file} should live in a feature slice`);
     }
   }
 
   for (const slice of expectedSlices) {
     if (!(await hasFilesUnder(pathJoin(src, slice)))) {
-      failures.push(`registry-application is missing feature slice ${slice}`);
+      failures.push(`registry-platform is missing feature slice ${slice}`);
       continue;
     }
     if (!(await Bun.file(pathJoin(src, slice, "index.ts")).exists())) {
-      failures.push(`registry-application feature slice ${slice} is missing index.ts`);
+      failures.push(`registry-platform feature slice ${slice} is missing index.ts`);
     }
   }
 }

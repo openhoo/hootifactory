@@ -6,12 +6,12 @@ import {
   getArtifactWithRepository,
   getPackageWithRepository,
   type PackageWithRepositoryRow,
-} from "@hootifactory/registry-application/inventory";
+} from "@hootifactory/registry-platform/inventory";
 import {
   countRepositoriesForOrg,
   getRepositoryById,
   listRepositoriesForOrg,
-} from "@hootifactory/registry-application/repositories";
+} from "@hootifactory/registry-platform/repositories";
 import type { Action, PolicyName } from "@hootifactory/types";
 import type { Context } from "hono";
 import type { AppEnv } from "../types";

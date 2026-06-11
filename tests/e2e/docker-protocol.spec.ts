@@ -192,7 +192,7 @@ function reapExpiredUploadSessions(): { aborted: number } {
     [
       "-e",
       [
-        'import { reapExpiredContentUploadSessions } from "@hootifactory/registry-application";',
+        'import { reapExpiredContentUploadSessions } from "@hootifactory/registry-platform";',
         "console.log(JSON.stringify(await reapExpiredContentUploadSessions({ limit: 10 })));",
       ].join("\n"),
     ],

@@ -118,8 +118,8 @@ async function loadModule(opts: {
   // touch a real DB; stub just those two functions (not the @hootifactory/db handle)
   // while preserving the rest of the module surface (e.g. loadContentAddressableManifestRaw,
   // which the real ./pipeline still imports through this module).
-  const realContent = await import("@hootifactory/registry-application/content");
-  await mock.module("@hootifactory/registry-application/content", () => ({
+  const realContent = await import("@hootifactory/registry-platform/content");
+  await mock.module("@hootifactory/registry-platform/content", () => ({
     ...realContent,
     reapExpiredContentUploadSessions: async ({ limit }: { limit: number }) => {
       collab.reapCalls.push(limit);

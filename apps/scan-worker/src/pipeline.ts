@@ -8,7 +8,7 @@ import {
   withSpan,
 } from "@hootifactory/observability";
 import { type RegistryPlugin, registryPlugins } from "@hootifactory/registry";
-import { loadContentAddressableManifestRaw } from "@hootifactory/registry-application/content";
+import { loadContentAddressableManifestRaw } from "@hootifactory/registry-platform/content";
 import type { NormalizedFinding } from "@hootifactory/scan-core";
 import { runDependencyScanners, type ScannerRuntime } from "@hootifactory/scanner";
 import { type BlobByteStore, scanStoredBytes } from "./scan-bytes";

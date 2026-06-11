@@ -14,7 +14,7 @@ import {
 import {
   resolveRegistryRouteMatch,
   resolveRepository,
-} from "@hootifactory/registry-application/routing";
+} from "@hootifactory/registry-platform/routing";
 import {
   authorizeRoute,
   buildRegistryRequestContext,
@@ -22,7 +22,7 @@ import {
   registryAuthorizationDeniedResponse,
   repoModuleSpanAttributes,
   serveWebFallback,
-} from "@hootifactory/registry-application/runtime";
+} from "@hootifactory/registry-platform/runtime";
 import type { Context } from "hono";
 import { registryAppRouteSegments, tryHandleAppRoute } from "./registry-app-routes";
 import { stripBodyForFallbackHead } from "./registry-utils";

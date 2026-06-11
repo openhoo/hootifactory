@@ -18,7 +18,7 @@
     "@hootifactory/observability": "workspace:*",
     "@hootifactory/queue": "workspace:*",
     "@hootifactory/registry": "workspace:*",
-    "@hootifactory/registry-application": "workspace:*",
+    "@hootifactory/registry-platform": "workspace:*",
     "@hootifactory/registry-runtime": "workspace:*",
     "@hootifactory/scan-core": "workspace:*",
     "@hootifactory/scanner": "workspace:*",

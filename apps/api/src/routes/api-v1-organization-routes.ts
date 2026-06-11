@@ -7,7 +7,7 @@ import {
   V1RepositoryListResponseSchema,
   V1RepositoryResponseSchema,
 } from "@hootifactory/contracts";
-import { createRepositoryForPrincipal } from "@hootifactory/registry-application/repositories";
+import { createRepositoryForPrincipal } from "@hootifactory/registry-platform/repositories";
 import type { Hono } from "hono";
 import type { AppEnv } from "../types";
 import {

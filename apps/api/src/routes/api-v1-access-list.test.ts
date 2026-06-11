@@ -40,11 +40,11 @@ mock.module("@hootifactory/auth", () => ({
     },
   httpStatusForDenial: () => 403,
 }));
-mock.module("@hootifactory/registry-application/inventory", () => ({
+mock.module("@hootifactory/registry-platform/inventory", () => ({
   getArtifactWithRepository,
   getPackageWithRepository,
 }));
-mock.module("@hootifactory/registry-application/repositories", () => ({
+mock.module("@hootifactory/registry-platform/repositories", () => ({
   countRepositoriesForOrg,
   getRepositoryById,
   listRepositoriesForOrg,
