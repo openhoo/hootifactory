@@ -585,6 +585,8 @@ Scanning is **off by default** (`SCANNER_ENABLED=false`). When enabled, every pu
 
 The two heuristic baselines are **irreducible**: the `SCANNERS` allowlist can narrow the external set but can never disable the offline malware/advisory gate. External CLI scanners run in **hardened Docker sandboxes** (`--network none --read-only --cap-drop ALL --security-opt no-new-privileges`, non-root, tmpfs, memory/cpu/pids caps) pinned to `@sha256:` digests — enforced at startup in production.
 
+> ⚠️ **`SCANNER_CLI_RUNTIME=host` removes all of that sandboxing.** In host mode the scanner binaries (`grype`, `trivy`, `clamscan`) execute directly on the worker host: no network isolation, no read-only filesystem, no capability drops, no memory/CPU/pids caps — only `SCANNER_TIMEOUT_MS` bounds a run. Scanners parse **untrusted artifact bytes**, so a malicious artifact exercises those parsers with the worker's full privileges. Use `docker` (the default) or `auto` with a reachable Docker daemon in production; note that `auto` falls back to host binaries when Docker is unreachable. The scan-worker logs a startup warning whenever the resolved runtime is unsandboxed host execution.
+
 **Policy gates.** Findings are evaluated against the repo's most-specific scan policy:
 
 - **`audit`** (default) — a violating artifact is **quarantined**; only `blocked` artifacts are withheld.
