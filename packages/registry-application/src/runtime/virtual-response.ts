@@ -1,5 +1,4 @@
-import type { RegistryPlugin } from "@hootifactory/registry";
-import { registryErrorResponseForModule } from "./registry-error-format";
+import { type RegistryPlugin, registryErrorResponseForModule } from "@hootifactory/registry";
 
 export function virtualNotFound(adapter: RegistryPlugin): Response {
   return registryErrorResponseForModule(adapter, {

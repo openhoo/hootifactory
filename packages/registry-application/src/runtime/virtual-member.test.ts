@@ -12,7 +12,7 @@ import {
   mapVirtualMemberAuthorizations,
   virtualMemberSkipReason,
   withVirtualMemberSpans,
-} from "./registry-virtual-member";
+} from "./virtual-member";
 
 const route: RouteMatch = {
   entry: { method: "GET", pattern: "/:pkg+", handlerId: "packument" },

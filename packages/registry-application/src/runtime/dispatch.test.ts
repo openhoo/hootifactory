@@ -42,7 +42,7 @@ describe("adapterResponse", () => {
   afterEach(() => mock.restore());
 
   test("returns the adapter's response on success", async () => {
-    const { adapterResponse } = await loadDispatch();
+    const { adapterResponse } = await import("./adapter-response");
     const ctx = createTestRegistryContext();
     const res = await adapterResponse(
       fakeAdapter({ handle: async () => new Response("ok", { status: 200 }) }) as any,
@@ -55,7 +55,7 @@ describe("adapterResponse", () => {
   });
 
   test("converts a thrown RegistryError into the module's error response (404 miss)", async () => {
-    const { adapterResponse } = await loadDispatch();
+    const { adapterResponse } = await import("./adapter-response");
     const { Errors } = await import("@hootifactory/registry");
     const ctx = createTestRegistryContext();
     const res = await adapterResponse(
@@ -72,7 +72,7 @@ describe("adapterResponse", () => {
   });
 
   test("converts a thrown non-404 RegistryError into the module's error response", async () => {
-    const { adapterResponse } = await loadDispatch();
+    const { adapterResponse } = await import("./adapter-response");
     const { Errors } = await import("@hootifactory/registry");
     const ctx = createTestRegistryContext();
     const res = await adapterResponse(
@@ -89,7 +89,7 @@ describe("adapterResponse", () => {
   });
 
   test("rethrows non-RegistryError failures", async () => {
-    const { adapterResponse } = await loadDispatch();
+    const { adapterResponse } = await import("./adapter-response");
     const ctx = createTestRegistryContext();
     await expect(
       adapterResponse(
@@ -122,7 +122,10 @@ describe("dispatchByRepoKind", () => {
     expect(await res.text()).toBe("hosted");
   });
 
-  test("virtual delegates to the configured dispatcher", async () => {
+  test("virtual routes through the virtual fan-out dispatcher", async () => {
+    await mock.module("../repositories/virtual", () => ({
+      loadVirtualMembers: async () => [],
+    }));
     const { dispatchByRepoKind } = await loadDispatch();
     const ctx = createTestRegistryContext();
     const res = await dispatchByRepoKind(
@@ -131,24 +134,9 @@ describe("dispatchByRepoKind", () => {
       routeMatch() as any,
       req(),
       ctx,
-      { dispatchVirtual: async () => new Response("virtual", { status: 200 }) },
     );
-    expect(await res.text()).toBe("virtual");
-  });
-
-  test("virtual without a configured dispatcher throws an unsupported error", async () => {
-    const { dispatchByRepoKind } = await loadDispatch();
-    const ctx = createTestRegistryContext();
-    // dispatchByRepoKind is a sync function that throws before returning a promise.
-    expect(() =>
-      dispatchByRepoKind(
-        "virtual",
-        fakeAdapter({ handle: async () => new Response("never") }) as any,
-        routeMatch() as any,
-        req(),
-        ctx,
-      ),
-    ).toThrow();
+    // No members configured: the fan-out exhausts and reports a module-shaped 404.
+    expect(res.status).toBe(404);
   });
 });
 

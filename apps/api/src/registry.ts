@@ -5,23 +5,27 @@ import {
   withLogAttributes,
   withSpan,
 } from "@hootifactory/observability";
-import { Errors, type HttpMethod, registryPlugins } from "@hootifactory/registry";
+import {
+  Errors,
+  type HttpMethod,
+  registryErrorResponseForModule,
+  registryPlugins,
+} from "@hootifactory/registry";
 import {
   resolveRegistryRouteMatch,
   resolveRepository,
 } from "@hootifactory/registry-application/routing";
 import {
+  authorizeRoute,
   buildRegistryRequestContext,
   dispatchByRepoKind,
+  registryAuthorizationDeniedResponse,
   repoModuleSpanAttributes,
   serveWebFallback,
 } from "@hootifactory/registry-application/runtime";
 import type { Context } from "hono";
 import { tryHandleAppRoute } from "./registry-app-routes";
-import { authorizeRoute, registryAuthorizationDeniedResponse } from "./registry-auth";
-import { registryErrorResponseForModule } from "./registry-error-format";
 import { stripBodyForFallbackHead } from "./registry-utils";
-import { dispatchVirtual } from "./registry-virtual";
 import { compressRegistryResponse } from "./response-compression";
 import type { AppEnv } from "./types";
 
@@ -152,9 +156,7 @@ export async function handleRegistryRequest(c: Context<AppEnv>): Promise<Respons
             });
           }
 
-          const res = await dispatchByRepoKind(repo.kind, adapter, match, c.req.raw, ctx, {
-            dispatchVirtual,
-          });
+          const res = await dispatchByRepoKind(repo.kind, adapter, match, c.req.raw, ctx);
           recordOutcome(res.status, res.status < 400 ? "ok" : "error");
           logger.debug("registry request completed", {
             repo: repo.name,

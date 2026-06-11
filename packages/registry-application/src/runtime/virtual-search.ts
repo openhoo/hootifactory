@@ -6,12 +6,10 @@ import {
   type RegistryRequestContext,
   type RouteMatch,
 } from "@hootifactory/registry";
-import { loadVirtualMembers } from "@hootifactory/registry-application/repositories";
-import {
-  adapterResponseOrRegistryError,
-  repoSpanAttributes,
-} from "@hootifactory/registry-application/runtime";
-import { authorizeVirtualMembers, mapVirtualMemberAuthorizations } from "./registry-virtual-member";
+import { loadVirtualMembers } from "../repositories/virtual";
+import { adapterResponseOrRegistryError } from "./adapter-response";
+import { repoSpanAttributes } from "./telemetry";
+import { authorizeVirtualMembers, mapVirtualMemberAuthorizations } from "./virtual-member";
 
 export function dispatchVirtualSearch(
   adapter: RegistryPlugin,

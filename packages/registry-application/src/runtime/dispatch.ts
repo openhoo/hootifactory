@@ -2,15 +2,15 @@ import { BoundedLruCache, InFlightDeduper } from "@hootifactory/core";
 import { logger, withSpan } from "@hootifactory/observability";
 import {
   Errors,
-  RegistryError,
   type RegistryPlugin,
   type RegistryRequestContext,
   type RouteMatch,
-  registryErrorToModuleResponse,
 } from "@hootifactory/registry";
 import type { RepoKind } from "@hootifactory/types";
 import { loadUpstream } from "../repositories/upstreams";
-import { isReadMethod, repoModuleSpanAttributes } from "./telemetry";
+import { adapterResponse } from "./adapter-response";
+import { isReadMethod } from "./telemetry";
+import { dispatchVirtual } from "./virtual";
 
 const PROXY_REFRESH_FRESHNESS_CACHE_LIMIT = 2048;
 
@@ -18,90 +18,6 @@ const proxyRefreshFreshUntil = new BoundedLruCache<string, number>(
   PROXY_REFRESH_FRESHNESS_CACHE_LIMIT,
 );
 const proxyRefreshInFlight = new InFlightDeduper<string, boolean>();
-
-type VirtualRegistryDispatch = (
-  adapter: RegistryPlugin,
-  match: RouteMatch,
-  req: Request,
-  ctx: RegistryRequestContext,
-) => Promise<Response>;
-
-export interface RegistryKindDispatchOptions {
-  dispatchVirtual?: VirtualRegistryDispatch;
-}
-
-export async function adapterResponse(
-  adapter: RegistryPlugin,
-  match: RouteMatch,
-  req: Request,
-  ctx: RegistryRequestContext,
-): Promise<Response> {
-  return withSpan(
-    "registry.adapter.handle",
-    {
-      ...repoModuleSpanAttributes(adapter, ctx.repo, match.entry.handlerId),
-      "registry.route": match.entry.pattern,
-      "http.request.method": req.method,
-    },
-    async (span) => {
-      try {
-        const response = await adapter.handle(match, req, ctx);
-        span.setAttribute("http.response.status_code", response.status);
-        logger.debug("registry adapter handled request", {
-          moduleId: adapter.id,
-          repo: ctx.repo.name,
-          handler: match.entry.handlerId,
-          status: response.status,
-        });
-        return response;
-      } catch (err) {
-        if (err instanceof RegistryError) {
-          const response = registryErrorToModuleResponse(adapter, err);
-          span.setAttribute("http.response.status_code", response.status);
-          // A 404 is a "miss" (telemetry classification only), keyed off status
-          // rather than any module's error-code vocabulary.
-          if (err.status === 404) {
-            span.addEvent("registry.adapter.miss", {
-              "registry.error.code": err.code,
-              "registry.error.message": err.message,
-            });
-            logger.debug("registry adapter miss", {
-              moduleId: adapter.id,
-              repo: ctx.repo.name,
-              handler: match.entry.handlerId,
-              code: err.code,
-            });
-          } else {
-            logger.debug("registry adapter error", {
-              moduleId: adapter.id,
-              repo: ctx.repo.name,
-              handler: match.entry.handlerId,
-              code: err.code,
-            });
-          }
-          return response;
-        }
-        throw err;
-      }
-    },
-  );
-}
-
-export async function adapterResponseOrRegistryError(
-  adapter: RegistryPlugin,
-  match: RouteMatch,
-  req: Request,
-  ctx: RegistryRequestContext,
-): Promise<Response> {
-  try {
-    return await adapterResponse(adapter, match, req, ctx);
-  } catch (err) {
-    if (err instanceof RegistryError) {
-      return registryErrorToModuleResponse(adapter, err);
-    }
-    throw err;
-  }
-}
 
 async function proxyError(response: Response): Promise<Response> {
   return new Response(await response.text(), {
@@ -226,14 +142,10 @@ export function dispatchByRepoKind(
   match: RouteMatch,
   req: Request,
   ctx: RegistryRequestContext,
-  opts: RegistryKindDispatchOptions = {},
 ): Promise<Response> {
   switch (kind) {
     case "virtual":
-      if (!opts.dispatchVirtual) {
-        throw Errors.unsupported({ reason: "virtual repository dispatch is not configured" });
-      }
-      return opts.dispatchVirtual(adapter, match, req, ctx);
+      return dispatchVirtual(adapter, match, req, ctx);
     case "proxy":
       return dispatchProxy(adapter, match, req, ctx);
     case "hosted":

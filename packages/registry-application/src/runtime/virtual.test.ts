@@ -6,9 +6,9 @@ import {
   type ResolvedRepo,
   type RouteMatch,
 } from "@hootifactory/registry";
-import { dispatchVirtual } from "./registry-virtual";
-import { virtualMetadataPackageName } from "./registry-virtual-metadata";
-import { dispatchVirtualSearch } from "./registry-virtual-search-dispatch";
+import { dispatchVirtual } from "./virtual";
+import { virtualMetadataPackageName } from "./virtual-metadata";
+import { dispatchVirtualSearch } from "./virtual-search";
 
 const repo = {
   id: "repo_virtual",

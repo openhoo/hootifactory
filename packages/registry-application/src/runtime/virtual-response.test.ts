@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { RegistryError, type RegistryPlugin } from "@hootifactory/registry";
 import {
+  RegistryError,
+  type RegistryPlugin,
   registryErrorResponseForModule,
   registryErrorToModuleResponse,
-} from "./registry-error-format";
-import { virtualMemberUnavailable, virtualNotFound } from "./registry-virtual-response";
+} from "@hootifactory/registry";
+import { virtualMemberUnavailable, virtualNotFound } from "./virtual-response";
 
 function adapter(
   errorResponseKind: RegistryPlugin["errorResponseKind"] = "registry",

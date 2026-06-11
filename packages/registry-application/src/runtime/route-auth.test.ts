@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import type { RegistryPlugin, RegistryRequestContext, ResolvedRepo } from "@hootifactory/registry";
-import { appendBearerChallengeError, registryAuthorizationDeniedResponse } from "./registry-auth";
-import type { registryErrorResponseForModule } from "./registry-error-format";
+import type {
+  RegistryPlugin,
+  RegistryRequestContext,
+  ResolvedRepo,
+  registryErrorResponseForModule,
+} from "@hootifactory/registry";
+import { appendBearerChallengeError, registryAuthorizationDeniedResponse } from "./route-auth";
 
 type RegistryErrorInput = Parameters<typeof registryErrorResponseForModule>[1];
 
