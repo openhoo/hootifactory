@@ -1,0 +1,3 @@
+[test]
+# Loaded before every test file (including --parallel/--isolate worker processes).
+preload = ["./test-setup.ts"]
