@@ -3,9 +3,11 @@ import type { ResolvedScanner, ScannerRuntime, ScannerRuntimeOptions } from "@ho
 import {
   externalContentScannerAvailable,
   externalContentScannerRequested,
+  scannerCliRunsOnHost,
   scannerRuntimeFromEnv,
   shouldFailForMissingExternalScanner,
   unavailableExternalScannerMessage,
+  unsandboxedScannerRuntimeWarning,
 } from "./scan-runtime";
 
 function scanner(
@@ -122,5 +124,42 @@ describe("unavailableExternalScannerMessage", () => {
     const message = unavailableExternalScannerMessage(runtime({}, []));
     expect(message).toContain("SCANNER_CLI_RUNTIME=docker");
     expect(message).not.toContain("()");
+  });
+});
+
+describe("scannerCliRunsOnHost", () => {
+  test("host mode always runs on the host", () => {
+    expect(scannerCliRunsOnHost({ cliRuntime: "host" })).toBe(true);
+  });
+
+  test("docker and disabled modes never run on the host", () => {
+    expect(scannerCliRunsOnHost({ cliRuntime: "docker" })).toBe(false);
+    expect(scannerCliRunsOnHost({ cliRuntime: "disabled" })).toBe(false);
+    // The unset default is docker.
+    expect(scannerCliRunsOnHost({})).toBe(false);
+  });
+
+  test("auto falls back to host binaries when the Docker CLI is unavailable", () => {
+    expect(
+      scannerCliRunsOnHost({
+        cliRuntime: "auto",
+        dockerCommand: "definitely-not-a-docker-cli-on-path",
+      }),
+    ).toBe(true);
+  });
+});
+
+describe("unsandboxedScannerRuntimeWarning", () => {
+  test("warns for host mode and spells out what is lost", () => {
+    const warning = unsandboxedScannerRuntimeWarning({ cliRuntime: "host" });
+    expect(warning).toContain("unsandboxed");
+    expect(warning).toContain("SCANNER_TIMEOUT_MS");
+    expect(warning).toContain("SCANNER_CLI_RUNTIME=docker");
+  });
+
+  test("stays silent for sandboxed or disabled runtimes", () => {
+    expect(unsandboxedScannerRuntimeWarning({ cliRuntime: "docker" })).toBeNull();
+    expect(unsandboxedScannerRuntimeWarning({ cliRuntime: "disabled" })).toBeNull();
+    expect(unsandboxedScannerRuntimeWarning({})).toBeNull();
   });
 });
