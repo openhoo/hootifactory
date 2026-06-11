@@ -4,7 +4,7 @@ import {
   type RegistryRequestContext,
   registryAdapter,
   registryErrorResponseForKind,
-  serveRegistryBlob,
+  serveVersionBlob,
   textResponseWithEtag,
 } from "@hootifactory/registry";
 import {
@@ -166,18 +166,16 @@ class HexAdapterState {
     });
     const split = splitTarballFile(filename);
     if (!split) return jsonNotFound("tarball not found");
-    const pkg = await ctx.data.packages.findByName(split.name);
-    if (!pkg) return jsonNotFound(`tarball ${filename} not found`);
-    const row = await ctx.data.versions.findLive(pkg, split.version);
-    const meta = parseHexVersionMeta(row?.metadata);
-    if (!meta) return jsonNotFound(`tarball ${filename} not found`);
-    return serveRegistryBlob(ctx, {
-      digest: meta.blobDigest,
+    return serveVersionBlob(ctx, {
+      name: split.name,
+      version: split.version,
       kind: HEX_KIND,
       scope: hexBlobScope(split.name, split.version),
+      parseMetadata: parseHexVersionMeta,
+      digest: ({ metadata }) => metadata.blobDigest,
       contentType: "application/octet-stream",
       redirect: req.method === "GET",
-      blocked: () => new Response("blocked by scan policy", { status: 403 }),
+      missing: () => jsonNotFound(`tarball ${filename} not found`),
     });
   }
 

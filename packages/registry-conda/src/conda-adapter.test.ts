@@ -247,16 +247,17 @@ describe("Conda adapter", () => {
     const ctx = condaContext();
     ctx.data.packages.findByName = async () => pkgRow("other");
     ctx.data.versions.findLive = async () => null;
-    const res = await new CondaAdapter().handle(
-      {
-        entry: { method: "GET", pattern: "/:subdir/:filename", handlerId: "download" },
-        params: { subdir: "linux-64", filename: "other-1.0-0.conda" },
-        path: "/linux-64/other-1.0-0.conda",
-      },
-      new Request("https://registry.test/linux-64/other-1.0-0.conda"),
-      ctx,
-    );
-    expect(res.status).toBe(404);
+    await expect(
+      new CondaAdapter().handle(
+        {
+          entry: { method: "GET", pattern: "/:subdir/:filename", handlerId: "download" },
+          params: { subdir: "linux-64", filename: "other-1.0-0.conda" },
+          path: "/linux-64/other-1.0-0.conda",
+        },
+        new Request("https://registry.test/linux-64/other-1.0-0.conda"),
+        ctx,
+      ),
+    ).rejects.toMatchObject({ status: 404, code: "NOT_FOUND" });
   });
 
   test("download 404s when the stored metadata is for a different subdir", async () => {
@@ -264,16 +265,17 @@ describe("Conda adapter", () => {
     ctx.data.packages.findByName = async () => pkgRow("numpy");
     // storedMeta has subdir "linux-64"; request a noarch path for the same file.
     ctx.data.versions.findLive = async () => versionRow(storedMeta);
-    const res = await new CondaAdapter().handle(
-      {
-        entry: { method: "GET", pattern: "/:subdir/:filename", handlerId: "download" },
-        params: { subdir: "noarch", filename: "numpy-1.21.0-py39_0.conda" },
-        path: "/noarch/numpy-1.21.0-py39_0.conda",
-      },
-      new Request("https://registry.test/noarch/numpy-1.21.0-py39_0.conda"),
-      ctx,
-    );
-    expect(res.status).toBe(404);
+    await expect(
+      new CondaAdapter().handle(
+        {
+          entry: { method: "GET", pattern: "/:subdir/:filename", handlerId: "download" },
+          params: { subdir: "noarch", filename: "numpy-1.21.0-py39_0.conda" },
+          path: "/noarch/numpy-1.21.0-py39_0.conda",
+        },
+        new Request("https://registry.test/noarch/numpy-1.21.0-py39_0.conda"),
+        ctx,
+      ),
+    ).rejects.toMatchObject({ status: 404, code: "NOT_FOUND" });
   });
 
   test("GET /<subdir>/<index-variant> 404s (not 400) so conda falls back to repodata.json", async () => {
@@ -289,16 +291,17 @@ describe("Conda adapter", () => {
       "repodata.json.bz2",
     ]) {
       const ctx = condaContext();
-      const res = await adapter.handle(
-        {
-          entry: { method: "GET", pattern: "/:subdir/:filename", handlerId: "download" },
-          params: { subdir: "linux-64", filename },
-          path: `/linux-64/${filename}`,
-        },
-        new Request(`https://registry.test/linux-64/${filename}`),
-        ctx,
-      );
-      expect(res.status).toBe(404);
+      await expect(
+        adapter.handle(
+          {
+            entry: { method: "GET", pattern: "/:subdir/:filename", handlerId: "download" },
+            params: { subdir: "linux-64", filename },
+            path: `/linux-64/${filename}`,
+          },
+          new Request(`https://registry.test/linux-64/${filename}`),
+          ctx,
+        ),
+      ).rejects.toMatchObject({ status: 404, code: "NOT_FOUND" });
     }
   });
 

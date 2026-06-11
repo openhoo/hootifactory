@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { z } from "@hootifactory/core";
 import { createTestRegistryContext, createTestRouteMatch } from "../testing";
 import { basicAuthChallenge } from "./adapter";
 import {
@@ -43,6 +44,39 @@ describe("defineRegistryPlugin", () => {
       createTestRegistryContext(),
     );
     expect(await res.json()).toEqual({ package: "@scope/pkg" });
+  });
+
+  test("validates route params before permission resolution and handler dispatch", async () => {
+    const seen: string[] = [];
+    const plugin = defineRegistryPlugin({
+      id: "cargo",
+      capabilities: registryCapabilities("virtualizable"),
+      routes: (route) => [
+        route.get("/:crate", "download", ({ params }) => Response.json({ crate: params.crate }), {
+          paramSchemas: { crate: z.string().trim().min(1).toLowerCase() },
+          permission: ({ params }) => {
+            seen.push(params.crate);
+            return readOnlyPermission({ type: "package", packageName: params.crate });
+          },
+        }),
+      ],
+    });
+    const [entry] = plugin.routes();
+    const match = createTestRouteMatch(entry!, { crate: " Serde " }, "/%20Serde%20");
+    const ctx = createTestRegistryContext();
+
+    expect(plugin.requiredPermission("GET", match, ctx)).toEqual({
+      action: "read",
+      resource: { type: "package", packageName: "serde" },
+    });
+    const res = await plugin.handle(
+      match,
+      new Request("https://registry.example.test/%20Serde%20"),
+      ctx,
+    );
+
+    expect(seen).toEqual(["serde"]);
+    expect(await res.json()).toEqual({ crate: "serde" });
   });
 
   test("uses default read/write permission when a route has no override", () => {

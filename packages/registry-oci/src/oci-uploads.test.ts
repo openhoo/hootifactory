@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type {
-  RegistryRequestContext,
+  ContentAddressableRegistryRequestContext,
   RegistryUploadedBlob,
   RegistryUploadSessionMutations,
   RegistryUploadSessionRow,
@@ -13,7 +13,9 @@ const UPLOAD_UUID = "11111111-1111-4111-8111-111111111111";
 const DIGEST = "sha256:1111111111111111111111111111111111111111111111111111111111111111";
 const MOUNT_DIGEST = "sha256:2222222222222222222222222222222222222222222222222222222222222222";
 
-function ctxFor(overrides: Partial<RegistryRequestContext> = {}): RegistryRequestContext {
+function ctxFor(
+  overrides: Partial<ContentAddressableRegistryRequestContext> = {},
+): ContentAddressableRegistryRequestContext {
   const ctx = createTestRegistryContext({ baseUrl: "https://registry.test", ...overrides });
   ctx.repo = { ...ctx.repo, moduleId: "docker", mountPath: "v2/acme/containers" };
   return ctx;

@@ -6,7 +6,8 @@ import {
   type RegistryRequestContext,
   type RegistryVersionMetadataRow,
   registryAdapter,
-  serveRegistryBlob,
+  repoResponseCache,
+  serveAssetBlob,
   textResponseWithEtag,
 } from "@hootifactory/registry";
 import {
@@ -25,40 +26,12 @@ import { GemFilenameSchema, GemNameSchema, GemVersionSchema } from "./rubygems-v
 const TEXT_PLAIN = { "content-type": "text/plain; charset=utf-8" } as const;
 const VERSIONS_CACHE_TTL_MS = 5_000;
 
-interface VersionsCacheEntry {
-  body: string;
-  etag: string;
-  expiresAt: number;
-}
-
 /** RubyGems: `.gem` push/yank + the compact-index protocol (`/versions`, `/info/<gem>`). */
 class RubygemsAdapterState {
-  readonly versionsCache = new Map<string, VersionsCacheEntry>();
-
-  cacheKey(ctx: RegistryRequestContext): string {
-    return ctx.repo.id;
-  }
-
-  cachedVersions(ctx: RegistryRequestContext): VersionsCacheEntry | null {
-    const entry = this.versionsCache.get(this.cacheKey(ctx));
-    if (!entry) return null;
-    if (entry.expiresAt > Date.now()) return entry;
-    this.versionsCache.delete(this.cacheKey(ctx));
-    return null;
-  }
-
-  storeVersions(ctx: RegistryRequestContext, body: string): VersionsCacheEntry {
-    const entry = {
-      body,
-      etag: `"${md5Hex(body)}"`,
-      expiresAt: Date.now() + VERSIONS_CACHE_TTL_MS,
-    };
-    this.versionsCache.set(this.cacheKey(ctx), entry);
-    return entry;
-  }
+  readonly versionsCache = repoResponseCache<string>({ ttlMs: VERSIONS_CACHE_TTL_MS });
 
   clearVersionsCache(ctx: RegistryRequestContext): void {
-    this.versionsCache.delete(this.cacheKey(ctx));
+    this.versionsCache.clear(ctx);
   }
 
   async push(req: Request, ctx: RegistryRequestContext): Promise<Response> {
@@ -95,10 +68,11 @@ class RubygemsAdapterState {
   }
 
   async compactVersions(req: Request, ctx: RegistryRequestContext): Promise<Response> {
-    const cached = this.cachedVersions(ctx);
-    if (cached) return textResponseWithEtag(req, cached.body, TEXT_PLAIN, cached.etag);
-    const rows = await ctx.data.versions.listRepositoryMetadata({ liveOnly: true });
-    const entry = this.storeVersions(ctx, buildVersionsBody(rows));
+    const entry = await this.versionsCache.get(ctx, "versions", async () => {
+      const rows = await ctx.data.versions.listRepositoryMetadata({ liveOnly: true });
+      const body = buildVersionsBody(rows);
+      return { body, etag: `"${md5Hex(body)}"` };
+    });
     return textResponseWithEtag(req, entry.body, TEXT_PLAIN, entry.etag);
   }
 
@@ -108,7 +82,7 @@ class RubygemsAdapterState {
       message: "invalid gem name",
     });
     const pkg = await ctx.data.packages.findByName(name);
-    if (!pkg) return new Response("Not Found", { status: 404 });
+    if (!pkg) throw Errors.notFound();
     const versions = await ctx.data.versions.listLive(pkg, { orderByCreated: "asc" });
     const entries = versions.flatMap((row) => {
       const entry = readGemVersionEntry(row.metadata, row.createdAt);
@@ -129,15 +103,12 @@ class RubygemsAdapterState {
       code: "NAME_INVALID",
       message: "invalid gem filename",
     });
-    const asset = await ctx.data.assets.findByScope({ role: GEM_KIND, scope: filename });
-    if (!asset) throw Errors.notFound();
-    return serveRegistryBlob(ctx, {
-      digest: asset.digest,
+    return serveAssetBlob(ctx, {
+      role: GEM_KIND,
       kind: GEM_KIND,
       scope: filename,
       contentType: "application/octet-stream",
       redirect: req.method === "GET",
-      blocked: () => new Response("gem blocked by scan policy", { status: 403 }),
     });
   }
 }

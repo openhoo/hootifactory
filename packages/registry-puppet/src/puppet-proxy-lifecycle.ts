@@ -3,7 +3,8 @@ import {
   mapWithBoundedConcurrency,
   type RegistryPackageHandle,
   type RegistryRequestContext,
-  safeFetch,
+  readBoundedBytes,
+  upstreamFetch,
 } from "@hootifactory/registry";
 import {
   isPuppetFileUrlOnUpstreamHost,
@@ -37,7 +38,7 @@ export async function handlePuppetProxyIngest(
 ): Promise<boolean> {
   const upstreamHost = puppetUpstreamHost(upstreamBase);
   if (!upstreamHost) return false;
-  const module = await fetchPuppetUpstreamModule(upstreamBase, slug, ctx);
+  const module = await fetchPuppetUpstreamModule(upstreamBase, upstreamHost, slug, ctx);
   if (!module || module.slug !== slug) return false;
 
   let pkg: RegistryPackageHandle | null = await ctx.data.packages.findByName(slug);
@@ -123,15 +124,15 @@ function md5Hex(bytes: Uint8Array): string {
 
 async function fetchPuppetUpstreamModule(
   upstreamBase: string,
+  upstreamHost: string,
   slug: string,
   ctx: RegistryRequestContext,
 ) {
   const url = puppetUpstreamModuleUrl(upstreamBase, slug);
-  // safeFetch rejects private/loopback/metadata hosts and re-validates redirects.
-  const res = await safeFetch(url, {
-    enforcePublicNetwork: ctx.limits.enforcePublicNetwork,
+  const res = await upstreamFetch(ctx, url, {
+    pinHost: upstreamHost,
     headers: { accept: "application/json" },
-  }).catch(() => null);
+  });
   if (!res?.ok) return null;
   const json = await readJson(res, MAX_MODULE_JSON_BYTES);
   return json ? parsePuppetUpstreamModule(json) : null;
@@ -141,10 +142,10 @@ async function readJson(res: Response, maxBytes: number): Promise<unknown> {
   // Stream the body through the same byte-capped reader used for tarballs so an
   // absent/incorrect `content-length` cannot pull an unbounded response into RAM,
   // and the cap is enforced in actual bytes (not UTF-16 code units).
-  const bytes = await readBytes(res, maxBytes);
-  if (!bytes) return null;
+  const read = await readBoundedBytes(res, maxBytes);
+  if (!read) return null;
   try {
-    return JSON.parse(new TextDecoder().decode(bytes));
+    return JSON.parse(new TextDecoder().decode(read.bytes));
   } catch {
     return null;
   }
@@ -166,55 +167,16 @@ async function fetchVerifiedPuppetRelease(input: {
   const fileUrl = resolvePuppetFileUrl(upstreamBase, release.file_uri);
   if (!fileUrl || !isPuppetFileUrlOnUpstreamHost(fileUrl, upstreamHost)) return null;
 
-  let response: Response | null = null;
-  try {
-    // A same-host absolute file_uri reuses the upstream base's credentials; a
-    // relative file_uri already resolved against the credentialed base.
-    response = await safeFetch(inheritUrlCredentials(fileUrl, upstreamBase), {
-      allowedHosts: [upstreamHost],
-      enforcePublicNetwork: ctx.limits.enforcePublicNetwork,
-    });
-  } catch {
-    return null;
-  }
+  // A same-host absolute file_uri reuses the upstream base's credentials; a
+  // relative file_uri already resolved against the credentialed base.
+  const response = await upstreamFetch(ctx, inheritUrlCredentials(fileUrl, upstreamBase), {
+    pinHost: upstreamHost,
+  });
   if (!response?.ok) return null;
-  const tarball = await readBytes(response, ctx.limits.maxUploadBytes);
-  if (!tarball) return null;
-  const sha256 = sha256Hex(tarball);
-  return sha256 === release.file_sha256 ? { tarball, sha256 } : null;
-}
-
-function sha256Hex(bytes: Uint8Array): string {
-  const hasher = new Bun.CryptoHasher("sha256");
-  hasher.update(bytes);
-  return hasher.digest("hex");
-}
-
-async function readBytes(res: Response, maxBytes: number): Promise<Uint8Array | null> {
-  const declared = Number(res.headers.get("content-length") ?? 0);
-  if (declared > maxBytes) {
-    await res.body?.cancel().catch(() => {});
-    return null;
-  }
-  const reader = res.body?.getReader();
-  if (!reader) return new Uint8Array(0);
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > maxBytes) {
-      await reader.cancel().catch(() => {});
-      return null;
-    }
-    chunks.push(value);
-  }
-  const out = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    out.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return out;
+  const read = await readBoundedBytes(response, ctx.limits.maxUploadBytes, {
+    digests: ["sha256"],
+  });
+  const sha256 = read?.digests.sha256?.slice("sha256:".length);
+  if (!read || !sha256) return null;
+  return sha256 === release.file_sha256 ? { tarball: read.bytes, sha256 } : null;
 }

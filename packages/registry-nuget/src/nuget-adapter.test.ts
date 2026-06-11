@@ -184,12 +184,13 @@ describe("NuGet adapter flat-container versions", () => {
     const ctx = createTestRegistryContext();
     ctx.repo = { ...ctx.repo, moduleId: "nuget", mountPath: "nuget/private" };
     ctx.data.packages.findByName = async () => null;
-    const res = await adapter.handle(
-      versionsMatch,
-      new Request("https://registry.test/v3-flatcontainer/hoot.lib/index.json"),
-      ctx,
-    );
-    expect(res.status).toBe(404);
+    await expect(
+      adapter.handle(
+        versionsMatch,
+        new Request("https://registry.test/v3-flatcontainer/hoot.lib/index.json"),
+        ctx,
+      ),
+    ).rejects.toMatchObject({ status: 404, code: "NOT_FOUND" });
   });
 
   test("returns 404 when a known package has no live versions", async () => {
@@ -198,12 +199,13 @@ describe("NuGet adapter flat-container versions", () => {
     ctx.repo = { ...ctx.repo, moduleId: "nuget", mountPath: "nuget/private" };
     ctx.data.packages.findByName = async () => pkg;
     ctx.data.versions.listLiveNames = async () => [];
-    const res = await adapter.handle(
-      versionsMatch,
-      new Request("https://registry.test/v3-flatcontainer/hoot.lib/index.json"),
-      ctx,
-    );
-    expect(res.status).toBe(404);
+    await expect(
+      adapter.handle(
+        versionsMatch,
+        new Request("https://registry.test/v3-flatcontainer/hoot.lib/index.json"),
+        ctx,
+      ),
+    ).rejects.toMatchObject({ status: 404, code: "NOT_FOUND" });
   });
 });
 
@@ -271,12 +273,13 @@ describe("NuGet adapter registration leaf", () => {
     const ctx = createTestRegistryContext();
     ctx.repo = { ...ctx.repo, moduleId: "nuget", mountPath: "nuget/private" };
     ctx.data.packages.findByName = async () => null;
-    const res = await adapter.handle(
-      leafMatch("1.0.0.json"),
-      new Request("https://registry.test/v3/registrations/hoot.lib/1.0.0.json"),
-      ctx,
-    );
-    expect(res.status).toBe(404);
+    await expect(
+      adapter.handle(
+        leafMatch("1.0.0.json"),
+        new Request("https://registry.test/v3/registrations/hoot.lib/1.0.0.json"),
+        ctx,
+      ),
+    ).rejects.toMatchObject({ status: 404, code: "NOT_FOUND" });
   });
 });
 

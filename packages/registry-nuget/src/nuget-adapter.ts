@@ -1,5 +1,4 @@
 import {
-  BoundedLruCache,
   Errors,
   ifNoneMatch,
   parseRegistryInput,
@@ -10,7 +9,8 @@ import {
   type RegistryRequestContext,
   type RegistryVirtualSearchInput,
   registryAdapter,
-  serveRegistryBlob,
+  repoResponseCache,
+  serveVersionBlob,
   textEtag,
   textResponseWithEtag,
 } from "@hootifactory/registry";
@@ -39,10 +39,9 @@ type StoredNugetVersionRow = Omit<RegistryPackageVersionRow, "metadata"> & {
 const NUGET_SEARCH_PACKAGE_BATCH_SIZE = 250;
 const NUGET_REGISTRATION_CACHE_LIMIT = 256;
 
-interface NugetRegistrationCacheEntry {
+interface NugetRegistrationCacheBody {
   fingerprint: string;
-  body: string;
-  etag: string;
+  text: string;
 }
 
 function parseNugetId(id: string): string {
@@ -66,12 +65,12 @@ function registrationFingerprint(rows: RegistryPackageVersionFingerprintRow[]): 
 
 function registrationResponse(
   req: Request,
-  entry: Pick<NugetRegistrationCacheEntry, "body" | "etag">,
+  entry: { body: NugetRegistrationCacheBody; etag: string },
 ): Response {
   if (ifNoneMatch(req, entry.etag)) {
     return new Response(null, { status: 304, headers: { etag: entry.etag } });
   }
-  return new Response(entry.body, {
+  return new Response(entry.body.text, {
     headers: {
       "content-type": "application/json; charset=utf-8",
       etag: entry.etag,
@@ -85,9 +84,9 @@ function registrationResponse(
  * the nuspec when clients do not provide query parameters.
  */
 class NugetAdapterState {
-  readonly registrationCache = new BoundedLruCache<string, NugetRegistrationCacheEntry>(
-    NUGET_REGISTRATION_CACHE_LIMIT,
-  );
+  readonly registrationCache = repoResponseCache<NugetRegistrationCacheBody>({
+    maxEntries: NUGET_REGISTRATION_CACHE_LIMIT,
+  });
 
   base(ctx: RegistryRequestContext): string {
     return `${ctx.baseUrl}/${ctx.repo.mountPath}`;
@@ -134,11 +133,11 @@ class NugetAdapterState {
   async versions(id: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     id = parseNugetId(id);
     const pkg = await this.findPkg(ctx, id);
-    if (!pkg) return new Response("Not Found", { status: 404 });
+    if (!pkg) throw Errors.notFound();
     const versions = (await ctx.data.versions.listLiveNames(pkg))
       .map((row) => row.version)
       .sort(compareNugetVersions);
-    if (versions.length === 0) return new Response("Not Found", { status: 404 });
+    if (versions.length === 0) throw Errors.notFound();
     return textResponseWithEtag(req, JSON.stringify({ versions }), {
       "content-type": "application/json; charset=utf-8",
     });
@@ -152,26 +151,17 @@ class NugetAdapterState {
   ): Promise<Response> {
     id = parseNugetId(id);
     const pkg = await this.findPkg(ctx, id);
-    if (!pkg) return new Response("Not Found", { status: 404 });
+    if (!pkg) throw Errors.notFound();
     const cacheKey = this.registrationCacheKey(pkg, base);
     const fingerprint = registrationFingerprint(await ctx.data.versions.listLiveFingerprints(pkg));
-    const cached = this.registrationCache.get(cacheKey);
-    if (cached?.fingerprint === fingerprint) return registrationResponse(req, cached);
-
-    const rows = await this.listVersions(ctx, pkg, { includeUnlisted: true });
-    const body = JSON.stringify(
-      buildNugetRegistrationIndex({
-        id,
-        base,
-        versions: rows.map((row) => ({
-          version: row.version,
-          metadata: row.metadata,
-        })),
-      }),
+    let cached = await this.registrationCache.get(ctx, cacheKey, () =>
+      this.buildRegistrationEntry(ctx, pkg, id, base, fingerprint),
     );
-    const entry = { fingerprint, body, etag: textEtag(body) };
-    this.putRegistrationCache(cacheKey, entry);
-    return registrationResponse(req, entry);
+    if (cached.body.fingerprint !== fingerprint) {
+      cached = await this.buildRegistrationEntry(ctx, pkg, id, base, fingerprint);
+      this.registrationCache.set(ctx, cacheKey, cached);
+    }
+    return registrationResponse(req, cached);
   }
 
   async registrationLeaf(
@@ -188,7 +178,7 @@ class NugetAdapterState {
     const norm = normalizeNugetVersion(version);
     if (!norm) throw Errors.notFound();
     const pkg = await this.findPkg(ctx, id);
-    if (!pkg) return new Response("Not Found", { status: 404 });
+    if (!pkg) throw Errors.notFound();
     const row = await ctx.data.versions.findLive(pkg, norm);
     if (!row) throw Errors.notFound();
     const metadata = parseNugetVersionMeta(row.metadata);
@@ -269,22 +259,23 @@ class NugetAdapterState {
     const ext = file.toLowerCase().endsWith(".nuspec") ? "nuspec" : "nupkg";
     const expected = `${id.toLowerCase()}.${norm}.${ext}`;
     if (file && file.toLowerCase() !== expected) throw Errors.notFound();
-    const v = await ctx.data.versions.findLive(pkg, norm);
-    const digest = parseNugetVersionMeta(v?.metadata)?.nupkgDigest;
-    if (!digest) throw Errors.notFound();
     if (file.toLowerCase().endsWith(".nuspec")) {
+      const v = await ctx.data.versions.findLive(pkg, norm);
+      if (!parseNugetVersionMeta(v?.metadata)?.nupkgDigest) throw Errors.notFound();
       return new Response(
         `<?xml version="1.0" encoding="utf-8"?>\n<package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd"><metadata><id>${escapeXml(id)}</id><version>${escapeXml(norm)}</version></metadata></package>\n`,
         { headers: { "content-type": "application/xml; charset=utf-8" } },
       );
     }
-    return serveRegistryBlob(ctx, {
-      digest,
+    return serveVersionBlob<NugetVersionMeta>(ctx, {
+      name: id.toLowerCase(),
+      version: norm,
       kind: "generic_file",
       scope: `${id.toLowerCase()}.${norm}.nupkg`,
+      parseMetadata: parseNugetVersionMeta,
+      digest: ({ metadata }) => metadata.nupkgDigest,
       contentType: "application/octet-stream",
       redirect: req.method === "GET",
-      blocked: () => new Response("blocked by scan policy", { status: 403 }),
     });
   }
 
@@ -305,7 +296,7 @@ class NugetAdapterState {
     const metadata = parseNugetVersionMeta(row.metadata);
     if (!metadata) throw Errors.notFound();
     await ctx.data.versions.updateMetadata(row, { ...metadata, listed });
-    this.clearRegistrationCacheForPackage(pkg.id);
+    this.clearRegistrationCache(ctx);
     return new Response(null, { status: listed ? 200 : 204 });
   }
 
@@ -331,13 +322,29 @@ class NugetAdapterState {
     return `${pkg.id}\0${base}`;
   }
 
-  putRegistrationCache(cacheKey: string, entry: NugetRegistrationCacheEntry): void {
-    this.registrationCache.set(cacheKey, entry);
+  private async buildRegistrationEntry(
+    ctx: RegistryRequestContext,
+    pkg: RegistryPackageHandle,
+    id: string,
+    base: string,
+    fingerprint: string,
+  ) {
+    const rows = await this.listVersions(ctx, pkg, { includeUnlisted: true });
+    const text = JSON.stringify(
+      buildNugetRegistrationIndex({
+        id,
+        base,
+        versions: rows.map((row) => ({
+          version: row.version,
+          metadata: row.metadata,
+        })),
+      }),
+    );
+    return { body: { fingerprint, text }, etag: textEtag(text) };
   }
 
-  clearRegistrationCacheForPackage(packageId: string): void {
-    const prefix = `${packageId}\0`;
-    this.registrationCache.deleteWhere((key) => key.startsWith(prefix));
+  clearRegistrationCache(ctx: RegistryRequestContext): void {
+    this.registrationCache.clear(ctx);
   }
 }
 

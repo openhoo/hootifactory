@@ -110,15 +110,16 @@ describe("AptAdapter", () => {
   });
 
   test("returns 404 for InRelease (unsigned v1)", async () => {
-    const res = await new AptAdapter().handle(
-      createTestRouteMatch(
-        { method: "GET", pattern: "/dists/:suite/InRelease", handlerId: "inRelease" },
-        { suite: "stable" },
+    await expect(
+      new AptAdapter().handle(
+        createTestRouteMatch(
+          { method: "GET", pattern: "/dists/:suite/InRelease", handlerId: "inRelease" },
+          { suite: "stable" },
+        ),
+        new Request("https://r.test/apt/o/r/dists/stable/InRelease"),
+        createTestRegistryContext(),
       ),
-      new Request("https://r.test/apt/o/r/dists/stable/InRelease"),
-      createTestRegistryContext(),
-    );
-    expect(res.status).toBe(404);
+    ).rejects.toMatchObject({ status: 404, code: "NOT_FOUND" });
   });
 
   test("downloads a .deb via its pool-path asset", async () => {

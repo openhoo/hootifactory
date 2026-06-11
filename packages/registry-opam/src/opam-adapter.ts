@@ -1,6 +1,6 @@
 import {
+  bytesResponseWithEtag,
   Errors,
-  ifNoneMatch,
   parseRegistryInput,
   type RegistryPlugin,
   type RegistryRequestContext,
@@ -51,11 +51,7 @@ class OpamAdapterState {
   async index(req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const metas = await this.liveMetas(ctx);
     const tarball = buildOpamIndexTarball(metas, (meta) => this.srcUrl(ctx, meta));
-    const etag = `"${new Bun.CryptoHasher("sha1").update(tarball).digest("hex")}"`;
-    if (ifNoneMatch(req, etag)) return new Response(null, { status: 304, headers: { etag } });
-    return new Response(tarball, {
-      headers: { "content-type": "application/gzip", etag },
-    });
+    return bytesResponseWithEtag(req, tarball, { "content-type": "application/gzip" });
   }
 
   /** `GET /packages/<pkg>/<pkg>.<version>/opam` — the individual opam file. */

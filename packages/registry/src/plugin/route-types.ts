@@ -1,3 +1,4 @@
+import type { ZodType } from "@hootifactory/core";
 import type {
   HttpMethod,
   Permission,
@@ -22,6 +23,10 @@ type RegistryRouteParamNames<Pattern extends string> =
 export type RegistryRouteParams<Pattern extends string> = string extends Pattern
   ? Record<string, string>
   : Record<RegistryRouteParamNames<Pattern>, string>;
+
+export type RegistryRouteParamSchemas<
+  Params extends Record<string, string> = Record<string, string>,
+> = Partial<{ [Key in keyof Params]: ZodType<Params[Key]> }>;
 
 export interface RegistryRouteInput<
   Params extends Record<string, string> = Record<string, string>,
@@ -55,6 +60,7 @@ export type RegistryBeforeHandleHook<
 
 export interface RegistryRouteSpec<Params extends Record<string, string> = Record<string, string>>
   extends RouteEntry {
+  paramSchemas?: RegistryRouteParamSchemas<Params>;
   permission?: RegistryPermissionResolver<Params>;
   handler: RegistryRouteHandler<Params>;
 }

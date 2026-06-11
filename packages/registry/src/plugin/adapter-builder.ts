@@ -43,6 +43,7 @@ import type {
   RegistryRouteInput,
   RegistryRouteList,
   RegistryRouteOptions,
+  RegistryRouteParamSchemas,
   RegistryRouteParams,
   RegistryRouteSpec,
 } from "./route-types";
@@ -403,6 +404,11 @@ export class RegistryAdapterRouteBuilder<
 
   artifactPermission(name: string, options?: RegistryArtifactPermissionParamOptions): this {
     return this.artifactParam(name, options);
+  }
+
+  params(schemas: RegistryRouteParamSchemas<Params>): this {
+    this.options.paramSchemas = schemas;
+    return this;
   }
 
   calls(

@@ -33,6 +33,28 @@ const workspaceImportPattern =
 // new package + a manifest line — never a boundary-checker edit.
 const NON_PLUGIN_REGISTRY = new Set(["registry", "registry-platform", "registry-runtime"]);
 const NON_PLUGIN_SCANNER = new Set(["scanner", "scanner-runtime"]);
+const LEGACY_HAND_ROLLED_404_ALLOWLIST = new Set([
+  "packages/registry-alpine/src/alpine-adapter.ts",
+  "packages/registry-cargo/src/cargo-adapter.ts",
+  "packages/registry-chef/src/chef-adapter.ts",
+  "packages/registry-cocoapods/src/cocoapods-adapter.ts",
+  "packages/registry-conan/src/conan-adapter.ts",
+  "packages/registry-hackage/src/hackage-adapter.ts",
+  "packages/registry-luarocks/src/luarocks-adapter.ts",
+  "packages/registry-nix/src/nix-adapter.ts",
+  "packages/registry-npm/src/npm-publish-lifecycle.ts",
+  "packages/registry-opam/src/opam-adapter.ts",
+  "packages/registry-scoop/src/scoop-adapter.ts",
+  "packages/registry-terraform/src/terraform-modules.ts",
+  "packages/registry-terraform/src/terraform-providers.ts",
+  "packages/registry-vagrant/src/vagrant-adapter.ts",
+  "packages/registry-winget/src/winget-adapter.ts",
+]);
+const HAND_ROLLED_404_PATTERNS = [
+  /\bnew Response\([^)]*\bstatus\s*:\s*404/,
+  /\bResponse\.json\([^)]*\bstatus\s*:\s*404/,
+  /\breturn\s+(?:this\.)?notFound(?:Envelope)?\(/,
+];
 
 const failures: string[] = [];
 
@@ -51,6 +73,7 @@ const registryPluginSrcRoots = pluginPackages.registry.map((pkg) => `${pkg.relDi
 const rules = buildRules();
 
 await checkBoundaryRules();
+await checkRegistryErrorConventions();
 await checkRootPackageImports();
 await checkWorkspaceShape();
 await checkRegistryApplicationShape();
@@ -355,6 +378,24 @@ async function checkBoundaryRules(): Promise<void> {
           }
         }
       }
+    }
+  }
+}
+
+async function checkRegistryErrorConventions(): Promise<void> {
+  for (const root of registryPluginSrcRoots) {
+    for (const file of await filesUnder(pathJoin(repoRoot, root), "**/*.ts")) {
+      if (isTestFile(file)) continue;
+      const relative = relativePath(repoRoot, file);
+      if (LEGACY_HAND_ROLLED_404_ALLOWLIST.has(relative)) continue;
+      const lines = (await Bun.file(file).text()).split(/\r?\n/);
+      const line = lines.find((text) =>
+        HAND_ROLLED_404_PATTERNS.some((pattern) => pattern.test(text)),
+      );
+      if (!line) continue;
+      failures.push(
+        `${relative} hand-rolls a 404 response; throw Errors.notFound() or use a helper missing callback`,
+      );
     }
   }
 }

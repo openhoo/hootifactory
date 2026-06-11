@@ -414,6 +414,9 @@ export interface RegistryDataService {
       offset?: number;
     }): Promise<{ assets: RegistryAssetRow[]; total: number }>;
   };
+}
+
+export interface ContentAddressableRegistryDataService extends RegistryDataService {
   /**
    * Content-addressable store operations. Only meaningful for modules that
    * declare `capabilities.contentAddressable` — other modules have no

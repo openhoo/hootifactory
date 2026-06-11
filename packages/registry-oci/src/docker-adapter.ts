@@ -1,4 +1,5 @@
 import {
+  type ContentAddressableRegistryRequestContext,
   Errors,
   type HttpMethod,
   ifNoneMatch,
@@ -39,6 +40,10 @@ const UPLOAD_CONTROL_HANDLERS = new Set([
 const REGISTRY_TOKEN_SERVICE = "hootifactory";
 const OCI_REPOSITORY_NAME_RE =
   /^[a-z0-9]+(?:(?:\.|_|__|-+)[a-z0-9]+)*(?:\/[a-z0-9]+(?:(?:\.|_|__|-+)[a-z0-9]+)*)*$/;
+
+function contentStore(ctx: RegistryRequestContext) {
+  return (ctx as ContentAddressableRegistryRequestContext).data.contentStore;
+}
 
 class DockerAdapterState {
   /** Full docker name "org/repo/image" for scope matching against the JWT. */
@@ -132,7 +137,7 @@ class DockerAdapterState {
     const pkg = await ctx.data.packages.findByName(image);
     if (!pkg) throw Errors.nameUnknown({ image });
     const query = parseOciTagsListQuery(req.url);
-    const tags = await ctx.data.contentStore.listTags(pkg, query);
+    const tags = await contentStore(ctx).listTags(pkg, query);
     return buildOciTagsListResponse({
       baseUrl: ctx.baseUrl,
       mountPath: ctx.repo.mountPath,
@@ -159,12 +164,12 @@ class DockerAdapterState {
     const pkg = await ctx.data.packages.findByName(image);
     if (!pkg) return buildOciReferrersResponse({ manifests: [], artifactTypeFilter });
 
-    const rows = await ctx.data.contentStore.listSubjectManifests(digest);
+    const rows = await contentStore(ctx).listSubjectManifests(digest);
     const referrerDigests = [...new Set(rows.map((row) => row.digest))];
     const associatedDigests =
       referrerDigests.length > 0
         ? new Set(
-            await ctx.data.contentStore.listExistingManifestDigests({
+            await contentStore(ctx).listExistingManifestDigests({
               package: pkg,
               digests: referrerDigests,
             }),

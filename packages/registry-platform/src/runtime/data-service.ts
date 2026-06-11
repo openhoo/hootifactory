@@ -1,6 +1,6 @@
 import type {
+  ContentAddressableRegistryDataService,
   RegistryBlobRefInput,
-  RegistryDataService,
   RegistryRequestContext,
 } from "@hootifactory/registry";
 import { blobStore } from "@hootifactory/storage";
@@ -91,7 +91,9 @@ import {
   packageId,
 } from "./data-service-helpers";
 
-export function createRegistryDataService(ctx: RegistryRequestContext): RegistryDataService {
+export function createRegistryDataService(
+  ctx: RegistryRequestContext,
+): ContentAddressableRegistryDataService {
   return {
     packages: {
       findByName: (name) => findPackageByName(ctx, name),

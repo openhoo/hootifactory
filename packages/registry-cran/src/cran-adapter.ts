@@ -1,11 +1,12 @@
 import {
+  bytesResponseWithEtag,
   Errors,
-  ifNoneMatch,
   type RegistryPackageRow,
   type RegistryPlugin,
   type RegistryRequestContext,
   registryAdapter,
-  serveRegistryBlob,
+  repoResponseCache,
+  serveVersionBlob,
   textResponseWithEtag,
 } from "@hootifactory/registry";
 import { buildPackagesIndex, type CranIndexEntry } from "./cran-index";
@@ -15,10 +16,9 @@ import { parseCranTarballFilename, parseCranVersionMeta } from "./cran-validatio
 const TEXT_PLAIN = { "content-type": "text/plain; charset=utf-8" } as const;
 const INDEX_TTL_MS = 5_000;
 
-interface IndexCacheEntry {
+interface IndexCacheBody {
   text: string;
   gz: Uint8Array;
-  expiresAt: number;
 }
 
 /**
@@ -31,43 +31,37 @@ interface IndexCacheEntry {
  * paths under `/bin/...` 404 (no compiled binaries are hosted).
  */
 class CranAdapterState {
-  private readonly indexCache = new Map<string, IndexCacheEntry>();
+  private readonly indexCache = repoResponseCache<IndexCacheBody>({ ttlMs: INDEX_TTL_MS });
 
   /** Build (or reuse a cached) `{ text, gz }` PACKAGES index for this repo. */
-  private async index(ctx: RegistryRequestContext): Promise<IndexCacheEntry> {
-    const key = ctx.repo.id;
-    const cached = this.indexCache.get(key);
-    if (cached && cached.expiresAt > Date.now()) return cached;
-
-    const names = await ctx.data.packages.listNames();
-    const entries: CranIndexEntry[] = [];
-    for (const { name } of names) {
-      const pkg = await ctx.data.packages.findByName(name);
-      if (!pkg) continue;
-      const meta = await this.latestMeta(ctx, pkg);
-      if (meta) {
-        entries.push({
-          name: meta.name,
-          version: meta.version,
-          controlFields: meta.controlFields,
-          md5: meta.md5,
-        });
+  private async index(ctx: RegistryRequestContext): Promise<IndexCacheBody> {
+    const entry = await this.indexCache.get(ctx, "packages", async () => {
+      const names = await ctx.data.packages.listNames();
+      const entries: CranIndexEntry[] = [];
+      for (const { name } of names) {
+        const pkg = await ctx.data.packages.findByName(name);
+        if (!pkg) continue;
+        const meta = await this.latestMeta(ctx, pkg);
+        if (meta) {
+          entries.push({
+            name: meta.name,
+            version: meta.version,
+            controlFields: meta.controlFields,
+            md5: meta.md5,
+          });
+        }
       }
-    }
-    const text = buildPackagesIndex(entries);
-    const gz = Bun.gzipSync(new TextEncoder().encode(text));
-    const entry: IndexCacheEntry = { text, gz, expiresAt: Date.now() + INDEX_TTL_MS };
-    this.indexCache.set(key, entry);
-    return entry;
+      const text = buildPackagesIndex(entries);
+      return { body: { text, gz: Bun.gzipSync(new TextEncoder().encode(text)) }, etag: "" };
+    });
+    return entry.body;
   }
 
   /** `GET /src/contrib/PACKAGES[.gz]` — the regenerated control-stanza index. */
   async packages(gz: boolean, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const index = await this.index(ctx);
     if (!gz) return textResponseWithEtag(req, index.text, TEXT_PLAIN);
-    const etag = `"${new Bun.CryptoHasher("md5").update(index.gz).digest("hex")}"`;
-    if (ifNoneMatch(req, etag)) return new Response(null, { status: 304, headers: { etag } });
-    return new Response(index.gz, { headers: { "content-type": "application/gzip", etag } });
+    return bytesResponseWithEtag(req, index.gz, { "content-type": "application/gzip" });
   }
 
   /** `GET /src/contrib/<pkg>_<version>.tar.gz` — serve the stored source tarball. */
@@ -102,19 +96,16 @@ class CranAdapterState {
     req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
-    const pkg = await ctx.data.packages.findByName(name);
-    if (!pkg) throw Errors.notFound();
-    const row = await ctx.data.versions.findLive(pkg, version);
-    const meta = parseCranVersionMeta(row?.metadata);
-    if (!meta) throw Errors.notFound();
     const scope = cranBlobScope(name, version);
-    return serveRegistryBlob(ctx, {
-      digest: meta.blobDigest,
+    return serveVersionBlob(ctx, {
+      name,
+      version,
       kind: CRAN_TARBALL_KIND,
       scope,
+      parseMetadata: parseCranVersionMeta,
+      digest: ({ metadata }) => metadata.blobDigest,
       contentType: "application/gzip",
       redirect: req.method === "GET",
-      blocked: () => new Response("package blocked by scan policy", { status: 403 }),
     });
   }
 
@@ -122,7 +113,7 @@ class CranAdapterState {
     const parts = parseCranTarballFilename(filenameRaw);
     if (!parts) throw Errors.nameInvalid("invalid CRAN tarball filename");
     const res = await handleCranPublish(parts, req, ctx);
-    if (res.status >= 200 && res.status < 300) this.indexCache.delete(ctx.repo.id);
+    if (res.status >= 200 && res.status < 300) this.indexCache.clear(ctx);
     return res;
   }
 

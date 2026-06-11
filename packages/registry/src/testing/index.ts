@@ -1,11 +1,14 @@
 import type {
+  ContentAddressableRegistryRequestContext,
+  HttpMethod,
   Logger,
-  RegistryRequestContext,
+  RegistryPlugin,
   ResolvedRepo,
   RouteEntry,
   RouteMatch,
 } from "../plugin/adapter";
-import type { RegistryDataService } from "../plugin/data";
+import type { ContentAddressableRegistryDataService } from "../plugin/data";
+import { compileRoutes, matchRoute } from "../routing/route-matcher";
 
 function unimplemented(name: string): never {
   throw new Error(`unimplemented registry test context method: ${name}`);
@@ -20,7 +23,7 @@ function createTestLogger(): Logger {
   };
 }
 
-function createTestDataService(): RegistryDataService {
+function createTestDataService(): ContentAddressableRegistryDataService {
   return {
     packages: {
       findByName: () => Promise.resolve(null),
@@ -129,8 +132,8 @@ export function createTestResolvedRepo(overrides: Partial<ResolvedRepo> = {}): R
 }
 
 export function createTestRegistryContext(
-  overrides: Partial<RegistryRequestContext> = {},
-): RegistryRequestContext {
+  overrides: Partial<ContentAddressableRegistryRequestContext> = {},
+): ContentAddressableRegistryRequestContext {
   return {
     repo: createTestResolvedRepo(overrides.repo),
     principal: { kind: "anonymous" },
@@ -154,4 +157,31 @@ export function createTestRouteMatch(
   path = entry.pattern,
 ): RouteMatch {
   return { entry, params, path };
+}
+
+function isHttpMethod(method: string): method is HttpMethod {
+  return ["GET", "HEAD", "PUT", "POST", "PATCH", "DELETE"].includes(method);
+}
+
+export async function dispatchTestRequest(
+  plugin: RegistryPlugin,
+  req: Request,
+  ctxOverrides: Partial<ContentAddressableRegistryRequestContext> = {},
+): Promise<Response> {
+  const method = req.method.toUpperCase();
+  if (!isHttpMethod(method)) return new Response("method not allowed", { status: 405 });
+
+  const path = new URL(req.url).pathname;
+  const match = matchRoute(compileRoutes(plugin.routes()), method, path);
+  if (!match) return new Response("not found", { status: 404 });
+
+  const ctx = createTestRegistryContext(ctxOverrides);
+  const permission = plugin.requiredPermission(method, match, ctx);
+  const decision = await ctx.authorize(permission.action, {
+    repositoryName: permission.repositoryName ?? ctx.repo.name,
+    ...permission.resource,
+  });
+  if (!decision.allowed) return new Response(decision.reason ?? "forbidden", { status: 403 });
+
+  return plugin.handle(match, req, ctx);
 }

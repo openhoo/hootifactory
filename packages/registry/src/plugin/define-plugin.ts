@@ -1,3 +1,4 @@
+import { parseRegistryInput } from "@hootifactory/core";
 import {
   type HttpMethod,
   type Permission,
@@ -62,6 +63,22 @@ function resolveRoutePermission(
   return typeof resolver === "function" ? resolver(input) : resolver;
 }
 
+function validateRouteParams(
+  spec: AnyRegistryRouteSpec,
+  match: RouteMatch,
+): Record<string, string> {
+  const schemas = spec.paramSchemas;
+  if (!schemas) return match.params;
+  const params = { ...match.params };
+  for (const [name, schema] of Object.entries(schemas)) {
+    if (!schema) continue;
+    params[name] = parseRegistryInput(schema, params[name], {
+      message: `invalid route parameter: ${name}`,
+    }) as string;
+  }
+  return params;
+}
+
 class DefinedRegistryPlugin implements RegistryPlugin {
   readonly id: RegistryPlugin["id"];
   readonly displayName: RegistryModuleDescriptor["displayName"];
@@ -110,9 +127,10 @@ class DefinedRegistryPlugin implements RegistryPlugin {
       // Carry every RouteEntry field (method/pattern/handlerId + declarative
       // flags) into the compiled entry by stripping only the spec-only members,
       // so a newly-added RouteEntry flag is never silently dropped here.
-      const { permission, handler, ...entry } = spec;
+      const { permission, handler, paramSchemas, ...entry } = spec;
       void permission;
       void handler;
+      void paramSchemas;
       return entry;
     });
     routes.forEach((spec, index) => {
@@ -137,7 +155,8 @@ class DefinedRegistryPlugin implements RegistryPlugin {
     ctx: RegistryRequestContext,
   ): Permission {
     const spec = this.specFor(match);
-    const input = { method, match, params: match.params, ctx };
+    const params = validateRouteParams(spec, match);
+    const input = { method, match: { ...match, params }, params, ctx };
     return (
       resolveRoutePermission(spec.permission, input) ??
       this.input.defaultPermission?.(input) ??
@@ -147,7 +166,8 @@ class DefinedRegistryPlugin implements RegistryPlugin {
 
   handle(match: RouteMatch, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const spec = this.specFor(match);
-    const input = { match, params: match.params, req, ctx };
+    const params = validateRouteParams(spec, match);
+    const input = { match: { ...match, params }, params, req, ctx };
     return Promise.resolve()
       .then(() => this.input.beforeHandle?.(input))
       .then(() => spec.handler(input));

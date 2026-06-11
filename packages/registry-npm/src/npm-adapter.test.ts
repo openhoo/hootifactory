@@ -289,33 +289,32 @@ describe("npm adapter contract", () => {
   test("tarball returns 404 when the package or dist is missing", async () => {
     const ctx = createTestRegistryContext();
     ctx.data.packages.findByName = async () => null;
-    const missingPkg = await new NpmAdapter().handle(
-      tarballMatch,
-      new Request("https://registry.test/@scope/pkg/-/pkg-1.2.3-beta.1.tgz"),
-      ctx,
-    );
-    expect(missingPkg.status).toBe(404);
+    await expect(
+      new NpmAdapter().handle(
+        tarballMatch,
+        new Request("https://registry.test/@scope/pkg/-/pkg-1.2.3-beta.1.tgz"),
+        ctx,
+      ),
+    ).rejects.toMatchObject({ status: 404, code: "NOT_FOUND" });
 
     const ctx2 = createTestRegistryContext();
     ctx2.data.packages.findByName = async () => fullPackageRow("pkg_1", "@scope/pkg");
     ctx2.data.versions.findLive = async () => null;
-    const missingDist = await new NpmAdapter().handle(
-      tarballMatch,
-      new Request("https://registry.test/@scope/pkg/-/pkg-1.2.3-beta.1.tgz"),
-      ctx2,
-    );
-    expect(missingDist.status).toBe(404);
+    await expect(
+      new NpmAdapter().handle(
+        tarballMatch,
+        new Request("https://registry.test/@scope/pkg/-/pkg-1.2.3-beta.1.tgz"),
+        ctx2,
+      ),
+    ).rejects.toMatchObject({ status: 404, code: "NOT_FOUND" });
   });
 
   test("packument returns 404 when the package is unknown", async () => {
     const ctx = createTestRegistryContext();
     ctx.data.packages.findByName = async () => null;
-    const res = await new NpmAdapter().handle(
-      packumentMatch,
-      new Request("https://registry.test/pkg"),
-      ctx,
-    );
-    expect(res.status).toBe(404);
+    await expect(
+      new NpmAdapter().handle(packumentMatch, new Request("https://registry.test/pkg"), ctx),
+    ).rejects.toMatchObject({ status: 404, code: "NOT_FOUND" });
   });
 
   test("generateMetadata returns null for an unknown package", async () => {
@@ -463,12 +462,13 @@ describe("npm adapter dist-tags routes", () => {
 
     const missingCtx = createTestRegistryContext();
     missingCtx.data.packages.findByName = async () => null;
-    const missing = await new NpmAdapter().handle(
-      distTagsListMatch,
-      new Request("https://registry.test/-/package/pkg/dist-tags"),
-      missingCtx,
-    );
-    expect(missing.status).toBe(404);
+    await expect(
+      new NpmAdapter().handle(
+        distTagsListMatch,
+        new Request("https://registry.test/-/package/pkg/dist-tags"),
+        missingCtx,
+      ),
+    ).rejects.toMatchObject({ status: 404, code: "NOT_FOUND" });
   });
 
   test("distTagSet sets the tag and updates latest", async () => {
@@ -517,29 +517,30 @@ describe("npm adapter dist-tags routes", () => {
   test("distTagSet 404s when the package or version is missing", async () => {
     const missingPkg = createTestRegistryContext();
     missingPkg.data.packages.findByName = async () => null;
-    const noPkg = await new NpmAdapter().handle(
-      distTagSetMatch,
-      new Request("https://registry.test/-/package/pkg/dist-tags/beta", {
-        method: "PUT",
-        body: '"1.1.0"',
-      }),
-      missingPkg,
-    );
-    expect(noPkg.status).toBe(404);
+    await expect(
+      new NpmAdapter().handle(
+        distTagSetMatch,
+        new Request("https://registry.test/-/package/pkg/dist-tags/beta", {
+          method: "PUT",
+          body: '"1.1.0"',
+        }),
+        missingPkg,
+      ),
+    ).rejects.toMatchObject({ status: 404, code: "NOT_FOUND" });
 
     const missingVersion = createTestRegistryContext();
     missingVersion.data.packages.findByName = async () => fullPackageRow("pkg_1", "pkg");
     missingVersion.data.versions.findLive = async () => null;
-    const noVersion = await new NpmAdapter().handle(
-      distTagSetMatch,
-      new Request("https://registry.test/-/package/pkg/dist-tags/beta", {
-        method: "PUT",
-        body: '"1.1.0"',
-      }),
-      missingVersion,
-    );
-    expect(noVersion.status).toBe(404);
-    expect(await noVersion.json()).toEqual({ error: "version not found" });
+    await expect(
+      new NpmAdapter().handle(
+        distTagSetMatch,
+        new Request("https://registry.test/-/package/pkg/dist-tags/beta", {
+          method: "PUT",
+          body: '"1.1.0"',
+        }),
+        missingVersion,
+      ),
+    ).rejects.toMatchObject({ status: 404, code: "NOT_FOUND" });
   });
 
   test("distTagDelete removes the tag and clears latest when deleting latest", async () => {
@@ -577,12 +578,13 @@ describe("npm adapter dist-tags routes", () => {
 
     const missingCtx = createTestRegistryContext();
     missingCtx.data.packages.findByName = async () => null;
-    const missing = await new NpmAdapter().handle(
-      distTagDeleteMatch,
-      new Request("https://registry.test/-/package/pkg/dist-tags/beta", { method: "DELETE" }),
-      missingCtx,
-    );
-    expect(missing.status).toBe(404);
+    await expect(
+      new NpmAdapter().handle(
+        distTagDeleteMatch,
+        new Request("https://registry.test/-/package/pkg/dist-tags/beta", { method: "DELETE" }),
+        missingCtx,
+      ),
+    ).rejects.toMatchObject({ status: 404, code: "NOT_FOUND" });
   });
 });
 

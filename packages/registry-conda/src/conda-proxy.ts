@@ -1,7 +1,8 @@
 import {
   mapWithBoundedConcurrency,
   type RegistryRequestContext,
-  safeFetch,
+  readBoundedBytes,
+  upstreamFetch,
 } from "@hootifactory/registry";
 import {
   CONDA_MEDIA_TYPE,
@@ -93,20 +94,16 @@ async function fetchUpstreamRepodata(
   upstreamHost: string,
   ctx: RegistryRequestContext,
 ): Promise<UpstreamRepodata | null> {
-  const res = await safeFetch(url, {
-    allowedHosts: [upstreamHost],
-    enforcePublicNetwork: ctx.limits.enforcePublicNetwork,
+  const res = await upstreamFetch(ctx, url, {
+    pinHost: upstreamHost,
     headers: { accept: "application/json" },
-  }).catch(() => null);
+  });
   if (!res?.ok) return null;
-  // Stream with a byte cap instead of `res.json()`: a chunked (no
-  // content-length) or lying upstream could otherwise read an unbounded body
-  // into memory.
-  const bytes = await readBoundedBody(res, ctx.limits.maxUploadBytes);
-  if (!bytes) return null;
+  const read = await readBoundedBytes(res, ctx.limits.maxUploadBytes);
+  if (!read) return null;
   let json: unknown;
   try {
-    json = JSON.parse(new TextDecoder().decode(bytes));
+    json = JSON.parse(new TextDecoder().decode(read.bytes));
   } catch {
     return null;
   }
@@ -114,40 +111,6 @@ async function fetchUpstreamRepodata(
   const packages = isJsonObject(json.packages) ? json.packages : {};
   const packagesConda = isJsonObject(json["packages.conda"]) ? json["packages.conda"] : {};
   return { packages, packagesConda };
-}
-
-/**
- * Read a response body into memory, aborting if it exceeds `maxBytes`. The
- * declared `content-length` is only a hint; we enforce the cap while streaming
- * so a chunked or mis-declared body cannot exhaust memory.
- */
-async function readBoundedBody(res: Response, maxBytes: number): Promise<Uint8Array | null> {
-  const declared = Number(res.headers.get("content-length") ?? 0);
-  if (declared > maxBytes) {
-    await res.body?.cancel().catch(() => {});
-    return null;
-  }
-  const reader = res.body?.getReader();
-  if (!reader) return null;
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > maxBytes) {
-      await reader.cancel().catch(() => {});
-      return null;
-    }
-    chunks.push(value);
-  }
-  const bytes = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return bytes;
 }
 
 async function mirrorPackage(input: {
@@ -272,41 +235,15 @@ async function fetchPackage(
   upstreamHost: string,
   ctx: RegistryRequestContext,
 ): Promise<{ bytes: Uint8Array; sha256: string; md5: string } | null> {
-  const res = await safeFetch(url, {
-    allowedHosts: [upstreamHost],
-    enforcePublicNetwork: ctx.limits.enforcePublicNetwork,
-  }).catch(() => null);
+  const res = await upstreamFetch(ctx, url, { pinHost: upstreamHost });
   if (!res?.ok) return null;
-  const declared = Number(res.headers.get("content-length") ?? 0);
-  if (declared > ctx.limits.maxUploadBytes) {
-    await res.body?.cancel().catch(() => {});
-    return null;
-  }
-  const reader = res.body?.getReader();
-  if (!reader) return null;
-  const sha256 = new Bun.CryptoHasher("sha256");
-  const md5 = new Bun.CryptoHasher("md5");
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > ctx.limits.maxUploadBytes) {
-      await reader.cancel().catch(() => {});
-      return null;
-    }
-    sha256.update(value);
-    md5.update(value);
-    chunks.push(value);
-  }
-  const bytes = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return { bytes, sha256: sha256.digest("hex"), md5: md5.digest("hex") };
+  const read = await readBoundedBytes(res, ctx.limits.maxUploadBytes, {
+    digests: ["md5", "sha256"],
+  });
+  const sha256 = read?.digests.sha256?.slice("sha256:".length);
+  const md5 = read?.digests.md5;
+  if (!read || !sha256 || !md5) return null;
+  return { bytes: read.bytes, sha256, md5 };
 }
 
 function isJsonObject(value: unknown): value is Record<string, unknown> {

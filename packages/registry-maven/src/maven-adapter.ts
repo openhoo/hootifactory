@@ -1,11 +1,10 @@
 import {
   asJsonRecord,
-  Errors,
   parseRegistryInput,
   type RegistryPlugin,
   type RegistryRequestContext,
   registryAdapter,
-  serveRegistryBlob,
+  serveAssetBlob,
 } from "@hootifactory/registry";
 import { handleMavenUpload, MAVEN_FILE_KIND } from "./maven-upload-lifecycle";
 import { contentTypeForPath, MavenPathSchema, mavenPackageForPath } from "./maven-validation";
@@ -25,15 +24,12 @@ class MavenAdapterState {
       code: "NAME_INVALID",
       message: "invalid maven path",
     });
-    const asset = await ctx.data.assets.findByScope({ role: MAVEN_FILE_KIND, scope: safePath });
-    if (!asset) throw Errors.notFound();
-    return serveRegistryBlob(ctx, {
-      digest: asset.digest,
+    return serveAssetBlob(ctx, {
+      role: MAVEN_FILE_KIND,
       kind: MAVEN_FILE_KIND,
       scope: safePath,
       contentType: contentTypeForPath(safePath),
       redirect: req.method === "GET",
-      blocked: () => new Response("artifact blocked by scan policy", { status: 403 }),
     });
   }
 }

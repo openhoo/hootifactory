@@ -1,6 +1,6 @@
 import {
+  bytesResponseWithEtag,
   Errors,
-  ifNoneMatch,
   parseRegistryInput,
   type RegistryPackageHandle,
   type RegistryPlugin,
@@ -112,9 +112,7 @@ class ArchAdapterState {
   /** Serve the regenerated sync DB (gzip'd tar) with a content-stable ETag. */
   private async serveDb(req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const db = buildArchDb(await this.collectEntries(ctx));
-    const etag = `"${new Bun.CryptoHasher("sha256").update(db.gz).digest("hex")}"`;
-    if (ifNoneMatch(req, etag)) return new Response(null, { status: 304, headers: { etag } });
-    return new Response(db.gz, { headers: { ...DB_GZIP, etag } });
+    return bytesResponseWithEtag(req, db.gz, DB_GZIP);
   }
 
   /** Serve a package blob, resolved from the stored asset by filename scope. */

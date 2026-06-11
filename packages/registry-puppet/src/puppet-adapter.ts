@@ -3,7 +3,7 @@ import {
   type RegistryPlugin,
   type RegistryRequestContext,
   registryAdapter,
-  serveRegistryBlob,
+  serveVersionBlob,
   textResponseWithEtag,
 } from "@hootifactory/registry";
 import { puppetBadRequest, puppetNotFound } from "./puppet-errors";
@@ -140,21 +140,19 @@ class PuppetAdapterState {
     if (!filename.success) return puppetBadRequest("invalid release filename");
     const ref = fileToRelease(filename.data);
     if (!ref) return puppetNotFound(`file ${filenameRaw} not found`);
-    const pkg = await ctx.data.packages.findByName(ref.slug);
-    if (!pkg) return puppetNotFound(`file ${filenameRaw} not found`);
-    const row = await ctx.data.versions.findLive(pkg, ref.version);
-    const meta = parsePuppetReleaseMeta(row?.metadata);
-    // The requested filename must match the canonical name for this release.
-    if (!meta || puppetReleaseFileName(ref.owner, ref.name, ref.version) !== filename.data) {
-      return puppetNotFound(`file ${filenameRaw} not found`);
-    }
-    return serveRegistryBlob(ctx, {
-      digest: meta.blobDigest,
+    return serveVersionBlob(ctx, {
+      name: ref.slug,
+      version: ref.version,
       kind: "puppet_release",
       scope: puppetBlobScope(ref.slug, ref.version),
+      parseMetadata: parsePuppetReleaseMeta,
+      // The requested filename must match the canonical name for this release.
+      digest: ({ metadata }) =>
+        puppetReleaseFileName(ref.owner, ref.name, ref.version) === filename.data
+          ? metadata.blobDigest
+          : null,
       contentType: ARCHIVE_CONTENT_TYPE,
       redirect: req.method === "GET",
-      blocked: () => new Response("blocked by scan policy", { status: 403 }),
       missing: () => puppetNotFound(`file ${filenameRaw} not found`),
     });
   }

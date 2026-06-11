@@ -1,6 +1,6 @@
 import {
   asJsonRecord,
-  BoundedLruCache,
+  Errors,
   type HttpMethod,
   type Permission,
   parseRegistryInput,
@@ -12,6 +12,7 @@ import {
   type RegistryVirtualSearchInput,
   type RouteMatch,
   registryAdapter,
+  repoResponseCache,
   type SearchQuery,
   type SearchResult,
   serveRegistryBlob,
@@ -19,7 +20,6 @@ import {
   textResponseWithEtag,
 } from "@hootifactory/registry";
 import { parseNpmDistTag, parseNpmDistTagRequestBody } from "./npm-dist-tags";
-import { ifNoneMatch } from "./npm-http";
 import type { NpmDist } from "./npm-integrity";
 import { handleNpmProxyIngest } from "./npm-proxy-lifecycle";
 import { handleNpmPublish } from "./npm-publish-lifecycle";
@@ -56,14 +56,13 @@ const COMPRESSIBLE_HANDLERS = ["packument", "search", "distTagsList"];
 
 interface CachedPackument {
   token: string;
-  body: string;
-  etag: string;
+  text: string;
 }
 
 class NpmAdapterState {
-  readonly packumentCache = new BoundedLruCache<string, CachedPackument>(
-    PACKUMENT_CACHE_MAX_ENTRIES,
-  );
+  readonly packumentCache = repoResponseCache<CachedPackument>({
+    maxEntries: PACKUMENT_CACHE_MAX_ENTRIES,
+  });
 
   requiredPermission(method: HttpMethod, match?: RouteMatch): Permission {
     return this.requiredRoutePermission(method, match);
@@ -119,31 +118,37 @@ class NpmAdapterState {
     });
   }
 
-  packumentCacheKey(ctx: RegistryRequestContext, pkg: RegistryPackageHandle): string {
-    return `${ctx.repo.id}:${pkg.id}`;
+  packumentCacheKey(pkg: RegistryPackageHandle): string {
+    return pkg.id;
   }
 
-  cachedPackument(
+  async packumentEntry(
     ctx: RegistryRequestContext,
+    name: string,
     pkg: RegistryPackageHandle,
+    tags: Record<string, string>,
     token: string,
-  ): CachedPackument | null {
-    const cached = this.packumentCache.get(this.packumentCacheKey(ctx, pkg));
-    return cached?.token === token ? cached : null;
+  ) {
+    const key = this.packumentCacheKey(pkg);
+    const cached = await this.packumentCache.get(ctx, key, () =>
+      this.buildPackumentEntry(ctx, name, pkg, tags, token),
+    );
+    if (cached.body.token === token) return cached;
+    const refreshed = await this.buildPackumentEntry(ctx, name, pkg, tags, token);
+    this.packumentCache.set(ctx, key, refreshed);
+    return refreshed;
   }
 
-  cachePackument(
+  private async buildPackumentEntry(
     ctx: RegistryRequestContext,
+    name: string,
     pkg: RegistryPackageHandle,
+    tags: Record<string, string>,
     token: string,
-    body: string,
-  ): CachedPackument {
-    const cached = { token, body, etag: textEtag(body) };
-    // BoundedLruCache self-bounds and evicts the least-recently-used entry, so a
-    // hot package read early stays cached (the old FIFO Map evicted by insertion
-    // order, dropping hot entries under multi-tenant load).
-    this.packumentCache.set(this.packumentCacheKey(ctx, pkg), cached);
-    return cached;
+  ) {
+    const versions = await this.liveVersionsFor(ctx, pkg);
+    const text = JSON.stringify(buildPackument(name, versions, tags));
+    return { body: { token, text }, etag: textEtag(text) };
   }
 
   whoamiUsername(ctx: RegistryRequestContext): string {
@@ -165,23 +170,10 @@ class NpmAdapterState {
     if (!pkg) return null;
     const tags = await this.distTags(ctx, pkg);
     const token = await this.packumentToken(ctx, pkg, tags);
-    const cached = this.cachedPackument(ctx, pkg, token);
-    if (cached) {
-      return {
-        contentType: PACKUMENT_CONTENT_TYPE,
-        body: cached.body,
-      };
-    }
-    const versions = await this.liveVersionsFor(ctx, pkg);
-    const packed = this.cachePackument(
-      ctx,
-      pkg,
-      token,
-      JSON.stringify(buildPackument(name, versions, tags)),
-    );
+    const packed = await this.packumentEntry(ctx, name, pkg, tags, token);
     return {
       contentType: PACKUMENT_CONTENT_TYPE,
-      body: packed.body,
+      body: packed.body.text,
     };
   }
 
@@ -204,22 +196,13 @@ class NpmAdapterState {
   async packument(name: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     name = parseNpmName(name);
     const pkg = await this.findPackage(ctx, name);
-    if (!pkg) return Response.json({ error: "Not found" }, { status: 404 });
+    if (!pkg) throw Errors.notFound();
     const tags = await this.distTags(ctx, pkg);
     const token = await this.packumentToken(ctx, pkg, tags);
-    let cached = this.cachedPackument(ctx, pkg, token);
-    if (!cached) {
-      const versions = await this.liveVersionsFor(ctx, pkg);
-      cached = this.cachePackument(
-        ctx,
-        pkg,
-        token,
-        JSON.stringify(buildPackument(name, versions, tags)),
-      );
-    }
+    const cached = await this.packumentEntry(ctx, name, pkg, tags, token);
     return textResponseWithEtag(
       req,
-      cached.body,
+      cached.body.text,
       { "content-type": PACKUMENT_CONTENT_TYPE },
       cached.etag,
     );
@@ -237,14 +220,14 @@ class NpmAdapterState {
       message: "invalid tarball filename",
     });
     const pkg = await this.findPackage(ctx, name);
-    if (!pkg) return Response.json({ error: "Not found" }, { status: 404 });
+    if (!pkg) throw Errors.notFound();
     const distVersion = versionFromTarballFilename(name, filename);
     const version = distVersion ? await this.versionRow(ctx, pkg, distVersion) : null;
     const metadata = version ? parseNpmStoredVersionMetadata(version.metadata) : null;
     const dist: NpmDist | undefined =
       metadata?.dist?.filename === filename ? metadata.dist : undefined;
     if (!dist || !distVersion) {
-      return Response.json({ error: "Not found" }, { status: 404 });
+      throw Errors.notFound();
     }
     const etag = `"${dist.shasum}"`;
     return serveRegistryBlob(ctx, {
@@ -252,11 +235,10 @@ class NpmAdapterState {
       kind: "npm_tarball",
       scope: `${name}@${distVersion}`,
       contentType: "application/octet-stream",
-      extraHeaders: { etag },
+      req,
+      etag,
       redirect: req.method === "GET",
       blocked: () => Response.json({ error: "artifact blocked by scan policy" }, { status: 403 }),
-      notModified: () =>
-        ifNoneMatch(req, etag) ? new Response(null, { status: 304, headers: { etag } }) : null,
     });
   }
 
@@ -271,7 +253,7 @@ class NpmAdapterState {
   async distTagsList(name: string, ctx: RegistryRequestContext): Promise<Response> {
     name = parseNpmName(name);
     const pkg = await this.findPackage(ctx, name);
-    if (!pkg) return Response.json({}, { status: 404 });
+    if (!pkg) throw Errors.notFound();
     return Response.json(await this.distTags(ctx, pkg));
   }
 
@@ -283,11 +265,11 @@ class NpmAdapterState {
   ): Promise<Response> {
     name = parseNpmName(name);
     const pkg = await this.findPackage(ctx, name);
-    if (!pkg) return Response.json({ error: "Not found" }, { status: 404 });
+    if (!pkg) throw Errors.notFound();
     tag = parseNpmDistTag(tag);
     const version = parseNpmDistTagRequestBody(await req.text());
     const row = await this.versionRow(ctx, pkg, version);
-    if (!row) return Response.json({ error: "version not found" }, { status: 404 });
+    if (!row) throw Errors.notFound();
     await ctx.data.tags.set(pkg, tag, row);
     if (tag === "latest") {
       await ctx.data.tags.updateLatestVersion(pkg, version);
@@ -298,7 +280,7 @@ class NpmAdapterState {
   async distTagDelete(name: string, tag: string, ctx: RegistryRequestContext): Promise<Response> {
     name = parseNpmName(name);
     const pkg = await this.findPackage(ctx, name);
-    if (!pkg) return Response.json({ error: "Not found" }, { status: 404 });
+    if (!pkg) throw Errors.notFound();
     tag = parseNpmDistTag(tag);
     await ctx.data.tags.delete(pkg, tag);
     if (tag === "latest") {

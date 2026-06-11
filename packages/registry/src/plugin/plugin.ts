@@ -65,6 +65,7 @@ export type {
   RegistryRouteInput,
   RegistryRouteList,
   RegistryRouteOptions,
+  RegistryRouteParamSchemas,
   RegistryRouteParams,
   RegistryRoutePrefixFactory,
   RegistryRouteSpec,
