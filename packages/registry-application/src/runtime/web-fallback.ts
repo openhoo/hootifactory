@@ -2,8 +2,13 @@ import { readdirSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { env } from "@hootifactory/config";
 
-/** Reserved server path segments that must never fall back to the SPA index.html. */
-const RESERVED_SERVER_SEGMENTS = new Set(["api", "v2", "token", "healthz", "readyz"]);
+/**
+ * Platform-owned path segments that must never fall back to the SPA index.html.
+ * Module-owned grammar (repo mounts and app-level routes such as an OCI token
+ * service) is NOT listed here — the delivery layer derives those segments from
+ * the registered plugins and passes them via `registryMountSegments`.
+ */
+const RESERVED_SERVER_SEGMENTS = new Set(["api", "healthz", "readyz"]);
 const IMMUTABLE_ASSET_CACHE_CONTROL = "public, max-age=31536000, immutable";
 const INDEX_CACHE_CONTROL = "no-cache";
 
