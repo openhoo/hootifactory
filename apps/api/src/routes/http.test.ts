@@ -21,6 +21,11 @@ const { AUDIT_RESULT, audit, denied } = await import("./http");
 
 function context() {
   return {
+    env: undefined,
+    req: {
+      raw: new Request("http://localhost/"),
+      header: () => undefined,
+    },
     json(body: unknown, status = 200) {
       return new Response(JSON.stringify(body), { status });
     },
@@ -54,18 +59,36 @@ describe("http route helpers", () => {
   test("audit forwards the entry to the writer (fire-and-forget)", async () => {
     writeAuditCalls.length = 0;
     writeAuditBehavior = "ok";
-    audit({ action: "auth.login", result: AUDIT_RESULT.success, ip: "203.0.113.1" } as AuditEntry);
+    audit(context(), {
+      action: "auth.login",
+      result: AUDIT_RESULT.success,
+      ip: "203.0.113.1",
+    } as AuditEntry);
     await Promise.resolve();
     await Promise.resolve();
     expect(writeAuditCalls).toHaveLength(1);
     expect(writeAuditCalls[0]?.action).toBe("auth.login");
+    expect(writeAuditCalls[0]?.ip).toBe("203.0.113.1");
+  });
+
+  test("audit derives the client IP from the request when the entry omits it", async () => {
+    writeAuditCalls.length = 0;
+    writeAuditBehavior = "ok";
+    const c = {
+      env: { requestIP: () => ({ address: "198.51.100.3", family: "IPv4", port: 4711 }) },
+      req: { raw: new Request("http://localhost/"), header: () => undefined },
+    } as unknown as Context<AppEnv>;
+    audit(c, { action: "auth.login", result: AUDIT_RESULT.success } as AuditEntry);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(writeAuditCalls[0]?.ip).toBe("198.51.100.3");
   });
 
   test("audit swallows writer failures so a request can never fail on auditing", async () => {
     writeAuditCalls.length = 0;
     writeAuditBehavior = "throw";
     expect(() =>
-      audit({
+      audit(context(), {
         action: "token.revoke",
         result: AUDIT_RESULT.success,
         resourceType: "token",

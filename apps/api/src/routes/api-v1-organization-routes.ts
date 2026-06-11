@@ -162,7 +162,7 @@ export function registerApiV1OrganizationRoutes(apiV1Router: Hono<AppEnv>) {
         return errorResponse(c, created.status, created.code, created.error);
       }
       const { repo } = created;
-      audit({
+      audit(c, {
         orgId: params.data.orgId,
         action: "repository.create",
         result: AUDIT_RESULT.success,

@@ -38,7 +38,7 @@ export function registerTokenRoutes(router: Hono<AppEnv>): void {
     const decision = await tokenResourceDecision(c.get("principal"), tok, "delete");
     if (!decision.allowed) return denied(c, decision);
     await revokeToken(tokenId, principalActor(c.get("principal")), "revoked via ui");
-    audit({
+    audit(c, {
       orgId,
       action: "token.revoke",
       result: AUDIT_RESULT.success,
@@ -78,7 +78,7 @@ export function registerTokenRoutes(router: Hono<AppEnv>): void {
       grants: request.grants,
       expiresAt: request.expiresAt,
     });
-    audit({
+    audit(c, {
       orgId,
       action: "token.create",
       result: AUDIT_RESULT.success,

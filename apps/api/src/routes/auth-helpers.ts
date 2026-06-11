@@ -6,7 +6,7 @@ import { enqueue, QUEUES } from "@hootifactory/queue";
 import type { Context } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { SESSION_COOKIE } from "../middleware/authenticate";
-import { clientIp, UNKNOWN_CLIENT_IP } from "../request-ip";
+import { clientIpOrUndefined } from "../request-ip";
 import type { AppEnv } from "../types";
 
 const OIDC_STATE_COOKIE = "hoot_oidc_state";
@@ -107,9 +107,8 @@ export async function createRequestSession(
   userId: string,
   options: { includeUserAgent?: boolean } = {},
 ): Promise<void> {
-  const ip = clientIp(c);
   const { secret, expiresAt } = await createSession(userId, {
-    ip: ip === UNKNOWN_CLIENT_IP ? undefined : ip,
+    ip: clientIpOrUndefined(c),
     userAgent:
       options.includeUserAgent === false ? undefined : (c.req.header("user-agent") ?? undefined),
   });

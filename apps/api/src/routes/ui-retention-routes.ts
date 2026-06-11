@@ -14,7 +14,7 @@ export function registerRetentionRoutes(router: Hono<AppEnv>): void {
     if (!parsedBody.ok) return parsedBody.response;
     const { keepLastN } = parsedBody.data;
     const pruned = await applyRetention(guard.repo.id, keepLastN);
-    audit({
+    audit(c, {
       orgId: guard.repo.orgId,
       action: "retention.apply",
       result: AUDIT_RESULT.success,

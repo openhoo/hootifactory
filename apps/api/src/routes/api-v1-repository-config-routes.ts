@@ -61,7 +61,7 @@ export function registerApiV1RepositoryConfigRoutes(apiV1Router: Hono<AppEnv>) {
         return errorResponse(c, upstreamUrl.status, "BAD_REQUEST", upstreamUrl.error);
       }
       await addUpstream(access.repo.id, upstreamUrl.url, parsedBody.data.priority ?? 0);
-      audit({
+      audit(c, {
         orgId: access.repo.orgId,
         action: "repository.upstream.add",
         result: AUDIT_RESULT.success,
@@ -137,7 +137,7 @@ export function registerApiV1RepositoryConfigRoutes(apiV1Router: Hono<AppEnv>) {
         }
         throw err;
       }
-      audit({
+      audit(c, {
         orgId: access.repo.orgId,
         action: "repository.member.add",
         result: AUDIT_RESULT.success,

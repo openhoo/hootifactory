@@ -117,7 +117,7 @@ export function registerApiV1TokenRoutes(apiV1Router: Hono<AppEnv>) {
         grants: request.grants,
         expiresAt: request.expiresAt,
       });
-      audit({
+      audit(c, {
         orgId: params.data.orgId,
         action: "token.create",
         result: AUDIT_RESULT.success,
@@ -177,7 +177,7 @@ export function registerApiV1TokenRoutes(apiV1Router: Hono<AppEnv>) {
       if (!decision.allowed) return authorizationDenied(c, decision);
       const rotated = await rotateToken(token.id, principalActor(c.get("principal")));
       if (!rotated) return errorResponse(c, 404, "NOT_FOUND", "token not found");
-      audit({
+      audit(c, {
         orgId: token.orgId,
         action: "token.rotate",
         result: AUDIT_RESULT.success,
@@ -212,7 +212,7 @@ export function registerApiV1TokenRoutes(apiV1Router: Hono<AppEnv>) {
       const decision = await tokenResourceDecision(c.get("principal"), token, "delete");
       if (!decision.allowed) return authorizationDenied(c, decision);
       await revokeToken(token.id, principalActor(c.get("principal")), "revoked via api v1");
-      audit({
+      audit(c, {
         orgId: token.orgId,
         action: "token.revoke",
         result: AUDIT_RESULT.success,

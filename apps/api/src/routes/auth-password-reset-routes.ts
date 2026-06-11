@@ -54,7 +54,7 @@ export function registerPasswordResetRoutes(router: Hono<AppEnv>): void {
         });
         await enqueueEmail(job);
         logger.info("password reset email queued", { userId: user.id });
-        audit({
+        audit(c, {
           action: "auth.password_reset_email",
           result: AUDIT_RESULT.success,
           resourceType: "user",
@@ -65,7 +65,7 @@ export function registerPasswordResetRoutes(router: Hono<AppEnv>): void {
         const message = errorMessage(err);
         addSpanEvent("auth.password_reset_email_failed", { "error.message": message });
         logger.error("password reset email failed", { userId: user.id, error: err });
-        audit({
+        audit(c, {
           action: "auth.password_reset_email",
           result: AUDIT_RESULT.failure,
           resourceType: "user",
@@ -102,7 +102,7 @@ export function registerPasswordResetRoutes(router: Hono<AppEnv>): void {
     const reset = await resetPasswordWithToken(parsedBody.data.token, parsedBody.data.password);
     if (!reset) return c.json({ error: "invalid or expired reset token" }, 400);
     logger.info("password reset confirmed", { userId: reset.userId });
-    audit({
+    audit(c, {
       action: "auth.password_reset_confirm",
       result: AUDIT_RESULT.success,
       resourceType: "user",

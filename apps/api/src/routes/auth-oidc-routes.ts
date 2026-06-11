@@ -196,7 +196,7 @@ async function confirmOidcLink(c: Context<AppEnv>, tokenSecret: string): Promise
     await createRequestSession(c, user.id);
     setActiveSpanAttributes({ "enduser.id": user.id, "auth.event": "oidc_link_confirm" });
     logger.info("OIDC link confirmation succeeded", { userId: user.id, issuer: claims.issuer });
-    audit({
+    audit(c, {
       action: "auth.oidc_link_confirm",
       result: AUDIT_RESULT.success,
       resourceType: "user",
@@ -207,7 +207,7 @@ async function confirmOidcLink(c: Context<AppEnv>, tokenSecret: string): Promise
   } catch (err) {
     const message = errorMessage(err);
     logger.warn("OIDC link confirmation failed", { error: message });
-    audit({
+    audit(c, {
       action: "auth.oidc_link_confirm",
       result: AUDIT_RESULT.failure,
       resourceType: "user",
@@ -247,7 +247,7 @@ export function registerOidcRoutes(router: Hono<AppEnv>): void {
       await createRequestSession(c, user.id);
       setActiveSpanAttributes({ "enduser.id": user.id, "auth.event": "oidc_login" });
       logger.info("OIDC login succeeded", { userId: user.id, issuer: claims.issuer });
-      audit({
+      audit(c, {
         action: "auth.oidc_login",
         result: AUDIT_RESULT.success,
         resourceType: "user",
@@ -279,7 +279,7 @@ export function registerOidcRoutes(router: Hono<AppEnv>): void {
             ip,
             retryAfter: throttle.retryAfter,
           });
-          audit({
+          audit(c, {
             action: "auth.oidc_link_email",
             result: AUDIT_RESULT.failure,
             resourceType: "user",
@@ -302,7 +302,7 @@ export function registerOidcRoutes(router: Hono<AppEnv>): void {
         await enqueueEmail(job);
         addSpanEvent("auth.oidc_link_email_sent");
         logger.info("OIDC link confirmation email queued", { userId: err.userId });
-        audit({
+        audit(c, {
           action: "auth.oidc_link_email",
           result: AUDIT_RESULT.success,
           resourceType: "user",
@@ -315,7 +315,7 @@ export function registerOidcRoutes(router: Hono<AppEnv>): void {
       const message = errorMessage(err);
       addSpanEvent("auth.oidc_login_failed", { "auth.failure": message });
       logger.warn("OIDC login failed", { error: message });
-      audit({
+      audit(c, {
         action: "auth.oidc_login",
         result: AUDIT_RESULT.failure,
         detail: { error: message },

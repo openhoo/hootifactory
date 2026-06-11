@@ -37,7 +37,7 @@ export function registerScanPolicyRoutes(router: Hono<AppEnv>): void {
       mode: body.mode,
       blockOnSeverity,
     });
-    audit({
+    audit(c, {
       orgId,
       action: "scan_policy.create",
       result: AUDIT_RESULT.success,

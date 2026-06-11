@@ -20,6 +20,7 @@ describe("environment auth creation defaults", () => {
     expect(devEnv.AUTH_ALLOW_REGISTRATION).toBe(true);
     expect(devEnv.AUTH_ALLOW_ORG_CREATION).toBe(true);
     expect(devEnv.API_TRUSTED_ORIGINS).toEqual([]);
+    expect(devEnv.API_TRUSTED_PROXIES).toEqual([]);
     expect(devEnv.AUTH_LOGIN_MAX_ATTEMPTS).toBe(5);
     expect(devEnv.AUTH_LOGIN_WINDOW_SECONDS).toBe(60);
     expect(devEnv.AUTH_THROTTLE_MAX_BUCKETS).toBe(10_000);
@@ -205,6 +206,18 @@ describe("environment auth creation defaults", () => {
     ).toEqual(["http://localhost:5173", "https://app.example"]);
     expect(() => loadEnv({ API_TRUSTED_ORIGINS: "notaurl" })).toThrow();
     expect(() => loadEnv({ API_TRUSTED_ORIGINS: "ftp://example.test" })).toThrow();
+  });
+
+  test("trusted proxies accept IPs and CIDRs, trimmed and deduplicated", () => {
+    expect(
+      loadEnv({
+        API_TRUSTED_PROXIES: " 10.0.0.0/8, 203.0.113.7 ,10.0.0.0/8, 2001:db8::/32, ::1 ",
+      }).API_TRUSTED_PROXIES,
+    ).toEqual(["10.0.0.0/8", "203.0.113.7", "2001:db8::/32", "::1"]);
+    expect(() => loadEnv({ API_TRUSTED_PROXIES: "not-an-ip" })).toThrow(/invalid IP or CIDR/);
+    expect(() => loadEnv({ API_TRUSTED_PROXIES: "10.0.0.0/33" })).toThrow(/invalid IP or CIDR/);
+    expect(() => loadEnv({ API_TRUSTED_PROXIES: "2001:db8::/129" })).toThrow(/invalid IP or CIDR/);
+    expect(() => loadEnv({ API_TRUSTED_PROXIES: "10.0.0.0/x" })).toThrow(/invalid IP or CIDR/);
   });
 
   test("login throttle configuration is positive integer based", () => {

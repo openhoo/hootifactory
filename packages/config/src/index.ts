@@ -1,3 +1,4 @@
+import { isIP } from "node:net";
 import { LOG_LEVELS, SCANNER_CLI_RUNTIMES } from "@hootifactory/types";
 import { z } from "zod";
 
@@ -82,6 +83,38 @@ const originList = z
       }
     }
     return [...new Set(origins)];
+  });
+
+function isIpOrCidr(value: string): boolean {
+  const slash = value.indexOf("/");
+  const address = slash >= 0 ? value.slice(0, slash) : value;
+  const family = isIP(address);
+  if (family === 0) return false;
+  if (slash < 0) return true;
+  const prefix = value.slice(slash + 1);
+  if (!/^\d{1,3}$/.test(prefix)) return false;
+  return Number(prefix) <= (family === 4 ? 32 : 128);
+}
+
+/** A comma-separated, deduplicated list of IP addresses and/or CIDR ranges. */
+const ipOrCidrList = z
+  .string()
+  .default("")
+  .transform((value, ctx) => {
+    const entries: string[] = [];
+    for (const raw of value.split(",")) {
+      const item = raw.trim();
+      if (!item) continue;
+      if (!isIpOrCidr(item)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `invalid IP or CIDR "${item}"`,
+        });
+        return z.NEVER;
+      }
+      entries.push(item);
+    }
+    return [...new Set(entries)];
   });
 
 /**
@@ -228,6 +261,12 @@ const EnvSchema = z
     REGISTRY_PUBLIC_URL: absoluteUrl.default("http://localhost:3000"),
     REGISTRY_ALLOW_PRIVATE_UPSTREAMS: boolish.default(false),
     API_TRUSTED_ORIGINS: originList,
+    /**
+     * Proxy peers (IPs/CIDRs) trusted to set X-Forwarded-For. Empty (default)
+     * means forwarding headers are never trusted and the direct peer address
+     * is the client IP.
+     */
+    API_TRUSTED_PROXIES: ipOrCidrList,
     /** When set, the API serves the built web UI (single-container deploys). */
     WEB_DIST: z.string().optional(),
 

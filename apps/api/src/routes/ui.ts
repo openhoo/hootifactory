@@ -60,7 +60,7 @@ uiRouter.post("/orgs", async (c) => {
       description: body.description,
       ownerUserId: p.userId,
     });
-    audit({
+    audit(c, {
       orgId: org.id,
       action: "org.create",
       result: AUDIT_RESULT.success,
@@ -110,7 +110,7 @@ uiRouter.post("/orgs/:orgId/repositories", async (c) => {
   });
   if (!created.ok) return c.json({ error: created.error }, created.status);
   const { repo } = created;
-  audit({
+  audit(c, {
     orgId,
     action: "repository.create",
     result: AUDIT_RESULT.success,
