@@ -562,16 +562,16 @@ export function registerApiV1AccessManagementRoutes(apiV1Router: Hono<AppEnv>) {
         orgId: params.data.orgId,
         groupId: params.data.groupId,
         userId: body.data.userId,
+        principal: c.get("principal"),
       });
-      if (result === "group_not_found")
-        return errorResponse(c, 404, "NOT_FOUND", "group not found");
-      if (result === "user_not_member") {
-        return errorResponse(
-          c,
-          409,
-          "USER_NOT_MEMBER",
-          "user is not a member of this organization",
-        );
+      if (!result.ok) {
+        if (result.code === "group_not_found") {
+          return errorResponse(c, 404, "NOT_FOUND", result.error);
+        }
+        if (result.code === "user_not_member") {
+          return errorResponse(c, 409, "USER_NOT_MEMBER", result.error);
+        }
+        return errorResponse(c, 403, "FORBIDDEN", result.error);
       }
       return dataResponse(c, { ok: true });
     },
