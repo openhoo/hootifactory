@@ -22,7 +22,7 @@ test.describe("ansible galaxy registry (Dockerized real ansible-galaxy)", () => 
       visibility: "public",
     });
     const token = (await (await createToken(owner.ctx, owner.orgId, { name: "ansible" })).json())
-      .secret as string;
+      .data.secret as string;
 
     const id = Date.now().toString(36);
     const namespace = "acme";

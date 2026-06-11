@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { validateProxyUpstreamParent, validateProxyUpstreamUrl } from "./ui-upstreams";
+import { validateProxyUpstreamParent, validateProxyUpstreamUrl } from "./api-v1-upstreams";
 
 describe("proxy upstream validation", () => {
   test("requires a proxy parent repository", () => {

@@ -26,7 +26,7 @@ test.describe("repositories", () => {
       const name = uniq("repo");
       const res = await createRepo(owner.ctx, owner.orgId, { name, moduleId });
       expect(res.status()).toBe(201);
-      const repo = (await res.json()).repository;
+      const repo = (await res.json()).data;
       expect(repo.moduleId).toBe(moduleId);
       expect(repo.mountPath).toBe(`${seg}/${owner.orgSlug}/${name}`);
       expect(repo.visibility).toBe("private");
@@ -38,9 +38,9 @@ test.describe("repositories", () => {
     const owner = await setupOwner(baseURL!);
     const name = uniq("repo");
     await createRepo(owner.ctx, owner.orgId, { name, moduleId: "npm" });
-    const list = await (await owner.ctx.get(`/api/orgs/${owner.orgId}/repositories`)).json();
-    expect(list.repositories.some((r: { name: string }) => r.name === name)).toBe(true);
-    for (const repo of list.repositories) expectRepositoryDto(repo);
+    const list = await (await owner.ctx.get(`/api/v1/orgs/${owner.orgId}/repositories`)).json();
+    expect(list.data.some((r: { name: string }) => r.name === name)).toBe(true);
+    for (const repo of list.data) expectRepositoryDto(repo);
   });
 
   test("repository detail responses omit internal storage configuration", async ({ baseURL }) => {
@@ -53,16 +53,16 @@ test.describe("repositories", () => {
         visibility: "public",
       })
     ).json();
-    const repo = created.repository as { id: string };
-    expectRepositoryDto(created.repository);
+    const repo = created.data as { id: string };
+    expectRepositoryDto(created.data);
 
-    const ownerDetail = await (await owner.ctx.get(`/api/repositories/${repo.id}`)).json();
-    expectRepositoryDto(ownerDetail.repository);
+    const ownerDetail = await (await owner.ctx.get(`/api/v1/repositories/${repo.id}`)).json();
+    expectRepositoryDto(ownerDetail.data.repository);
 
     const anon = await anonContext(baseURL!);
-    const anonDetail = await anon.get(`/api/repositories/${repo.id}`);
+    const anonDetail = await anon.get(`/api/v1/repositories/${repo.id}`);
     expect(anonDetail.status()).toBe(200);
-    expectRepositoryDto((await anonDetail.json()).repository);
+    expectRepositoryDto((await anonDetail.json()).data.repository);
   });
 
   test("duplicate repo name -> 409", async ({ baseURL }) => {
@@ -127,7 +127,9 @@ test.describe("repositories", () => {
       kind: "mirror",
     });
     expect(kind.status()).toBe(400);
-    expect(await kind.text()).toContain("unsupported repository kind");
+    const kindBody = await kind.text();
+    expect(kindBody).toContain("invalid repository request");
+    expect(kindBody).toContain('"kind"');
 
     const visibility = await createRepo(owner.ctx, owner.orgId, {
       name: uniq("repo"),
@@ -135,7 +137,9 @@ test.describe("repositories", () => {
       visibility: "internal",
     });
     expect(visibility.status()).toBe(400);
-    expect(await visibility.text()).toContain("unsupported repository visibility");
+    const visibilityBody = await visibility.text();
+    expect(visibilityBody).toContain("invalid repository request");
+    expect(visibilityBody).toContain('"visibility"');
   });
 
   test("proxy repositories require a module with pull-through support", async ({ baseURL }) => {
@@ -176,10 +180,10 @@ test.describe("repositories", () => {
           grants: [{ permission: "repository.read", repository: "*" }],
         })
       ).json()
-    ).secret as string;
+    ).data.secret as string;
 
     const anon = await anonContext(baseURL!);
-    const res = await anon.post(`/api/orgs/${owner.orgId}/repositories`, {
+    const res = await anon.post(`/api/v1/orgs/${owner.orgId}/repositories`, {
       headers: { authorization: `Bearer ${secret}` },
       data: { name: uniq("r"), moduleId: "npm" },
     });

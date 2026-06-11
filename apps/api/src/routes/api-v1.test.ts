@@ -28,6 +28,8 @@ type OpenApiDocument = {
 const expectedOperations = [
   "GET /me",
   "GET /orgs",
+  "POST /orgs",
+  "GET /registry-modules",
   "GET /orgs/{orgId}",
   "GET /orgs/{orgId}/repositories",
   "POST /orgs/{orgId}/repositories",

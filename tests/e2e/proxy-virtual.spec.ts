@@ -64,7 +64,8 @@ function installAll(baseURL: string, mountPath: string, token: string, specs: st
 }
 
 async function repoFrom(res: { json: () => Promise<unknown> }) {
-  return (await res.json()) as { repository: { id: string; mountPath: string } };
+  const body = (await res.json()) as { data: { id: string; mountPath: string } };
+  return { repository: body.data };
 }
 
 function sha1hex(bytes: Buffer): string {
@@ -346,11 +347,11 @@ async function pollArtifact(
 ): Promise<{ id: string; name: string; version: string | null; state: string }> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const res = await ctx.get(`/api/repositories/${repoId}/artifacts`);
+    const res = await ctx.get(`/api/v1/repositories/${repoId}/artifacts`);
     const body = (await res.json()) as {
-      artifacts: { id: string; name: string; version: string | null; state: string }[];
+      data: { id: string; name: string; version: string | null; state: string }[];
     };
-    const found = body.artifacts.find((a) => a.name === name);
+    const found = body.data.find((a) => a.name === name);
     if (found && found.state !== "pending") return found;
     await new Promise((r) => setTimeout(r, 400));
   }
@@ -363,7 +364,7 @@ test.describe("virtual + proxy repositories (Dockerized real npm)", () => {
   test("virtual repo aggregates two member repos", async ({ baseURL }) => {
     test.setTimeout(120_000);
     const owner = await setupOwner(baseURL!);
-    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "t" })).json())
+    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "t" })).json()).data
       .secret as string;
     const a = (
       await repoFrom(await createRepo(owner.ctx, owner.orgId, { name: "npm-a", moduleId: "npm" }))
@@ -380,10 +381,10 @@ test.describe("virtual + proxy repositories (Dockerized real npm)", () => {
         }),
       )
     ).repository;
-    await owner.ctx.post(`/api/repositories/${v.id}/members`, {
+    await owner.ctx.post(`/api/v1/repositories/${v.id}/members`, {
       data: { memberRepoId: a.id, position: 0 },
     });
-    await owner.ctx.post(`/api/repositories/${v.id}/members`, {
+    await owner.ctx.post(`/api/v1/repositories/${v.id}/members`, {
       data: { memberRepoId: b.id, position: 1 },
     });
 
@@ -401,7 +402,7 @@ test.describe("virtual + proxy repositories (Dockerized real npm)", () => {
   test("virtual repo merges package metadata across member repos", async ({ baseURL }) => {
     test.setTimeout(120_000);
     const owner = await setupOwner(baseURL!);
-    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "t" })).json())
+    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "t" })).json()).data
       .secret as string;
     const a = (
       await repoFrom(
@@ -422,10 +423,10 @@ test.describe("virtual + proxy repositories (Dockerized real npm)", () => {
         }),
       )
     ).repository;
-    await owner.ctx.post(`/api/repositories/${v.id}/members`, {
+    await owner.ctx.post(`/api/v1/repositories/${v.id}/members`, {
       data: { memberRepoId: a.id, position: 0 },
     });
-    await owner.ctx.post(`/api/repositories/${v.id}/members`, {
+    await owner.ctx.post(`/api/v1/repositories/${v.id}/members`, {
       data: { memberRepoId: b.id, position: 1 },
     });
 
@@ -452,7 +453,7 @@ test.describe("virtual + proxy repositories (Dockerized real npm)", () => {
   test("virtual repo search merges readable member repos", async ({ baseURL }) => {
     test.setTimeout(120_000);
     const owner = await setupOwner(baseURL!);
-    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "t" })).json())
+    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "t" })).json()).data
       .secret as string;
     const a = (
       await repoFrom(
@@ -473,10 +474,10 @@ test.describe("virtual + proxy repositories (Dockerized real npm)", () => {
         }),
       )
     ).repository;
-    await owner.ctx.post(`/api/repositories/${v.id}/members`, {
+    await owner.ctx.post(`/api/v1/repositories/${v.id}/members`, {
       data: { memberRepoId: a.id, position: 0 },
     });
-    await owner.ctx.post(`/api/repositories/${v.id}/members`, {
+    await owner.ctx.post(`/api/v1/repositories/${v.id}/members`, {
       data: { memberRepoId: b.id, position: 1 },
     });
 
@@ -506,7 +507,7 @@ test.describe("virtual + proxy repositories (Dockerized real npm)", () => {
   test("proxy repo mirrors a package from its upstream", async ({ baseURL }) => {
     test.setTimeout(120_000);
     const owner = await setupOwner(baseURL!);
-    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "t" })).json())
+    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "t" })).json()).data
       .secret as string;
     const upstream = (
       await repoFrom(
@@ -526,7 +527,7 @@ test.describe("virtual + proxy repositories (Dockerized real npm)", () => {
         }),
       )
     ).repository;
-    await owner.ctx.post(`/api/repositories/${proxy.id}/upstreams`, {
+    await owner.ctx.post(`/api/v1/repositories/${proxy.id}/upstreams`, {
       data: { url: `${baseURL}/${upstream.mountPath}/` },
     });
 
@@ -547,8 +548,10 @@ test.describe("virtual + proxy repositories (Dockerized real npm)", () => {
     );
     expect(localTarballAfterIngest.status()).toBe(200);
 
-    const packages = await (await owner.ctx.get(`/api/repositories/${proxy.id}/packages`)).json();
-    expect(packages.packages.find((p: { name: string }) => p.name === pkg)?.latestVersion).toBe(
+    const packages = await (
+      await owner.ctx.get(`/api/v1/repositories/${proxy.id}/packages`)
+    ).json();
+    expect(packages.data.find((p: { name: string }) => p.name === pkg)?.latestVersion).toBe(
       "1.0.0",
     );
   });
@@ -556,7 +559,7 @@ test.describe("virtual + proxy repositories (Dockerized real npm)", () => {
   test("proxy repo refreshes cached packuments for new upstream versions", async ({ baseURL }) => {
     test.setTimeout(120_000);
     const owner = await setupOwner(baseURL!);
-    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "t" })).json())
+    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "t" })).json()).data
       .secret as string;
     const upstream = (
       await repoFrom(
@@ -576,7 +579,7 @@ test.describe("virtual + proxy repositories (Dockerized real npm)", () => {
         }),
       )
     ).repository;
-    await owner.ctx.post(`/api/repositories/${proxy.id}/upstreams`, {
+    await owner.ctx.post(`/api/v1/repositories/${proxy.id}/upstreams`, {
       data: { url: `${baseURL}/${upstream.mountPath}/` },
     });
     setProxyUpstreamCacheTtl(proxy.id, 0);
@@ -625,18 +628,19 @@ test.describe("virtual + proxy repositories (Dockerized real npm)", () => {
       latest: "1.0.0",
     });
     try {
-      await owner.ctx.post(`/api/repositories/${proxy.id}/upstreams`, {
+      await owner.ctx.post(`/api/v1/repositories/${proxy.id}/upstreams`, {
         data: { url: `${upstream.url}/` },
       });
       setProxyUpstreamCacheTtl(proxy.id, 0);
       expect((await owner.ctx.get(`/${proxy.mountPath}/${pkg}`)).status()).toBe(200);
       await pollArtifact(owner.ctx, proxy.id, pkg);
-      await owner.ctx.post(`/api/orgs/${owner.orgId}/quota`, {
+      await owner.ctx.post(`/api/v1/orgs/${owner.orgId}/quota`, {
         data: { maxStorageBytes: 1_000_000 },
       });
-      const quotaBefore = await (await owner.ctx.get(`/api/orgs/${owner.orgId}/quota`)).json();
+      const quotaBefore = (await (await owner.ctx.get(`/api/v1/orgs/${owner.orgId}/quota`)).json())
+        .data;
       expect(quotaBefore.usedStorageBytes).toBeGreaterThan(0);
-      await owner.ctx.post(`/api/orgs/${owner.orgId}/quota`, {
+      await owner.ctx.post(`/api/v1/orgs/${owner.orgId}/quota`, {
         data: { maxStorageBytes: quotaBefore.usedStorageBytes },
       });
 
@@ -645,7 +649,8 @@ test.describe("virtual + proxy repositories (Dockerized real npm)", () => {
       expect(refreshed.status()).toBe(200);
       const tarball = await owner.ctx.get(`/${proxy.mountPath}/${pkg}/-/${pkg}-1.0.0.tgz`);
       expect(Buffer.from(await tarball.body()).toString()).toBe(newBytes.toString());
-      const quotaAfter = await (await owner.ctx.get(`/api/orgs/${owner.orgId}/quota`)).json();
+      const quotaAfter = (await (await owner.ctx.get(`/api/v1/orgs/${owner.orgId}/quota`)).json())
+        .data;
       expect(quotaAfter.usedStorageBytes).toBe(quotaBefore.usedStorageBytes);
       expect(proxyNpmRefState({ repoId: proxy.id, scope: `${pkg}@1.0.0` }).refs).toHaveLength(1);
     } finally {
@@ -656,7 +661,7 @@ test.describe("virtual + proxy repositories (Dockerized real npm)", () => {
   test("proxy-mirrored packages are recorded and scanned locally", async ({ baseURL }) => {
     test.setTimeout(120_000);
     const owner = await setupOwner(baseURL!);
-    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "t" })).json())
+    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "t" })).json()).data
       .secret as string;
     const upstream = (
       await repoFrom(
@@ -677,10 +682,10 @@ test.describe("virtual + proxy repositories (Dockerized real npm)", () => {
         }),
       )
     ).repository;
-    await owner.ctx.post(`/api/repositories/${proxy.id}/upstreams`, {
+    await owner.ctx.post(`/api/v1/repositories/${proxy.id}/upstreams`, {
       data: { url: `${baseURL}/${upstream.mountPath}/` },
     });
-    await owner.ctx.post(`/api/orgs/${owner.orgId}/scan-policies`, {
+    await owner.ctx.post(`/api/v1/orgs/${owner.orgId}/scan-policies`, {
       data: { repositoryPattern: proxyName, mode: "audit", blockOnSeverity: "high" },
     });
 
@@ -715,7 +720,7 @@ test.describe("virtual + proxy repositories (Dockerized real npm)", () => {
       servedBytes: Buffer.from("tampered tarball"),
     });
     try {
-      await owner.ctx.post(`/api/repositories/${proxy.id}/upstreams`, {
+      await owner.ctx.post(`/api/v1/repositories/${proxy.id}/upstreams`, {
         data: { url: `${upstream.url}/` },
       });
 
@@ -748,14 +753,16 @@ test.describe("virtual + proxy repositories (Dockerized real npm)", () => {
       servedBytes: Buffer.from("identity tarball"),
     });
     try {
-      await owner.ctx.post(`/api/repositories/${proxy.id}/upstreams`, {
+      await owner.ctx.post(`/api/v1/repositories/${proxy.id}/upstreams`, {
         data: { url: `${upstream.url}/` },
       });
 
       const packument = await owner.ctx.get(`/${proxy.mountPath}/${pkg}`);
       expect(packument.status()).toBe(404);
-      const packages = await (await owner.ctx.get(`/api/repositories/${proxy.id}/packages`)).json();
-      expect(packages.packages.find((p: { name: string }) => p.name === pkg)).toBeUndefined();
+      const packages = await (
+        await owner.ctx.get(`/api/v1/repositories/${proxy.id}/packages`)
+      ).json();
+      expect(packages.data.find((p: { name: string }) => p.name === pkg)).toBeUndefined();
     } finally {
       await upstream.close();
     }
@@ -782,7 +789,7 @@ test.describe("virtual + proxy repositories (Dockerized real npm)", () => {
       includeHashes: false,
     });
     try {
-      await owner.ctx.post(`/api/repositories/${proxy.id}/upstreams`, {
+      await owner.ctx.post(`/api/v1/repositories/${proxy.id}/upstreams`, {
         data: { url: `${upstream.url}/` },
       });
 
@@ -824,7 +831,7 @@ test.describe("virtual + proxy repositories (Dockerized real npm)", () => {
       redirectTarballTo: `${redirected.url}/${pkg}-redirected/-/${pkg}-redirected-1.0.0.tgz`,
     });
     try {
-      await owner.ctx.post(`/api/repositories/${proxy.id}/upstreams`, {
+      await owner.ctx.post(`/api/v1/repositories/${proxy.id}/upstreams`, {
         data: { url: `${upstream.url}/` },
       });
 
@@ -874,70 +881,70 @@ test.describe("virtual + proxy repositories (Dockerized real npm)", () => {
 
     expect(
       (
-        await owner.ctx.post(`/api/repositories/${hosted.id}/members`, {
+        await owner.ctx.post(`/api/v1/repositories/${hosted.id}/members`, {
           data: { memberRepoId: hosted.id },
         })
       ).status(),
     ).toBe(400);
     expect(
       (
-        await owner.ctx.post(`/api/repositories/${hosted.id}/upstreams`, {
+        await owner.ctx.post(`/api/v1/repositories/${hosted.id}/upstreams`, {
           data: { url: "https://registry.npmjs.org/" },
         })
       ).status(),
     ).toBe(400);
     expect(
       (
-        await owner.ctx.post(`/api/repositories/${virtual.id}/upstreams`, {
+        await owner.ctx.post(`/api/v1/repositories/${virtual.id}/upstreams`, {
           data: { url: "https://registry.npmjs.org/" },
         })
       ).status(),
     ).toBe(400);
     expect(
       (
-        await owner.ctx.post(`/api/repositories/${virtual.id}/members`, {
+        await owner.ctx.post(`/api/v1/repositories/${virtual.id}/members`, {
           data: { memberRepoId: virtual.id },
         })
       ).status(),
     ).toBe(400);
     expect(
       (
-        await owner.ctx.post(`/api/repositories/${virtual.id}/members`, {
+        await owner.ctx.post(`/api/v1/repositories/${virtual.id}/members`, {
           data: { memberRepoId: goHosted.id },
         })
       ).status(),
     ).toBe(400);
     expect(
       (
-        await owner.ctx.post(`/api/repositories/${virtual.id}/members`, {
+        await owner.ctx.post(`/api/v1/repositories/${virtual.id}/members`, {
           data: { memberRepoId: proxy.id },
         })
       ).status(),
     ).toBe(400);
     expect(
       (
-        await owner.ctx.post(`/api/repositories/${virtual.id}/members`, {
+        await owner.ctx.post(`/api/v1/repositories/${virtual.id}/members`, {
           data: { memberRepoId: privateOther.id },
         })
       ).status(),
     ).toBe(404);
     expect(
       (
-        await owner.ctx.post(`/api/repositories/${virtual.id}/members`, {
+        await owner.ctx.post(`/api/v1/repositories/${virtual.id}/members`, {
           data: { memberRepoId: hosted.id, position: "first" },
         })
       ).status(),
     ).toBe(400);
     expect(
       (
-        await owner.ctx.post(`/api/repositories/${proxy.id}/upstreams`, {
+        await owner.ctx.post(`/api/v1/repositories/${proxy.id}/upstreams`, {
           data: { url: "https://registry.npmjs.org/", priority: "first" },
         })
       ).status(),
     ).toBe(400);
     expect(
       (
-        await owner.ctx.post(`/api/repositories/${virtual.id}/members`, {
+        await owner.ctx.post(`/api/v1/repositories/${virtual.id}/members`, {
           data: { memberRepoId: hosted.id, position: 0 },
         })
       ).status(),
@@ -963,10 +970,10 @@ test.describe("virtual repositories with throwing adapters", () => {
         }),
       )
     ).repository;
-    await owner.ctx.post(`/api/repositories/${v.id}/members`, {
+    await owner.ctx.post(`/api/v1/repositories/${v.id}/members`, {
       data: { memberRepoId: a.id, position: 0 },
     });
-    await owner.ctx.post(`/api/repositories/${v.id}/members`, {
+    await owner.ctx.post(`/api/v1/repositories/${v.id}/members`, {
       data: { memberRepoId: b.id, position: 1 },
     });
 

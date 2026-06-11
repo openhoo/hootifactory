@@ -343,6 +343,23 @@ export const V1AddVirtualMemberRequestSchema = z
   })
   .describe("Virtual repository member creation request.");
 
+export const V1CreateOrgRequestSchema = z
+  .strictObject({
+    slug: z
+      .string()
+      .trim()
+      .regex(/^[a-z0-9][a-z0-9-]{1,62}$/, "slug must be lowercase alphanumeric/dashes (2-63 chars)")
+      .describe("Organization URL slug."),
+    displayName: z.string().trim().min(1).max(256).describe("Organization display name."),
+    description: z
+      .string()
+      .trim()
+      .max(2048)
+      .describe("Optional organization description.")
+      .optional(),
+  })
+  .describe("Organization creation request.");
+
 export const V1OrganizationSchema = z
   .strictObject({
     id: V1UuidSchema.describe("Organization identifier."),
@@ -408,6 +425,32 @@ export const V1GroupSchema = z
     updatedAt: V1WireTimestampSchema.describe("Last group update timestamp."),
   })
   .describe("Group metadata.");
+
+export const V1RegistryCapabilitiesSchema = z
+  .strictObject({
+    contentAddressable: z
+      .boolean()
+      .describe("Whether the module stores uploads addressed by content digest."),
+    resumableUploads: z.boolean().describe("Whether chunked, resumable uploads are supported."),
+    proxyable: z.boolean().describe("Whether proxy repositories are supported."),
+    virtualizable: z.boolean().describe("Whether virtual repositories are supported."),
+  })
+  .describe("Registry module capabilities.");
+
+export const V1RegistryModuleSchema = z
+  .strictObject({
+    id: V1RegistryModuleIdSchema,
+    displayName: z.string().describe("Human-readable module name."),
+    mountSegment: z.string().describe("URL segment the module mounts repositories under."),
+    capabilities: V1RegistryCapabilitiesSchema,
+  })
+  .describe("Installed registry protocol module.");
+
+export const V1RegistryModulesDataSchema = z
+  .strictObject({
+    modules: z.array(V1RegistryModuleSchema).describe("Installed registry modules."),
+  })
+  .describe("Registry module catalog data.");
 
 export const V1RepositorySchema = z
   .strictObject({
@@ -697,3 +740,26 @@ export const V1UserResponseSchema = V1DataResponseSchema(V1UserSchema);
 export const V1GroupListResponseSchema = V1ListResponseSchema(V1GroupSchema);
 export const V1GroupResponseSchema = V1DataResponseSchema(V1GroupSchema);
 export const V1PermissionGrantListResponseSchema = V1ListResponseSchema(V1TokenGrantSchema);
+export const V1RegistryModulesResponseSchema = V1DataResponseSchema(V1RegistryModulesDataSchema);
+
+// Wire types for API v1 payloads, derived from the schemas above. The web client
+// and any TypeScript consumer should use these instead of hand-written interfaces.
+export type V1PaginationMeta = z.output<typeof V1PaginationMetaSchema>;
+export type V1Organization = z.output<typeof V1OrganizationSchema>;
+export type V1RegistryCapabilities = z.output<typeof V1RegistryCapabilitiesSchema>;
+export type V1RegistryModule = z.output<typeof V1RegistryModuleSchema>;
+export type V1Repository = z.output<typeof V1RepositorySchema>;
+export type V1PackageSummary = z.output<typeof V1PackageSummarySchema>;
+export type V1PackageVersionSummary = z.output<typeof V1PackageVersionSummarySchema>;
+export type V1RegistryAsset = z.output<typeof V1RegistryAssetSchema>;
+export type V1PackageVersionDetail = z.output<typeof V1PackageVersionDetailSchema>;
+export type V1ArtifactSummary = z.output<typeof V1ArtifactSummarySchema>;
+export type V1ArtifactFinding = z.output<typeof V1ArtifactFindingSchema>;
+export type V1ScanPolicy = z.output<typeof V1ScanPolicySchema>;
+export type V1OrgQuota = z.output<typeof V1OrgQuotaSchema>;
+export type V1ApiToken = z.output<typeof V1ApiTokenSchema>;
+export type V1User = z.output<typeof V1UserSchema>;
+export type V1Group = z.output<typeof V1GroupSchema>;
+export type V1PermissionCatalogEntry = z.output<typeof V1PermissionCatalogEntrySchema>;
+export type V1Principal = z.output<typeof V1PrincipalSchema>;
+export type V1MeData = z.output<typeof V1MeDataSchema>;

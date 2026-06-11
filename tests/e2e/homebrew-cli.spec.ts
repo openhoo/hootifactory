@@ -26,7 +26,7 @@ test.describe("homebrew registry (Dockerized real brew JSON API)", () => {
       visibility: "public",
     });
     const token = (await (await createToken(owner.ctx, owner.orgId, { name: "homebrew" })).json())
-      .secret as string;
+      .data.secret as string;
 
     const id = Date.now().toString(36);
     const name = `hoot${id}`; // /^[a-z0-9._+@-]+$/ (lowercase)

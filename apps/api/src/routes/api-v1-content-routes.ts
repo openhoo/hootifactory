@@ -22,6 +22,7 @@ import {
 import { findLiveVersion } from "@hootifactory/registry-platform/repositories";
 import type { Hono } from "hono";
 import type { AppEnv } from "../types";
+import { repositoryDto } from "./api-v1-dto";
 import {
   ArtifactIdParamsSchema,
   AssetListQuerySchema,
@@ -41,7 +42,6 @@ import {
   validatePagination,
   validateV1,
 } from "./api-v1-helpers";
-import { repositoryDto } from "./ui-dto";
 
 export function registerApiV1ContentRoutes(apiV1Router: Hono<AppEnv>) {
   apiV1Router.get(

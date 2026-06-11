@@ -81,7 +81,7 @@ test.describe("go module proxy (Dockerized real go)", () => {
           visibility: "public",
         })
       ).json()
-    ).repository as { mountPath: string };
+    ).data as { mountPath: string };
 
     const id = Date.now().toString(36);
     const moduleName = `hoot.test/mod${id}`;
@@ -117,7 +117,7 @@ test.describe("go module proxy (Dockerized real go)", () => {
           visibility: "public",
         })
       ).json()
-    ).repository as { mountPath: string };
+    ).data as { mountPath: string };
 
     const id = Date.now().toString(36);
     const moduleName = `hoot.test/latest${id}`;

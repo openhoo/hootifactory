@@ -55,11 +55,6 @@ const validateCreatedTokenGrant = mock(
       | { ok: false; decision: Decision },
 );
 
-let requireUserResult: { ok: true; principal: Principal } | { ok: false; response: Response } = {
-  ok: false,
-  response: new Response(JSON.stringify({ error: "login required" }), { status: 401 }),
-};
-
 function tokenRow() {
   return {
     id: "00000000-0000-4000-8000-000000000002",
@@ -108,9 +103,6 @@ mock.module("@hootifactory/auth", () => ({
   getOrganizationById: async () => null,
   listAccessibleOrgs: async () => [],
 }));
-mock.module("./ui-repository-access", () => ({
-  requireUserPrincipal: () => requireUserResult,
-}));
 mock.module("./http", () => ({
   audit: () => {},
   AUDIT_RESULT: { success: "success", failure: "failure" },
@@ -145,10 +137,6 @@ function postJson(path: string, body: unknown): Request {
 
 describe("api v1 token routes", () => {
   beforeEach(() => {
-    requireUserResult = {
-      ok: false,
-      response: new Response(JSON.stringify({ error: "login required" }), { status: 401 }),
-    };
     for (const m of [
       visibleTokensForPrincipal,
       getApiTokenById,
@@ -187,13 +175,11 @@ describe("api v1 token routes", () => {
   });
 
   test("POST token denies unauthorized creation", async () => {
-    requireUserResult = { ok: true, principal: user };
     const res = await appWith(user).fetch(postJson(`/orgs/${ORG_ID}/tokens`, tokenCreateBody));
     expect(res.status).toBe(403);
   });
 
   test("POST token creates and returns a secret", async () => {
-    requireUserResult = { ok: true, principal: user };
     authorizeTokenCreation.mockResolvedValueOnce({ allowed: true });
     const res = await appWith(user).fetch(postJson(`/orgs/${ORG_ID}/tokens`, tokenCreateBody));
     expect(res.status).toBe(201);

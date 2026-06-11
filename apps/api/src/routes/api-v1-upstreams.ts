@@ -1,8 +1,8 @@
 import { env } from "@hootifactory/config";
 import { assertPublicHttpUrl } from "@hootifactory/core";
-import type { RepositoryRow } from "./ui-repository-access";
+import type { ResolvedRepo } from "@hootifactory/registry";
 
-type ProxyUpstreamRepo = Pick<RepositoryRow, "kind">;
+type ProxyUpstreamRepo = Pick<ResolvedRepo, "kind">;
 type UrlValidator = (url: string) => URL;
 
 type ValidationResult = { ok: true } | { ok: false; status: 400; error: string };

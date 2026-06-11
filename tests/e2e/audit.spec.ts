@@ -47,7 +47,7 @@ test.describe("audit log coverage", () => {
       await (
         await createRepo(owner.ctx, owner.orgId, { name: uniq("audit-hosted"), moduleId: "npm" })
       ).json()
-    ).repository as { id: string };
+    ).data as { id: string };
     const virtual = (
       await (
         await createRepo(owner.ctx, owner.orgId, {
@@ -56,7 +56,7 @@ test.describe("audit log coverage", () => {
           kind: "virtual",
         })
       ).json()
-    ).repository as { id: string };
+    ).data as { id: string };
     const proxy = (
       await (
         await createRepo(owner.ctx, owner.orgId, {
@@ -65,37 +65,39 @@ test.describe("audit log coverage", () => {
           kind: "proxy",
         })
       ).json()
-    ).repository as { id: string };
+    ).data as { id: string };
 
     expect(
       (
-        await owner.ctx.post(`/api/repositories/${virtual.id}/members`, {
+        await owner.ctx.post(`/api/v1/repositories/${virtual.id}/members`, {
           data: { memberRepoId: hosted.id, position: 0 },
         })
       ).status(),
     ).toBe(201);
     expect(
       (
-        await owner.ctx.post(`/api/repositories/${proxy.id}/upstreams`, {
+        await owner.ctx.post(`/api/v1/repositories/${proxy.id}/upstreams`, {
           data: { url: "https://registry.npmjs.org/", priority: 0 },
         })
       ).status(),
     ).toBe(201);
     expect(
       (
-        await owner.ctx.post(`/api/orgs/${owner.orgId}/scan-policies`, {
+        await owner.ctx.post(`/api/v1/orgs/${owner.orgId}/scan-policies`, {
           data: { repositoryPattern: "*", mode: "audit", blockOnSeverity: "high" },
         })
       ).status(),
     ).toBe(201);
     expect(
       (
-        await owner.ctx.post(`/api/orgs/${owner.orgId}/quota`, { data: { maxStorageBytes: 1000 } })
+        await owner.ctx.post(`/api/v1/orgs/${owner.orgId}/quota`, {
+          data: { maxStorageBytes: 1000 },
+        })
       ).status(),
     ).toBe(200);
     expect(
       (
-        await owner.ctx.post(`/api/repositories/${hosted.id}/retention/apply`, { data: {} })
+        await owner.ctx.post(`/api/v1/repositories/${hosted.id}/retention/apply`, { data: {} })
       ).status(),
     ).toBe(200);
 

@@ -187,8 +187,8 @@ test.describe("cargo sparse registry (protocol)", () => {
           visibility: "public",
         })
       ).json()
-    ).repository as { mountPath: string };
-    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "t" })).json())
+    ).data as { mountPath: string };
+    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "t" })).json()).data
       .secret as string;
 
     const id = Date.now().toString(36);
@@ -256,8 +256,8 @@ test.describe("cargo sparse registry (protocol)", () => {
           visibility: "public",
         })
       ).json()
-    ).repository as { id: string; mountPath: string };
-    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "t" })).json())
+    ).data as { id: string; mountPath: string };
+    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "t" })).json()).data
       .secret as string;
     const anon = await anonContext(baseURL!);
 
@@ -310,11 +310,11 @@ test.describe("cargo sparse registry (protocol)", () => {
     ).toBe(200);
 
     const pruned = await (
-      await owner.ctx.post(`/api/repositories/${repo.id}/retention/apply`, {
+      await owner.ctx.post(`/api/v1/repositories/${repo.id}/retention/apply`, {
         data: { keepLastN: 1 },
       })
     ).json();
-    expect(pruned.pruned).toBe(1);
+    expect(pruned.data.pruned).toBe(1);
 
     const indexPath = `${crate.slice(0, 2)}/${crate.slice(2, 4)}/${crate}`;
     const indexText = await (await owner.ctx.get(`/${repo.mountPath}/${indexPath}`)).text();
@@ -343,8 +343,8 @@ test.describe("cargo sparse registry (protocol)", () => {
           visibility: "public",
         })
       ).json()
-    ).repository as { mountPath: string };
-    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "t" })).json())
+    ).data as { mountPath: string };
+    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "t" })).json()).data
       .secret as string;
     const anon = await anonContext(baseURL!);
 
@@ -387,7 +387,7 @@ test.describe("go module proxy (protocol)", () => {
           visibility: "public",
         })
       ).json()
-    ).repository as { id: string; mountPath: string };
+    ).data as { id: string; mountPath: string };
 
     const moduleName = `hoot.test/mod${Date.now().toString(36)}`;
     const upload = (
@@ -433,11 +433,11 @@ test.describe("go module proxy (protocol)", () => {
     expect((await upload("v1.0.1")).status()).toBe(200);
 
     const pruned = await (
-      await owner.ctx.post(`/api/repositories/${repo.id}/retention/apply`, {
+      await owner.ctx.post(`/api/v1/repositories/${repo.id}/retention/apply`, {
         data: { keepLastN: 1 },
       })
     ).json();
-    expect(pruned.pruned).toBe(1);
+    expect(pruned.data.pruned).toBe(1);
 
     const list = await (await owner.ctx.get(`/${repo.mountPath}/${moduleName}/@v/list`)).text();
     expect(list).not.toContain("v1.0.0");
@@ -464,7 +464,7 @@ test.describe("nuget v3 (protocol)", () => {
           visibility: "public",
         })
       ).json()
-    ).repository as { id: string; mountPath: string };
+    ).data as { id: string; mountPath: string };
 
     const id = Date.now().toString(36);
     const pkgId = `Hoot.Pkg${id}`;
@@ -576,11 +576,11 @@ test.describe("nuget v3 (protocol)", () => {
     ).toBe(200);
 
     const pruned = await (
-      await owner.ctx.post(`/api/repositories/${repo.id}/retention/apply`, {
+      await owner.ctx.post(`/api/v1/repositories/${repo.id}/retention/apply`, {
         data: { keepLastN: 1 },
       })
     ).json();
-    expect(pruned.pruned).toBe(1);
+    expect(pruned.data.pruned).toBe(1);
 
     const after = await (
       await owner.ctx.get(`/${repo.mountPath}/v3-flatcontainer/${lower}/index.json`)
@@ -621,7 +621,7 @@ test.describe("nuget v3 (protocol)", () => {
           visibility: "public",
         })
       ).json()
-    ).repository as { mountPath: string };
+    ).data as { mountPath: string };
 
     const id = Date.now().toString(36);
     const pkgId = `Hoot.Search${id}`;
@@ -668,7 +668,7 @@ test.describe("nuget v3 (protocol)", () => {
           visibility: "public",
         })
       ).json()
-    ).repository as { id: string; mountPath: string };
+    ).data as { id: string; mountPath: string };
     const b = (
       await (
         await createRepo(owner.ctx, owner.orgId, {
@@ -677,7 +677,7 @@ test.describe("nuget v3 (protocol)", () => {
           visibility: "public",
         })
       ).json()
-    ).repository as { id: string; mountPath: string };
+    ).data as { id: string; mountPath: string };
     const virtual = (
       await (
         await createRepo(owner.ctx, owner.orgId, {
@@ -687,11 +687,11 @@ test.describe("nuget v3 (protocol)", () => {
           visibility: "public",
         })
       ).json()
-    ).repository as { id: string; mountPath: string };
-    await owner.ctx.post(`/api/repositories/${virtual.id}/members`, {
+    ).data as { id: string; mountPath: string };
+    await owner.ctx.post(`/api/v1/repositories/${virtual.id}/members`, {
       data: { memberRepoId: a.id, position: 0 },
     });
-    await owner.ctx.post(`/api/repositories/${virtual.id}/members`, {
+    await owner.ctx.post(`/api/v1/repositories/${virtual.id}/members`, {
       data: { memberRepoId: b.id, position: 1 },
     });
 
@@ -736,10 +736,10 @@ test.describe("pypi simple API (protocol)", () => {
           visibility: "public",
         })
       ).json()
-    ).repository as { mountPath: string };
+    ).data as { mountPath: string };
     const secret = (
       await (await createToken(owner.ctx, owner.orgId, { name: "pypi-name-check" })).json()
-    ).secret as string;
+    ).data.secret as string;
     const anon = await anonContext(baseURL!);
     const id = Date.now().toString(36);
     const pkg = `hootpyname${id}`;
@@ -810,10 +810,10 @@ test.describe("pypi simple API (protocol)", () => {
           visibility: "public",
         })
       ).json()
-    ).repository as { mountPath: string };
+    ).data as { mountPath: string };
     const secret = (
       await (await createToken(owner.ctx, owner.orgId, { name: "pypi-simple-json" })).json()
-    ).secret as string;
+    ).data.secret as string;
     const anon = await anonContext(baseURL!);
     const id = Date.now().toString(36);
     const pkg = `hootpyjson${id}`;
@@ -883,10 +883,10 @@ test.describe("pypi simple API (protocol)", () => {
           visibility: "public",
         })
       ).json()
-    ).repository as { mountPath: string };
+    ).data as { mountPath: string };
     const secret = (
       await (await createToken(owner.ctx, owner.orgId, { name: "pypi-quota-files" })).json()
-    ).secret as string;
+    ).data.secret as string;
     const anon = await anonContext(baseURL!);
     const id = Date.now().toString(36);
     const pkg = `hootpyquota${id}`;
@@ -907,7 +907,7 @@ test.describe("pypi simple API (protocol)", () => {
 
     expect(
       (
-        await owner.ctx.post(`/api/orgs/${owner.orgId}/quota`, { data: { maxArtifacts: 1 } })
+        await owner.ctx.post(`/api/v1/orgs/${owner.orgId}/quota`, { data: { maxArtifacts: 1 } })
       ).status(),
     ).toBe(200);
 
@@ -937,9 +937,9 @@ test.describe("pypi simple API (protocol)", () => {
           visibility: "public",
         })
       ).json()
-    ).repository as { id: string; mountPath: string };
+    ).data as { id: string; mountPath: string };
     const secret = (await (await createToken(owner.ctx, owner.orgId, { name: "pypi-ret" })).json())
-      .secret as string;
+      .data.secret as string;
     const anon = await anonContext(baseURL!);
     const id = Date.now().toString(36);
     const pkg = `hootpy${id}`;
@@ -975,11 +975,11 @@ test.describe("pypi simple API (protocol)", () => {
     expect((await owner.ctx.head(`/${repo.mountPath}/files/${firstFile}`)).status()).toBe(200);
 
     const pruned = await (
-      await owner.ctx.post(`/api/repositories/${repo.id}/retention/apply`, {
+      await owner.ctx.post(`/api/v1/repositories/${repo.id}/retention/apply`, {
         data: { keepLastN: 1 },
       })
     ).json();
-    expect(pruned.pruned).toBe(1);
+    expect(pruned.data.pruned).toBe(1);
 
     const simple = await (await owner.ctx.get(`/${repo.mountPath}/simple/${pkg}/`)).text();
     expect(simple).not.toContain("1.0.0");
@@ -1008,7 +1008,7 @@ test.describe("pypi simple API (protocol)", () => {
           visibility: "public",
         })
       ).json()
-    ).repository as { id: string; mountPath: string };
+    ).data as { id: string; mountPath: string };
     const virtual = (
       await (
         await createRepo(owner.ctx, owner.orgId, {
@@ -1018,13 +1018,13 @@ test.describe("pypi simple API (protocol)", () => {
           visibility: "public",
         })
       ).json()
-    ).repository as { id: string; mountPath: string };
-    await owner.ctx.post(`/api/repositories/${virtual.id}/members`, {
+    ).data as { id: string; mountPath: string };
+    await owner.ctx.post(`/api/v1/repositories/${virtual.id}/members`, {
       data: { memberRepoId: member.id, position: 0 },
     });
     const secret = (
       await (await createToken(owner.ctx, owner.orgId, { name: "pypi-virtual" })).json()
-    ).secret as string;
+    ).data.secret as string;
     const anon = await anonContext(baseURL!);
     const id = Date.now().toString(36);
     const pkg = `hootvirt${id}`;

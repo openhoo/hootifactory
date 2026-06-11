@@ -54,7 +54,7 @@ test.describe("conan registry (Dockerized real conan)", () => {
       moduleId: "conan",
       visibility: "public",
     });
-    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "conan" })).json())
+    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "conan" })).json()).data
       .secret as string;
 
     const repoUrl = `${dockerReachableUrl(baseURL!)}/${repo.mountPath}`;

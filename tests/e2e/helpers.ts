@@ -32,11 +32,11 @@ export async function setupOwner(baseURL: string): Promise<OwnerCtx> {
     throw new Error(`register failed: ${reg.status()} ${await reg.text()}`);
   }
   const slug = uniq("org");
-  const orgRes = await ctx.post("/api/orgs", { data: { slug, displayName: `Org ${slug}` } });
+  const orgRes = await ctx.post("/api/v1/orgs", { data: { slug, displayName: `Org ${slug}` } });
   if (orgRes.status() !== 201) {
     throw new Error(`createOrg failed: ${orgRes.status()} ${await orgRes.text()}`);
   }
-  const org = (await orgRes.json()).org as { id: string };
+  const org = (await orgRes.json()).data as { id: string };
   return { ctx, username, password, orgId: org.id, orgSlug: slug };
 }
 
@@ -50,7 +50,7 @@ export async function createRepo(
   orgId: string,
   data: Record<string, unknown>,
 ) {
-  return ctx.post(`/api/orgs/${orgId}/repositories`, { data });
+  return ctx.post(`/api/v1/orgs/${orgId}/repositories`, { data });
 }
 
 export async function createToken(
@@ -58,7 +58,7 @@ export async function createToken(
   orgId: string,
   data: Record<string, unknown>,
 ) {
-  return ctx.post(`/api/orgs/${orgId}/tokens`, {
+  return ctx.post(`/api/v1/orgs/${orgId}/tokens`, {
     data: {
       grants: [
         { permission: "repository.write", repository: "*" },
@@ -145,7 +145,7 @@ export async function createRepoReturning(
   if (res.status() !== 201) {
     throw new Error(`createRepo failed: ${res.status()} ${await res.text()}`);
   }
-  return (await res.json()).repository as CreatedRepo;
+  return (await res.json()).data as CreatedRepo;
 }
 
 /** Add a hosted member repo to a virtual repository (position controls resolution order). */
@@ -155,7 +155,7 @@ export async function addMember(
   memberRepoId: string,
   position: number,
 ) {
-  return ctx.post(`/api/repositories/${virtualRepoId}/members`, {
+  return ctx.post(`/api/v1/repositories/${virtualRepoId}/members`, {
     data: { memberRepoId, position },
   });
 }
@@ -167,7 +167,7 @@ export async function addUpstream(
   url: string,
   priority = 0,
 ) {
-  return ctx.post(`/api/repositories/${proxyRepoId}/upstreams`, {
+  return ctx.post(`/api/v1/repositories/${proxyRepoId}/upstreams`, {
     data: { url, priority },
   });
 }

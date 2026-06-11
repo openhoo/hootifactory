@@ -41,27 +41,27 @@ test.describe("api tokens", () => {
       grants: [{ permission: "repository.read", repository: "*" }],
     });
     expect(created.status()).toBe(201);
-    const { token, secret } = await created.json();
+    const { token, secret } = (await created.json()).data;
     expect(secret).toMatch(/^hoot_/);
     expect(token.ownerUsername).toBe(owner.username);
     expect(token.grants).toEqual([{ permission: "repository.read", repository: "*" }]);
     expect(Date.parse(token.expiresAt)).toBeGreaterThan(Date.now());
 
     const anon = await anonContext(baseURL!);
-    const ok = await anon.get("/api/me", { headers: { authorization: `Bearer ${secret}` } });
+    const ok = await anon.get("/api/v1/me", { headers: { authorization: `Bearer ${secret}` } });
     expect(ok.status()).toBe(200);
 
-    const list = await (await owner.ctx.get(`/api/orgs/${owner.orgId}/tokens`)).json();
-    const listed = list.tokens.find((t: { id: string }) => t.id === token.id);
+    const list = await (await owner.ctx.get(`/api/v1/orgs/${owner.orgId}/tokens`)).json();
+    const listed = list.data.find((t: { id: string }) => t.id === token.id);
     expect(listed).toBeTruthy();
     expect(listed.ownerUsername).toBe(owner.username);
     expect(listed.grants).toEqual([{ permission: "repository.read", repository: "*" }]);
     expect(Date.parse(listed.expiresAt)).toBeGreaterThan(Date.now());
 
-    const del = await owner.ctx.delete(`/api/orgs/${owner.orgId}/tokens/${token.id}`);
+    const del = await owner.ctx.delete(`/api/v1/orgs/${owner.orgId}/tokens/${token.id}`);
     expect(del.status()).toBe(200);
 
-    const after = await anon.get("/api/me", { headers: { authorization: `Bearer ${secret}` } });
+    const after = await anon.get("/api/v1/me", { headers: { authorization: `Bearer ${secret}` } });
     expect(after.status()).toBe(401);
   });
 
@@ -94,15 +94,15 @@ test.describe("api tokens", () => {
     const owner = await setupOwner(baseURL!);
     const admin = await setupOwner(baseURL!);
     const viewer = await setupOwner(baseURL!);
-    const adminMe = (await (await admin.ctx.get("/api/me")).json()) as {
-      principal: { userId: string };
+    const adminMe = (await (await admin.ctx.get("/api/v1/me")).json()) as {
+      data: { principal: { userId: string } };
     };
-    const viewerMe = (await (await viewer.ctx.get("/api/me")).json()) as {
-      principal: { userId: string };
+    const viewerMe = (await (await viewer.ctx.get("/api/v1/me")).json()) as {
+      data: { principal: { userId: string } };
     };
     grantUserPermissions({
       orgId: owner.orgId,
-      userId: adminMe.principal.userId,
+      userId: adminMe.data.principal.userId,
       grants: [
         { permission: "org.read" },
         { permission: "token.read", tokenTarget: "org" },
@@ -111,32 +111,34 @@ test.describe("api tokens", () => {
     });
     grantUserPermissions({
       orgId: owner.orgId,
-      userId: viewerMe.principal.userId,
+      userId: viewerMe.data.principal.userId,
       grants: [{ permission: "org.read" }],
     });
 
-    const { token } = await (
-      await createToken(owner.ctx, owner.orgId, {
-        name: "owner-token",
-        grants: [{ permission: "repository.read", repository: "*" }],
-      })
-    ).json();
+    const { token } = (
+      await (
+        await createToken(owner.ctx, owner.orgId, {
+          name: "owner-token",
+          grants: [{ permission: "repository.read", repository: "*" }],
+        })
+      ).json()
+    ).data;
 
-    const adminList = await admin.ctx.get(`/api/orgs/${owner.orgId}/tokens`);
+    const adminList = await admin.ctx.get(`/api/v1/orgs/${owner.orgId}/tokens`);
     expect(adminList.status()).toBe(200);
     const adminBody = await adminList.json();
-    const listed = adminBody.tokens.find((t: { id: string }) => t.id === token.id);
+    const listed = adminBody.data.find((t: { id: string }) => t.id === token.id);
     expect(listed).toBeTruthy();
     expect(listed.ownerUsername).toBe(owner.username);
     expect(listed.ownerUserId).toBe(token.ownerUserId);
     expect(listed.tokenHash).toBeUndefined();
 
-    const viewerList = await viewer.ctx.get(`/api/orgs/${owner.orgId}/tokens`);
+    const viewerList = await viewer.ctx.get(`/api/v1/orgs/${owner.orgId}/tokens`);
     expect(viewerList.status()).toBe(200);
     const viewerBody = await viewerList.json();
-    expect(viewerBody.tokens.some((t: { id: string }) => t.id === token.id)).toBe(false);
+    expect(viewerBody.data.some((t: { id: string }) => t.id === token.id)).toBe(false);
 
-    const revoked = await admin.ctx.delete(`/api/orgs/${owner.orgId}/tokens/${token.id}`);
+    const revoked = await admin.ctx.delete(`/api/v1/orgs/${owner.orgId}/tokens/${token.id}`);
     expect(revoked.status()).toBe(200);
   });
 
@@ -149,15 +151,15 @@ test.describe("api tokens", () => {
           grants: [{ permission: "repository.read", repository: "acme/*" }],
         })
       ).json()
-    ).secret as string;
+    ).data.secret as string;
 
     const anon = await anonContext(baseURL!);
     const me = await (
-      await anon.get("/api/me", {
+      await anon.get("/api/v1/me", {
         headers: { authorization: `Bearer ${secret}` },
       })
     ).json();
-    expect(me.principal.grants[0]).toMatchObject({
+    expect(me.data.principal.grants[0]).toMatchObject({
       permission: "repository.read",
       repository: "acme/*",
     });
@@ -172,9 +174,9 @@ test.describe("api tokens", () => {
           grants: [{ permission: "repository.read", repository: "*" }],
         })
       ).json()
-    ).secret as string;
+    ).data.secret as string;
     const anon = await anonContext(baseURL!);
-    const res = await anon.post(`/api/orgs/${owner.orgId}/tokens`, {
+    const res = await anon.post(`/api/v1/orgs/${owner.orgId}/tokens`, {
       headers: { authorization: `Bearer ${secret}` },
       data: { name: "nested" },
     });
@@ -188,7 +190,7 @@ test.describe("api tokens", () => {
     const repoName = uniq("scoped-repo");
     const repo = (
       await (await createRepo(owner.ctx, owner.orgId, { name: repoName, moduleId: "npm" })).json()
-    ).repository as { id: string; name: string; mountPath: string };
+    ).data as { id: string; name: string; mountPath: string };
     const pkgName = uniq("scoped-pkg");
     await publishRawNpm(owner.ctx, repo.mountPath, pkgName);
 
@@ -199,7 +201,7 @@ test.describe("api tokens", () => {
           grants: [{ permission: "repository.read", repository: repo.name }],
         })
       ).json()
-    ).secret as string;
+    ).data.secret as string;
     const wrongSecret = (
       await (
         await createToken(owner.ctx, owner.orgId, {
@@ -207,33 +209,39 @@ test.describe("api tokens", () => {
           grants: [{ permission: "repository.read", repository: `${repo.name}-other` }],
         })
       ).json()
-    ).secret as string;
+    ).data.secret as string;
     const anon = await anonContext(baseURL!);
     const auth = { authorization: `Bearer ${secret}` };
 
-    const packagesRes = await anon.get(`/api/repositories/${repo.id}/packages`, { headers: auth });
+    const packagesRes = await anon.get(`/api/v1/repositories/${repo.id}/packages`, {
+      headers: auth,
+    });
     expect(packagesRes.status()).toBe(200);
     const packagesBody = (await packagesRes.json()) as {
-      packages: { id: string; name: string }[];
+      data: { id: string; name: string }[];
     };
-    const pkg = packagesBody.packages.find((p) => p.name === pkgName);
+    const pkg = packagesBody.data.find((p) => p.name === pkgName);
     expect(pkg).toBeTruthy();
 
-    const versions = await anon.get(`/api/packages/${pkg!.id}/versions`, { headers: auth });
+    const versions = await anon.get(`/api/v1/packages/${pkg!.id}/versions`, { headers: auth });
     expect(versions.status()).toBe(200);
 
-    const artifacts = await anon.get(`/api/repositories/${repo.id}/artifacts`, { headers: auth });
+    const artifacts = await anon.get(`/api/v1/repositories/${repo.id}/artifacts`, {
+      headers: auth,
+    });
     expect(artifacts.status()).toBe(200);
     const artifactsBody = (await artifacts.json()) as {
-      artifacts: { id: string; name: string }[];
+      data: { id: string; name: string }[];
     };
-    const artifact = artifactsBody.artifacts.find((a) => a.name === pkgName);
+    const artifact = artifactsBody.data.find((a) => a.name === pkgName);
     expect(artifact).toBeTruthy();
 
-    const findings = await anon.get(`/api/artifacts/${artifact!.id}/findings`, { headers: auth });
+    const findings = await anon.get(`/api/v1/artifacts/${artifact!.id}/findings`, {
+      headers: auth,
+    });
     expect(findings.status()).toBe(200);
 
-    const denied = await anon.get(`/api/packages/${pkg!.id}/versions`, {
+    const denied = await anon.get(`/api/v1/packages/${pkg!.id}/versions`, {
       headers: { authorization: `Bearer ${wrongSecret}` },
     });
     expect(denied.status()).toBe(403);
@@ -245,13 +253,13 @@ test.describe("api tokens", () => {
     const repoName = uniq("demoted-repo");
     const repo = (
       await (await createRepo(owner.ctx, owner.orgId, { name: repoName, moduleId: "npm" })).json()
-    ).repository as { id: string; name: string; mountPath: string };
-    const limitedMe = (await (await limited.ctx.get("/api/me")).json()) as {
-      principal: { userId: string };
+    ).data as { id: string; name: string; mountPath: string };
+    const limitedMe = (await (await limited.ctx.get("/api/v1/me")).json()) as {
+      data: { principal: { userId: string } };
     };
     grantUserPermissions({
       orgId: owner.orgId,
-      userId: limitedMe.principal.userId,
+      userId: limitedMe.data.principal.userId,
       grants: [
         { permission: "org.read" },
         { permission: "token.create", tokenTarget: "org" },
@@ -278,7 +286,7 @@ test.describe("api tokens", () => {
     });
     expect(scopedWrite.status()).toBe(403);
     expect(await scopedWrite.json()).toMatchObject({
-      error: "cannot grant permission 'repository.write' beyond your own access",
+      error: { message: "cannot grant permission 'repository.write' beyond your own access" },
     });
   });
 
@@ -290,13 +298,13 @@ test.describe("api tokens", () => {
       await (
         await createRepo(owner.ctx, owner.orgId, { name: repoName, moduleId: "docker" })
       ).json()
-    ).repository as { id: string; name: string; mountPath: string };
-    const limitedMe = (await (await limited.ctx.get("/api/me")).json()) as {
-      principal: { userId: string };
+    ).data as { id: string; name: string; mountPath: string };
+    const limitedMe = (await (await limited.ctx.get("/api/v1/me")).json()) as {
+      data: { principal: { userId: string } };
     };
     grantUserPermissions({
       orgId: owner.orgId,
-      userId: limitedMe.principal.userId,
+      userId: limitedMe.data.principal.userId,
       grants: [
         { permission: "org.read" },
         { permission: "token.create", tokenTarget: "org" },
@@ -322,7 +330,7 @@ test.describe("api tokens", () => {
     });
     expect(scopedWrite.status()).toBe(403);
     expect(await scopedWrite.json()).toMatchObject({
-      error: "cannot grant permission 'repository.write' beyond your own access",
+      error: { message: "cannot grant permission 'repository.write' beyond your own access" },
     });
 
     const scopedRead = await createToken(limited.ctx, owner.orgId, {

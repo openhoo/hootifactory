@@ -1,9 +1,4 @@
-import {
-  type AuditEntry,
-  type Decision,
-  httpStatusForDenial,
-  writeAudit,
-} from "@hootifactory/auth";
+import { type AuditEntry, writeAudit } from "@hootifactory/auth";
 import { logger } from "@hootifactory/observability";
 
 export { AUDIT_RESULT } from "@hootifactory/types";
@@ -29,12 +24,4 @@ export function audit(c: Context<AppEnv>, entry: AuditEntry): void {
       error: err,
     });
   });
-}
-
-/**
- * Standard JSON error response for an authorization denial: unauthenticated
- * principals get 401 (re-auth), everything else 403.
- */
-export function denied(c: Context<AppEnv>, decision: Decision): Response {
-  return c.json({ error: decision.reason }, httpStatusForDenial(decision));
 }

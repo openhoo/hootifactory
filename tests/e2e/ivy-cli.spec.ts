@@ -45,7 +45,7 @@ test.describe("ivy registry (Dockerized real sbt)", () => {
       moduleId: "ivy",
       visibility: "public",
     });
-    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "ivy" })).json())
+    const token = (await (await createToken(owner.ctx, owner.orgId, { name: "ivy" })).json()).data
       .secret as string;
 
     const id = Date.now().toString(36);

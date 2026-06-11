@@ -29,7 +29,7 @@ test.describe("chef supermarket registry (Dockerized real knife)", () => {
       moduleId: "chef",
       visibility: "public",
     });
-    const secret = (await (await createToken(owner.ctx, owner.orgId, { name: "chef" })).json())
+    const secret = (await (await createToken(owner.ctx, owner.orgId, { name: "chef" })).json()).data
       .secret as string;
 
     const id = Date.now().toString(36);

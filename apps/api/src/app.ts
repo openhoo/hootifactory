@@ -19,7 +19,6 @@ import { handleRegistryRequest } from "./registry";
 import { apiV1Router } from "./routes/api-v1";
 import { authRouter } from "./routes/auth";
 import { healthRouter } from "./routes/health";
-import { uiRouter } from "./routes/ui";
 import type { AppEnv } from "./types";
 
 initializeObservability({ serviceRole: "api" });
@@ -88,7 +87,6 @@ app.onError((err, c) => {
 app.route("/", healthRouter);
 app.route("/api/auth", authRouter);
 app.route("/api/v1", apiV1Router);
-app.route("/api", uiRouter);
 
 // Everything else is registry traffic. Module-owned app-level routes (e.g. the
 // OCI /v2 + /token service) are dispatched inside handleRegistryRequest, which

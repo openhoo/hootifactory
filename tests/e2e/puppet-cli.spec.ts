@@ -80,7 +80,7 @@ test.describe("puppet forge registry (Dockerized real puppet)", () => {
       visibility: "public",
     });
     const token = (await (await createToken(owner.ctx, owner.orgId, { name: "puppet" })).json())
-      .secret as string;
+      .data.secret as string;
 
     // Forge lowercases owners and `puppet module install` lowercases the slug, so
     // owner (alphanumeric) and name ([a-z][a-z0-9_]*) must both be lowercase. The

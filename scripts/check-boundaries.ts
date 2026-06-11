@@ -195,43 +195,36 @@ function buildRules(): BoundaryRule[] {
     {
       name: "repository configuration route slice stays DB-free",
       roots: [
-        "apps/api/src/routes/ui-repository-access.ts",
-        "apps/api/src/routes/ui-repository-config.ts",
         "apps/api/src/routes/api-v1-repository-config-routes.ts",
+        "apps/api/src/routes/api-v1-upstreams.ts",
+        "apps/api/src/routes/api-v1-virtual-members.ts",
       ],
       forbidden: [/@hootifactory\/db\b/, /\bdb\./],
     },
     {
       name: "content inventory route slice stays DB-free",
-      roots: [
-        "apps/api/src/routes/ui-content.ts",
-        "apps/api/src/routes/ui-artifact-routes.ts",
-        "apps/api/src/routes/api-v1-content-routes.ts",
-      ],
+      roots: ["apps/api/src/routes/api-v1-content-routes.ts"],
       forbidden: [/@hootifactory\/db\b/, /\bdb\./],
     },
     {
       name: "governance route slice stays DB-free",
-      roots: [
-        "apps/api/src/routes/ui-scan-policy-routes.ts",
-        "apps/api/src/routes/ui-quota-routes.ts",
-        "apps/api/src/routes/api-v1-policy-routes.ts",
-      ],
+      roots: ["apps/api/src/routes/api-v1-policy-routes.ts"],
       forbidden: [/@hootifactory\/db\b/, /\bdb\./],
     },
     {
       name: "organization route slice stays DB-free",
-      roots: ["apps/api/src/routes/ui.ts", "apps/api/src/routes/api-v1-organization-routes.ts"],
+      roots: [
+        "apps/api/src/routes/api-v1-organization-routes.ts",
+        "apps/api/src/routes/api-v1-registry-module-routes.ts",
+      ],
       forbidden: [/@hootifactory\/db\b/, /\bdb\./],
     },
     {
       name: "token route slice stays DB-free",
       roots: [
-        "apps/api/src/routes/ui-tokens.ts",
         "apps/api/src/routes/api-v1-token-routes.ts",
         "apps/api/src/routes/api-v1-helpers.ts",
-        "apps/api/src/routes/ui-dto.ts",
-        "apps/api/src/routes/ui-schemas.ts",
+        "apps/api/src/routes/api-v1-dto.ts",
       ],
       forbidden: [/@hootifactory\/db\b/, /\bdb\./],
     },
@@ -379,12 +372,9 @@ async function checkRootPackageImports(): Promise<void> {
         `${relative} imports @hootifactory/registry-platform root; use a feature-slice subpath`,
       );
     }
-    if (
-      hasExactWorkspaceImport(content, "@hootifactory/contracts") &&
-      !isApiV1RouteSource(relative)
-    ) {
+    if (workspaceSubpathImports(content, "@hootifactory/contracts").length > 0) {
       failures.push(
-        `${relative} imports @hootifactory/contracts root outside API v1 routes; use @hootifactory/contracts/legacy for UI DTO/client code`,
+        `${relative} imports a @hootifactory/contracts subpath; the package exposes only its root export`,
       );
     }
   }
@@ -411,8 +401,12 @@ function hasExactWorkspaceImport(content: string, packageName: string): boolean 
   return pattern.test(content);
 }
 
-function isApiV1RouteSource(relative: string): boolean {
-  return /^apps\/api\/src\/routes\/api-v1(?:-|\.ts)/.test(relative);
+function workspaceSubpathImports(content: string, packageName: string): string[] {
+  const pattern = new RegExp(
+    String.raw`\b(?:from|import)\s*(?:\(\s*)?["'](${escapeRegExp(packageName)}\/[^"']+)["']`,
+    "g",
+  );
+  return [...content.matchAll(pattern)].map((match) => match[1] ?? "");
 }
 
 function escapeRegExp(value: string): string {

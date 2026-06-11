@@ -1,5 +1,11 @@
-import { getOrganizationById, listAccessibleOrgs } from "@hootifactory/auth";
 import {
+  createOrganizationWithOwner,
+  getOrganizationById,
+  listAccessibleOrgs,
+} from "@hootifactory/auth";
+import { env } from "@hootifactory/config";
+import {
+  V1CreateOrgRequestSchema,
   V1CreateRepositoryRequestSchema,
   V1MeResponseSchema,
   V1OrganizationListResponseSchema,
@@ -7,9 +13,11 @@ import {
   V1RepositoryListResponseSchema,
   V1RepositoryResponseSchema,
 } from "@hootifactory/contracts";
+import { isUniqueViolation } from "@hootifactory/core";
 import { createRepositoryForPrincipal } from "@hootifactory/registry-platform/repositories";
 import type { Hono } from "hono";
 import type { AppEnv } from "../types";
+import { repositoryDto } from "./api-v1-dto";
 import {
   dataResponse,
   doc,
@@ -19,12 +27,12 @@ import {
   OrgIdParamsSchema,
   PaginationQuerySchema,
   requireOrg,
+  requireUserPrincipal,
   validateJsonV1,
   validatePagination,
   validateV1,
 } from "./api-v1-helpers";
 import { AUDIT_RESULT, audit } from "./http";
-import { repositoryDto } from "./ui-dto";
 
 export function registerApiV1OrganizationRoutes(apiV1Router: Hono<AppEnv>) {
   apiV1Router.get(
@@ -69,6 +77,59 @@ export function registerApiV1OrganizationRoutes(apiV1Router: Hono<AppEnv>) {
         return response ? response : dataResponse(c, [org]);
       }
       return errorResponse(c, 401, "UNAUTHENTICATED", "authentication required");
+    },
+  );
+
+  apiV1Router.post(
+    "/orgs",
+    doc({
+      operationId: "createOrganization",
+      summary: "Create an organization",
+      tag: "Organizations",
+      description: "Creates an organization owned by the calling user.",
+      requestBody: {
+        description: "Organization creation payload.",
+        schema: V1CreateOrgRequestSchema,
+      },
+      response: {
+        status: 201,
+        description: "Organization created.",
+        schema: V1OrganizationResponseSchema,
+      },
+      extraResponses: { 409: { description: "Organization slug already taken." } },
+    }),
+    async (c) => {
+      if (!env.AUTH_ALLOW_ORG_CREATION) {
+        return errorResponse(c, 403, "FORBIDDEN", "org creation is disabled");
+      }
+      const user = requireUserPrincipal(c);
+      if (!user.ok) return user.response;
+      const parsedBody = await validateJsonV1(c, V1CreateOrgRequestSchema, "invalid org request");
+      if (!parsedBody.ok) return parsedBody.response;
+      const body = parsedBody.data;
+      try {
+        const org = await createOrganizationWithOwner({
+          slug: body.slug,
+          displayName: body.displayName,
+          description: body.description,
+          ownerUserId: user.principal.userId,
+        });
+        audit(c, {
+          orgId: org.id,
+          action: "org.create",
+          result: AUDIT_RESULT.success,
+          resourceType: "org",
+          resourceId: org.id,
+          principal: user.principal,
+          detail: { slug: org.slug },
+        });
+        return dataResponse(c, org, 201);
+      } catch (err) {
+        if (isUniqueViolation(err)) {
+          return errorResponse(c, 409, "CONFLICT", `org slug '${body.slug}' already taken`);
+        }
+        throw err;
+      }
     },
   );
 
