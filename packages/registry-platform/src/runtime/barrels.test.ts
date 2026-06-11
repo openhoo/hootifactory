@@ -58,6 +58,7 @@ describe("package barrels", () => {
     expect(typeof mod.createRepository).toBe("function");
     expect(typeof mod.resolveCreateRepositoryRequest).toBe("function");
     expect(typeof mod.applyRetention).toBe("function");
+    expect(typeof mod.applyDueRetentionPolicies).toBe("function");
     expect(typeof mod.loadUpstream).toBe("function");
     expect(typeof mod.loadVirtualMembers).toBe("function");
     expect(typeof mod.isValidRepositoryName).toBe("function");

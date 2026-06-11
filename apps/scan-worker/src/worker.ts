@@ -9,6 +9,7 @@ import { loadConfiguredRegistryPlugins } from "@hootifactory/registry-runtime";
 import { loadConfiguredScanners } from "@hootifactory/scanner-runtime";
 import { scannerRuntimeFromEnv as defaultScannerRuntimeFromEnv } from "./pipeline";
 import {
+  applyRetentionPolicies as defaultApplyRetentionPolicies,
   reapExpiredUploads as defaultReapExpiredUploads,
   reclaimStuckScans as defaultReclaimStuckScans,
   runScanCycle as defaultRunScanCycle,
@@ -30,6 +31,7 @@ export interface ScanWorkerDeps {
   reapExpiredUploads?: typeof defaultReapExpiredUploads;
   sweepBlobs?: typeof defaultSweepBlobs;
   reclaimStuckScans?: typeof defaultReclaimStuckScans;
+  applyRetentionPolicies?: typeof defaultApplyRetentionPolicies;
   runScanCycle?: typeof defaultRunScanCycle;
   startHealthServer?: typeof defaultStartHealthServer;
   installShutdownHandlers?: typeof defaultInstallShutdownHandlers;
@@ -58,6 +60,7 @@ export async function runScanWorker(deps: ScanWorkerDeps = {}): Promise<void> {
   const reapExpiredUploads = deps.reapExpiredUploads ?? defaultReapExpiredUploads;
   const sweepBlobs = deps.sweepBlobs ?? defaultSweepBlobs;
   const reclaimStuckScans = deps.reclaimStuckScans ?? defaultReclaimStuckScans;
+  const applyRetentionPolicies = deps.applyRetentionPolicies ?? defaultApplyRetentionPolicies;
   const runScanCycle = deps.runScanCycle ?? defaultRunScanCycle;
   const startHealthServer = deps.startHealthServer ?? defaultStartHealthServer;
   const installShutdownHandlers = deps.installShutdownHandlers ?? defaultInstallShutdownHandlers;
@@ -87,6 +90,11 @@ export async function runScanWorker(deps: ScanWorkerDeps = {}): Promise<void> {
   // SCANNER_TIMEOUT_MS, default 120s) so a live worker is never reclaimed mid-scan.
   const scanReclaimIntervalSeconds = env.SCAN_RECLAIM_INTERVAL_SECONDS;
   const scanReclaimTimeoutSeconds = env.SCAN_RECLAIM_TIMEOUT_SECONDS;
+  // Scheduled retention (#323): periodically apply persisted retention_policies
+  // rows; until this task, the table was never read and retention only ran via
+  // the synchronous on-demand API route.
+  const retentionApplyIntervalSeconds = env.RETENTION_APPLY_INTERVAL_SECONDS;
+  const retentionApplyBatchSize = env.RETENTION_APPLY_BATCH_SIZE;
 
   // Shutdown drain grace (#317): exiting mid-cycle strands every claimed
   // scan_outbox row in 'processing' until reclaimStuckScans fires after
@@ -116,6 +124,8 @@ export async function runScanWorker(deps: ScanWorkerDeps = {}): Promise<void> {
     blobGcIntervalSeconds,
     scanReclaimIntervalSeconds,
     scanReclaimTimeoutSeconds,
+    retentionApplyBatchSize,
+    retentionApplyIntervalSeconds,
   };
 
   // The in-flight loop iteration, drained by cleanup. Starts settled so a
@@ -169,6 +179,8 @@ export async function runScanWorker(deps: ScanWorkerDeps = {}): Promise<void> {
     blobGcIntervalSeconds,
     scanReclaimIntervalSeconds,
     scanReclaimTimeoutSeconds,
+    retentionApplyBatchSize,
+    retentionApplyIntervalSeconds,
     shutdownGraceMs,
     workerPort: env.WORKER_PORT,
     scanners: scannerRuntime.scanners
@@ -192,6 +204,11 @@ export async function runScanWorker(deps: ScanWorkerDeps = {}): Promise<void> {
       name: "scan.outbox.reclaim_stuck",
       intervalMs: scanReclaimIntervalSeconds * 1000,
       run: () => reclaimStuckScans(scanReclaimTimeoutSeconds, maxAttempts),
+    },
+    {
+      name: "retention.apply",
+      intervalMs: retentionApplyIntervalSeconds * 1000,
+      run: () => applyRetentionPolicies(retentionApplyBatchSize),
     },
   ]);
 

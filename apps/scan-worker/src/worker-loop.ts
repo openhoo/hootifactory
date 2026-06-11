@@ -5,6 +5,7 @@ import {
   reapExpiredContentUploadSessions,
   sweepUnreferencedCasBlobs,
 } from "@hootifactory/registry-platform/content";
+import { applyDueRetentionPolicies } from "@hootifactory/registry-platform/repositories";
 import { SCAN_OUTBOX_STATUS } from "@hootifactory/scan-core";
 import type { ScannerRuntime } from "@hootifactory/scanner";
 import { processScan, recordScanFailure } from "./pipeline";
@@ -38,6 +39,8 @@ export interface ScanWorkerConfig {
   blobGcIntervalSeconds: number;
   scanReclaimIntervalSeconds: number;
   scanReclaimTimeoutSeconds: number;
+  retentionApplyBatchSize: number;
+  retentionApplyIntervalSeconds: number;
 }
 
 /**
@@ -151,6 +154,28 @@ export async function sweepBlobs(batchSize: number, graceSeconds: number): Promi
     }
   } catch (err) {
     logger.error("unreferenced CAS blob sweeper failed", { error: err });
+  }
+}
+
+/**
+ * Apply persisted per-repository retention policies on the maintenance cadence
+ * (#323). The sweep itself isolates failures per repository; this wrapper only
+ * adds the span + structured logging and absorbs a whole-sweep failure (e.g. the
+ * policy query itself) so the maintenance scheduler never aborts the loop.
+ */
+export async function applyRetentionPolicies(
+  batchSize: number,
+  sweep: typeof applyDueRetentionPolicies = applyDueRetentionPolicies,
+): Promise<void> {
+  try {
+    const result = await withSpan("retention.apply", { "retention.batch_size": batchSize }, () =>
+      sweep({ limit: batchSize }),
+    );
+    if (result.policies > 0) {
+      logger.info("scheduled retention sweep completed", result);
+    }
+  } catch (err) {
+    logger.error("scheduled retention sweep failed", { error: err });
   }
 }
 

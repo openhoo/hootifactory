@@ -370,6 +370,8 @@ const EnvSchema = z
     BLOB_GC_GRACE_SECONDS: nonNegativeInt(60),
     SCAN_RECLAIM_INTERVAL_SECONDS: positiveInt(300),
     SCAN_RECLAIM_TIMEOUT_SECONDS: z.coerce.number().int().min(60).default(900),
+    RETENTION_APPLY_INTERVAL_SECONDS: positiveInt(3600),
+    RETENTION_APPLY_BATCH_SIZE: positiveInt(100),
     MAIL_WORKER_BATCH_SIZE: positiveInt(8),
     MAIL_WORKER_POLL_INTERVAL_SECONDS: secondsWithMin(0.5, 0.5),
   })
