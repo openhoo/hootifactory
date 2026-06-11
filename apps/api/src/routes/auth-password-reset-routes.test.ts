@@ -36,7 +36,10 @@ mock.module("@hootifactory/auth", () => ({
   dummyPasswordResetWork,
   resetPasswordWithToken,
 }));
+const breachedPasswordRejection = mock(async (..._args: unknown[]) => null as Response | null);
+
 mock.module("./auth-password-reset", () => ({ createPasswordResetEmail }));
+mock.module("./auth-password-policy", () => ({ breachedPasswordRejection }));
 mock.module("./auth-helpers", () => ({
   enqueueEmail,
   clientIp: () => "203.0.113.7",
@@ -169,6 +172,7 @@ describe("password reset request timing normalization (#223)", () => {
 describe("password reset confirmation", () => {
   beforeEach(() => {
     resetPasswordWithToken.mockClear();
+    breachedPasswordRejection.mockClear();
     env.EMAIL_ENABLED = true;
   });
 
@@ -192,6 +196,23 @@ describe("password reset confirmation", () => {
     );
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error: "invalid or expired reset token" });
+  });
+
+  test("rejects breached passwords before consuming the reset token", async () => {
+    breachedPasswordRejection.mockImplementationOnce(async () =>
+      Response.json(
+        { error: "this password appears in known data breaches; choose a different one" },
+        { status: 400 },
+      ),
+    );
+    const res = await appWithRoutes().fetch(
+      confirm({ token: "a".repeat(20), password: "password1234" }),
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: "this password appears in known data breaches; choose a different one",
+    });
+    expect(resetPasswordWithToken).not.toHaveBeenCalled();
   });
 
   test("confirms a valid reset token", async () => {

@@ -9,6 +9,7 @@ import type { Hono } from "hono";
 import type { AppEnv } from "../types";
 import { errorMessage, validateJsonBody } from "../validation";
 import { clientIp, enqueueEmail, publicUrl } from "./auth-helpers";
+import { breachedPasswordRejection } from "./auth-password-policy";
 import { createPasswordResetEmail } from "./auth-password-reset";
 import { PasswordResetConfirmBodySchema, PasswordResetRequestBodySchema } from "./auth-schemas";
 import { consumePasswordResetRequest } from "./auth-throttle";
@@ -99,6 +100,13 @@ export function registerPasswordResetRoutes(router: Hono<AppEnv>): void {
       "invalid password reset confirmation",
     );
     if (!parsedBody.ok) return parsedBody.response;
+    // Checked before the token is consumed so a rejected password leaves the
+    // reset token valid for another attempt.
+    const breachedRejection = await breachedPasswordRejection(c, parsedBody.data.password);
+    if (breachedRejection) {
+      logger.warn("password reset confirmation rejected for breached password");
+      return breachedRejection;
+    }
     const reset = await resetPasswordWithToken(parsedBody.data.token, parsedBody.data.password);
     if (!reset) return c.json({ error: "invalid or expired reset token" }, 400);
     logger.info("password reset confirmed", { userId: reset.userId });

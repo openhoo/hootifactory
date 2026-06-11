@@ -294,6 +294,7 @@ const EnvSchema = z
     // Auth
     SESSION_SECRET: z.string().min(16).default("dev-session-secret-change-me-please-32chars"),
     AUTH_ALLOW_REGISTRATION: boolish.optional(),
+    AUTH_BREACHED_PASSWORD_CHECK: boolish.default(false),
     AUTH_ALLOW_ORG_CREATION: boolish.optional(),
     AUTH_SYSTEM_ADMIN_USER_IDS: uuidList,
     AUTH_LOGIN_MAX_ATTEMPTS: positiveInt(5),
