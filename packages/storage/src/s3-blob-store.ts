@@ -96,6 +96,15 @@ export interface S3BlobStoreOptions {
   bucket?: string;
   accessKeyId?: string;
   secretAccessKey?: string;
+  /**
+   * Invoked when the SigV4-signed server-side CopyObject fails (network error
+   * or non-2xx response) before promoteToBlob falls back to a full streaming
+   * re-copy. Wire this to the application's logger: without it, a persistent
+   * misconfiguration (e.g. bad credentials) silently degrades every promote to
+   * the slow path. Not called for the expected "no endpoint/credentials
+   * configured" skip. Must not throw; exceptions are swallowed defensively.
+   */
+  onCopyError?: (error: unknown, context: { sourceKey: string; targetKey: string }) => void;
 }
 
 async function toBytes(data: Exclude<BlobData, ReadableStream<Uint8Array>>): Promise<Uint8Array> {
@@ -120,6 +129,7 @@ export class S3BlobStore implements BlobStore {
   private readonly accessKeyId?: string;
   private readonly secretAccessKey?: string;
   private readonly forcePathStyle: boolean;
+  private readonly onCopyError?: S3BlobStoreOptions["onCopyError"];
 
   constructor(opts: S3BlobStoreOptions = {}) {
     this.endpoint = opts.endpoint ?? env.S3_ENDPOINT;
@@ -129,6 +139,7 @@ export class S3BlobStore implements BlobStore {
     this.accessKeyId = opts.accessKeyId ?? env.S3_ACCESS_KEY_ID;
     this.secretAccessKey = opts.secretAccessKey ?? env.S3_SECRET_ACCESS_KEY;
     this.forcePathStyle = env.S3_FORCE_PATH_STYLE;
+    this.onCopyError = opts.onCopyError;
     this.client = new S3Client({
       endpoint: this.endpoint,
       region: this.region,
@@ -286,9 +297,28 @@ export class S3BlobStore implements BlobStore {
       // Drain the body so the connection returns to the pool immediately instead
       // of waiting for GC to collect the unconsumed Response.
       await response.body?.cancel().catch(() => {});
-      return response.ok;
-    } catch {
+      if (!response.ok) {
+        this.reportCopyError(
+          new Error(`S3 CopyObject responded with HTTP ${response.status}`),
+          sourceKey,
+          targetKey,
+        );
+        return false;
+      }
+      return true;
+    } catch (err) {
+      this.reportCopyError(err, sourceKey, targetKey);
       return false;
+    }
+  }
+
+  /** Surface a copy failure to the injected hook without letting it break the fallback path. */
+  private reportCopyError(error: unknown, sourceKey: string, targetKey: string): void {
+    try {
+      this.onCopyError?.(error, { sourceKey, targetKey });
+    } catch {
+      // The hook is observability-only; a throwing hook must not turn a
+      // recoverable copy failure into a failed promote.
     }
   }
 }

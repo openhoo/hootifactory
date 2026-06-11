@@ -3,13 +3,19 @@ import { logger, withSpan } from "@hootifactory/observability";
 import { EMAIL_TEMPLATE } from "@hootifactory/types";
 import nodemailer, { type Transporter } from "nodemailer";
 
+/**
+ * A queued email. `deliveryKey` is mandatory: it is the idempotency identity of
+ * the send (pg-boss singleton key, `email_deliveries` claim key, and the SMTP
+ * Message-ID), so every enqueue site must derive a deterministic key — without
+ * one, a re-delivered queue message would double-send.
+ */
 export type EmailJob =
   | {
       template: typeof EMAIL_TEMPLATE.passwordReset;
       to: string;
       resetUrl: string;
       expiresAt: string;
-      deliveryKey?: string;
+      deliveryKey: string;
     }
   | {
       template: typeof EMAIL_TEMPLATE.oidcLink;
@@ -17,7 +23,7 @@ export type EmailJob =
       linkUrl: string;
       providerName: string;
       expiresAt: string;
-      deliveryKey?: string;
+      deliveryKey: string;
     };
 
 export interface RenderedEmail {
@@ -146,7 +152,7 @@ export async function deliverEmail(job: EmailJob, transport: Transporter): Promi
       subject: message.subject,
       text: message.text,
       html: message.html,
-      messageId: job.deliveryKey ? `<${job.deliveryKey}@hootifactory.local>` : undefined,
+      messageId: `<${job.deliveryKey}@hootifactory.local>`,
     });
     span.setAttribute("email.message_id", info.messageId ?? "");
     span.setAttribute("email.accepted_count", info.accepted?.length ?? 0);

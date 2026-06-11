@@ -8,6 +8,7 @@ describe("email rendering", () => {
       to: "alice@example.test",
       resetUrl: "https://hoot.example.test/reset-password?token=abc",
       expiresAt: "2026-06-01T12:00:00.000Z",
+      deliveryKey: "password-reset-1",
     });
 
     expect(rendered.to).toBe("alice@example.test");
@@ -23,6 +24,7 @@ describe("email rendering", () => {
       providerName: "<script>",
       linkUrl: "https://hoot.example.test/api/auth/oidc/link/confirm?token=abc",
       expiresAt: "2026-06-01T12:00:00.000Z",
+      deliveryKey: "oidc-link-1",
     });
 
     expect(rendered.text).toContain("<script>");

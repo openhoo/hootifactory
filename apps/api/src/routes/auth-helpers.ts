@@ -55,17 +55,29 @@ export function publicUrl(path: string): string {
   return new URL(path, `${env.APP_PUBLIC_URL}/`).href;
 }
 
+/**
+ * Enqueue an email job. `deliveryKey` (mandatory on {@link EmailJob}) doubles
+ * as the pg-boss singleton key, so the same logical email is queued at most
+ * once per week even across API retries. The retry schedule must reach past
+ * the mail worker's 15-minute claim-takeover threshold with attempts to spare:
+ * a worker that crashes between claiming a delivery and confirming the SMTP
+ * send leaves a claim that only becomes re-claimable after that threshold, so
+ * later retries are what rescue the email. With backoff capped at 10 minutes,
+ * attempts land around 0.5/1.5/3.5/7.5/15.5/25.5/35.5/45.5 minutes — the last
+ * four all fall after the takeover window opens.
+ */
 export async function enqueueEmail(job: EmailJob): Promise<void> {
   if (!env.EMAIL_ENABLED) return;
   await enqueue(
     QUEUES.emailSend,
     { ...job, telemetry: captureTelemetryContext() },
     {
-      retryLimit: 5,
+      retryLimit: 8,
       retryDelay: 30,
       retryBackoff: true,
+      retryDelayMax: 10 * 60,
       singletonKey: job.deliveryKey,
-      singletonSeconds: job.deliveryKey ? 7 * 24 * 60 * 60 : undefined,
+      singletonSeconds: 7 * 24 * 60 * 60,
     },
   );
 }

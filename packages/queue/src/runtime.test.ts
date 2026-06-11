@@ -119,6 +119,7 @@ describe("runWorker", () => {
    * test drive the batch handler, plus the process-exit/signal intercepts. */
   function makeHarness() {
     const registered: Registered[] = [];
+    const completed: { queue: string; ids: string[] }[] = [];
     let stopBossCalls = 0;
     const deps: RunWorkerDeps = {
       work: (async (
@@ -139,8 +140,11 @@ describe("runWorker", () => {
       stopBoss: (async () => {
         stopBossCalls += 1;
       }) as RunWorkerDeps["stopBoss"],
+      completeJobs: async (queue: string, ids: string[]) => {
+        completed.push({ queue, ids });
+      },
     };
-    return { deps, registered, stopBossCalls: () => stopBossCalls };
+    return { deps, registered, completed, stopBossCalls: () => stopBossCalls };
   }
 
   const originalPort = process.env.WORKER_PORT;
@@ -167,7 +171,7 @@ describe("runWorker", () => {
   test("registers a consumer with the configured batch settings and processes jobs", async () => {
     delete process.env.WORKER_PORT; // skip the health server in this test
     intercept();
-    const { deps, registered } = makeHarness();
+    const { deps, registered, completed } = makeHarness();
 
     const handled: { id: string }[] = [];
     await runWorker<{ id: string }>(
@@ -195,12 +199,92 @@ describe("runWorker", () => {
     });
 
     // Drive the registered batch handler to prove handleJob runs per job, with
-    // the per-job instrumentation wrapper.
+    // the per-job instrumentation wrapper, and that each success is acked
+    // individually as it completes.
     await consumer.handler([
       { id: "j1", data: { id: "a1" } } as Job<{ id: string }>,
       { id: "j2", data: { id: "a2" } } as Job<{ id: string }>,
     ]);
     expect(handled).toEqual([{ id: "a1" }, { id: "a2" }]);
+    expect(completed).toEqual([
+      { queue: "scan.artifact", ids: ["j1"] },
+      { queue: "scan.artifact", ids: ["j2"] },
+    ]);
+  });
+
+  test("isolates job failures within a batch: siblings still run and are acked", async () => {
+    delete process.env.WORKER_PORT;
+    intercept();
+    const { deps, registered, completed } = makeHarness();
+
+    const handled: string[] = [];
+    await runWorker<{ id: string }>(
+      {
+        role: "test-worker",
+        logLabel: "test worker",
+        queue: "email.send",
+        batchSize: 3,
+        pollingIntervalSeconds: 1,
+        handleJob: async (data) => {
+          if (data.id === "bad") throw new Error("job boom");
+          handled.push(data.id);
+        },
+        jobLogAttributes: (data) => ({ "job.id": data.id }),
+      },
+      deps,
+    );
+
+    const consumer = registered[0];
+    if (!consumer) throw new Error("expected a registered consumer");
+
+    // The middle job throws: the later sibling must still be processed and both
+    // successes acked per-job, then the handler rejects with an aggregate so
+    // pg-boss fails (and retries) only the still-active job.
+    const batch = consumer.handler([
+      { id: "j1", data: { id: "ok-1" } } as Job<{ id: string }>,
+      { id: "j2", data: { id: "bad" } } as Job<{ id: string }>,
+      { id: "j3", data: { id: "ok-2" } } as Job<{ id: string }>,
+    ]);
+    await expect(batch).rejects.toThrow("1 of 3 email.send job(s) failed");
+    await expect(batch).rejects.toBeInstanceOf(AggregateError);
+    expect(handled).toEqual(["ok-1", "ok-2"]);
+    expect(completed).toEqual([
+      { queue: "email.send", ids: ["j1"] },
+      { queue: "email.send", ids: ["j3"] },
+    ]);
+  });
+
+  test("a failed per-job ack counts as a job failure so the job is retried", async () => {
+    delete process.env.WORKER_PORT;
+    intercept();
+    const { deps, registered, completed } = makeHarness();
+    deps.completeJobs = async (queue: string, ids: string[]) => {
+      if (ids.includes("j1")) throw new Error("ack failed");
+      completed.push({ queue, ids });
+    };
+
+    await runWorker<{ id: string }>(
+      {
+        role: "test-worker",
+        logLabel: "test worker",
+        queue: "email.send",
+        batchSize: 2,
+        pollingIntervalSeconds: 1,
+        handleJob: async () => {},
+        jobLogAttributes: () => ({}),
+      },
+      deps,
+    );
+
+    const consumer = registered[0];
+    if (!consumer) throw new Error("expected a registered consumer");
+    const batch = consumer.handler([
+      { id: "j1", data: { id: "a1" } } as Job<{ id: string }>,
+      { id: "j2", data: { id: "a2" } } as Job<{ id: string }>,
+    ]);
+    // j1's ack failure surfaces as a batch-level aggregate; j2 was still acked.
+    await expect(batch).rejects.toThrow("1 of 2 email.send job(s) failed");
+    expect(completed).toEqual([{ queue: "email.send", ids: ["j2"] }]);
   });
 
   test("starts a readiness health server when WORKER_PORT is set (object startLog)", async () => {
@@ -265,6 +349,7 @@ describe("runWorker", () => {
         throw new Error("registration failed");
       }) as unknown as RunWorkerDeps["work"],
       stopBoss: (async () => {}) as RunWorkerDeps["stopBoss"],
+      completeJobs: async () => {},
     };
 
     // runWorker swallows the startup error into the shutdown path (does not throw).

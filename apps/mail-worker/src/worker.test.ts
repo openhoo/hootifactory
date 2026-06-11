@@ -60,6 +60,7 @@ const job: EmailJob = {
   to: "user@example.com",
   resetUrl: "https://example.com/reset",
   expiresAt: "2026-01-01T00:00:00Z",
+  deliveryKey: "password-reset-token-1",
 };
 
 describe("mail worker entrypoint wiring", () => {
