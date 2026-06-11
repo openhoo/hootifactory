@@ -15,6 +15,8 @@ export interface ServeRegistryBlobOptions {
   kind: RegistryBlobRefKind;
   scope: string;
   contentType: string;
+  /** Filename for the forced `content-disposition: attachment` (defaults to the digest). */
+  downloadFilename?: string;
   extraHeaders?: Record<string, string>;
   blocked: () => Response;
   notModified?: () => Response | null;
@@ -71,6 +73,7 @@ export async function serveRegistryBlob(
   return ctx.data.content.serveBlobIfClean({
     digest: opts.digest,
     contentType: opts.contentType,
+    downloadFilename: opts.downloadFilename,
     extraHeaders: opts.extraHeaders,
     blocked: opts.blocked,
     notModified: opts.notModified,

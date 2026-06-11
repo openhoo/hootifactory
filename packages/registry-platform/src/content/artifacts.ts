@@ -12,24 +12,49 @@ import {
 type BlobResponseOptions = {
   digest: string;
   contentType: string;
+  /** Filename for the forced `content-disposition: attachment` (defaults to the digest). */
+  downloadFilename?: string;
   extraHeaders?: Record<string, string>;
   blocked: () => Response;
   notModified?: () => Response | null;
   redirect?: boolean;
 };
 
-function attachmentFilename(digest: string): string {
-  return digest.replace(/[^A-Za-z0-9._-]/g, "_");
+function attachmentFilename(name: string): string {
+  return name.replace(/[^A-Za-z0-9._-]/g, "_");
+}
+
+/**
+ * Response headers a module may never override via `extraHeaders`: blob bytes
+ * must never render inline or be MIME-sniffed. Matched case-insensitively —
+ * `Headers` would otherwise merge a differently-cased duplicate key into the
+ * response value.
+ */
+const PROTECTED_BLOB_HEADERS = new Set(["content-disposition", "x-content-type-options"]);
+
+function overridableExtraHeaders(
+  extraHeaders: Record<string, string> | undefined,
+): Record<string, string> {
+  if (!extraHeaders) return {};
+  return Object.fromEntries(
+    Object.entries(extraHeaders).filter(([key]) => !PROTECTED_BLOB_HEADERS.has(key.toLowerCase())),
+  );
 }
 
 function blobResponseHeaders(ctx: unknown, opts: BlobResponseOptions): Record<string, string> {
   return {
     "cache-control": blobCacheControl(ctx),
-    "content-disposition": `attachment; filename="${attachmentFilename(opts.digest)}"`,
     "content-type": opts.contentType,
     etag: `"${opts.digest}"`,
+    ...overridableExtraHeaders(opts.extraHeaders),
+    // The security headers come last (and are filtered out of `extraHeaders`
+    // above) so no caller can downgrade them. A module that needs a friendlier
+    // download name passes `downloadFilename` (sanitized here) — the attachment
+    // disposition itself is not negotiable.
+    "content-disposition": `attachment; filename="${attachmentFilename(
+      opts.downloadFilename ?? opts.digest,
+    )}"`,
     "x-content-type-options": "nosniff",
-    ...opts.extraHeaders,
   };
 }
 

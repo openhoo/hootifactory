@@ -177,8 +177,8 @@ class SwiftAdapterState {
       kind: "swift_archive",
       scope: swiftArchiveScope(scope, name, version),
       contentType: "application/zip",
+      downloadFilename: `${name}-${version}.zip`,
       extraHeaders: {
-        "content-disposition": `attachment; filename="${name}-${version}.zip"`,
         digest: `sha-256=${checksumBase64}`,
         "content-version": CONTENT_VERSION,
       },
