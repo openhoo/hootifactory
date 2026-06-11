@@ -49,6 +49,7 @@
       "name": "@hootifactory/mail-worker",
       "version": "0.0.0",
       "dependencies": {
+        "@hootifactory/config": "workspace:*",
         "@hootifactory/db": "workspace:*",
         "@hootifactory/email": "workspace:*",
         "@hootifactory/observability": "workspace:*",

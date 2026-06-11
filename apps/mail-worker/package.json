@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@hootifactory/config": "workspace:*",
     "@hootifactory/db": "workspace:*",
     "@hootifactory/email": "workspace:*",
     "@hootifactory/observability": "workspace:*",

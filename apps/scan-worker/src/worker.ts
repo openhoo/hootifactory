@@ -1,8 +1,8 @@
+import { env } from "@hootifactory/config";
 import { initializeObservability, logger } from "@hootifactory/observability";
 import {
   createMaintenanceScheduler,
   installShutdownHandlers,
-  intEnv,
   startHealthServer,
 } from "@hootifactory/queue";
 import { loadConfiguredRegistryPlugins } from "@hootifactory/registry-runtime";
@@ -57,22 +57,22 @@ export async function runScanWorker(deps: ScanWorkerDeps = {}): Promise<void> {
     logger.warn("ignoring unknown scanners in SCANNERS", { unknown: loadedScanners.unknown });
   }
 
-  const workerBatchSize = intEnv("SCAN_WORKER_BATCH_SIZE", 16, 1);
-  const workerConcurrency = Math.min(workerBatchSize, intEnv("SCAN_WORKER_CONCURRENCY", 4, 1));
-  const pollingIntervalSeconds = intEnv("SCAN_WORKER_POLL_INTERVAL_SECONDS", 0.5, 0.5);
-  const maxAttempts = intEnv("SCAN_WORKER_MAX_ATTEMPTS", 5, 1);
-  const uploadReaperIntervalSeconds = intEnv("UPLOAD_REAPER_INTERVAL_SECONDS", 300, 1);
-  const uploadReaperBatchSize = intEnv("UPLOAD_REAPER_BATCH_SIZE", 100, 1);
-  const blobGcIntervalSeconds = intEnv("BLOB_GC_INTERVAL_SECONDS", 300, 1);
-  const blobGcBatchSize = intEnv("BLOB_GC_BATCH_SIZE", 100, 1);
-  const blobGcGraceSeconds = intEnv("BLOB_GC_GRACE_SECONDS", 60, 0);
+  const workerBatchSize = env.SCAN_WORKER_BATCH_SIZE;
+  const workerConcurrency = Math.min(workerBatchSize, env.SCAN_WORKER_CONCURRENCY);
+  const pollingIntervalSeconds = env.SCAN_WORKER_POLL_INTERVAL_SECONDS;
+  const maxAttempts = env.SCAN_WORKER_MAX_ATTEMPTS;
+  const uploadReaperIntervalSeconds = env.UPLOAD_REAPER_INTERVAL_SECONDS;
+  const uploadReaperBatchSize = env.UPLOAD_REAPER_BATCH_SIZE;
+  const blobGcIntervalSeconds = env.BLOB_GC_INTERVAL_SECONDS;
+  const blobGcBatchSize = env.BLOB_GC_BATCH_SIZE;
+  const blobGcGraceSeconds = env.BLOB_GC_GRACE_SECONDS;
   // A claimed row whose worker died never reaches markSucceeded/markFailed and is
   // stranded in 'processing', permanently blocking its artifact under enforce-mode
   // policy. Reclaim such rows once they exceed a generous multiple of the worst-
   // case per-artifact scan time (manifest-graph traversal + OSV, each bounded by
   // SCANNER_TIMEOUT_MS, default 120s) so a live worker is never reclaimed mid-scan.
-  const scanReclaimIntervalSeconds = intEnv("SCAN_RECLAIM_INTERVAL_SECONDS", 300, 1);
-  const scanReclaimTimeoutSeconds = intEnv("SCAN_RECLAIM_TIMEOUT_SECONDS", 900, 60);
+  const scanReclaimIntervalSeconds = env.SCAN_RECLAIM_INTERVAL_SECONDS;
+  const scanReclaimTimeoutSeconds = env.SCAN_RECLAIM_TIMEOUT_SECONDS;
 
   const scannerRuntime = scannerRuntimeFromEnv();
 
@@ -113,7 +113,7 @@ export async function runScanWorker(deps: ScanWorkerDeps = {}): Promise<void> {
     blobGcIntervalSeconds,
     scanReclaimIntervalSeconds,
     scanReclaimTimeoutSeconds,
-    workerPort: process.env.WORKER_PORT,
+    workerPort: env.WORKER_PORT,
     scanners: scannerRuntime.scanners
       .filter((scanner) => scanner.available)
       .map((scanner) => scanner.plugin.id),

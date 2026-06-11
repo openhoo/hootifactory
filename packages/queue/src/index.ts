@@ -2,10 +2,13 @@ import { env } from "@hootifactory/config";
 import { logger, withSpan } from "@hootifactory/observability";
 import { type Job, PgBoss, type SendOptions, type WorkOptions } from "pg-boss";
 
+/**
+ * Durable pg-boss queues. Rule of thumb: pg-boss carries fire-and-forget delivery
+ * jobs only. Work that must stay transactionally consistent with registry writes
+ * (scan scheduling, blob GC, retention) runs through DB-backed outbox/maintenance
+ * loops instead, so it commits or rolls back with the write that produced it.
+ */
 export const QUEUES = {
-  scanArtifact: "scan.artifact",
-  gcSweep: "gc.sweep",
-  retentionApply: "retention.apply",
   emailSend: "email.send",
 } as const;
 
@@ -88,7 +91,6 @@ export {
 export {
   type HealthServer,
   installShutdownHandlers,
-  intEnv,
   type RunWorkerConfig,
   runWorker,
   type ShutdownController,

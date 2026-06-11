@@ -1,3 +1,4 @@
+import { env } from "@hootifactory/config";
 import {
   instrumentHttpRequest,
   instrumentQueueBatch,
@@ -10,13 +11,6 @@ import {
 import type { Job } from "pg-boss";
 import { stopBoss, work } from "./index";
 
-/** Parse a numeric env var with a fallback default and a lower bound. */
-export function intEnv(name: string, fallback: number, min: number): number {
-  const raw = process.env[name];
-  const parsed = raw === undefined ? fallback : Number(raw);
-  return Math.max(min, Number.isFinite(parsed) ? parsed : fallback);
-}
-
 export interface HealthServer {
   /** The Bun server, or null when WORKER_PORT is unset. */
   server: ReturnType<typeof Bun.serve> | null;
@@ -27,14 +21,18 @@ export interface HealthServer {
 /**
  * Optional readiness health endpoint so orchestrators can wait for the worker.
  * Reports 503 until `setReady(true)`. A no-op (server: null) when WORKER_PORT is
- * unset. Shared by every worker entrypoint so the endpoint stays consistent.
+ * unset (`port` defaults to the validated env value; tests pass it explicitly).
+ * Shared by every worker entrypoint so the endpoint stays consistent.
  */
-export function startHealthServer(role: string): HealthServer {
+export function startHealthServer(
+  role: string,
+  port: number | undefined = env.WORKER_PORT,
+): HealthServer {
   let ready = false;
   let server: ReturnType<typeof Bun.serve> | null = null;
-  if (process.env.WORKER_PORT) {
+  if (port !== undefined) {
     server = Bun.serve({
-      port: Number(process.env.WORKER_PORT),
+      port,
       hostname: "127.0.0.1",
       fetch: (request) =>
         instrumentHttpRequest(request, async (telemetry) => {
@@ -163,7 +161,7 @@ export async function runWorker<T extends object>(
           queue,
           batchSize,
           pollingIntervalSeconds,
-          workerPort: process.env.WORKER_PORT,
+          workerPort: env.WORKER_PORT,
           ...extraStartLog,
         });
         const workerId = await deps.work<WorkerJob<T>>(

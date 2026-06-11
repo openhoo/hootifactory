@@ -37,7 +37,6 @@ await (async () => {
   const realQueue = await import("@hootifactory/queue");
   await mock.module("@hootifactory/queue", () => ({
     ...realQueue,
-    intEnv: (_name: string, fallback: number) => fallback,
     runWorker: async (config: NonNullable<Captured["runWorkerConfig"]>) => {
       captured.runWorkerConfig = config;
     },

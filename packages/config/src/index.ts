@@ -52,6 +52,12 @@ const dockerCpus = z
 /** A coerced, positive integer env value with a default. */
 const positiveInt = (def: number) => z.coerce.number().int().positive().default(def);
 
+/** A coerced, non-negative integer env value with a default. */
+const nonNegativeInt = (def: number) => z.coerce.number().int().min(0).default(def);
+
+/** A coerced seconds value (fractional allowed) with a lower bound and a default. */
+const secondsWithMin = (min: number, def: number) => z.coerce.number().min(min).default(def);
+
 /** A trimmed, non-empty string env value with a default. */
 const trimmedString = (def: string) => z.string().trim().min(1).default(def);
 
@@ -306,6 +312,26 @@ const EnvSchema = z
 
     // Queue (pg-boss)
     PG_BOSS_POOL_MAX: positiveInt(5),
+
+    // Workers (shared runtime + scan-worker / mail-worker tuning)
+    /** When set, workers serve a readiness endpoint on this port. */
+    WORKER_PORT: z.preprocess(
+      (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
+      z.coerce.number().int().positive().optional(),
+    ),
+    SCAN_WORKER_BATCH_SIZE: positiveInt(16),
+    SCAN_WORKER_CONCURRENCY: positiveInt(4),
+    SCAN_WORKER_POLL_INTERVAL_SECONDS: secondsWithMin(0.5, 0.5),
+    SCAN_WORKER_MAX_ATTEMPTS: positiveInt(5),
+    UPLOAD_REAPER_INTERVAL_SECONDS: positiveInt(300),
+    UPLOAD_REAPER_BATCH_SIZE: positiveInt(100),
+    BLOB_GC_INTERVAL_SECONDS: positiveInt(300),
+    BLOB_GC_BATCH_SIZE: positiveInt(100),
+    BLOB_GC_GRACE_SECONDS: nonNegativeInt(60),
+    SCAN_RECLAIM_INTERVAL_SECONDS: positiveInt(300),
+    SCAN_RECLAIM_TIMEOUT_SECONDS: z.coerce.number().int().min(60).default(900),
+    MAIL_WORKER_BATCH_SIZE: positiveInt(8),
+    MAIL_WORKER_POLL_INTERVAL_SECONDS: secondsWithMin(0.5, 0.5),
   })
   .superRefine((v, ctx) => {
     // Fail fast (never silently boot) when a production deployment still carries a

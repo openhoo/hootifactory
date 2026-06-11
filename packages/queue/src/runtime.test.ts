@@ -2,78 +2,31 @@ import { afterEach, describe, expect, test } from "bun:test";
 import type { Job } from "pg-boss";
 import {
   installShutdownHandlers,
-  intEnv,
   type RunWorkerDeps,
   runWorker,
   startHealthServer,
 } from "./runtime";
 
 /**
- * runtime.ts is the shared worker lifecycle. The pure helpers (`intEnv`) and the
- * signal/health primitives are tested directly. `runWorker` is exercised with
- * injected fake `work`/`stopBoss` deps (no pg-boss, no database), and with
- * `process.exit` plus process signal handlers intercepted so nothing touches a
- * real database, network port, or the test runner's process lifecycle. Using
- * dependency injection (rather than mocking the boss module) keeps coverage
- * attributed to this statically-imported module under Bun's parallel runner.
+ * runtime.ts is the shared worker lifecycle. The signal/health primitives are
+ * tested directly. `runWorker` is exercised with injected fake `work`/`stopBoss`
+ * deps (no pg-boss, no database), and with `process.exit` plus process signal
+ * handlers intercepted so nothing touches a real database, network port, or the
+ * test runner's process lifecycle. Using dependency injection (rather than
+ * mocking the boss module) keeps coverage attributed to this statically-imported
+ * module under Bun's parallel runner.
  */
 
-describe("intEnv", () => {
-  const KEY = "QUEUE_RUNTIME_TEST_INT";
-  afterEach(() => {
-    delete process.env[KEY];
-  });
-
-  test("returns the parsed env value when above the minimum", () => {
-    process.env[KEY] = "25";
-    expect(intEnv(KEY, 10, 1)).toBe(25);
-  });
-
-  test("falls back to the default when unset", () => {
-    expect(intEnv(KEY, 7, 1)).toBe(7);
-  });
-
-  test("falls back to the default when non-numeric", () => {
-    process.env[KEY] = "not-a-number";
-    expect(intEnv(KEY, 9, 1)).toBe(9);
-  });
-
-  test("parses an explicit 0 and clamps it up to the minimum", () => {
-    // 0 is a valid numeric value (not treated as unset); it parses, then the
-    // lower bound applies, so it clamps up to `min` rather than the fallback.
-    process.env[KEY] = "0";
-    expect(intEnv(KEY, 5, 1)).toBe(1);
-  });
-
-  test("preserves an explicit 0 when the minimum allows it", () => {
-    process.env[KEY] = "0";
-    expect(intEnv(KEY, 5, 0)).toBe(0);
-  });
-
-  test("clamps a below-minimum value up to the lower bound", () => {
-    process.env[KEY] = "2";
-    expect(intEnv(KEY, 9, 5)).toBe(5);
-  });
-});
-
 describe("startHealthServer", () => {
-  const original = process.env.WORKER_PORT;
-  afterEach(() => {
-    if (original === undefined) delete process.env.WORKER_PORT;
-    else process.env.WORKER_PORT = original;
-  });
-
-  test("is a no-op (no server) when WORKER_PORT is unset", () => {
-    delete process.env.WORKER_PORT;
-    const health = startHealthServer("test-worker");
+  test("is a no-op (no server) when no port is configured", () => {
+    const health = startHealthServer("test-worker", undefined);
     expect(health.server).toBeNull();
     // setReady is still callable and harmless without a server.
     expect(() => health.setReady(true)).not.toThrow();
   });
 
-  test("serves 503 until ready, then 200, when WORKER_PORT is set", async () => {
-    process.env.WORKER_PORT = "0"; // ephemeral port
-    const health = startHealthServer("test-worker");
+  test("serves 503 until ready, then 200, when a port is configured", async () => {
+    const health = startHealthServer("test-worker", 0); // ephemeral port
     expect(health.server).not.toBeNull();
     const port = health.server?.port;
     try {
