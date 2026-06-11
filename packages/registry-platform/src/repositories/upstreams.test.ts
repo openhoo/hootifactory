@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
+import { parseUpstreamCredentials, upstreamFetchUrl } from "./upstreams";
 
 function fakeDb(rowsByCall: unknown[][] = []) {
   const calls: { op: string; args: unknown[] }[] = [];
@@ -87,5 +88,59 @@ describe("addUpstream", () => {
       const values = calls.find((c) => c.op === "values");
       expect(values?.args[0]).toMatchObject({ priority: 0 });
     });
+  });
+});
+
+describe("parseUpstreamCredentials", () => {
+  test("parses username/password from the jsonb column", () => {
+    expect(parseUpstreamCredentials({ username: "u", password: "p" })).toEqual({
+      username: "u",
+      password: "p",
+    });
+  });
+
+  test("tolerates partial credentials", () => {
+    expect(parseUpstreamCredentials({ password: "p" })).toEqual({ username: "", password: "p" });
+  });
+
+  test("returns null for null, empty, or malformed values", () => {
+    expect(parseUpstreamCredentials(null)).toBeNull();
+    expect(parseUpstreamCredentials({})).toBeNull();
+    expect(parseUpstreamCredentials({ username: 7, password: [] })).toBeNull();
+  });
+});
+
+describe("upstreamFetchUrl", () => {
+  test("applies stored credentials as userinfo, percent-encoding reserved characters", () => {
+    expect(
+      upstreamFetchUrl({
+        url: "https://upstream.test/npm",
+        credentials: { username: "user@corp", password: "p@ss:w/rd" },
+      }),
+    ).toBe("https://user%40corp:p%40ss%3Aw%2Frd@upstream.test/npm");
+  });
+
+  test("stored credentials take precedence over inline userinfo", () => {
+    expect(
+      upstreamFetchUrl({
+        url: "https://inline:old@upstream.test/",
+        credentials: { username: "u", password: "p" },
+      }),
+    ).toBe("https://u:p@upstream.test/");
+  });
+
+  test("returns the configured URL unchanged without stored credentials", () => {
+    expect(upstreamFetchUrl({ url: "https://upstream.test/npm", credentials: null })).toBe(
+      "https://upstream.test/npm",
+    );
+    expect(upstreamFetchUrl({ url: "https://upstream.test/npm", credentials: {} })).toBe(
+      "https://upstream.test/npm",
+    );
+  });
+
+  test("leaves an unparseable URL unchanged", () => {
+    expect(
+      upstreamFetchUrl({ url: "not a url", credentials: { username: "u", password: "p" } }),
+    ).toBe("not a url");
   });
 });

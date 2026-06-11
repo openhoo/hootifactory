@@ -4,6 +4,7 @@
  * by untrusted upstream JSON, so every such fetch must go through here.
  */
 
+import { Buffer } from "node:buffer";
 import { lookup } from "node:dns/promises";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
@@ -28,7 +29,7 @@ export function assertPublicHttpUrl(raw: string, opts: PublicUrlOptions = {}): U
   try {
     url = new URL(raw);
   } catch {
-    throw new Error(`invalid URL: ${raw}`);
+    throw new Error(`invalid URL: ${redactUrlCredentials(raw)}`);
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     throw new Error(`unsupported URL scheme: ${url.protocol}`);
@@ -37,6 +38,45 @@ export function assertPublicHttpUrl(raw: string, opts: PublicUrlOptions = {}): U
     throw new Error(`refusing to fetch a private/loopback/metadata host: ${url.hostname}`);
   }
   return url;
+}
+
+/** Strip any userinfo (`user:pass@`) from a URL so it is safe for logs/telemetry. */
+export function redactUrlCredentials(raw: string): string {
+  try {
+    const url = new URL(raw);
+    if (!url.username && !url.password) return raw;
+    url.username = "";
+    url.password = "";
+    return url.toString();
+  } catch {
+    // Unparseable input: strip any `//userinfo@` segment textually so even a
+    // malformed URL cannot carry credentials into logs.
+    return raw.replace(/\/\/[^/@\s]*@/g, "//");
+  }
+}
+
+/**
+ * Copy userinfo credentials from `base` onto `target` when `target` carries none
+ * and points at the same host. Proxy plugins fetch secondary URLs advertised by
+ * untrusted upstream JSON (tarballs, version documents) that they already pin to
+ * the configured upstream host; this lets those fetches reuse the upstream's
+ * credentials without ever sending them to a third-party host.
+ */
+export function inheritUrlCredentials(target: string, base: string): string {
+  try {
+    const targetUrl = new URL(target);
+    const baseUrl = new URL(base);
+    if (!baseUrl.username && !baseUrl.password) return target;
+    if (targetUrl.username || targetUrl.password) return target;
+    if (targetUrl.host !== baseUrl.host) return target;
+    // Userinfo round-trips in percent-encoded form: the getters return the
+    // encoded value and `%` is not re-encoded by the setters.
+    targetUrl.username = baseUrl.username;
+    targetUrl.password = baseUrl.password;
+    return targetUrl.toString();
+  } catch {
+    return target;
+  }
 }
 
 /**
@@ -142,6 +182,22 @@ async function pinnedFetch(
   });
 }
 
+function stripUrlCredentials(url: URL): void {
+  url.username = "";
+  url.password = "";
+}
+
+function basicAuthorization(url: URL): string {
+  const decode = (value: string) => {
+    try {
+      return decodeURIComponent(value);
+    } catch {
+      return value;
+    }
+  };
+  return `Basic ${Buffer.from(`${decode(url.username)}:${decode(url.password)}`, "utf8").toString("base64")}`;
+}
+
 export interface SafeFetchOptions extends RequestInit {
   /** Optional host allowlist (host includes port) enforced on the initial URL and every redirect. */
   allowedHosts?: string[];
@@ -156,9 +212,12 @@ export interface SafeFetchOptions extends RequestInit {
 }
 
 /**
- * fetch() that (1) validates the target is a public http(s) URL and (2) follows
+ * fetch() that (1) validates the target is a public http(s) URL, (2) follows
  * redirects manually, re-validating every hop so an upstream cannot redirect the
- * server into an internal/metadata address. Applies a timeout on each hop.
+ * server into an internal/metadata address, and (3) lifts URL userinfo into a
+ * Basic Authorization header sent only to the origin that carried the
+ * credentials — never replayed across a cross-origin redirect. Applies a
+ * timeout on each hop.
  */
 export async function safeFetch(raw: string, opts: SafeFetchOptions = {}): Promise<Response> {
   const {
@@ -171,13 +230,25 @@ export async function safeFetch(raw: string, opts: SafeFetchOptions = {}): Promi
   } = opts;
   const allowedHostSet = allowedHosts ? new Set(allowedHosts) : null;
   let url = assertPublicHttpUrl(raw, { enforcePublicNetwork });
+  // Userinfo credentials are lifted out of the URL and forwarded explicitly as a
+  // Basic Authorization header, only on hops to the origin that carried them.
+  // Bun's fetch silently drops URL userinfo while node's http.request forwards
+  // it implicitly, and a redirect must never replay credentials cross-origin.
+  const auth =
+    url.username || url.password ? { origin: url.origin, header: basicAuthorization(url) } : null;
+  stripUrlCredentials(url);
   for (let hop = 0; hop <= maxHops; hop++) {
     if (allowedHostSet && !allowedHostSet.has(url.host)) {
       throw new Error(`redirected to disallowed host: ${url.host}`);
     }
     const address = await publicResolvedAddress(url, { enforcePublicNetwork, lookupHost });
+    const headers = new Headers(init.headers);
+    if (auth && url.origin === auth.origin && !headers.has("authorization")) {
+      headers.set("authorization", auth.header);
+    }
     const requestInit = {
       ...init,
+      headers,
       redirect: "manual" as const,
       signal: init.signal ?? AbortSignal.timeout(timeoutMs),
     };
@@ -188,6 +259,8 @@ export async function safeFetch(raw: string, opts: SafeFetchOptions = {}): Promi
       const loc = res.headers.get("location");
       if (!loc) return res;
       url = assertPublicHttpUrl(new URL(loc, url).toString(), { enforcePublicNetwork });
+      // A redirect target never contributes credentials of its own.
+      stripUrlCredentials(url);
       // Drain the redirect body so the pinned-fetch socket is released now rather
       // than lingering until the per-hop timeout fires.
       await res.body?.cancel().catch(() => {});

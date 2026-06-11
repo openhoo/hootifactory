@@ -1,5 +1,6 @@
 import {
   computeDigest,
+  inheritUrlCredentials,
   mapWithBoundedConcurrency,
   type RegistryRequestContext,
   safeFetch,
@@ -52,11 +53,19 @@ export async function handleChefProxyIngest(
     CHEF_PROXY_MIRROR_CONCURRENCY,
     async (versionUrl) => {
       if (!isChefUrlOnUpstreamHost(versionUrl, upstreamHost)) return;
-      const detail = parseChefUpstreamVersion(await fetchJson(versionUrl, upstreamHost, ctx));
+      // Same-host version/tarball fetches reuse the upstream base's credentials
+      // (stored metadata keeps the original upstream URLs).
+      const detail = parseChefUpstreamVersion(
+        await fetchJson(inheritUrlCredentials(versionUrl, upstreamBase), upstreamHost, ctx),
+      );
       if (!detail) return;
       if (existingVersions.has(detail.version)) return;
 
-      const tarball = await fetchTarball(detail.file, upstreamHost, ctx);
+      const tarball = await fetchTarball(
+        inheritUrlCredentials(detail.file, upstreamBase),
+        upstreamHost,
+        ctx,
+      );
       if (!tarball) return;
 
       pkg ??= await ctx.data.packages.findOrCreate({ name: cookbookName });

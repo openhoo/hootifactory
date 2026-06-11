@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { Buffer } from "node:buffer";
 import type { RegistryPackageRow, RegistryPackageVersionRow } from "@hootifactory/registry";
 import { computeDigest } from "@hootifactory/registry";
 import { createTestRegistryContext } from "@hootifactory/registry/testing";
@@ -514,5 +515,68 @@ describe("handleNpmProxyIngest mirroring", () => {
     const result = await handleNpmProxyIngest("pkg", UPSTREAM, ctx);
     expect(result).toBe(true);
     expect(upsertInputs).toEqual([{ version: "1.0.0", sizeBytes: stored.size }]);
+  });
+});
+
+describe("handleNpmProxyIngest upstream credentials", () => {
+  test("sends Basic auth from the upstream base to the packument and same-host tarball fetches", async () => {
+    const tarball = new TextEncoder().encode("tarball-auth");
+    const digests = computeNpmTarballDigests(tarball);
+    const authByPath: Record<string, string | null> = {};
+    globalThis.fetch = (async (input: FetchUrl, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      // safeFetch must strip the userinfo from the request URL itself.
+      expect(url).not.toContain("hoot-user");
+      expect(url).not.toContain("hoot-pass");
+      authByPath[new URL(url).pathname] = new Headers(init?.headers).get("authorization");
+      if (url.endsWith(".tgz")) {
+        return new Response(tarball, {
+          status: 200,
+          headers: { "content-length": String(tarball.byteLength) },
+        });
+      }
+      const json = JSON.stringify({
+        versions: {
+          "1.0.0": {
+            name: "pkg",
+            version: "1.0.0",
+            dist: {
+              tarball: `${UPSTREAM}/pkg/-/pkg-1.0.0.tgz`,
+              integrity: digests.integrity,
+              shasum: digests.shasum,
+            },
+          },
+        },
+        "dist-tags": { latest: "1.0.0" },
+      });
+      return new Response(json, {
+        status: 200,
+        headers: { "content-type": "application/json", "content-length": String(json.length) },
+      });
+    }) as typeof fetch;
+
+    const ctx = createTestRegistryContext();
+    ctx.data.packages.findByName = async () => null;
+    ctx.data.packages.findOrCreate = async () => pkgRow("pkg_1", "pkg");
+    ctx.data.versions.listLive = async () => [];
+    ctx.data.versions.upsertWithBlobRef = async () => ({
+      stored: {
+        digest: digests.blobDigest,
+        size: tarball.byteLength,
+        deduped: false,
+        refCreated: true,
+        blobRefId: "ref_1",
+      },
+      versionId: "ver_1",
+    });
+    ctx.enqueueScan = async () => {};
+    ctx.data.tags.replace = async () => {};
+
+    expect(
+      await handleNpmProxyIngest("pkg", "https://hoot-user:hoot-pass@registry.npmjs.org", ctx),
+    ).toBe(true);
+    const expectedAuth = `Basic ${Buffer.from("hoot-user:hoot-pass").toString("base64")}`;
+    expect(authByPath["/pkg"]).toBe(expectedAuth);
+    expect(authByPath["/pkg/-/pkg-1.0.0.tgz"]).toBe(expectedAuth);
   });
 });

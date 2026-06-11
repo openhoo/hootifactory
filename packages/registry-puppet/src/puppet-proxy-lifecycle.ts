@@ -1,4 +1,5 @@
 import {
+  inheritUrlCredentials,
   mapWithBoundedConcurrency,
   type RegistryPackageHandle,
   type RegistryRequestContext,
@@ -167,7 +168,9 @@ async function fetchVerifiedPuppetRelease(input: {
 
   let response: Response | null = null;
   try {
-    response = await safeFetch(fileUrl, {
+    // A same-host absolute file_uri reuses the upstream base's credentials; a
+    // relative file_uri already resolved against the credentialed base.
+    response = await safeFetch(inheritUrlCredentials(fileUrl, upstreamBase), {
       allowedHosts: [upstreamHost],
       enforcePublicNetwork: ctx.limits.enforcePublicNetwork,
     });
