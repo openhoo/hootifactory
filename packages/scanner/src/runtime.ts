@@ -150,6 +150,45 @@ async function cleanupDockerContainer(command: string, cidFile: string): Promise
  * stdout, or `null` when no runtime is available. Enforces a timeout and reaps the
  * Docker container on abort.
  */
+/** Default ceiling for scanner stdout (a crafted artifact can make a scanner emit unbounded JSON). */
+const DEFAULT_MAX_OUTPUT_BYTES = 32 * 1024 * 1024;
+/** stderr is only quoted in error messages, so a small excerpt suffices. */
+const MAX_STDERR_BYTES = 1024 * 1024;
+
+/**
+ * Read a stream fully up to `maxBytes`. Past the ceiling the stream is
+ * cancelled and `truncated` is set so the caller can fail the scan instead of
+ * buffering attacker-controlled output into worker memory.
+ */
+async function readStreamBounded(
+  stream: ReadableStream<Uint8Array>,
+  maxBytes: number,
+): Promise<{ text: string; truncated: boolean }> {
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  let truncated = false;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      truncated = true;
+      await reader.cancel().catch(() => {});
+      break;
+    }
+    chunks.push(value);
+  }
+  const joined = new Uint8Array(chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0));
+  let offset = 0;
+  for (const chunk of chunks) {
+    joined.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return { text: new TextDecoder().decode(joined), truncated };
+}
+
 export async function runScannerCli(input: {
   args: string[];
   allowedExitCodes?: number[];
@@ -192,15 +231,25 @@ export async function runScannerCli(input: {
     stderr: "pipe",
     signal,
   });
+  const maxOutputBytes = input.options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
   try {
-    const text = await new Response(proc.stdout).text();
-    const stderr = await new Response(proc.stderr).text();
+    // Drain both pipes concurrently (a child filling the un-drained stderr pipe
+    // would otherwise block until the timeout) and cap how much output is
+    // buffered into worker memory.
+    const [out, errOut] = await Promise.all([
+      readStreamBounded(proc.stdout, maxOutputBytes),
+      readStreamBounded(proc.stderr, MAX_STDERR_BYTES),
+    ]);
+    if (out.truncated) {
+      proc.kill();
+      throw new Error(`${command} produced more than ${maxOutputBytes} bytes of output`);
+    }
     const exitCode = await proc.exited;
     if (!(input.allowedExitCodes ?? [0]).includes(exitCode)) {
       if (timedOut) throw new Error(`${command} timed out after ${timeoutMs}ms`);
-      throw new Error(`${command} exited ${exitCode}: ${stderr.slice(0, 1000)}`);
+      throw new Error(`${command} exited ${exitCode}: ${errOut.text.slice(0, 1000)}`);
     }
-    return text;
+    return out.text;
   } catch (err) {
     if (timedOut) throw new Error(`${command} timed out after ${timeoutMs}ms`);
     throw err;

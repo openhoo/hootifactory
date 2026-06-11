@@ -24,6 +24,7 @@ describe("@hootifactory/scanner-runtime barrel", () => {
     // Shape is config-driven; assert the generic knobs are present (no per-scanner identity).
     expect(options).toHaveProperty("cliRuntime");
     expect(options).toHaveProperty("timeoutMs");
+    expect(options).toHaveProperty("maxOutputBytes");
     expect(options).not.toHaveProperty("image");
   });
 });

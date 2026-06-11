@@ -240,6 +240,31 @@ describe("runScannerCli (host runtime)", () => {
     expect(text).toBe("partial");
   });
 
+  test("fails the scan when stdout exceeds the output ceiling", async () => {
+    await expect(
+      runScannerCli({
+        args: ["-c", "head -c 262144 /dev/zero | tr '\\0' 'x'"],
+        hostBins: [SH],
+        image: "unused:latest",
+        options: { cliRuntime: "host", timeoutMs: 5_000, maxOutputBytes: 4096 },
+        target: "/tmp/hootifactory-runtime-test",
+      }),
+    ).rejects.toThrow(/more than 4096 bytes/);
+  });
+
+  test("drains a stderr flood concurrently instead of deadlocking until the timeout", async () => {
+    // 2 MiB to stderr overflows the pipe buffer; with sequential draining the
+    // child would block writing stderr while stdout stays open, hanging to timeout.
+    const text = await runScannerCli({
+      args: ["-c", "head -c 2097152 /dev/zero | tr '\\0' 'e' >&2; printf '%s' ok"],
+      hostBins: [SH],
+      image: "unused:latest",
+      options: { cliRuntime: "host", timeoutMs: 5_000 },
+      target: "/tmp/hootifactory-runtime-test",
+    });
+    expect(text).toBe("ok");
+  });
+
   test("under the docker runtime, builds a sandboxed argv, writes a cidfile, and reaps it on failure", async () => {
     // `false` stands in for the docker CLI: it ignores the hardened run args and
     // exits 1 (outside the default allowed set), so the helper throws — exercising

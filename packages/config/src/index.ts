@@ -301,6 +301,7 @@ const EnvSchema = z
     // Scanning — generic, cross-scanner runtime knobs only.
     SCANNER_ENABLED: boolish.default(false),
     SCANNER_TIMEOUT_MS: positiveInt(120_000),
+    SCANNER_MAX_OUTPUT_BYTES: positiveInt(32 * 1024 * 1024),
     SCANNER_CLI_RUNTIME: z.enum(SCANNER_CLI_RUNTIMES).default("docker"),
     SCANNER_DOCKER_COMMAND: z.string().default("docker"),
     SCANNER_DOCKER_MEMORY: dockerSize.default("1g"),

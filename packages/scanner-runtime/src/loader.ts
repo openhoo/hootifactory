@@ -53,6 +53,7 @@ export function scannerRuntimeOptionsFromEnv(): ScannerRuntimeOptions {
   return {
     cliRuntime: env.SCANNER_CLI_RUNTIME,
     timeoutMs: env.SCANNER_TIMEOUT_MS,
+    maxOutputBytes: env.SCANNER_MAX_OUTPUT_BYTES,
     dockerCommand: env.SCANNER_DOCKER_COMMAND,
     dockerMemory: env.SCANNER_DOCKER_MEMORY,
     dockerCpus: env.SCANNER_DOCKER_CPUS,
