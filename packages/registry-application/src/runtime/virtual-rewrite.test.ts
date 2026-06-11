@@ -6,7 +6,7 @@ import {
   rewriteVirtualBody,
   rewriteVirtualMetadata,
   shouldRewriteVirtualBody,
-} from "./registry-virtual-rewrite";
+} from "./virtual-rewrite";
 
 describe("virtual registry response rewriting", () => {
   test("detects rewritable JSON and HTML content types case-insensitively", () => {

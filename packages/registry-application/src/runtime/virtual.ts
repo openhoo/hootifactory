@@ -6,18 +6,14 @@ import {
   type RegistryRequestContext,
   type RouteMatch,
 } from "@hootifactory/registry";
-import { loadVirtualMembers } from "@hootifactory/registry-application/repositories";
-import {
-  adapterResponse,
-  adapterResponseOrRegistryError,
-  isReadMethod,
-  repoSpanAttributes,
-} from "@hootifactory/registry-application/runtime";
-import { authorizeVirtualMembers, virtualMemberSkipReason } from "./registry-virtual-member";
-import { dispatchVirtualMetadata, virtualMetadataPackageName } from "./registry-virtual-metadata";
-import { virtualMemberUnavailable, virtualNotFound } from "./registry-virtual-response";
-import { rewriteVirtualBody, shouldRewriteVirtualBody } from "./registry-virtual-rewrite";
-import { dispatchVirtualSearch } from "./registry-virtual-search-dispatch";
+import { loadVirtualMembers } from "../repositories/virtual";
+import { adapterResponse, adapterResponseOrRegistryError } from "./adapter-response";
+import { isReadMethod, repoSpanAttributes } from "./telemetry";
+import { authorizeVirtualMembers, virtualMemberSkipReason } from "./virtual-member";
+import { dispatchVirtualMetadata, virtualMetadataPackageName } from "./virtual-metadata";
+import { virtualMemberUnavailable, virtualNotFound } from "./virtual-response";
+import { rewriteVirtualBody, shouldRewriteVirtualBody } from "./virtual-rewrite";
+import { dispatchVirtualSearch } from "./virtual-search";
 
 /** Virtual repo: try each member in order; return the first non-error response. */
 export async function dispatchVirtual(

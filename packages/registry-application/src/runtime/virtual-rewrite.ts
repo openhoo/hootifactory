@@ -1,5 +1,10 @@
 import { type RegistryMetadata, textEtag, textResponseWithEtag } from "@hootifactory/registry";
-import { headersWithoutContentLength } from "./registry-utils";
+
+function headersWithoutContentLength(headers: Headers): Headers {
+  const next = new Headers(headers);
+  next.delete("content-length");
+  return next;
+}
 
 export function shouldRewriteVirtualBody(contentType: string): boolean {
   const normalized = contentType.toLowerCase();

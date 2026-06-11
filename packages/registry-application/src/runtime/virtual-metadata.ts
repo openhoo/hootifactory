@@ -7,17 +7,17 @@ import {
   type RegistryPlugin,
   type RegistryRequestContext,
   type RouteMatch,
+  registryErrorToModuleResponse,
 } from "@hootifactory/registry";
-import { loadVirtualMembers } from "@hootifactory/registry-application/repositories";
-import { repoSpanAttributes } from "@hootifactory/registry-application/runtime";
-import { registryErrorToModuleResponse } from "./registry-error-format";
-import { authorizeVirtualMembers, mapVirtualMemberAuthorizations } from "./registry-virtual-member";
-import { virtualMemberUnavailable, virtualNotFound } from "./registry-virtual-response";
+import { loadVirtualMembers } from "../repositories/virtual";
+import { repoSpanAttributes } from "./telemetry";
+import { authorizeVirtualMembers, mapVirtualMemberAuthorizations } from "./virtual-member";
+import { virtualMemberUnavailable, virtualNotFound } from "./virtual-response";
 import {
   metadataResponseEtag,
   metadataResponseWithEtag,
   rewriteVirtualMetadata,
-} from "./registry-virtual-rewrite";
+} from "./virtual-rewrite";
 
 export function virtualMetadataPackageName(match: RouteMatch): string | null {
   if (!match.entry.metadataMergeable) return null;

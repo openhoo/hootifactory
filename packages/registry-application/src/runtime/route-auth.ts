@@ -7,9 +7,11 @@ import type {
   RegistryRequestContext,
   ResolvedRepo,
   RouteMatch,
+  registryErrorResponseForModule,
 } from "@hootifactory/registry";
-import type { registryErrorResponseForModule } from "./registry-error-format";
-import type { RegistryAuthFailure } from "./types";
+
+/** Marker set by delivery-layer auth middleware when a presented registry bearer token failed validation. */
+export type RegistryAuthFailure = "invalid_token";
 
 export interface RouteAuthorization {
   permission: Permission;
