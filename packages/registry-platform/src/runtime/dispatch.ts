@@ -1,4 +1,4 @@
-import { BoundedLruCache, InFlightDeduper } from "@hootifactory/core";
+import { BoundedLruCache, InFlightDeduper, redactUrlCredentials } from "@hootifactory/core";
 import { logger, withSpan } from "@hootifactory/observability";
 import {
   Errors,
@@ -7,7 +7,7 @@ import {
   type RouteMatch,
 } from "@hootifactory/registry";
 import type { RepoKind } from "@hootifactory/types";
-import { loadUpstream } from "../repositories/upstreams";
+import { loadUpstream, type Upstream, upstreamFetchUrl } from "../repositories/upstreams";
 import { adapterResponse } from "./adapter-response";
 import { isReadMethod } from "./telemetry";
 import { dispatchVirtual } from "./virtual";
@@ -37,14 +37,17 @@ function isProxyRefreshFresh(ctx: RegistryRequestContext, packageName: string): 
 async function refreshProxyPackage(
   adapter: RegistryPlugin,
   packageName: string,
-  upstream: { url: string; cacheTtlSeconds: number },
+  upstream: Upstream,
   ctx: RegistryRequestContext,
 ): Promise<boolean> {
   const key = proxyRefreshKey(ctx, packageName);
   const proxyIngest = adapter.proxyIngest;
   if (!proxyIngest) return false;
   return proxyRefreshInFlight.run(key, async () => {
-    const ok = await proxyIngest(packageName, upstream.url, ctx)
+    // The ingest URL carries the upstream's stored credentials as userinfo;
+    // safeFetch turns them into a Basic Authorization header pinned to the
+    // upstream origin. Spans/logs must only ever see the redacted URL.
+    const ok = await proxyIngest(packageName, upstreamFetchUrl(upstream), ctx)
       .then(Boolean)
       .catch(() => false);
     if (ok) {
@@ -87,7 +90,9 @@ export async function dispatchProxy(
         refreshed = await withSpan(
           "registry.proxy.refresh",
           {
-            "registry.upstream.url": upstream.url,
+            // The configured URL may embed userinfo credentials; never export
+            // them to the tracing backend.
+            "registry.upstream.url": redactUrlCredentials(upstream.url),
             "registry.package.name": packageName,
           },
           async (refreshSpan) => {
@@ -115,7 +120,7 @@ export async function dispatchProxy(
         const ok = await withSpan(
           "registry.proxy.retry_refresh",
           {
-            "registry.upstream.url": upstream.url,
+            "registry.upstream.url": redactUrlCredentials(upstream.url),
             "registry.package.name": packageName,
           },
           async (retrySpan) => {

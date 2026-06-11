@@ -1,4 +1,5 @@
 import {
+  inheritUrlCredentials,
   mapWithBoundedConcurrency,
   type RegistryRequestContext,
   safeFetch,
@@ -107,6 +108,7 @@ export async function handleNpmProxyIngest(
 
       const verified = await fetchVerifiedNpmTarball({
         tarballUrl,
+        upstreamBase,
         upstreamHost,
         upstreamDist,
         ctx,
@@ -188,6 +190,7 @@ async function fetchNpmUpstreamPackument(
 
 async function fetchVerifiedNpmTarball(input: {
   tarballUrl: string;
+  upstreamBase: string;
   upstreamHost: string;
   upstreamDist: Parameters<typeof upstreamDistMatchesDigests>[0];
   ctx: RegistryRequestContext;
@@ -196,7 +199,9 @@ async function fetchVerifiedNpmTarball(input: {
   try {
     // Upstream packument JSON is untrusted; tarballs must stay on the configured host.
     if (!isNpmTarballUrlOnUpstreamHost(input.tarballUrl, input.upstreamHost)) return null;
-    response = await safeFetch(input.tarballUrl, {
+    // Same-host tarball fetches reuse the upstream base's credentials (the
+    // stored metadata keeps the original, credential-free upstream URL).
+    response = await safeFetch(inheritUrlCredentials(input.tarballUrl, input.upstreamBase), {
       allowedHosts: [input.upstreamHost],
       enforcePublicNetwork: input.ctx.limits.enforcePublicNetwork,
     });

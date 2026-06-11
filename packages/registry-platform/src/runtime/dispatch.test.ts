@@ -29,7 +29,10 @@ function fakeAdapter(opts: {
 }
 
 async function loadDispatch(upstream: unknown = null) {
+  // Spread the real module so non-mocked exports (e.g. upstreamFetchUrl) survive.
+  const upstreams = await import("../repositories/upstreams");
   await mock.module("../repositories/upstreams", () => ({
+    ...upstreams,
     loadUpstream: async () => upstream,
   }));
   return import("./dispatch");
@@ -233,5 +236,56 @@ describe("dispatchProxy", () => {
     );
     expect(res.status).toBe(404);
     expect(res.headers.get("content-type")).toContain("text/plain");
+  });
+});
+
+describe("dispatchProxy upstream credentials", () => {
+  afterEach(() => mock.restore());
+
+  test("hands proxyIngest the credentialed URL but only traces the redacted one", async () => {
+    const spans: { name: string; attributes: Record<string, unknown> }[] = [];
+    const observability = await import("@hootifactory/observability");
+    await mock.module("@hootifactory/observability", () => ({
+      ...observability,
+      withSpan: async (
+        name: string,
+        attributes: Record<string, unknown>,
+        handler: (span: unknown) => Promise<unknown>,
+      ) => {
+        spans.push({ name, attributes });
+        return handler({ setAttribute() {}, addEvent() {} });
+      },
+    }));
+    const { dispatchProxy } = await loadDispatch({
+      url: "https://inline:stale@upstream.test/npm",
+      credentials: { username: "store-user", password: "store-p@ss" },
+      cacheTtlSeconds: 0,
+    });
+    const ctx = createTestRegistryContext();
+    const ingestUrls: string[] = [];
+    const res = await dispatchProxy(
+      fakeAdapter({
+        handle: async () => new Response("miss", { status: 404 }),
+        proxyIngest: async (...args: unknown[]) => {
+          ingestUrls.push(String(args[1]));
+          return true;
+        },
+      }) as any,
+      routeMatch({ params: { pkg: `pkg-${crypto.randomUUID()}` } }) as any,
+      req(),
+      ctx,
+    );
+    expect(res.status).toBe(404);
+    // The ingest fetch URL carries the stored credentials (column wins over
+    // inline userinfo) so safeFetch can authenticate to the upstream.
+    expect(ingestUrls).toEqual(["https://store-user:store-p%40ss@upstream.test/npm"]);
+    // Every span sees only the redacted upstream URL — no credential, inline or
+    // stored, may reach the tracing backend.
+    const refreshSpans = spans.filter((s) => s.name === "registry.proxy.refresh");
+    expect(refreshSpans.length).toBe(1);
+    expect(refreshSpans[0]?.attributes["registry.upstream.url"]).toBe("https://upstream.test/npm");
+    const serialized = JSON.stringify(spans);
+    expect(serialized).not.toContain("stale");
+    expect(serialized).not.toContain("store-p");
   });
 });
