@@ -81,6 +81,26 @@ function ChartContainer({
   )
 }
 
+// Strict allowlist for color values interpolated into the <style> block below.
+// Permits hex (#rgb[a] / #rrggbb[aa]), rgb()/rgba()/hsl()/hsla() with numeric
+// arguments, or var(--token) with a safe token charset. Anything else (e.g.
+// values containing braces, semicolons or url()) is dropped instead of being
+// injected, so config-driven colors can never break out of the style rule.
+const SAFE_CHART_COLOR = new RegExp(
+  [
+    "^(?:",
+    "#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})",
+    "|(?:rgb|rgba|hsl|hsla)\\(\\s*-?[\\d.]+(?:%|deg)?(?:\\s*[,/\\s]\\s*-?[\\d.]+%?){2,3}\\s*\\)",
+    "|var\\(--[a-z0-9_-]+\\)",
+    ")$",
+  ].join(""),
+  "i"
+)
+
+function isSafeChartColor(color: string) {
+  return SAFE_CHART_COLOR.test(color.trim())
+}
+
 const ChartStyle = ({ id, config }: { id: string; config: ChartConfig }) => {
   const colorConfig = Object.entries(config).filter(
     ([, config]) => config.theme ?? config.color
@@ -102,7 +122,9 @@ ${colorConfig
     const color =
       itemConfig.theme?.[theme as keyof typeof itemConfig.theme] ??
       itemConfig.color
-    return color ? `  --color-${key}: ${color};` : null
+    return color && isSafeChartColor(color)
+      ? `  --color-${key}: ${color.trim()};`
+      : null
   })
   .join("\n")}
 }
