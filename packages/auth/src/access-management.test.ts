@@ -27,9 +27,34 @@ import {
   updateUserProfile,
 } from "./access-management";
 import { withFakeDb } from "./fake-db";
+import type { PermissionGrantRow } from "./permission-grants";
 import type { Principal } from "./principal";
 
 const userPrincipal: Principal = { kind: "user", userId: "u1", username: "alice" };
+const adminPrincipal: Principal = { kind: "user", userId: "admin-1", username: "root" };
+
+function grantRow(overrides: Partial<PermissionGrantRow> = {}): PermissionGrantRow {
+  return {
+    id: "pg-1",
+    orgId: "org-1",
+    userId: null,
+    groupId: null,
+    tokenId: null,
+    permission: "repository.write",
+    repositoryId: null,
+    repositoryPattern: null,
+    packagePattern: null,
+    artifactPattern: null,
+    policy: null,
+    tokenTarget: null,
+    targetTokenId: null,
+    grantedByUserId: null,
+    source: null,
+    createdAt: new Date("2026-06-01T00:00:00.000Z"),
+    updatedAt: new Date("2026-06-01T00:00:00.000Z"),
+    ...overrides,
+  };
+}
 
 /** The recorded query kinds, in order, as a comparable string. */
 function kinds(fake: { queries: ReadonlyArray<{ kind: string }> }): string {
@@ -308,35 +333,163 @@ describe("group membership helpers", () => {
     });
   });
 
-  test("addGroupMember adds when the group exists and the user is an org member", async () => {
+  test("addGroupMember adds without a domination check when the group holds no grants", async () => {
     await withFakeDb(db, async (fake) => {
-      fake.queue([{ id: "g1" }]); // group lookup
-      fake.queue([{ id: "m1" }]); // membership lookup
-      const result = await addGroupMember({ orgId: "org-1", groupId: "g1", userId: "u1" });
-      expect(result).toBe("added");
-      expect(kinds(fake)).toBe("select,select,insert");
+      fake.queue([{ id: "g1", orgId: "org-1" }]); // group lookup
+      fake.queue([]); // group grants (none -> nothing to dominate)
+      fake.queue([{ id: "m1" }]); // org membership lookup
+      const result = await addGroupMember({
+        orgId: "org-1",
+        groupId: "g1",
+        userId: "u2",
+        principal: userPrincipal,
+      });
+      expect(result).toEqual({ ok: true });
+      // No authorization reads beyond the group-grant lookup itself.
+      expect(kinds(fake)).toBe("select,select,select,insert");
+      expect(fake.queries.at(-1)?.values).toEqual({ orgId: "org-1", groupId: "g1", userId: "u2" });
     });
   });
 
   test("addGroupMember reports group_not_found", async () => {
     await withFakeDb(db, async (fake) => {
       fake.queue([]); // group lookup misses
-      const result = await addGroupMember({ orgId: "org-1", groupId: "g1", userId: "u1" });
-      expect(result).toBe("group_not_found");
+      const result = await addGroupMember({
+        orgId: "org-1",
+        groupId: "g1",
+        userId: "u1",
+        principal: userPrincipal,
+      });
+      expect(result).toEqual({ ok: false, code: "group_not_found", error: "group not found" });
       expect(kinds(fake)).toBe("select");
     });
   });
 
   test("addGroupMember reports user_not_member", async () => {
     await withFakeDb(db, async (fake) => {
-      fake.queue([{ id: "g1" }]); // group exists
+      fake.queue([{ id: "g1", orgId: "org-1" }]); // group exists
+      fake.queue([]); // group grants (none)
       fake.queue([]); // not an org member
-      const result = await addGroupMember({ orgId: "org-1", groupId: "g1", userId: "u1" });
-      expect(result).toBe("user_not_member");
+      const result = await addGroupMember({
+        orgId: "org-1",
+        groupId: "g1",
+        userId: "u1",
+        principal: userPrincipal,
+      });
+      expect(result).toEqual({
+        ok: false,
+        code: "user_not_member",
+        error: "user is not a member of this organization",
+      });
+      expect(kinds(fake)).toBe("select,select,select");
+    });
+  });
+
+  test("addGroupMember rejects an actor whose grants do not cover the group's grants", async () => {
+    await withFakeDb(db, async (fake) => {
+      fake.queue([{ id: "g1", orgId: "org-1" }]); // group lookup
+      fake.queue([grantRow({ groupId: "g1", permission: "repository.write" })]); // group grants
+      fake.queue([grantRow({ userId: "u1", permission: "group.member.manage" })]); // actor's direct grants
+      fake.queue([]); // actor's group memberships
+      const result = await addGroupMember({
+        orgId: "org-1",
+        groupId: "g1",
+        userId: "u2",
+        principal: userPrincipal,
+      });
+      expect(result).toEqual({
+        ok: false,
+        code: "grant_escalation",
+        error:
+          "adding a member to this group would grant permissions beyond your own " +
+          "(cannot grant permission 'repository.write' beyond your own access)",
+      });
+      // group lookup, group grants, actor grants, actor memberships — and no insert.
+      expect(kinds(fake)).toBe("select,select,select,select");
+    });
+  });
+
+  test("addGroupMember rejects a self-add by an under-privileged actor", async () => {
+    await withFakeDb(db, async (fake) => {
+      fake.queue([{ id: "g1", orgId: "org-1" }]); // group lookup
+      fake.queue([grantRow({ groupId: "g1", permission: "repository.write" })]); // group grants
+      fake.queue([grantRow({ userId: "u1", permission: "group.member.manage" })]); // actor's direct grants
+      fake.queue([]); // actor's group memberships
+      const result = await addGroupMember({
+        orgId: "org-1",
+        groupId: "g1",
+        userId: "u1", // the acting principal's own user id
+        principal: userPrincipal,
+      });
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.code).toBe("grant_escalation");
+      expect(fake.queries.every((q) => q.kind !== "insert")).toBe(true);
+    });
+  });
+
+  test("addGroupMember allows an actor whose grants dominate the group's grants", async () => {
+    await withFakeDb(db, async (fake) => {
+      fake.queue([{ id: "g1", orgId: "org-1" }]); // group lookup
+      fake.queue([grantRow({ groupId: "g1", permission: "repository.read" })]); // group grants
+      // repository.write implies repository.read, so the actor dominates.
+      fake.queue([grantRow({ userId: "u1", permission: "repository.write" })]); // actor's direct grants
+      fake.queue([]); // actor's group memberships
+      fake.queue([{ id: "m1" }]); // org membership lookup
+      const result = await addGroupMember({
+        orgId: "org-1",
+        groupId: "g1",
+        userId: "u2",
+        principal: userPrincipal,
+      });
+      expect(result).toEqual({ ok: true });
+      expect(kinds(fake)).toBe("select,select,select,select,select,insert");
+    });
+  });
+
+  test("addGroupMember allows a system.admin actor, even for a system.admin group", async () => {
+    const adminGrant = grantRow({ userId: "admin-1", orgId: null, permission: "system.admin" });
+    await withFakeDb(db, async (fake) => {
+      fake.queue([{ id: "g1", orgId: "org-1" }]); // group lookup
+      fake.queue([
+        grantRow({ groupId: "g1", permission: "repository.write" }),
+        grantRow({ id: "pg-2", groupId: "g1", permission: "system.admin" }),
+      ]); // group grants
+      fake.queue([adminGrant]); // actor's direct grants (repository.write check)
+      fake.queue([]); // actor's group memberships (repository.write check)
+      fake.queue([adminGrant]); // actor's direct grants (system.admin check, system resource)
+      fake.queue([{ id: "m1" }]); // org membership lookup
+      const result = await addGroupMember({
+        orgId: "org-1",
+        groupId: "g1",
+        userId: "u2",
+        principal: adminPrincipal,
+      });
+      expect(result).toEqual({ ok: true });
+      expect(kinds(fake)).toBe("select,select,select,select,select,select,insert");
+    });
+  });
+
+  test("addGroupMember rejects non-user principals when the group holds grants", async () => {
+    await withFakeDb(db, async (fake) => {
+      fake.queue([{ id: "g1", orgId: "org-1" }]); // group lookup
+      fake.queue([grantRow({ groupId: "g1", permission: "repository.read" })]); // group grants
+      const result = await addGroupMember({
+        orgId: "org-1",
+        groupId: "g1",
+        userId: "u2",
+        principal: { kind: "anonymous" },
+      });
+      expect(result).toEqual({
+        ok: false,
+        code: "grant_escalation",
+        error:
+          "adding a member to this group would grant permissions beyond your own (login required)",
+      });
       expect(kinds(fake)).toBe("select,select");
     });
   });
 
+  // Removal only ever reduces access, so it intentionally has no domination check.
   test("removeGroupMember deletes the row", async () => {
     await withFakeDb(db, async (fake) => {
       await removeGroupMember("org-1", "g1", "u1");

@@ -22,6 +22,7 @@ import type { Principal } from "./principal";
 import { randomSecret } from "./secret";
 import { activeSessionsForUser } from "./sessions";
 import { validateAssignablePermissionGrants } from "./token-grants";
+import { permissionGrantToTokenGrant } from "./tokens";
 
 export type UserRow = typeof users.$inferSelect;
 export type GroupRow = typeof groups.$inferSelect;
@@ -218,28 +219,69 @@ export async function listGroupMembers(orgId: string, groupId: string) {
     .orderBy(desc(groupMemberships.createdAt));
 }
 
+export type AddGroupMemberResult =
+  | { ok: true }
+  | {
+      ok: false;
+      code: "group_not_found" | "user_not_member" | "grant_escalation";
+      error: string;
+    };
+
 export async function addGroupMember(input: {
   orgId: string;
   groupId: string;
   userId: string;
-}): Promise<"added" | "group_not_found" | "user_not_member"> {
-  return db.transaction(async (tx) => {
-    const [group] = await tx
-      .select({ id: groups.id })
-      .from(groups)
-      .where(and(eq(groups.id, input.groupId), eq(groups.orgId, input.orgId)))
-      .limit(1);
-    if (!group) return "group_not_found";
+  principal: Principal;
+}): Promise<AddGroupMemberResult> {
+  const group = await getGroupInOrg(input.orgId, input.groupId);
+  if (!group) return { ok: false, code: "group_not_found", error: "group not found" };
 
+  // Group membership conveys every grant the group holds, so adding a member
+  // is equivalent to assigning those grants directly. Require the acting
+  // principal to dominate the group's current grants using the same machinery
+  // as the grant-assignment path (replaceGroupGrants); otherwise a caller
+  // holding only group.member.manage could escalate by adding themselves (or
+  // anyone) to a higher-privileged group. allowSystemAdmin is set because we
+  // are checking existing grants rather than assigning new ones: a group that
+  // already holds system.admin may only gain members through an actor who
+  // holds system.admin themselves. Removing a member needs no such check — it
+  // only ever reduces access.
+  const groupGrants = await grantsForGroup(input.orgId, input.groupId);
+  if (groupGrants.length > 0) {
+    const validation = await validateAssignablePermissionGrants({
+      principal: input.principal,
+      orgId: input.orgId,
+      grants: groupGrants.map(permissionGrantToTokenGrant),
+      allowSystemAdmin: true,
+    });
+    if (!validation.ok) {
+      return {
+        ok: false,
+        code: "grant_escalation",
+        error: `adding a member to this group would grant permissions beyond your own (${validation.error})`,
+      };
+    }
+  }
+
+  return db.transaction(async (tx): Promise<AddGroupMemberResult> => {
     const [membership] = await tx
       .select({ id: memberships.id })
       .from(memberships)
       .where(and(eq(memberships.orgId, input.orgId), eq(memberships.userId, input.userId)))
       .limit(1);
-    if (!membership) return "user_not_member";
+    if (!membership) {
+      return {
+        ok: false,
+        code: "user_not_member",
+        error: "user is not a member of this organization",
+      };
+    }
 
-    await tx.insert(groupMemberships).values(input).onConflictDoNothing();
-    return "added";
+    await tx
+      .insert(groupMemberships)
+      .values({ orgId: input.orgId, groupId: input.groupId, userId: input.userId })
+      .onConflictDoNothing();
+    return { ok: true };
   });
 }
 

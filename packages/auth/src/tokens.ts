@@ -86,7 +86,9 @@ export async function createApiToken(
   return { token, secret };
 }
 
-function permissionGrantToTokenGrant(grant: typeof permissionGrants.$inferSelect): TokenGrant {
+export function permissionGrantToTokenGrant(
+  grant: typeof permissionGrants.$inferSelect,
+): TokenGrant {
   return {
     permission: grant.permission,
     ...(grant.repositoryPattern ? { repository: grant.repositoryPattern } : {}),
