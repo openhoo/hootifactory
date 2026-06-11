@@ -5,6 +5,7 @@ import {
   type ResourceRef,
 } from "@hootifactory/auth";
 import { env } from "@hootifactory/config";
+import { assertDigest } from "@hootifactory/core";
 import { artifacts, db, ne, scanOutbox } from "@hootifactory/db";
 import { addSpanEvent, logger, withSpan } from "@hootifactory/observability";
 import type {
@@ -47,6 +48,11 @@ export async function recordArtifactScanOutbox(
   repo: ResolvedRepo,
   input: EnqueueScanInput,
 ): Promise<{ artifactId: string } | null> {
+  // Defense-in-depth (issue #308): every current caller passes a server-computed
+  // digest, but asserting the canonical "sha256:<64-hex>" shape here makes it an
+  // invariant of the enqueue boundary — a malformed digest can never become an
+  // artifacts/scan_outbox row (the throw happens before the transaction opens).
+  assertDigest(input.digest);
   return db.transaction(async (tx) => {
     const [row] = await tx
       .insert(artifacts)

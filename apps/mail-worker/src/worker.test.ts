@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, mock, test } from "bun:test";
-import type { EmailJob } from "@hootifactory/email";
+import { type EmailJob, InvalidEmailJobError } from "@hootifactory/email";
 
 /**
  * worker.ts is the thin mail-worker entrypoint: initialize observability, read the
@@ -84,6 +84,17 @@ describe("mail worker entrypoint wiring", () => {
   test("routes each job through sendEmailOnce", async () => {
     await captured.runWorkerConfig?.handleJob?.(job);
     expect(captured.handledJobs).toEqual([job]);
+  });
+
+  test("fails a malformed payload with a readable error before it reaches sendEmailOnce", async () => {
+    const handled = captured.handledJobs.length;
+    // pg-boss job data is untrusted JSON: a payload missing its mandatory
+    // deliveryKey must fail the job (clear error), not start an SMTP send.
+    const malformed = { template: "password_reset", to: "user@example.com" } as EmailJob;
+    await expect(captured.runWorkerConfig?.handleJob?.(malformed)).rejects.toThrow(
+      InvalidEmailJobError,
+    );
+    expect(captured.handledJobs).toHaveLength(handled);
   });
 
   test("wires a shutdown hook to close the email transport", () => {
