@@ -19,9 +19,9 @@ import type {
   RegistryTagListOptions,
   RegistryTagListPage,
 } from "@hootifactory/registry";
-import { SHA256_PREFIX } from "@hootifactory/registry";
+import { Errors, SHA256_PREFIX } from "@hootifactory/registry";
 import { adjustArtifactsUsedTx, type Tx } from "../governance/quota";
-import { lockDigestTx } from "./blobs";
+import { lockDigestsTx, lockDigestTx } from "./blobs";
 
 export type ContentManifestRow = typeof contentManifests.$inferSelect;
 
@@ -239,11 +239,40 @@ export async function contentBlobRefExists(
  */
 export async function commitContentManifest(
   ctx: RegistryRequestContext,
-  opts: { manifest: UpsertContentManifestInput; packageId: string; tags: string[] },
+  opts: {
+    manifest: UpsertContentManifestInput;
+    packageId: string;
+    tags: string[];
+    /** If set, blob ref existence is re-asserted inside the commit transaction
+     *  under per-digest advisory locks, serializing against releaseBlobRef so a
+     *  concurrent manifest-delete cannot release these blobs before the new
+     *  manifest becomes visible. */
+    blobDigests?: { scope: string; digests: string[] };
+  },
 ): Promise<{ id: string; repositoryId: string; digest: string }> {
   const input = opts.manifest;
   return db.transaction(async (tx) => {
     await lockDigestTx(tx, manifestLockKey(ctx.repo.id, input.digest));
+
+    if (opts.blobDigests?.digests.length) {
+      const { scope, digests } = opts.blobDigests;
+      const sorted = [...new Set(digests)].sort();
+      await lockDigestsTx(tx, sorted);
+      const present = await tx
+        .select({ digest: blobRefs.digest })
+        .from(blobRefs)
+        .where(
+          and(
+            eq(blobRefs.repositoryId, ctx.repo.id),
+            eq(blobRefs.scope, scope),
+            inArray(blobRefs.digest, sorted),
+          ),
+        );
+      const have = new Set(present.map((r) => r.digest));
+      const missing = sorted.filter((d) => !have.has(d));
+      if (missing.length > 0) throw Errors.manifestBlobUnknown({ missing });
+    }
+
     const [manifest] = await tx
       .insert(contentManifests)
       .values({
