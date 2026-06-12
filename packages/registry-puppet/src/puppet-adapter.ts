@@ -1,10 +1,10 @@
 import {
   createRegistryAdapterPlugin,
+  jsonResponseWithEtag,
   type RegistryMetadata,
   type RegistryRequestContext,
   registryAdapter,
   serveVersionBlob,
-  textResponseWithEtag,
 } from "@hootifactory/registry";
 import { puppetBadRequest, puppetNotFound } from "./puppet-errors";
 import {
@@ -70,7 +70,7 @@ class PuppetAdapterState {
       url: this.urlContext(ctx),
     });
     if (!object) return puppetNotFound(`module ${slug.slug} not found`);
-    return textResponseWithEtag(req, JSON.stringify(object), {
+    return jsonResponseWithEtag(req, object, {
       "content-type": PUPPET_JSON_CONTENT_TYPE,
     });
   }
@@ -91,7 +91,7 @@ class PuppetAdapterState {
       meta,
       url: this.urlContext(ctx),
     });
-    return textResponseWithEtag(req, JSON.stringify(object), {
+    return jsonResponseWithEtag(req, object, {
       "content-type": PUPPET_JSON_CONTENT_TYPE,
     });
   }
@@ -129,7 +129,7 @@ class PuppetAdapterState {
       basePath: `/${ctx.repo.mountPath}/v3/releases?module=${slug.slug}`,
       url: this.urlContext(ctx),
     });
-    return textResponseWithEtag(req, JSON.stringify(body), {
+    return jsonResponseWithEtag(req, body, {
       "content-type": PUPPET_JSON_CONTENT_TYPE,
     });
   }

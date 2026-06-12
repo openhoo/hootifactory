@@ -2,8 +2,8 @@ import {
   bytesResponseWithEtag,
   createRegistryAdapterPlugin,
   Errors,
-  parseRegistryInput,
   type RegistryRequestContext,
+  type RegistryRouteParamSpec,
   registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
@@ -21,6 +21,12 @@ import { buildArtifactsXml, buildContentXml, zipSingleEntry } from "./p2-xml";
 const XML_HEADERS = { "content-type": "application/xml; charset=utf-8" } as const;
 const JAR_HEADERS = { "content-type": "application/java-archive" } as const;
 const TEXT_HEADERS = { "content-type": "text/plain; charset=utf-8" } as const;
+
+const jarFilenameParam: RegistryRouteParamSpec = {
+  schema: JarFilenameSchema,
+  code: "NAME_INVALID",
+  message: "invalid jar filename",
+};
 
 // The `p2.index` property document: pins the `.xml`-first factory order so a
 // director reads content.xml/artifacts.xml directly and skips the exhaustive
@@ -87,14 +93,10 @@ class P2AdapterState {
   /** `GET /plugins/<file>` or `/features/<file>` — serve a stored jar blob. */
   async download(
     kind: P2ArtifactKind,
-    filenameRaw: string | undefined,
+    filename: string,
     req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
-    const filename = parseRegistryInput(JarFilenameSchema, filenameRaw ?? "", {
-      code: "NAME_INVALID",
-      message: "invalid jar filename",
-    });
     const scope = p2JarScope(kind, filename);
     const asset = await ctx.data.assets.findByScope({ role: P2_JAR_KIND, scope });
     if (!asset) throw Errors.notFound();
@@ -176,9 +178,11 @@ const p2Definition = registryAdapter("p2")
       .calls((state, { req, ctx }) => state.artifactsXml(true, req, ctx)),
     route
       .get("/plugins/:filename", "downloadBundle")
+      .params({ filename: jarFilenameParam })
       .calls((state, { params, req, ctx }) => state.download("bundle", params.filename, req, ctx)),
     route
       .get("/features/:filename", "downloadFeature")
+      .params({ filename: jarFilenameParam })
       .calls((state, { params, req, ctx }) => state.download("feature", params.filename, req, ctx)),
     route
       .put("/plugins/:filename", "publishBundle")

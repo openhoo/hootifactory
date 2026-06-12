@@ -1,8 +1,8 @@
 import {
   digestHex,
+  jsonResponseWithEtag,
   type RegistryRequestContext,
   serveRegistryBlob,
-  textResponseWithEtag,
 } from "@hootifactory/registry";
 import { parseTerraformProviderPublishRequest } from "./terraform-publish";
 import {
@@ -73,9 +73,7 @@ export async function listProviderVersions(
       platforms: meta.platforms.map((platform) => ({ os: platform.os, arch: platform.arch })),
     })),
   };
-  return textResponseWithEtag(req, JSON.stringify(body), {
-    "content-type": "application/json; charset=utf-8",
-  });
+  return jsonResponseWithEtag(req, body);
 }
 
 /**
@@ -117,9 +115,7 @@ export async function providerDownloadInfo(
       })),
     };
   }
-  return textResponseWithEtag(req, JSON.stringify(doc), {
-    "content-type": "application/json; charset=utf-8",
-  });
+  return jsonResponseWithEtag(req, doc);
 }
 
 /** `GET /v1/providers/:namespace/:type/:version/download/:os/:arch/zip` — serve the plugin zip. */

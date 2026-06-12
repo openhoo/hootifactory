@@ -1,4 +1,7 @@
-import { publishImmutableVersionBlob, type RegistryRequestContext } from "@hootifactory/registry";
+import {
+  publishImmutableVersionBlobMapped,
+  type RegistryRequestContext,
+} from "@hootifactory/registry";
 import { buildAlpineVersionMeta } from "./alpine-meta";
 import {
   apkFilename,
@@ -86,7 +89,7 @@ export async function handleAlpinePublish(
   const scope = alpineBlobScope(arch, filename);
   const versionKey = alpineVersionKey(arch, info.version);
 
-  const result = await publishImmutableVersionBlob(ctx, {
+  return publishImmutableVersionBlobMapped<AlpinePublishResult>(ctx, {
     package: { name: info.name },
     version: versionKey,
     kind: ALPINE_APK_KIND,
@@ -120,13 +123,10 @@ export async function handleAlpinePublish(
     // `.apk` artifacts are immutable: a re-publish of an existing (arch, version)
     // conflicts, but the same version under a different arch is allowed.
     versionConflict: (pkg) => ctx.data.versions.exists(pkg, versionKey),
+    conflict: () => ({ status: 409, body: { error: "version already exists" } }),
+    success: () => ({
+      status: 201,
+      body: { ok: true, name: info.name, version: info.version, arch },
+    }),
   });
-
-  if (!result.ok) {
-    return { status: 409, body: { error: "version already exists" } };
-  }
-  return {
-    status: 201,
-    body: { ok: true, name: info.name, version: info.version, arch },
-  };
 }

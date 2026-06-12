@@ -1,8 +1,8 @@
 import {
   createRegistryAdapterPlugin,
   Errors,
-  parseRegistryInput,
   type RegistryRequestContext,
+  type RegistryRouteParamSpec,
   registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
@@ -23,19 +23,17 @@ import {
   readCargoIndexEntry,
 } from "./cargo-validation";
 
-function parseCrateName(crate: string): string {
-  return parseRegistryInput(CargoCrateNameSchema, crate, {
-    code: "NAME_INVALID",
-    message: "invalid crate name",
-  });
-}
+const crateParam: RegistryRouteParamSpec = {
+  schema: CargoCrateNameSchema,
+  code: "NAME_INVALID",
+  message: "invalid crate name",
+};
 
-function parseCrateVersion(version: string): string {
-  return parseRegistryInput(CargoVersionSchema, version, {
-    code: "MANIFEST_INVALID",
-    message: "invalid crate version",
-  });
-}
+const versionParam: RegistryRouteParamSpec = {
+  schema: CargoVersionSchema,
+  code: "MANIFEST_INVALID",
+  message: "invalid crate version",
+};
 
 /** Cargo sparse registry: config.json, sharded index, publish + download. */
 class CargoAdapterState {
@@ -44,10 +42,6 @@ class CargoAdapterState {
   }
 
   async index(path: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
-    path = parseRegistryInput(CargoIndexPathSchema, path, {
-      code: "NAME_INVALID",
-      message: "invalid cargo index path",
-    });
     const name = (path.split("/").pop() ?? "").toLowerCase();
     // The request path must equal the canonical sparse-index shard for the crate.
     if (path !== cargoIndexPath(name)) return new Response("", { status: 404 });
@@ -72,8 +66,7 @@ class CargoAdapterState {
     // The sparse index advertises the original-case crate name, so cargo requests
     // the download with that casing. Publish stores both the package record and the
     // blob scope lowercased, so we must canonicalize here to match (see #219).
-    const lower = parseCrateName(crate).toLowerCase();
-    version = parseCrateVersion(version);
+    const lower = crate.toLowerCase();
     const pkg = await this.findCrate(ctx, lower);
     if (!pkg) throw Errors.notFound();
     const v = await ctx.data.versions.findLive(pkg, version);
@@ -96,8 +89,6 @@ class CargoAdapterState {
     yanked: boolean,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
-    crate = parseCrateName(crate);
-    version = parseCrateVersion(version);
     const pkg = await this.findCrate(ctx, crate);
     if (!pkg) throw Errors.notFound();
     const v = await ctx.data.versions.findLive(pkg, version);
@@ -112,7 +103,7 @@ class CargoAdapterState {
   }
 
   async listOwners(crate: string, ctx: RegistryRequestContext): Promise<Response> {
-    crate = parseCrateName(crate).toLowerCase();
+    crate = crate.toLowerCase();
     const pkg = await this.findCrate(ctx, crate);
     if (!pkg) throw Errors.notFound();
     const rows = await ctx.data.versions.listPublishers(pkg);
@@ -125,7 +116,7 @@ class CargoAdapterState {
     action: "add" | "remove",
     ctx: RegistryRequestContext,
   ): Promise<Response> {
-    crate = parseCrateName(crate).toLowerCase();
+    crate = crate.toLowerCase();
     const pkg = await this.findCrate(ctx, crate);
     if (!pkg) throw Errors.notFound();
     const body = await parseCargoOwnersRequest(req);
@@ -184,26 +175,39 @@ const cargoDefinition = registryAdapter("cargo")
       .calls((state, { req, ctx }) => state.publish(req, ctx)),
     route
       .get("/api/v1/crates/:crate/:version/download", "download")
+      .params({ crate: crateParam, version: versionParam })
       .calls((state, { params, req, ctx }) =>
         state.download(params.crate, params.version, req, ctx),
       ),
     route
       .delete("/api/v1/crates/:crate/:version/yank", "yank")
+      .params({ crate: crateParam, version: versionParam })
       .calls((state, { params, ctx }) => state.setYank(params.crate, params.version, true, ctx)),
     route
       .put("/api/v1/crates/:crate/:version/unyank", "unyank")
+      .params({ crate: crateParam, version: versionParam })
       .calls((state, { params, ctx }) => state.setYank(params.crate, params.version, false, ctx)),
     route
       .get("/api/v1/crates/:crate/owners", "ownersList")
+      .params({ crate: crateParam })
       .calls((state, { params, ctx }) => state.listOwners(params.crate, ctx)),
     route
       .put("/api/v1/crates/:crate/owners", "ownersAdd")
+      .params({ crate: crateParam })
       .calls((state, { params, req, ctx }) => state.updateOwners(params.crate, req, "add", ctx)),
     route
       .delete("/api/v1/crates/:crate/owners", "ownersRemove")
+      .params({ crate: crateParam })
       .calls((state, { params, req, ctx }) => state.updateOwners(params.crate, req, "remove", ctx)),
     route
       .get("/:path+", "index")
+      .params({
+        path: {
+          schema: CargoIndexPathSchema,
+          code: "NAME_INVALID",
+          message: "invalid cargo index path",
+        },
+      })
       .calls((state, { params, req, ctx }) => state.index(params.path, req, ctx)),
   ]);
 

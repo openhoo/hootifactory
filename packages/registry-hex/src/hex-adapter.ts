@@ -1,11 +1,11 @@
 import {
   createRegistryAdapterPlugin,
-  parseRegistryInput,
+  jsonResponseWithEtag,
   type RegistryRequestContext,
+  type RegistryRouteParamSpec,
   registryAdapter,
   registryErrorResponseForKind,
   serveVersionBlob,
-  textResponseWithEtag,
 } from "@hootifactory/registry";
 import {
   buildHexApiPackage,
@@ -25,19 +25,17 @@ import {
 
 const JSON_CONTENT_TYPE = "application/json; charset=utf-8";
 
-function parseHexName(name: string): string {
-  return parseRegistryInput(HexPackageNameSchema, name, {
-    code: "NAME_INVALID",
-    message: "invalid Hex package name",
-  });
-}
+const nameParam: RegistryRouteParamSpec = {
+  schema: HexPackageNameSchema,
+  code: "NAME_INVALID",
+  message: "invalid Hex package name",
+};
 
-function parseHexVersion(version: string): string {
-  return parseRegistryInput(HexVersionSchema, version, {
-    code: "MANIFEST_INVALID",
-    message: "invalid release version",
-  });
-}
+const versionParam: RegistryRouteParamSpec = {
+  schema: HexVersionSchema,
+  code: "MANIFEST_INVALID",
+  message: "invalid release version",
+};
 
 function jsonNotFound(message: string): Response {
   // Match the plugin's `singleError` envelope (`{ error }`) so 404s stay
@@ -74,7 +72,7 @@ class HexAdapterState {
   async names(req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const names = await ctx.data.packages.listNames();
     const sorted = [...names].map((n) => n.name).sort((a, b) => a.localeCompare(b));
-    return textResponseWithEtag(req, JSON.stringify(buildHexNamesResource(sorted)), {
+    return jsonResponseWithEtag(req, buildHexNamesResource(sorted), {
       "content-type": JSON_CONTENT_TYPE,
     });
   }
@@ -90,30 +88,32 @@ class HexAdapterState {
         packages.push({ name, versions: releases.map((r) => r.version) });
       }
     }
-    return textResponseWithEtag(req, JSON.stringify({ packages }), {
-      "content-type": JSON_CONTENT_TYPE,
-    });
+    return jsonResponseWithEtag(
+      req,
+      { packages },
+      {
+        "content-type": JSON_CONTENT_TYPE,
+      },
+    );
   }
 
   /** `GET /packages/:name` — the package's release list (JSON simplification). */
   async packageResource(
-    nameRaw: string,
+    name: string,
     req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
-    const name = parseHexName(nameRaw);
     const releases = await this.storedReleases(name, ctx);
     if (!releases || releases.length === 0) return jsonNotFound(`package ${name} not found`);
-    return textResponseWithEtag(
+    return jsonResponseWithEtag(
       req,
-      JSON.stringify(buildHexPackageResource({ name, releases, repoName: ctx.repo.name })),
+      buildHexPackageResource({ name, releases, repoName: ctx.repo.name }),
       { "content-type": JSON_CONTENT_TYPE },
     );
   }
 
   /** `GET /api/packages/:name` — HTTP API package metadata + release refs. */
-  async apiPackage(nameRaw: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
-    const name = parseHexName(nameRaw);
+  async apiPackage(name: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const releases = await this.storedReleases(name, ctx);
     if (!releases || releases.length === 0) return jsonNotFound(`package ${name} not found`);
     const body = buildHexApiPackage({
@@ -123,20 +123,18 @@ class HexAdapterState {
       mountPath: ctx.repo.mountPath,
       repoName: ctx.repo.name,
     });
-    return textResponseWithEtag(req, JSON.stringify(body), {
+    return jsonResponseWithEtag(req, body, {
       "content-type": JSON_CONTENT_TYPE,
     });
   }
 
   /** `GET /api/packages/:name/releases/:version` — HTTP API single-release metadata. */
   async apiRelease(
-    nameRaw: string,
-    versionRaw: string,
+    name: string,
+    version: string,
     req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
-    const name = parseHexName(nameRaw);
-    const version = parseHexVersion(versionRaw);
     const pkg = await ctx.data.packages.findByName(name);
     if (!pkg) return jsonNotFound(`package ${name} not found`);
     const row = await ctx.data.versions.findLive(pkg, version);
@@ -149,21 +147,13 @@ class HexAdapterState {
       baseUrl: ctx.baseUrl,
       mountPath: ctx.repo.mountPath,
     });
-    return textResponseWithEtag(req, JSON.stringify(body), {
+    return jsonResponseWithEtag(req, body, {
       "content-type": JSON_CONTENT_TYPE,
     });
   }
 
   /** `GET /tarballs/<name>-<version>.tar` — serve the hosted release tarball blob. */
-  async download(
-    filenameRaw: string,
-    req: Request,
-    ctx: RegistryRequestContext,
-  ): Promise<Response> {
-    const filename = parseRegistryInput(HexTarballFilenameSchema, filenameRaw, {
-      code: "NAME_INVALID",
-      message: "invalid tarball filename",
-    });
+  async download(filename: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const split = splitTarballFile(filename);
     if (!split) return jsonNotFound("tarball not found");
     return serveVersionBlob(ctx, {
@@ -255,17 +245,27 @@ const hexDefinition = registryAdapter("hex")
     // the `/api/packages/:name` route in the (ordered) match table.
     route
       .get("/api/packages/:name/releases/:version", "apiRelease")
+      .params({ name: nameParam, version: versionParam })
       .calls((state, { params, req, ctx }) =>
         state.apiRelease(params.name, params.version, req, ctx),
       ),
     route
       .get("/api/packages/:name", "apiPackage")
+      .params({ name: nameParam })
       .calls((state, { params, req, ctx }) => state.apiPackage(params.name, req, ctx)),
     route
       .get("/tarballs/:filename", "download")
+      .params({
+        filename: {
+          schema: HexTarballFilenameSchema,
+          code: "NAME_INVALID",
+          message: "invalid tarball filename",
+        },
+      })
       .calls((state, { params, req, ctx }) => state.download(params.filename, req, ctx)),
     route
       .get("/packages/:name", "packageResource")
+      .params({ name: nameParam })
       .calls((state, { params, req, ctx }) => state.packageResource(params.name, req, ctx)),
   ]);
 

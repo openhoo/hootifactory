@@ -1,6 +1,6 @@
 import {
   digestHex,
-  publishImmutableVersionBlob,
+  publishImmutableVersionBlobResponse,
   type RegistryRequestContext,
 } from "@hootifactory/registry";
 import { parseScoopPublishRequest } from "./scoop-publish";
@@ -24,7 +24,7 @@ export async function handleScoopPublish(
   const version = manifest.version;
   const scope = scoopBlobScope(app, version, filename);
 
-  const result = await publishImmutableVersionBlob(ctx, {
+  return publishImmutableVersionBlobResponse(ctx, {
     package: { name: app },
     version,
     kind: "scoop_artifact",
@@ -56,9 +56,7 @@ export async function handleScoopPublish(
     }),
     // Scoop artifacts are immutable: a re-publish of an existing version conflicts.
     versionConflict: (pkg) => ctx.data.versions.exists(pkg, version),
+    conflictResponse: () => Response.json({ error: "version already exists" }, { status: 409 }),
+    successResponse: () => Response.json({ ok: true, app, version }, { status: 201 }),
   });
-  if (!result.ok) {
-    return Response.json({ error: "version already exists" }, { status: 409 });
-  }
-  return Response.json({ ok: true, app, version }, { status: 201 });
 }

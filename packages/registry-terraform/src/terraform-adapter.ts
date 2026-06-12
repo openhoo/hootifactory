@@ -1,11 +1,11 @@
 import {
   createRegistryAdapterPlugin,
-  parseRegistryInput,
+  jsonResponseWithEtag,
   type RegistryAppRoute,
   type RegistryAppRouteContext,
   type RegistryRequestContext,
+  type RegistryRouteParamSpec,
   registryAdapter,
-  textResponseWithEtag,
 } from "@hootifactory/registry";
 import {
   listModuleVersions,
@@ -35,26 +35,23 @@ import {
 
 const MOUNT_SEGMENT = "terraform";
 
-function parseIdentifier(value: string): string {
-  return parseRegistryInput(TerraformIdentifierSchema, value, {
-    code: "NAME_INVALID",
-    message: "invalid Terraform identifier",
-  });
-}
+const identifierParam: RegistryRouteParamSpec = {
+  schema: TerraformIdentifierSchema,
+  code: "NAME_INVALID",
+  message: "invalid Terraform identifier",
+};
 
-function parseVersion(value: string): string {
-  return parseRegistryInput(TerraformVersionSchema, value, {
-    code: "MANIFEST_INVALID",
-    message: "invalid Terraform version",
-  });
-}
+const versionParam: RegistryRouteParamSpec = {
+  schema: TerraformVersionSchema,
+  code: "MANIFEST_INVALID",
+  message: "invalid Terraform version",
+};
 
-function parsePlatformToken(value: string): string {
-  return parseRegistryInput(TerraformPlatformTokenSchema, value, {
-    code: "NAME_INVALID",
-    message: "invalid platform token",
-  });
-}
+const platformParam: RegistryRouteParamSpec = {
+  schema: TerraformPlatformTokenSchema,
+  code: "NAME_INVALID",
+  message: "invalid platform token",
+};
 
 function discoveryResponse(mountPath: string): Response {
   return new Response(JSON.stringify(buildTerraformDiscoveryDoc(mountPath)), {
@@ -98,9 +95,7 @@ export function terraformAppRoutes(): RegistryAppRoute[] {
  * same full mount path the download / archive URL builders already use.
  */
 export function serveTerraformDiscoveryDoc(req: Request, ctx: RegistryRequestContext): Response {
-  return textResponseWithEtag(req, JSON.stringify(buildTerraformDiscoveryDoc(ctx.repo.mountPath)), {
-    "content-type": "application/json; charset=utf-8",
-  });
+  return jsonResponseWithEtag(req, buildTerraformDiscoveryDoc(ctx.repo.mountPath));
 }
 
 /**
@@ -116,13 +111,7 @@ class TerraformAdapterState {
     req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
-    return listModuleVersions(
-      parseIdentifier(params.namespace),
-      parseIdentifier(params.name),
-      parseIdentifier(params.system),
-      req,
-      ctx,
-    );
+    return listModuleVersions(params.namespace, params.name, params.system, req, ctx);
   }
 
   moduleArchive(
@@ -131,10 +120,10 @@ class TerraformAdapterState {
     ctx: RegistryRequestContext,
   ): Promise<Response> {
     return serveModuleArchive(
-      parseIdentifier(params.namespace),
-      parseIdentifier(params.name),
-      parseIdentifier(params.system),
-      parseVersion(params.version),
+      params.namespace,
+      params.name,
+      params.system,
+      params.version,
       req,
       ctx,
     );
@@ -145,10 +134,10 @@ class TerraformAdapterState {
     ctx: RegistryRequestContext,
   ): Promise<Response> {
     return moduleDownloadRedirect(
-      parseIdentifier(params.namespace),
-      parseIdentifier(params.name),
-      parseIdentifier(params.system),
-      parseVersion(params.version),
+      params.namespace,
+      params.name,
+      params.system,
+      params.version,
       ctx,
     );
   }
@@ -158,13 +147,7 @@ class TerraformAdapterState {
     req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
-    return publishModuleVersion(
-      parseIdentifier(params.namespace),
-      parseIdentifier(params.name),
-      parseIdentifier(params.system),
-      req,
-      ctx,
-    );
+    return publishModuleVersion(params.namespace, params.name, params.system, req, ctx);
   }
 
   // ── provider handlers ───────────────────────────────────────────────────────
@@ -174,12 +157,7 @@ class TerraformAdapterState {
     req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
-    return listProviderVersions(
-      parseIdentifier(params.namespace),
-      parseIdentifier(params.type),
-      req,
-      ctx,
-    );
+    return listProviderVersions(params.namespace, params.type, req, ctx);
   }
 
   providerDownload(
@@ -188,11 +166,11 @@ class TerraformAdapterState {
     ctx: RegistryRequestContext,
   ): Promise<Response> {
     return providerDownloadInfo(
-      parseIdentifier(params.namespace),
-      parseIdentifier(params.type),
-      parseVersion(params.version),
-      parsePlatformToken(params.os),
-      parsePlatformToken(params.arch),
+      params.namespace,
+      params.type,
+      params.version,
+      params.os,
+      params.arch,
       req,
       ctx,
     );
@@ -204,11 +182,11 @@ class TerraformAdapterState {
     ctx: RegistryRequestContext,
   ): Promise<Response> {
     return serveProviderZip(
-      parseIdentifier(params.namespace),
-      parseIdentifier(params.type),
-      parseVersion(params.version),
-      parsePlatformToken(params.os),
-      parsePlatformToken(params.arch),
+      params.namespace,
+      params.type,
+      params.version,
+      params.os,
+      params.arch,
       req,
       ctx,
     );
@@ -219,13 +197,7 @@ class TerraformAdapterState {
     req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
-    return serveProviderShasums(
-      parseIdentifier(params.namespace),
-      parseIdentifier(params.type),
-      parseVersion(params.version),
-      req,
-      ctx,
-    );
+    return serveProviderShasums(params.namespace, params.type, params.version, req, ctx);
   }
 
   providerShasumsSig(
@@ -233,13 +205,7 @@ class TerraformAdapterState {
     req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
-    return serveProviderShasumsSignature(
-      parseIdentifier(params.namespace),
-      parseIdentifier(params.type),
-      parseVersion(params.version),
-      req,
-      ctx,
-    );
+    return serveProviderShasumsSignature(params.namespace, params.type, params.version, req, ctx);
   }
 
   providerPublish(
@@ -247,12 +213,7 @@ class TerraformAdapterState {
     req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
-    return publishProviderVersion(
-      parseIdentifier(params.namespace),
-      parseIdentifier(params.type),
-      req,
-      ctx,
-    );
+    return publishProviderVersion(params.namespace, params.type, req, ctx);
   }
 }
 
@@ -312,34 +273,66 @@ const terraformDefinition = registryAdapter("terraform")
     // ── module protocol ──────────────────────────────────────────────────
     route
       .get("/v1/modules/:namespace/:name/:system/versions", "moduleVersions")
+      .params({ namespace: identifierParam, name: identifierParam, system: identifierParam })
       .calls((state, { params, req, ctx }) => state.moduleVersions(params, req, ctx)),
     route
       .get("/v1/modules/:namespace/:name/:system/:version/archive", "moduleArchive")
+      .params({
+        namespace: identifierParam,
+        name: identifierParam,
+        system: identifierParam,
+        version: versionParam,
+      })
       .calls((state, { params, req, ctx }) => state.moduleArchive(params, req, ctx)),
     route
       .get("/v1/modules/:namespace/:name/:system/:version/download", "moduleDownload")
+      .params({
+        namespace: identifierParam,
+        name: identifierParam,
+        system: identifierParam,
+        version: versionParam,
+      })
       .calls((state, { params, ctx }) => state.moduleDownload(params, ctx)),
     route
       .put("/v1/modules/:namespace/:name/:system", "modulePublish")
+      .params({ namespace: identifierParam, name: identifierParam, system: identifierParam })
       .calls((state, { params, req, ctx }) => state.modulePublish(params, req, ctx)),
     // ── provider protocol ────────────────────────────────────────────────
     route
       .get("/v1/providers/:namespace/:type/versions", "providerVersions")
+      .params({ namespace: identifierParam, type: identifierParam })
       .calls((state, { params, req, ctx }) => state.providerVersions(params, req, ctx)),
     route
       .get("/v1/providers/:namespace/:type/:version/download/:os/:arch/zip", "providerZip")
+      .params({
+        namespace: identifierParam,
+        type: identifierParam,
+        version: versionParam,
+        os: platformParam,
+        arch: platformParam,
+      })
       .calls((state, { params, req, ctx }) => state.providerZip(params, req, ctx)),
     route
       .get("/v1/providers/:namespace/:type/:version/download/:os/:arch", "providerDownload")
+      .params({
+        namespace: identifierParam,
+        type: identifierParam,
+        version: versionParam,
+        os: platformParam,
+        arch: platformParam,
+      })
       .calls((state, { params, req, ctx }) => state.providerDownload(params, req, ctx)),
     route
       .get("/v1/providers/:namespace/:type/:version/shasums", "providerShasums")
+      .params({ namespace: identifierParam, type: identifierParam, version: versionParam })
       .calls((state, { params, req, ctx }) => state.providerShasums(params, req, ctx)),
     route
       .get("/v1/providers/:namespace/:type/:version/shasums.sig", "providerShasumsSig")
+      .params({ namespace: identifierParam, type: identifierParam, version: versionParam })
       .calls((state, { params, req, ctx }) => state.providerShasumsSig(params, req, ctx)),
     route
       .put("/v1/providers/:namespace/:type", "providerPublish")
+      .params({ namespace: identifierParam, type: identifierParam })
       .calls((state, { params, req, ctx }) => state.providerPublish(params, req, ctx)),
   ]);
 

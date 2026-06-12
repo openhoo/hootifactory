@@ -9,6 +9,7 @@ import {
   type RegistryPackageHandle,
   type RegistryPackageVersionRow,
   type RegistryRequestContext,
+  type RegistryRouteParamSpec,
   type RegistryVirtualSearchInput,
   type RouteMatch,
   registryAdapter,
@@ -49,6 +50,12 @@ function parseNpmName(name: string): string {
     message: "invalid package name",
   });
 }
+
+const tarballFilenameParam: RegistryRouteParamSpec = {
+  schema: NpmTarballFilenameSchema,
+  code: "NAME_INVALID",
+  message: "invalid tarball filename",
+};
 
 const PACKUMENT_CONTENT_TYPE = "application/json; charset=utf-8";
 const PACKUMENT_CACHE_MAX_ENTRIES = 512;
@@ -215,10 +222,6 @@ class NpmAdapterState {
     ctx: RegistryRequestContext,
   ): Promise<Response> {
     name = parseNpmName(name);
-    filename = parseRegistryInput(NpmTarballFilenameSchema, filename, {
-      code: "NAME_INVALID",
-      message: "invalid tarball filename",
-    });
     const pkg = await this.findPackage(ctx, name);
     if (!pkg) throw Errors.notFound();
     const distVersion = versionFromTarballFilename(name, filename);
@@ -418,6 +421,7 @@ const npmDefinition = registryAdapter("npm")
       .calls((state, { params, ctx }) => state.distTagDelete(params.pkg, params.tag, ctx)),
     route
       .get("/:pkg+/-/:filename", "tarball")
+      .params({ filename: tarballFilenameParam })
       .calls((state, { params, req, ctx }) => state.tarball(params.pkg, params.filename, req, ctx)),
     route
       .put("/:pkg+", "publish")

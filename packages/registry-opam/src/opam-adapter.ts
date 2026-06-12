@@ -4,6 +4,7 @@ import {
   Errors,
   parseRegistryInput,
   type RegistryRequestContext,
+  type RegistryRouteParamSpec,
   registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
@@ -25,12 +26,23 @@ import {
   parseOpamVersionMeta,
 } from "./opam-validation";
 
-function parsePackageName(name: string): string {
-  return parseRegistryInput(OpamPackageNameSchema, name, {
-    code: "NAME_INVALID",
-    message: "invalid opam package name",
-  });
-}
+const packageNameParam: RegistryRouteParamSpec = {
+  schema: OpamPackageNameSchema,
+  code: "NAME_INVALID",
+  message: "invalid opam package name",
+};
+
+const versionParam: RegistryRouteParamSpec = {
+  schema: OpamVersionSchema,
+  code: "MANIFEST_INVALID",
+  message: "invalid opam version",
+};
+
+const archiveFilenameParam: RegistryRouteParamSpec = {
+  schema: OpamArchiveFilenameSchema,
+  code: "NAME_INVALID",
+  message: "invalid archive filename",
+};
 
 function parseVersion(version: string): string {
   return parseRegistryInput(OpamVersionSchema, version, {
@@ -56,12 +68,11 @@ class OpamAdapterState {
 
   /** `GET /packages/<pkg>/<pkg>.<version>/opam` — the individual opam file. */
   async opamFile(
-    pkgRaw: string,
+    pkg: string,
     nvRaw: string,
     req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
-    const pkg = parsePackageName(pkgRaw);
     // The `<name>.<version>` directory segment must start with `<pkg>.`.
     const prefix = `${pkg}.`;
     if (!nvRaw.startsWith(prefix) || nvRaw.length === prefix.length) throw Errors.notFound();
@@ -78,18 +89,12 @@ class OpamAdapterState {
 
   /** `GET /archives/<name>/<version>/<filename>` — serve the hosted source archive. */
   async archive(
-    nameRaw: string,
-    versionRaw: string,
-    filenameRaw: string,
+    name: string,
+    version: string,
+    filename: string,
     req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
-    const name = parsePackageName(nameRaw);
-    const version = parseVersion(versionRaw);
-    const filename = parseRegistryInput(OpamArchiveFilenameSchema, filenameRaw, {
-      code: "NAME_INVALID",
-      message: "invalid archive filename",
-    });
     const pkg = await ctx.data.packages.findByName(name);
     if (!pkg) return new Response("Not Found", { status: 404 });
     const row = await ctx.data.versions.findLive(pkg, version);
@@ -183,9 +188,11 @@ const opamDefinition = registryAdapter("opam")
     route.get("/index.tar.gz", "index").calls((state, { req, ctx }) => state.index(req, ctx)),
     route
       .get("/packages/:pkg/:nv/opam", "opamFile")
+      .params({ pkg: packageNameParam })
       .calls((state, { params, req, ctx }) => state.opamFile(params.pkg, params.nv, req, ctx)),
     route
       .get("/archives/:name/:version/:filename", "archive")
+      .params({ name: packageNameParam, version: versionParam, filename: archiveFilenameParam })
       .calls((state, { params, req, ctx }) =>
         state.archive(params.name, params.version, params.filename, req, ctx),
       ),

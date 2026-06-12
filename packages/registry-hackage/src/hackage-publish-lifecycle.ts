@@ -1,6 +1,6 @@
 import {
   digestHex,
-  publishImmutableVersionBlob,
+  publishImmutableVersionBlobResponse,
   type RegistryRequestContext,
 } from "@hootifactory/registry";
 import { buildHackageVersionMeta } from "./hackage-metadata";
@@ -26,7 +26,7 @@ export async function handleHackagePublish(
   const { name, version, cabal, fields, sdist } = parsed.plan;
   const scope = hackageBlobScope(name, version);
 
-  const result = await publishImmutableVersionBlob(ctx, {
+  return publishImmutableVersionBlobResponse(ctx, {
     package: { name },
     version,
     kind: "hackage_sdist",
@@ -54,9 +54,8 @@ export async function handleHackagePublish(
     }),
     // Hackage releases are immutable: a re-publish of an existing version conflicts.
     versionConflict: (pkg) => ctx.data.versions.exists(pkg, version),
+    conflictResponse: () => Response.json({ error: "version already exists" }, { status: 409 }),
+    successResponse: () =>
+      Response.json({ ok: true, package: `${name}-${version}` }, { status: 201 }),
   });
-  if (!result.ok) {
-    return Response.json({ error: "version already exists" }, { status: 409 });
-  }
-  return Response.json({ ok: true, package: `${name}-${version}` }, { status: 201 });
 }

@@ -6,6 +6,7 @@ import {
   parseRegistryInput,
   type RegistryAssetRow,
   type RegistryRequestContext,
+  type RegistryRouteParamSpec,
   registryAdapter,
   repoResponseCache,
   serveAssetBlob,
@@ -25,6 +26,17 @@ import {
 const TEXT_PLAIN = { "content-type": "text/plain; charset=utf-8" } as const;
 const SNAPSHOT_TTL_MS = 5_000;
 
+const suiteParam: RegistryRouteParamSpec = {
+  schema: SuiteSchema,
+  code: "NAME_INVALID",
+  message: "invalid suite",
+};
+
+const componentParam: RegistryRouteParamSpec = {
+  schema: ComponentSchema,
+  code: "NAME_INVALID",
+  message: "invalid component",
+};
 /** APT (Debian): pool upload/download + generated Release/Packages indexes. */
 class AptAdapterState {
   readonly snapshotCache = repoResponseCache<AptSnapshot>({ ttlMs: SNAPSHOT_TTL_MS });
@@ -65,11 +77,7 @@ class AptAdapterState {
   }
 
   async release(suite: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
-    const validSuite = parseRegistryInput(SuiteSchema, suite, {
-      code: "NAME_INVALID",
-      message: "invalid suite",
-    });
-    const snapshot = await this.snapshot(ctx, validSuite);
+    const snapshot = await this.snapshot(ctx, suite);
     return textResponseWithEtag(req, snapshot.release, TEXT_PLAIN);
   }
 
@@ -81,18 +89,10 @@ class AptAdapterState {
     req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
-    const validSuite = parseRegistryInput(SuiteSchema, suite, {
-      code: "NAME_INVALID",
-      message: "invalid suite",
-    });
-    const validComponent = parseRegistryInput(ComponentSchema, component, {
-      code: "NAME_INVALID",
-      message: "invalid component",
-    });
     const arch = archFromDir(archdir);
     if (!arch) throw Errors.notFound();
-    const snapshot = await this.snapshot(ctx, validSuite);
-    const entry = snapshot.packages.get(`${validComponent}/binary-${arch}`);
+    const snapshot = await this.snapshot(ctx, suite);
+    const entry = snapshot.packages.get(`${component}/binary-${arch}`);
     if (!entry) throw Errors.notFound();
     if (!gz) return textResponseWithEtag(req, entry.text, TEXT_PLAIN);
     return bytesResponseWithEtag(req, entry.gz, { "content-type": "application/gzip" });
@@ -210,6 +210,7 @@ const aptDefinition = registryAdapter("apt")
   .routes((route) => [
     route
       .get("/dists/:suite/Release", "release")
+      .params({ suite: suiteParam })
       .calls((state, { params, req, ctx }) => state.release(params.suite, req, ctx)),
     route.get("/dists/:suite/InRelease", "inRelease", () => {
       throw Errors.notFound();
@@ -219,11 +220,13 @@ const aptDefinition = registryAdapter("apt")
     }),
     route
       .get("/dists/:suite/:component/:archdir/Packages", "packages")
+      .params({ suite: suiteParam, component: componentParam })
       .calls((state, { params, req, ctx }) =>
         state.packages(params.suite, params.component, params.archdir, false, req, ctx),
       ),
     route
       .get("/dists/:suite/:component/:archdir/Packages.gz", "packagesGz")
+      .params({ suite: suiteParam, component: componentParam })
       .calls((state, { params, req, ctx }) =>
         state.packages(params.suite, params.component, params.archdir, true, req, ctx),
       ),

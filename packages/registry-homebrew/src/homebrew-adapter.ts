@@ -1,6 +1,7 @@
 import {
   createRegistryAdapterPlugin,
   Errors,
+  jsonResponseWithEtag,
   parseRegistryInput,
   type RegistryPackageHandle,
   type RegistryRequestContext,
@@ -14,6 +15,8 @@ import {
   BOTTLE_ASSET_ROLE,
   BOTTLE_MEDIA_TYPE,
   HomebrewNameSchema,
+  HomebrewTagSchema,
+  HomebrewVersionSchema,
   isValidBottleFileName,
   parseHomebrewVersionMeta,
 } from "./homebrew-validation";
@@ -74,7 +77,7 @@ class HomebrewAdapterState {
     }
     // Deterministic name ordering keeps the index document stable for ETags.
     formulas.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-    return textResponseWithEtag(req, JSON.stringify(formulas), {
+    return jsonResponseWithEtag(req, formulas, {
       "content-type": JSON_CONTENT_TYPE,
     });
   }
@@ -94,7 +97,7 @@ class HomebrewAdapterState {
     if (!pkg) throw Errors.notFound();
     const formula = await this.resolveFormula(ctx, pkg, name);
     if (!formula) throw Errors.notFound();
-    return textResponseWithEtag(req, JSON.stringify(formula), {
+    return jsonResponseWithEtag(req, formula, {
       "content-type": JSON_CONTENT_TYPE,
     });
   }
@@ -168,9 +171,20 @@ const homebrewDefinition = registryAdapter("homebrew")
     route
       .get("/api/formula/:name", "formula")
       .calls((state, { params, req, ctx }) => state.formula(params.name, req, ctx)),
-    route.put("/api/formula/:name/:version/:tag", "publish", ({ params, req, ctx }) =>
-      handleHomebrewPublish(params.name, params.version, params.tag, req, ctx),
-    ),
+    route
+      .put("/api/formula/:name/:version/:tag", "publish")
+      .params({
+        name: { schema: HomebrewNameSchema, code: "NAME_INVALID", message: "invalid formula name" },
+        version: {
+          schema: HomebrewVersionSchema,
+          code: "MANIFEST_INVALID",
+          message: "invalid formula version",
+        },
+        tag: { schema: HomebrewTagSchema, code: "NAME_INVALID", message: "invalid bottle tag" },
+      })
+      .handle(({ params, req, ctx }) =>
+        handleHomebrewPublish(params.name, params.version, params.tag, req, ctx),
+      ),
     route
       .get("/bottles/:file", "download")
       .calls((state, { params, req, ctx }) => state.download(params.file, req, ctx)),

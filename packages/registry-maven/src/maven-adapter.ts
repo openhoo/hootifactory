@@ -1,34 +1,32 @@
 import {
   asJsonRecord,
   createRegistryAdapterPlugin,
-  parseRegistryInput,
   type RegistryRequestContext,
+  type RegistryRouteParamSpec,
   registryAdapter,
   serveAssetBlob,
 } from "@hootifactory/registry";
 import { handleMavenUpload, MAVEN_FILE_KIND } from "./maven-upload-lifecycle";
 import { contentTypeForPath, MavenPathSchema, mavenPackageForPath } from "./maven-validation";
 
+const pathParam: RegistryRouteParamSpec = {
+  schema: MavenPathSchema,
+  code: "NAME_INVALID",
+  message: "invalid maven path",
+};
+
 /** Maven: a coordinate-addressed file store with POM-driven package projection. */
 class MavenAdapterState {
   upload(path: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
-    const safePath = parseRegistryInput(MavenPathSchema, path, {
-      code: "NAME_INVALID",
-      message: "invalid maven path",
-    });
-    return handleMavenUpload(safePath, req, ctx);
+    return handleMavenUpload(path, req, ctx);
   }
 
   async download(path: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
-    const safePath = parseRegistryInput(MavenPathSchema, path, {
-      code: "NAME_INVALID",
-      message: "invalid maven path",
-    });
     return serveAssetBlob(ctx, {
       role: MAVEN_FILE_KIND,
       kind: MAVEN_FILE_KIND,
-      scope: safePath,
-      contentType: contentTypeForPath(safePath),
+      scope: path,
+      contentType: contentTypeForPath(path),
       redirect: req.method === "GET",
     });
   }
@@ -81,9 +79,11 @@ const mavenDefinition = registryAdapter("maven")
   .routes((route) => [
     route
       .put("/:path+", "upload")
+      .params({ path: pathParam })
       .calls((state, { params, req, ctx }) => state.upload(params.path, req, ctx)),
     route
       .get("/:path+", "download")
+      .params({ path: pathParam })
       .calls((state, { params, req, ctx }) => state.download(params.path, req, ctx)),
   ]);
 

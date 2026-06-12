@@ -348,7 +348,13 @@ export interface RegistryPlugin extends RegistryModuleDescriptor {
   /** Declarative routes, mounted under the repo's mount path. */
   routes(): RouteEntry[];
 
-  /** Pure mapping (method, route) -> required permission. */
+  /**
+   * Pure mapping (method, route) -> required permission. May throw a
+   * `RegistryError` (the parseRegistryInput-shaped 400) when the route
+   * declares param schemas and `match.params` fails them: validation runs
+   * before permission resolution, so hosts must surface that error with the
+   * module's error shape instead of proceeding to authorization.
+   */
   requiredPermission(
     method: HttpMethod,
     match: RouteMatch,

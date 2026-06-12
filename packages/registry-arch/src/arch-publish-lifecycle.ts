@@ -1,4 +1,7 @@
-import { publishImmutableVersionBlob, type RegistryRequestContext } from "@hootifactory/registry";
+import {
+  publishImmutableVersionBlobResponse,
+  type RegistryRequestContext,
+} from "@hootifactory/registry";
 import { parseArchPublishRequest } from "./arch-publish";
 
 const PKG_MEDIA_TYPE = "application/octet-stream";
@@ -23,7 +26,7 @@ export async function handleArchPublish(
   const { pkgname, version, filename, bytes, metadata } = parsed.plan;
   const scope = archBlobScope(filename);
 
-  const result = await publishImmutableVersionBlob(ctx, {
+  return publishImmutableVersionBlobResponse(ctx, {
     package: { name: pkgname },
     version,
     kind: ARCH_PKG_KIND,
@@ -46,9 +49,9 @@ export async function handleArchPublish(
     }),
     // Pacman packages are immutable: a re-publish of an existing version conflicts.
     versionConflict: (pkg) => ctx.data.versions.exists(pkg, version),
+    conflictResponse: () =>
+      Response.json({ error: "package version already exists" }, { status: 409 }),
+    successResponse: () =>
+      Response.json({ ok: true, pkgname, pkgver: version, filename }, { status: 201 }),
   });
-  if (!result.ok) {
-    return Response.json({ error: "package version already exists" }, { status: 409 });
-  }
-  return Response.json({ ok: true, pkgname, pkgver: version, filename }, { status: 201 });
 }

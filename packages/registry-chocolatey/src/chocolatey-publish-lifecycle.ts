@@ -1,4 +1,7 @@
-import { publishImmutableVersionBlob, type RegistryRequestContext } from "@hootifactory/registry";
+import {
+  publishImmutableVersionBlobResponse,
+  type RegistryRequestContext,
+} from "@hootifactory/registry";
 import { type ChocolateyPublishPlan, parseChocolateyPublishRequest } from "./chocolatey-publish";
 import type { ChocolateyVersionMeta } from "./chocolatey-validation";
 
@@ -24,7 +27,7 @@ export async function handleChocolateyPublish(
   }
   const { bytes, lowerId, scope, version } = parsed.plan;
 
-  const result = await publishImmutableVersionBlob(ctx, {
+  return publishImmutableVersionBlobResponse(ctx, {
     package: { name: lowerId },
     version,
     kind: "generic_file",
@@ -53,7 +56,7 @@ export async function handleChocolateyPublish(
     // Chocolatey/NuGet packages are immutable. A retention tombstone still
     // reserves the normalized version, so old bytes cannot be replaced.
     versionConflict: async (pkg) => Boolean(await ctx.data.versions.find(pkg, version)),
+    conflictResponse: () => new Response(null, { status: 409 }),
+    successResponse: () => new Response(null, { status: 201 }),
   });
-  if (!result.ok) return new Response(null, { status: 409 });
-  return new Response(null, { status: 201 });
 }

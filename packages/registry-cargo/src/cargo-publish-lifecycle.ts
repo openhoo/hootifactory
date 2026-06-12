@@ -1,6 +1,6 @@
 import {
   digestHex,
-  publishImmutableVersionBlob,
+  publishImmutableVersionBlobResponse,
   type RegistryRequestContext,
 } from "@hootifactory/registry";
 import { buildCargoIndexEntry, cargoBlobScope, parseCargoPublishBody } from "./cargo-publish";
@@ -45,7 +45,7 @@ export async function handleCargoPublish(
 
   const name = meta.name.toLowerCase();
   const scope = cargoBlobScope(name, meta.vers);
-  const result = await publishImmutableVersionBlob(ctx, {
+  return publishImmutableVersionBlobResponse(ctx, {
     package: { name },
     version: meta.vers,
     kind: "generic_file",
@@ -76,7 +76,7 @@ export async function handleCargoPublish(
     }),
     versionConflict: async (pkg) =>
       cargoVersionAlreadyPublished(await ctx.data.versions.listNames(pkg), meta.vers),
+    conflictResponse: () => cargoError("version already exists", 409),
+    successResponse: () => cargoPublishSuccessResponse(),
   });
-  if (!result.ok) return cargoError("version already exists", 409);
-  return cargoPublishSuccessResponse();
 }

@@ -1,6 +1,6 @@
 import {
   digestHex,
-  publishImmutableVersionBlob,
+  publishImmutableVersionBlobResponse,
   type RegistryRequestContext,
 } from "@hootifactory/registry";
 import { parseCocoapodsPublishRequest } from "./cocoapods-publish";
@@ -27,7 +27,7 @@ export async function handleCocoapodsPublish(
   const filename = podArtifactFilename(pod, version);
   const scope = cocoapodsBlobScope(pod, version, filename);
 
-  const result = await publishImmutableVersionBlob(ctx, {
+  return publishImmutableVersionBlobResponse(ctx, {
     package: { name: pod },
     version,
     kind: COCOAPODS_BLOB_KIND,
@@ -59,9 +59,7 @@ export async function handleCocoapodsPublish(
     }),
     // Pod source archives are immutable: a re-publish of an existing version conflicts.
     versionConflict: (pkg) => ctx.data.versions.exists(pkg, version),
+    conflictResponse: () => Response.json({ error: "version already exists" }, { status: 409 }),
+    successResponse: () => Response.json({ ok: true, pod, version }, { status: 201 }),
   });
-  if (!result.ok) {
-    return Response.json({ error: "version already exists" }, { status: 409 });
-  }
-  return Response.json({ ok: true, pod, version }, { status: 201 });
 }

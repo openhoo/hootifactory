@@ -1,6 +1,7 @@
 import {
   createRegistryAdapterPlugin,
   Errors,
+  jsonResponseWithEtag,
   parseRegistryInput,
   type RegistryRequestContext,
   registryAdapter,
@@ -61,14 +62,10 @@ class GoAdapterState {
     const latestVer = pickLatest(rows.map((r) => r.version));
     const row = rows.find((r) => r.version === latestVer);
     if (!row) throw Errors.notFound();
-    return textResponseWithEtag(
-      req,
-      JSON.stringify({
-        Version: row.version,
-        Time: row.metadata.time ?? row.createdAt.toISOString(),
-      }),
-      { "content-type": "application/json; charset=utf-8" },
-    );
+    return jsonResponseWithEtag(req, {
+      Version: row.version,
+      Time: row.metadata.time ?? row.createdAt.toISOString(),
+    });
   }
 
   async file(
@@ -77,10 +74,6 @@ class GoAdapterState {
     req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
-    file = parseRegistryInput(GoVersionFileSchema, file, {
-      code: "NAME_INVALID",
-      message: "invalid Go version file",
-    });
     const pkg = await ctx.data.packages.findByName(moduleName);
     if (!pkg) throw Errors.notFound();
     const dot = file.lastIndexOf(".");
@@ -96,11 +89,10 @@ class GoAdapterState {
     if (!meta) throw Errors.notFound();
 
     if (ext === "info") {
-      return textResponseWithEtag(
-        req,
-        JSON.stringify({ Version: version, Time: meta.time ?? row.createdAt.toISOString() }),
-        { "content-type": "application/json; charset=utf-8" },
-      );
+      return jsonResponseWithEtag(req, {
+        Version: version,
+        Time: meta.time ?? row.createdAt.toISOString(),
+      });
     }
     if (ext === "mod") {
       return textResponseWithEtag(req, meta.mod ?? `module ${moduleName}\n`, {
@@ -203,6 +195,13 @@ const goDefinition = registryAdapter("go")
       ),
     route
       .get("/:module+/@v/:file", "file")
+      .params({
+        file: {
+          schema: GoVersionFileSchema,
+          code: "NAME_INVALID",
+          message: "invalid Go version file",
+        },
+      })
       .calls((state, { params, req, ctx }) =>
         state.file(state.parseModule(params.module), params.file, req, ctx),
       ),

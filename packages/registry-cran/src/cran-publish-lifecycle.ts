@@ -1,6 +1,6 @@
 import {
   digestHex,
-  publishImmutableVersionBlob,
+  publishImmutableVersionBlobResponse,
   type RegistryRequestContext,
 } from "@hootifactory/registry";
 import { type CranPublishPlan, parseCranPublishRequest } from "./cran-publish";
@@ -45,7 +45,7 @@ export async function handleCranPublish(
   const { plan } = parsed;
   const scope = cranBlobScope(plan.name, plan.version);
 
-  const result = await publishImmutableVersionBlob(ctx, {
+  return publishImmutableVersionBlobResponse(ctx, {
     package: { name: plan.name },
     version: plan.version,
     kind: CRAN_TARBALL_KIND,
@@ -69,9 +69,8 @@ export async function handleCranPublish(
     }),
     // CRAN source tarballs are immutable: a re-publish of an existing version conflicts.
     versionConflict: (pkg) => ctx.data.versions.exists(pkg, plan.version),
+    conflictResponse: () => Response.json({ error: "version already exists" }, { status: 409 }),
+    successResponse: () =>
+      Response.json({ ok: true, package: plan.name, version: plan.version }, { status: 201 }),
   });
-  if (!result.ok) {
-    return Response.json({ error: "version already exists" }, { status: 409 });
-  }
-  return Response.json({ ok: true, package: plan.name, version: plan.version }, { status: 201 });
 }

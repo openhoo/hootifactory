@@ -1,6 +1,6 @@
 import {
   digestHex,
-  publishImmutableVersionBlob,
+  publishImmutableVersionBlobResponse,
   type RegistryRequestContext,
 } from "@hootifactory/registry";
 import { parseOpamPublishRequest } from "./opam-publish";
@@ -35,7 +35,7 @@ export async function handleOpamPublish(
   // the filename so stored blob/scan/asset metadata matches the actual contents.
   const mediaType = opamArchiveMediaType(filename);
 
-  const result = await publishImmutableVersionBlob(ctx, {
+  return publishImmutableVersionBlobResponse(ctx, {
     package: { name },
     version,
     kind: OPAM_ARCHIVE_KIND,
@@ -67,9 +67,7 @@ export async function handleOpamPublish(
     }),
     // opam source archives are immutable: re-publishing an existing version conflicts.
     versionConflict: (pkg) => ctx.data.versions.exists(pkg, version),
+    conflictResponse: () => Response.json({ error: "version already exists" }, { status: 409 }),
+    successResponse: () => Response.json({ ok: true, name, version }, { status: 201 }),
   });
-  if (!result.ok) {
-    return Response.json({ error: "version already exists" }, { status: 409 });
-  }
-  return Response.json({ ok: true, name, version }, { status: 201 });
 }

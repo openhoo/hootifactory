@@ -1,7 +1,8 @@
 import {
   createRegistryAdapterPlugin,
-  parseRegistryInput,
+  jsonResponseWithEtag,
   type RegistryRequestContext,
+  type RegistryRouteParamSpec,
   registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
@@ -33,19 +34,17 @@ interface PodVersions {
   versions: string[];
 }
 
-function parsePodName(pod: string): string {
-  return parseRegistryInput(PodNameSchema, pod, {
-    code: "NAME_INVALID",
-    message: "invalid pod name",
-  });
-}
+const podParam: RegistryRouteParamSpec = {
+  schema: PodNameSchema,
+  code: "NAME_INVALID",
+  message: "invalid pod name",
+};
 
-function parsePodVersion(version: string): string {
-  return parseRegistryInput(PodVersionSchema, version, {
-    code: "MANIFEST_INVALID",
-    message: "invalid pod version",
-  });
-}
+const podVersionParam: RegistryRouteParamSpec = {
+  schema: PodVersionSchema,
+  code: "MANIFEST_INVALID",
+  message: "invalid pod version",
+};
 
 /** Decomposed `Specs/<a>/<b>/<c>/<pod>/<version>/<pod>.podspec.json` request path. */
 interface SpecsPathParts {
@@ -192,7 +191,7 @@ class CocoapodsAdapterState {
     for (const { name, versions } of await this.listPodVersions(ctx)) {
       index[name] = versions;
     }
-    return textResponseWithEtag(req, JSON.stringify(index), {
+    return jsonResponseWithEtag(req, index, {
       "content-type": JSON_CONTENT_TYPE,
     });
   }
@@ -211,21 +210,19 @@ class CocoapodsAdapterState {
     const meta = parsePodVersionMeta(row?.metadata);
     if (!meta) return new Response("Not Found", { status: 404 });
     const served = buildServedPodspec(meta, this.downloadUrl(ctx, parts.pod, parts.version));
-    return textResponseWithEtag(req, JSON.stringify(served), {
+    return jsonResponseWithEtag(req, served, {
       "content-type": JSON_CONTENT_TYPE,
     });
   }
 
   /** `GET /pods/<pod>/<version>/<filename>` — serve the hosted source archive blob. */
   async download(
-    podRaw: string,
-    versionRaw: string,
+    pod: string,
+    version: string,
     filenameRaw: string,
     req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
-    const pod = parsePodName(podRaw);
-    const version = parsePodVersion(versionRaw);
     const pkg = await ctx.data.packages.findByName(pod);
     if (!pkg) return new Response("Not Found", { status: 404 });
     const row = await ctx.data.versions.findLive(pkg, version);
@@ -242,8 +239,7 @@ class CocoapodsAdapterState {
     });
   }
 
-  async publish(podRaw: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
-    const pod = parsePodName(podRaw);
+  async publish(pod: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     return handleCocoapodsPublish(pod, req, ctx);
   }
 }
@@ -303,6 +299,7 @@ const cocoapodsDefinition = registryAdapter("cocoapods")
       .calls((state, { params, req, ctx }) => state.podspec(params.tail, req, ctx)),
     route
       .get("/pods/:pod/:version/:filename", "download")
+      .params({ pod: podParam, version: podVersionParam })
       .calls((state, { params, req, ctx }) =>
         state.download(params.pod, params.version, params.filename, req, ctx),
       ),
@@ -312,6 +309,7 @@ const cocoapodsDefinition = registryAdapter("cocoapods")
       .calls((state, { params, req, ctx }) => state.shardIndex(params.shardFile, req, ctx)),
     route
       .put("/:pod", "publish")
+      .params({ pod: podParam })
       .calls((state, { params, req, ctx }) => state.publish(params.pod, req, ctx)),
   ]);
 

@@ -1,7 +1,7 @@
 import {
   digestHex,
   findRegistryPackage,
-  publishImmutableVersionBlob,
+  publishImmutableVersionBlobResponse,
   type RegistryRequestContext,
   type RegistryStoredBlob,
 } from "@hootifactory/registry";
@@ -61,7 +61,7 @@ export async function handlePuppetPublish(
     return puppetErrorResponse(`release ${releaseSlug} already exists`, 409);
   }
 
-  const result = await publishImmutableVersionBlob(ctx, {
+  return publishImmutableVersionBlobResponse(ctx, {
     package: { name: slug, namespace: plan.owner },
     version,
     kind: "puppet_release",
@@ -83,10 +83,7 @@ export async function handlePuppetPublish(
       metadata: { module: slug, owner: plan.owner },
     }),
     versionConflict: (pkg) => ctx.data.versions.exists(pkg, version),
+    conflictResponse: () => puppetErrorResponse(`release ${releaseSlug} already exists`, 409),
+    successResponse: () => Response.json({ slug: releaseSlug, version }, { status: 201 }),
   });
-  if (!result.ok) {
-    return puppetErrorResponse(`release ${releaseSlug} already exists`, 409);
-  }
-
-  return Response.json({ slug: releaseSlug, version }, { status: 201 });
 }
