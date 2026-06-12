@@ -7,7 +7,7 @@ import {
   userPrincipalById,
   verifyRegistryToken,
 } from "@hootifactory/auth";
-import { Errors, HttpError } from "@hootifactory/core";
+import { HttpError } from "@hootifactory/core";
 import { logger, withSpan } from "@hootifactory/observability";
 import { registryPlugins } from "@hootifactory/registry";
 import type { Context } from "hono";
@@ -24,7 +24,7 @@ import {
 export const SESSION_COOKIE = "hoot_session";
 
 function invalidCredentials(): never {
-  throw Errors.unauthorized("invalid authorization credentials");
+  throw new HttpError(401, "UNAUTHENTICATED", "invalid authorization credentials");
 }
 
 function isRegistryBearerPath(url: string): boolean {
