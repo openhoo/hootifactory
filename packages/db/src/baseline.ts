@@ -25,7 +25,12 @@ export async function baselineMigrations(): Promise<void> {
   const toBaseline = lastBreakpoint >= 0 ? migrations.slice(0, lastBreakpoint + 1) : migrations;
   const skipped = migrations.length - toBaseline.length;
 
-  const client = createDatabaseClient();
+  const client = createDatabaseClient({
+    connection: {
+      statement_timeout: "0",
+      idle_in_transaction_session_timeout: "0",
+    },
+  });
   await client`create schema if not exists drizzle`;
   await client`
     create table if not exists drizzle.__drizzle_migrations (

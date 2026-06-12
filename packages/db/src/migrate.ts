@@ -49,7 +49,12 @@ export async function runMigrations(deps: RunMigrationsDeps = {}): Promise<void>
   const createClient = deps.createClient ?? createDatabaseClient;
   const guard = deps.guard ?? assertNoLegacyMigrationChain;
   const applyMigrations = deps.applyMigrations ?? migrate;
-  const client = createClient();
+  const client = createClient({
+    connection: {
+      statement_timeout: "0",
+      idle_in_transaction_session_timeout: "0",
+    },
+  });
   await guard(client);
   const db = drizzle({ client });
   console.log(`[db] applying migrations from ${migrationsFolder}`);
