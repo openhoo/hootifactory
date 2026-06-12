@@ -32,7 +32,7 @@ describe("auth throttle persistence", () => {
     expect(calls).toBe(5);
   });
 
-  test("throttles password verification across changing client addresses", async () => {
+  test("throttles password verification across changing client addresses via identity failure bucket", async () => {
     const username = `spoofed-${randomUUID()}@example.test`;
     let calls = 0;
     const verify = async () => {
@@ -46,12 +46,15 @@ describe("auth throttle persistence", () => {
       ).resolves.toMatchObject({ kind: "invalid", failure: { count: attempts } });
     }
 
+    // 6th attempt from a fresh client IP: the per-(identity,ip) client bucket
+    // passes, password verification runs, and the identity bucket records the
+    // 6th failure.  Pre-verification throttling is scoped to the client bucket
+    // so a distributed attacker cannot dead-lock a username with junk requests.
     await expect(
       authenticateUserPasswordWithThrottle(username, "wrong", "203.0.113.250", verify),
-    ).resolves.toMatchObject({ kind: "throttled" });
-    // Throttled attempts must reject before running verify, so the count stays
-    // at the 5 attempts evaluated within the budget.
-    expect(calls).toBe(5);
+    ).resolves.toMatchObject({ kind: "invalid", failure: { count: 6 } });
+    // The 6th attempt DID run the verifier (client bucket was under limit).
+    expect(calls).toBe(6);
   });
 
   test("successful password verification clears prior shared failures within the budget", async () => {

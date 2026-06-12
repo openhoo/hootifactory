@@ -99,27 +99,19 @@ export function retryAfterSeconds(bucket: AuthThrottleBucket, now = Date.now()):
 }
 
 export async function consumeLoginAttempt(
-  username: string,
+  _username: string,
   ip: string,
 ): Promise<
   { throttled: false; bucket: AuthThrottleBucket } | { throttled: true; retryAfter: number }
 > {
-  const identityThrottle = await consumeSharedAuthThrottleBucket({
-    scope: LOGIN_IDENTITY_SCOPE,
-    key: loginIdentityThrottleKey(username),
-    windowSeconds: env.AUTH_LOGIN_WINDOW_SECONDS,
-    maxAttempts: env.AUTH_LOGIN_MAX_ATTEMPTS,
-  });
-  if (identityThrottle.throttled) return identityThrottle;
-
   const clientThrottle = await consumeSharedAuthThrottleBucket({
     scope: LOGIN_CLIENT_SCOPE,
-    key: loginThrottleKey(username, ip),
+    key: loginThrottleKey(_username, ip),
     windowSeconds: env.AUTH_LOGIN_WINDOW_SECONDS,
     maxAttempts: env.AUTH_LOGIN_MAX_ATTEMPTS,
   });
   if (clientThrottle.throttled) return clientThrottle;
-  return { throttled: false, bucket: identityThrottle.bucket };
+  return { throttled: false, bucket: clientThrottle.bucket };
 }
 
 export async function consumePasswordResetRequest(
@@ -230,7 +222,13 @@ export async function authenticateUserPasswordWithThrottle(
     return { kind: "authenticated", principal };
   }
 
-  return { kind: "invalid", failure: throttle.bucket };
+  const identityFailure = await consumeSharedAuthThrottleBucket({
+    scope: LOGIN_IDENTITY_SCOPE,
+    key: loginIdentityThrottleKey(username),
+    windowSeconds: env.AUTH_LOGIN_WINDOW_SECONDS,
+    maxAttempts: env.AUTH_LOGIN_MAX_ATTEMPTS,
+  });
+  return { kind: "invalid", failure: identityFailure.bucket };
 }
 
 function throttleKey(identity: string, ip: string): string {
