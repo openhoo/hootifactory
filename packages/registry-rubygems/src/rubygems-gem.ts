@@ -34,8 +34,7 @@ export function readGemMetadata(gem: Uint8Array): GemMetadata | null {
   if (!metaGz) return null;
   let yaml: string;
   try {
-    const inflated = gunzipSync(metaGz);
-    if (inflated.byteLength > MAX_GEM_METADATA_BYTES) return null;
+    const inflated = gunzipSync(metaGz, { maxOutputLength: MAX_GEM_METADATA_BYTES });
     yaml = new TextDecoder().decode(inflated);
   } catch {
     return null;
