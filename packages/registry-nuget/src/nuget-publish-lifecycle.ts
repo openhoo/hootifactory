@@ -1,4 +1,7 @@
-import { publishImmutableVersionBlob, type RegistryRequestContext } from "@hootifactory/registry";
+import {
+  publishImmutableVersionBlobResponse,
+  type RegistryRequestContext,
+} from "@hootifactory/registry";
 import { type NugetPublishPlan, parseNugetPublishRequest } from "./nuget-publish";
 import type { NugetVersionMeta } from "./nuget-validation";
 
@@ -22,7 +25,7 @@ export async function handleNugetPublish(
   }
   const { bytes, file, lowerId, version } = parsed.plan;
 
-  const result = await publishImmutableVersionBlob(ctx, {
+  return publishImmutableVersionBlobResponse(ctx, {
     package: { name: lowerId },
     version,
     kind: "generic_file",
@@ -50,7 +53,7 @@ export async function handleNugetPublish(
     // NuGet packages are immutable. A retention tombstone still reserves the
     // normalized package version, so old bytes cannot be replaced by re-push.
     versionConflict: async (pkg) => Boolean(await ctx.data.versions.find(pkg, version)),
+    conflictResponse: () => new Response(null, { status: 409 }),
+    successResponse: () => new Response(null, { status: 201 }),
   });
-  if (!result.ok) return new Response(null, { status: 409 });
-  return new Response(null, { status: 201 });
 }

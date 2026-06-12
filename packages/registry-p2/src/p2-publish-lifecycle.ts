@@ -1,4 +1,7 @@
-import { publishImmutableVersionBlob, type RegistryRequestContext } from "@hootifactory/registry";
+import {
+  publishImmutableVersionBlobMapped,
+  type RegistryRequestContext,
+} from "@hootifactory/registry";
 import { parseOsgiManifest } from "./p2-osgi-manifest";
 import { jarFilename, type P2ArtifactKind, type P2VersionMeta, p2JarScope } from "./p2-validation";
 
@@ -37,7 +40,7 @@ export async function handleP2Publish(
   const filename = jarFilename(symbolicName, version);
   const scope = p2JarScope(kind, filename);
 
-  const result = await publishImmutableVersionBlob(ctx, {
+  return publishImmutableVersionBlobMapped<P2PublishResult>(ctx, {
     package: { name: symbolicName },
     version,
     kind: P2_JAR_KIND,
@@ -71,13 +74,10 @@ export async function handleP2Publish(
     }),
     // P2 jars are immutable: a re-publish of an existing version conflicts.
     versionConflict: (pkg) => ctx.data.versions.exists(pkg, version),
+    conflict: () => ({ status: 409, body: { error: "version already exists" } }),
+    success: () => ({
+      status: 201,
+      body: { ok: true, symbolicName, version, kind, filename },
+    }),
   });
-
-  if (!result.ok) {
-    return { status: 409, body: { error: "version already exists" } };
-  }
-  return {
-    status: 201,
-    body: { ok: true, symbolicName, version, kind, filename },
-  };
 }

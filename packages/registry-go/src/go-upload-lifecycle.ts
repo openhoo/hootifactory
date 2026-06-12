@@ -1,6 +1,6 @@
 import {
   findRegistryPackage,
-  publishImmutableVersionBlob,
+  publishImmutableVersionBlobResponse,
   type RegistryRequestContext,
 } from "@hootifactory/registry";
 import { type GoUploadPlan, parseGoUploadRequest, validateGoUploadPlan } from "./go-upload";
@@ -39,7 +39,7 @@ export async function handleGoUpload(
   const uploadError = validateGoUploadPlan(moduleName, upload);
   if (uploadError) return Response.json(uploadError.body, { status: uploadError.status });
 
-  const result = await publishImmutableVersionBlob(ctx, {
+  return publishImmutableVersionBlobResponse(ctx, {
     package: { name: moduleName },
     version,
     kind: "generic_file",
@@ -61,7 +61,7 @@ export async function handleGoUpload(
       metadata: { module: moduleName },
     }),
     versionConflict: (pkg) => ctx.data.versions.exists(pkg, version),
+    conflictResponse: () => goVersionConflictResponse(),
+    successResponse: () => goUploadSuccessResponse(moduleName, version),
   });
-  if (!result.ok) return goVersionConflictResponse();
-  return goUploadSuccessResponse(moduleName, version);
 }

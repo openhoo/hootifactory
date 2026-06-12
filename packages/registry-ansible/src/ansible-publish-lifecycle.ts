@@ -2,7 +2,7 @@ import {
   computeDigest,
   digestHex,
   findRegistryPackage,
-  publishImmutableVersionBlob,
+  publishImmutableVersionBlobResponse,
   type RegistryRequestContext,
 } from "@hootifactory/registry";
 import { ansibleBadRequest, ansibleConflict, ansibleErrorResponse } from "./ansible-errors";
@@ -66,7 +66,7 @@ export async function handleAnsiblePublish(
     return ansibleConflict(`collection ${fqcn} version ${version} already exists`);
   }
 
-  const result = await publishImmutableVersionBlob(ctx, {
+  return publishImmutableVersionBlobResponse(ctx, {
     package: { name: fqcn },
     version,
     kind: ARTIFACT_BLOB_KIND,
@@ -88,14 +88,13 @@ export async function handleAnsiblePublish(
       metadata: { namespace: plan.namespace, name: plan.name, version },
     }),
     versionConflict: (pkg) => ctx.data.versions.exists(pkg, version),
+    conflictResponse: () => ansibleConflict(`collection ${fqcn} version ${version} already exists`),
+    successResponse: () => {
+      // Galaxy returns 202 Accepted with a `task` URL the client polls for import
+      // status. We import synchronously, so that task already reports completed (see
+      // the `import` route). The id is `<fqcn>-<version>`.
+      const taskUrl = `${ctx.baseUrl}/${ctx.repo.mountPath}/api/v3/imports/collections/${fqcn}-${version}/`;
+      return Response.json({ task: taskUrl }, { status: 202 });
+    },
   });
-  if (!result.ok) {
-    return ansibleConflict(`collection ${fqcn} version ${version} already exists`);
-  }
-
-  // Galaxy returns 202 Accepted with a `task` URL the client polls for import
-  // status. We import synchronously, so that task already reports completed (see
-  // the `import` route). The id is `<fqcn>-<version>`.
-  const taskUrl = `${ctx.baseUrl}/${ctx.repo.mountPath}/api/v3/imports/collections/${fqcn}-${version}/`;
-  return Response.json({ task: taskUrl }, { status: 202 });
 }

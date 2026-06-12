@@ -1,7 +1,7 @@
 import {
   digestHex,
   findRegistryPackage,
-  publishImmutableVersionBlob,
+  publishImmutableVersionBlobResponse,
   type RegistryRequestContext,
 } from "@hootifactory/registry";
 import { pubErrorResponse } from "./pub-errors";
@@ -52,7 +52,7 @@ export async function handlePubUpload(
     );
   }
 
-  const result = await publishImmutableVersionBlob(ctx, {
+  return publishImmutableVersionBlobResponse(ctx, {
     package: { name: packageName },
     version,
     kind: "pub_archive",
@@ -74,15 +74,15 @@ export async function handlePubUpload(
       metadata: { package: packageName },
     }),
     versionConflict: (pkg) => ctx.data.versions.exists(pkg, version),
+    conflictResponse: () =>
+      pubErrorResponse(
+        "PackageExists",
+        `version ${version} of package ${packageName} already exists`,
+        409,
+      ),
+    successResponse: () => {
+      const finishUrl = `${ctx.baseUrl}/${ctx.repo.mountPath}/api/packages/versions/newUploadFinish`;
+      return new Response(null, { status: 303, headers: { location: finishUrl } });
+    },
   });
-  if (!result.ok) {
-    return pubErrorResponse(
-      "PackageExists",
-      `version ${version} of package ${packageName} already exists`,
-      409,
-    );
-  }
-
-  const finishUrl = `${ctx.baseUrl}/${ctx.repo.mountPath}/api/packages/versions/newUploadFinish`;
-  return new Response(null, { status: 303, headers: { location: finishUrl } });
 }

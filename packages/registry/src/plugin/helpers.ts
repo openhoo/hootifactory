@@ -10,6 +10,7 @@ import type {
   StoreBlobStreamWithRefInput,
   StoreBlobWithRefInput,
 } from "./data";
+import type { MaybePromise } from "./route-types";
 
 export interface ServeRegistryBlobOptions {
   digest: string;
@@ -490,13 +491,38 @@ export interface PublishImmutableVersionBlobInput {
   versionConflict?: (pkg: RegistryPackageHandle) => Promise<boolean>;
 }
 
+export type PublishImmutableVersionBlobSuccess = {
+  ok: true;
+  pkg: RegistryPackageRow;
+  stored: RegistryStoredBlob;
+  versionId: string;
+};
+
+export type PublishImmutableVersionBlobConflict = {
+  ok: false;
+  pkg: RegistryPackageRow;
+  conflict: true;
+};
+
+export type PublishImmutableVersionBlobResult =
+  | PublishImmutableVersionBlobSuccess
+  | PublishImmutableVersionBlobConflict;
+
+export interface PublishImmutableVersionBlobMappedInput<Output>
+  extends PublishImmutableVersionBlobInput {
+  conflict(result: PublishImmutableVersionBlobConflict): MaybePromise<Output>;
+  success(result: PublishImmutableVersionBlobSuccess): MaybePromise<Output>;
+}
+
+export interface PublishImmutableVersionBlobResponseInput extends PublishImmutableVersionBlobInput {
+  conflictResponse?: (result: PublishImmutableVersionBlobConflict) => MaybePromise<Response>;
+  successResponse?: (result: PublishImmutableVersionBlobSuccess) => MaybePromise<Response>;
+}
+
 export async function publishImmutableVersionBlob(
   ctx: RegistryRequestContext,
   input: PublishImmutableVersionBlobInput,
-): Promise<
-  | { ok: true; pkg: RegistryPackageRow; stored: RegistryStoredBlob; versionId: string }
-  | { ok: false; pkg: RegistryPackageRow; conflict: true }
-> {
+): Promise<PublishImmutableVersionBlobResult> {
   const pkg = await findOrCreateRegistryPackage(ctx, input.package);
   if (await input.versionConflict?.(pkg)) {
     return { ok: false, pkg, conflict: true };
@@ -515,4 +541,26 @@ export async function publishImmutableVersionBlob(
   });
   if ("conflict" in result) return { ok: false, pkg, conflict: true };
   return { ok: true, pkg, stored, versionId: result.versionId };
+}
+
+export async function publishImmutableVersionBlobMapped<Output>(
+  ctx: RegistryRequestContext,
+  input: PublishImmutableVersionBlobMappedInput<Output>,
+): Promise<Output> {
+  const result = await publishImmutableVersionBlob(ctx, input);
+  return result.ok ? input.success(result) : input.conflict(result);
+}
+
+export async function publishImmutableVersionBlobResponse(
+  ctx: RegistryRequestContext,
+  input: PublishImmutableVersionBlobResponseInput,
+): Promise<Response> {
+  return publishImmutableVersionBlobMapped(ctx, {
+    ...input,
+    conflict: (result) =>
+      input.conflictResponse?.(result) ??
+      Response.json({ error: "version already exists" }, { status: 409 }),
+    success: (result) =>
+      input.successResponse?.(result) ?? Response.json({ ok: true }, { status: 201 }),
+  });
 }

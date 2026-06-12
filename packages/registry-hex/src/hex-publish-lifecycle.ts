@@ -1,6 +1,6 @@
 import {
   digestHex,
-  publishImmutableVersionBlob,
+  publishImmutableVersionBlobResponse,
   type RegistryRequestContext,
 } from "@hootifactory/registry";
 import { hexBlobScope, parseHexPublishRequest } from "./hex-publish";
@@ -27,7 +27,7 @@ export async function handleHexPublish(
   }
   const { name, version, metadata, tarball, innerChecksum, scope } = parsed.plan;
 
-  const result = await publishImmutableVersionBlob(ctx, {
+  return publishImmutableVersionBlobResponse(ctx, {
     package: { name },
     version,
     kind: HEX_KIND,
@@ -64,25 +64,25 @@ export async function handleHexPublish(
     }),
     // Hex releases are immutable: a re-publish of an existing version conflicts.
     versionConflict: (pkg) => ctx.data.versions.exists(pkg, version),
-  });
-  if (!result.ok) {
-    return Response.json({ error: "release already exists" }, { status: 409 });
-  }
-  const url = `${ctx.baseUrl}/${ctx.repo.mountPath}/api/packages/${name}/releases/${version}`;
-  const htmlUrl = `${ctx.baseUrl}/${ctx.repo.mountPath}/packages/${name}/${version}`;
-  // Shape the 201 body closer to Hex's release object: `mix hex.publish` gates on
-  // the status, but tooling surfaces `checksum`/`html_url` to the user. The
-  // checksum is the outer sha256 (= sha256 of the stored tarball), matching what
-  // the repository resource and download verify against.
-  return Response.json(
-    {
-      url,
-      html_url: htmlUrl,
-      package: name,
-      version,
-      has_docs: false,
-      checksum: digestHex(result.stored.digest),
+    conflictResponse: () => Response.json({ error: "release already exists" }, { status: 409 }),
+    successResponse: (result) => {
+      const url = `${ctx.baseUrl}/${ctx.repo.mountPath}/api/packages/${name}/releases/${version}`;
+      const htmlUrl = `${ctx.baseUrl}/${ctx.repo.mountPath}/packages/${name}/${version}`;
+      // Shape the 201 body closer to Hex's release object: `mix hex.publish` gates on
+      // the status, but tooling surfaces `checksum`/`html_url` to the user. The
+      // checksum is the outer sha256 (= sha256 of the stored tarball), matching what
+      // the repository resource and download verify against.
+      return Response.json(
+        {
+          url,
+          html_url: htmlUrl,
+          package: name,
+          version,
+          has_docs: false,
+          checksum: digestHex(result.stored.digest),
+        },
+        { status: 201 },
+      );
     },
-    { status: 201 },
-  );
+  });
 }
