@@ -34,6 +34,22 @@ describe("compact index info file", () => {
     );
   });
 
+  test("filters dependencies that would inject compact-index separators", () => {
+    const body = buildInfoFile([
+      entry({
+        deps: [
+          { name: "safe", requirements: ">= 1.0" },
+          { name: "bad,name", requirements: ">= 1.0" },
+          { name: "bad:name", requirements: ">= 1.0" },
+          { name: "bad|name", requirements: ">= 1.0" },
+          { name: "also-bad", requirements: ">= 1.0|checksum:forged" },
+        ],
+      }),
+    ]);
+
+    expect(body).toBe(`---\n1.0.0 safe:>= 1.0|checksum:${"a".repeat(64)}\n`);
+  });
+
   test("uses platform-qualified identifiers for native gems", () => {
     const body = buildInfoFile([
       entry({ version: "1.0.0", platform: "x86_64-linux", sha256: "a".repeat(64) }),
