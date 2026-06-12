@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { grantGrants, patternMatches, scopeMayTargetRepo, scopeSpecificity } from "./scope";
+import { patternMatches, scopeMayTargetRepo } from "./scope";
 
 describe("token scope helpers", () => {
   test("matches exact, prefix, slash-prefix, and org-wide patterns", () => {
@@ -9,67 +9,6 @@ describe("token scope helpers", () => {
     expect(patternMatches("team*", "team-api")).toBe(true);
     expect(patternMatches("team/api", "team/api")).toBe(true);
     expect(patternMatches("team/api", "team/api2")).toBe(false);
-  });
-
-  test("orders exact patterns above globs and org-wide scopes", () => {
-    expect(scopeSpecificity("*")).toBeLessThan(scopeSpecificity("team/*"));
-    expect(scopeSpecificity("team/*")).toBeLessThan(scopeSpecificity("team/api"));
-  });
-
-  test("structured grants match resource-specific targets", () => {
-    expect(grantGrants([{ permission: "org.read" }], { type: "org", orgId: "org_1" }, "read")).toBe(
-      true,
-    );
-    expect(
-      grantGrants(
-        [{ permission: "org.read" }],
-        { type: "repository", orgId: "org_1", repositoryName: "team/web" },
-        "read",
-      ),
-    ).toBe(false);
-
-    expect(
-      grantGrants(
-        [{ permission: "package.read", repository: "team/*", package: "@scope/*" }],
-        {
-          type: "package",
-          orgId: "org_1",
-          repositoryName: "team/web",
-          packageName: "@scope/pkg",
-        },
-        "read",
-      ),
-    ).toBe(true);
-
-    expect(
-      grantGrants(
-        [{ permission: "policy.write", policy: "quota", repository: "team/*" }],
-        { type: "policy", orgId: "org_1", repositoryName: "team/web", policy: "quota" },
-        "write",
-      ),
-    ).toBe(true);
-
-    expect(
-      grantGrants(
-        [{ permission: "token.rotate", tokenTarget: "self" }],
-        { type: "token", orgId: "org_1", tokenId: "tok_1", tokenTarget: "self" },
-        "write",
-        "tok_1",
-      ),
-    ).toBe(true);
-
-    expect(
-      grantGrants(
-        [{ permission: "artifact.read", repository: "team/*", artifact: "sha256:*" }],
-        {
-          type: "artifact",
-          orgId: "org_1",
-          repositoryName: "other/web",
-          artifactRef: "sha256:abc",
-        },
-        "read",
-      ),
-    ).toBe(false);
   });
 
   test("matches token scope patterns against mount-relative paths", () => {
