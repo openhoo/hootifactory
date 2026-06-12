@@ -1,7 +1,7 @@
 import {
+  createRegistryAdapterPlugin,
   Errors,
   parseRegistryInput,
-  type RegistryPlugin,
   type RegistryRequestContext,
   registryAdapter,
   serveRegistryBlob,
@@ -199,4 +199,4 @@ const nixDefinition = registryAdapter("nix")
   ]);
 
 export class NixAdapter extends nixDefinition.adapterClass() {}
-export const nixRegistryPlugin: RegistryPlugin = new NixAdapter();
+export const nixRegistryPlugin = createRegistryAdapterPlugin(NixAdapter);

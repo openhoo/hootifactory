@@ -1,9 +1,9 @@
 import {
   bytesResponseWithEtag,
+  createRegistryAdapterPlugin,
   Errors,
   parseRegistryInput,
   type RegistryPackageHandle,
-  type RegistryPlugin,
   type RegistryRequestContext,
   registryAdapter,
   serveRegistryBlob,
@@ -263,4 +263,4 @@ const archDefinition = registryAdapter("arch")
   ]);
 
 export class ArchAdapter extends archDefinition.adapterClass() {}
-export const archRegistryPlugin: RegistryPlugin = new ArchAdapter();
+export const archRegistryPlugin = createRegistryAdapterPlugin(ArchAdapter);

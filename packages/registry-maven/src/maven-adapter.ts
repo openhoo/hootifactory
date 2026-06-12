@@ -1,7 +1,7 @@
 import {
   asJsonRecord,
+  createRegistryAdapterPlugin,
   parseRegistryInput,
-  type RegistryPlugin,
   type RegistryRequestContext,
   registryAdapter,
   serveAssetBlob,
@@ -88,4 +88,4 @@ const mavenDefinition = registryAdapter("maven")
   ]);
 
 export class MavenAdapter extends mavenDefinition.adapterClass() {}
-export const mavenRegistryPlugin: RegistryPlugin = new MavenAdapter();
+export const mavenRegistryPlugin = createRegistryAdapterPlugin(MavenAdapter);

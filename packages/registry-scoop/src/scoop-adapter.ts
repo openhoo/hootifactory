@@ -1,7 +1,7 @@
 import {
+  createRegistryAdapterPlugin,
   Errors,
   parseRegistryInput,
-  type RegistryPlugin,
   type RegistryRequestContext,
   registryAdapter,
   serveRegistryBlob,
@@ -179,4 +179,4 @@ const scoopDefinition = registryAdapter("scoop")
   ]);
 
 export class ScoopAdapter extends scoopDefinition.adapterClass() {}
-export const scoopRegistryPlugin: RegistryPlugin = new ScoopAdapter();
+export const scoopRegistryPlugin = createRegistryAdapterPlugin(ScoopAdapter);

@@ -1,6 +1,6 @@
 import {
+  createRegistryAdapterPlugin,
   parseRegistryInput,
-  type RegistryPlugin,
   type RegistryRequestContext,
   registryAdapter,
   registryErrorResponseForKind,
@@ -270,4 +270,4 @@ const hexDefinition = registryAdapter("hex")
   ]);
 
 export class HexAdapter extends hexDefinition.adapterClass() {}
-export const hexRegistryPlugin: RegistryPlugin = new HexAdapter();
+export const hexRegistryPlugin = createRegistryAdapterPlugin(HexAdapter);

@@ -1222,3 +1222,7 @@ export class RegistryAdapterBuilder<State = undefined> {
 export function registryAdapter(id: RegistryPlugin["id"]): RegistryAdapterBuilder {
   return new RegistryAdapterBuilder(id);
 }
+
+export function createRegistryAdapterPlugin(Adapter: RegistryAdapterClass): RegistryPlugin {
+  return new Adapter();
+}

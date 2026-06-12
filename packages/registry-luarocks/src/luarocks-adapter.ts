@@ -1,7 +1,7 @@
 import {
+  createRegistryAdapterPlugin,
   Errors,
   parseRegistryInput,
-  type RegistryPlugin,
   type RegistryRequestContext,
   registryAdapter,
   serveRegistryBlob,
@@ -311,4 +311,4 @@ const luarocksDefinition = registryAdapter("luarocks")
   ]);
 
 export class LuarocksAdapter extends luarocksDefinition.adapterClass() {}
-export const luarocksRegistryPlugin: RegistryPlugin = new LuarocksAdapter();
+export const luarocksRegistryPlugin = createRegistryAdapterPlugin(LuarocksAdapter);

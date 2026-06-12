@@ -1,8 +1,8 @@
 import {
   bytesResponseWithEtag,
+  createRegistryAdapterPlugin,
   Errors,
   parseRegistryInput,
-  type RegistryPlugin,
   type RegistryRequestContext,
   registryAdapter,
   serveRegistryBlob,
@@ -310,4 +310,4 @@ const hackageDefinition = registryAdapter("hackage")
   ]);
 
 export class HackageAdapter extends hackageDefinition.adapterClass() {}
-export const hackageRegistryPlugin: RegistryPlugin = new HackageAdapter();
+export const hackageRegistryPlugin = createRegistryAdapterPlugin(HackageAdapter);

@@ -1,8 +1,8 @@
 import {
   bytesResponseWithEtag,
+  createRegistryAdapterPlugin,
   Errors,
   parseRegistryInput,
-  type RegistryPlugin,
   type RegistryRequestContext,
   registryAdapter,
   serveRegistryBlob,
@@ -189,4 +189,4 @@ const p2Definition = registryAdapter("p2")
   ]);
 
 export class P2Adapter extends p2Definition.adapterClass() {}
-export const p2RegistryPlugin: RegistryPlugin = new P2Adapter();
+export const p2RegistryPlugin = createRegistryAdapterPlugin(P2Adapter);

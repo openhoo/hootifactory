@@ -1,8 +1,8 @@
 import {
   asJsonRecord,
+  createRegistryAdapterPlugin,
   Errors,
   parseRegistryInput,
-  type RegistryPlugin,
   type RegistryRequestContext,
   registryAdapter,
   serveRegistryBlob,
@@ -170,4 +170,4 @@ const composerDefinition = registryAdapter("composer")
   ]);
 
 export class ComposerAdapter extends composerDefinition.adapterClass() {}
-export const composerRegistryPlugin: RegistryPlugin = new ComposerAdapter();
+export const composerRegistryPlugin = createRegistryAdapterPlugin(ComposerAdapter);

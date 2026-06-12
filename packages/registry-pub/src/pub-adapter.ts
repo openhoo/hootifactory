@@ -1,5 +1,5 @@
 import {
-  type RegistryPlugin,
+  createRegistryAdapterPlugin,
   type RegistryRequestContext,
   registryAdapter,
   serveRegistryBlob,
@@ -223,4 +223,4 @@ const pubDefinition = registryAdapter("pub")
   ]);
 
 export class PubAdapter extends pubDefinition.adapterClass() {}
-export const pubRegistryPlugin: RegistryPlugin = new PubAdapter();
+export const pubRegistryPlugin = createRegistryAdapterPlugin(PubAdapter);

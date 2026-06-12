@@ -1,7 +1,7 @@
 import {
   bytesResponseWithEtag,
+  createRegistryAdapterPlugin,
   parseRegistryInput,
-  type RegistryPlugin,
   type RegistryRequestContext,
   registryAdapter,
   serveRegistryBlob,
@@ -178,4 +178,4 @@ const alpineDefinition = registryAdapter("alpine")
   ]);
 
 export class AlpineAdapter extends alpineDefinition.adapterClass() {}
-export const alpineRegistryPlugin: RegistryPlugin = new AlpineAdapter();
+export const alpineRegistryPlugin = createRegistryAdapterPlugin(AlpineAdapter);

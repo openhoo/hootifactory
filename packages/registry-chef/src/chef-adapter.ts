@@ -1,8 +1,8 @@
 import {
+  createRegistryAdapterPlugin,
   parseRegistryInput,
   type RegistryMetadata,
   type RegistryPackageHandle,
-  type RegistryPlugin,
   type RegistryRequestContext,
   registryAdapter,
   serveRegistryBlob,
@@ -445,4 +445,4 @@ const chefDefinition = registryAdapter("chef")
   ]);
 
 export class ChefAdapter extends chefDefinition.adapterClass() {}
-export const chefRegistryPlugin: RegistryPlugin = new ChefAdapter();
+export const chefRegistryPlugin = createRegistryAdapterPlugin(ChefAdapter);

@@ -1,6 +1,6 @@
 import {
+  createRegistryAdapterPlugin,
   parseRegistryInput,
-  type RegistryPlugin,
   type RegistryRequestContext,
   registryAdapter,
   serveRegistryBlob,
@@ -316,4 +316,4 @@ const cocoapodsDefinition = registryAdapter("cocoapods")
   ]);
 
 export class CocoapodsAdapter extends cocoapodsDefinition.adapterClass() {}
-export const cocoapodsRegistryPlugin: RegistryPlugin = new CocoapodsAdapter();
+export const cocoapodsRegistryPlugin = createRegistryAdapterPlugin(CocoapodsAdapter);

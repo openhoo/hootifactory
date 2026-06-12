@@ -1,7 +1,7 @@
 import {
+  createRegistryAdapterPlugin,
   Errors,
   parseRegistryInput,
-  type RegistryPlugin,
   type RegistryRequestContext,
   registryAdapter,
   serveRegistryBlob,
@@ -214,4 +214,4 @@ const genericDefinition = registryAdapter("generic")
   ]);
 
 export class GenericAdapter extends genericDefinition.adapterClass() {}
-export const genericRegistryPlugin: RegistryPlugin = new GenericAdapter();
+export const genericRegistryPlugin = createRegistryAdapterPlugin(GenericAdapter);

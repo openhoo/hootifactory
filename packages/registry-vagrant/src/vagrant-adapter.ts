@@ -1,6 +1,6 @@
 import {
+  createRegistryAdapterPlugin,
   parseRegistryInput,
-  type RegistryPlugin,
   type RegistryRequestContext,
   registryAdapter,
   serveRegistryBlob,
@@ -288,4 +288,4 @@ const vagrantDefinition = registryAdapter("vagrant")
   ]);
 
 export class VagrantAdapter extends vagrantDefinition.adapterClass() {}
-export const vagrantRegistryPlugin: RegistryPlugin = new VagrantAdapter();
+export const vagrantRegistryPlugin = createRegistryAdapterPlugin(VagrantAdapter);

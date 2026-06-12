@@ -1,8 +1,8 @@
 import {
+  createRegistryAdapterPlugin,
   parseRegistryInput,
   type RegistryAppRoute,
   type RegistryAppRouteContext,
-  type RegistryPlugin,
   type RegistryRequestContext,
   registryAdapter,
   textResponseWithEtag,
@@ -344,4 +344,4 @@ const terraformDefinition = registryAdapter("terraform")
   ]);
 
 export class TerraformAdapter extends terraformDefinition.adapterClass() {}
-export const terraformRegistryPlugin: RegistryPlugin = new TerraformAdapter();
+export const terraformRegistryPlugin = createRegistryAdapterPlugin(TerraformAdapter);

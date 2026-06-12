@@ -1,8 +1,8 @@
 import {
   bytesResponseWithEtag,
+  createRegistryAdapterPlugin,
   Errors,
   type RegistryPackageHandle,
-  type RegistryPlugin,
   type RegistryRequestContext,
   registryAdapter,
   serveRegistryBlob,
@@ -134,4 +134,4 @@ const rpmDefinition = registryAdapter("rpm")
   ]);
 
 export class RpmAdapter extends rpmDefinition.adapterClass() {}
-export const rpmRegistryPlugin: RegistryPlugin = new RpmAdapter();
+export const rpmRegistryPlugin = createRegistryAdapterPlugin(RpmAdapter);

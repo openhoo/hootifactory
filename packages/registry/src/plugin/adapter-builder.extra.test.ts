@@ -1,7 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { createTestRegistryContext, createTestRouteMatch } from "../testing";
 import type { RegistryScanProvider, RouteMatch } from "./adapter";
-import { readOnlyPermission, registryAdapter, routePermission, writePermission } from "./plugin";
+import {
+  createRegistryAdapterPlugin,
+  readOnlyPermission,
+  registryAdapter,
+  routePermission,
+  writePermission,
+} from "./plugin";
 
 const ctx = createTestRegistryContext();
 
@@ -357,6 +363,15 @@ describe("adapterClass() generated adapters expose the full descriptor surface",
           .handle(() => new Response("ok")),
       ]);
   }
+
+  test("createRegistryAdapterPlugin instantiates a generated adapter as the public plugin", () => {
+    const Adapter = makeDefinition().adapterClass();
+    const plugin = createRegistryAdapterPlugin(Adapter);
+
+    expect(plugin.id).toBe("docker");
+    expect(plugin.displayName).toBe("OCI");
+    expect(plugin.routes()).toHaveLength(1);
+  });
 
   test("every descriptor getter and optional method is delegated to the inner plugin", async () => {
     const Adapter = makeDefinition().adapterClass();

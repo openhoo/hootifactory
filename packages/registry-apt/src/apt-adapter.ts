@@ -1,10 +1,10 @@
 import {
   asJsonRecord,
   bytesResponseWithEtag,
+  createRegistryAdapterPlugin,
   Errors,
   parseRegistryInput,
   type RegistryAssetRow,
-  type RegistryPlugin,
   type RegistryRequestContext,
   registryAdapter,
   repoResponseCache,
@@ -236,4 +236,4 @@ const aptDefinition = registryAdapter("apt")
   ]);
 
 export class AptAdapter extends aptDefinition.adapterClass() {}
-export const aptRegistryPlugin: RegistryPlugin = new AptAdapter();
+export const aptRegistryPlugin = createRegistryAdapterPlugin(AptAdapter);

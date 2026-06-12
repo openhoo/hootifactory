@@ -1,7 +1,7 @@
 import {
+  createRegistryAdapterPlugin,
   Errors,
   parseRegistryInput,
-  type RegistryPlugin,
   type RegistryRequestContext,
   registryAdapter,
   serveRegistryBlob,
@@ -208,4 +208,4 @@ const cargoDefinition = registryAdapter("cargo")
   ]);
 
 export class CargoAdapter extends cargoDefinition.adapterClass() {}
-export const cargoRegistryPlugin: RegistryPlugin = new CargoAdapter();
+export const cargoRegistryPlugin = createRegistryAdapterPlugin(CargoAdapter);

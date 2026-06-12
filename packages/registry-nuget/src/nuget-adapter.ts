@@ -1,11 +1,11 @@
 import {
+  createRegistryAdapterPlugin,
   Errors,
   ifNoneMatch,
   parseRegistryInput,
   type RegistryPackageHandle,
   type RegistryPackageVersionFingerprintRow,
   type RegistryPackageVersionRow,
-  type RegistryPlugin,
   type RegistryRequestContext,
   type RegistryVirtualSearchInput,
   registryAdapter,
@@ -511,4 +511,4 @@ const nugetDefinition = registryAdapter("nuget")
   ]);
 
 export class NugetAdapter extends nugetDefinition.adapterClass() {}
-export const nugetRegistryPlugin: RegistryPlugin = new NugetAdapter();
+export const nugetRegistryPlugin = createRegistryAdapterPlugin(NugetAdapter);
