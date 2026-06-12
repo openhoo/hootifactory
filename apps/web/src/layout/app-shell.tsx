@@ -156,9 +156,13 @@ export function AppShell() {
                 size="sm"
                 aria-label="Sign out"
                 onClick={async () => {
-                  await api.logout();
-                  await qc.invalidateQueries();
-                  navigate({ to: "/login" });
+                  try {
+                    await api.logout();
+                  } finally {
+                    localStorage.removeItem("hoot_org");
+                    qc.clear();
+                    navigate({ to: "/login" });
+                  }
                 }}
               >
                 <LogOut />
