@@ -68,18 +68,6 @@ describe("parseHomebrewPublishRequest", () => {
     expect(result.ok).toBe(false);
   });
 
-  test("rejects invalid names, versions, and tags before reading the body", async () => {
-    await expect(
-      parseHomebrewPublishRequest("Bad/Name", "1.2.3", "arm64_sonoma", multipart({})),
-    ).rejects.toThrow();
-    await expect(
-      parseHomebrewPublishRequest("hootcli", "bad version", "arm64_sonoma", multipart({})),
-    ).rejects.toThrow();
-    await expect(
-      parseHomebrewPublishRequest("hootcli", "1.2.3", "Bad-Tag", multipart({})),
-    ).rejects.toThrow();
-  });
-
   test("rejects a malformed formula JSON part", async () => {
     const result = await parseHomebrewPublishRequest(
       "hootcli",

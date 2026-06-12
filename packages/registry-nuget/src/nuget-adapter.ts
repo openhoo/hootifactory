@@ -8,6 +8,7 @@ import {
   type RegistryPackageVersionRow,
   type RegistryPlugin,
   type RegistryRequestContext,
+  type RegistryRouteParamSpec,
   type RegistryVirtualSearchInput,
   registryAdapter,
   repoResponseCache,
@@ -44,13 +45,29 @@ interface NugetRegistrationCacheBody {
   text: string;
 }
 
-function parseNugetId(id: string): string {
-  return parseRegistryInput(NugetIdSchema, id, {
-    code: "NAME_INVALID",
-    message: "invalid package id",
-  });
-}
+const idParam: RegistryRouteParamSpec = {
+  schema: NugetIdSchema,
+  code: "NAME_INVALID",
+  message: "invalid package id",
+};
 
+const versionParam: RegistryRouteParamSpec = {
+  schema: NugetVersionInputSchema,
+  code: "MANIFEST_UNKNOWN",
+  message: "invalid package version",
+  status: 404,
+};
+
+const fileParam: RegistryRouteParamSpec = {
+  schema: NugetFileSchema,
+  code: "NAME_INVALID",
+  message: "invalid package filename",
+};
+
+/**
+ * Still parsed in-handler: the registration leaf derives the version from the
+ * `:file` segment (`{version}.json`), so it is not a route param of its own.
+ */
 function parseNugetVersionInput(version: string): string {
   return parseRegistryInput(NugetVersionInputSchema, version, {
     code: "MANIFEST_UNKNOWN",
@@ -127,7 +144,6 @@ class NugetAdapterState {
   }
 
   async versions(id: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
-    id = parseNugetId(id);
     const pkg = await this.findPkg(ctx, id);
     if (!pkg) throw Errors.notFound();
     const versions = (await ctx.data.versions.listLiveNames(pkg))
@@ -143,7 +159,6 @@ class NugetAdapterState {
     base: string,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
-    id = parseNugetId(id);
     const pkg = await this.findPkg(ctx, id);
     if (!pkg) throw Errors.notFound();
     const cacheKey = this.registrationCacheKey(pkg, base);
@@ -165,7 +180,6 @@ class NugetAdapterState {
     base: string,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
-    id = parseNugetId(id);
     if (!file.toLowerCase().endsWith(".json")) throw Errors.notFound();
     const rawVersion = file.slice(0, -".json".length);
     const version = parseNugetVersionInput(rawVersion);
@@ -232,12 +246,6 @@ class NugetAdapterState {
     req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
-    id = parseNugetId(id);
-    version = parseNugetVersionInput(version);
-    file = parseRegistryInput(NugetFileSchema, file, {
-      code: "NAME_INVALID",
-      message: "invalid package filename",
-    });
     const pkg = await this.findPkg(ctx, id);
     if (!pkg) throw Errors.notFound();
     const norm = normalizeNugetVersion(version);
@@ -272,8 +280,6 @@ class NugetAdapterState {
     listed: boolean,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
-    id = parseNugetId(id);
-    version = parseNugetVersionInput(version);
     const pkg = await this.findPkg(ctx, id);
     if (!pkg) throw Errors.notFound();
     const norm = normalizeNugetVersion(version);
@@ -473,25 +479,31 @@ const nugetDefinition = registryAdapter("nuget")
     route.put("/v3/package", "publish").calls((state, { req, ctx }) => state.publish(req, ctx)),
     route
       .delete("/v3/package/:id/:version", "delete")
+      .params({ id: idParam, version: versionParam })
       .calls((state, { params, ctx }) => state.setListed(params.id, params.version, false, ctx)),
     route
       .post("/v3/package/:id/:version", "relist")
+      .params({ id: idParam, version: versionParam })
       .calls((state, { params, ctx }) => state.setListed(params.id, params.version, true, ctx)),
     route
       .get("/v3-flatcontainer/:id/index.json", "versions")
+      .params({ id: idParam })
       .calls((state, { params, req, ctx }) => state.versions(params.id, req, ctx)),
     route
       .get("/v3-flatcontainer/:id/:version/:file", "download")
+      .params({ id: idParam, version: versionParam, file: fileParam })
       .calls((state, { params, req, ctx }) =>
         state.download(params.id, params.version, params.file, req, ctx),
       ),
     route
       .get("/v3/registrations/:id/index.json", "registration")
+      .params({ id: idParam })
       .calls((state, { params, req, ctx }) =>
         state.registration(params.id, req, state.base(ctx), ctx),
       ),
     route
       .get("/v3/registrations/:id/:file", "registrationLeaf")
+      .params({ id: idParam })
       .calls((state, { params, req, ctx }) =>
         state.registrationLeaf(params.id, params.file, req, state.base(ctx), ctx),
       ),

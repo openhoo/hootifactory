@@ -1,6 +1,6 @@
 import {
   digestHex,
-  publishImmutableVersionBlob,
+  publishImmutableVersionBlobResponse,
   type RegistryRequestContext,
   type RegistryStoredBlob,
 } from "@hootifactory/registry";
@@ -54,7 +54,7 @@ export async function handleWingetPublish(
   const lowerId = packageIdentifier.toLowerCase();
   const scope = wingetInstallerScope(packageIdentifier, version, filename);
 
-  const result = await publishImmutableVersionBlob(ctx, {
+  return publishImmutableVersionBlobResponse(ctx, {
     package: { name: lowerId },
     version,
     kind: "generic_file",
@@ -82,7 +82,7 @@ export async function handleWingetPublish(
     // winget package versions are immutable here; a stored version (even a
     // retention tombstone) reserves the version and blocks re-publish.
     versionConflict: async (pkg) => Boolean(await ctx.data.versions.find(pkg, version)),
+    conflictResponse: () => wingetVersionConflictResponse(),
+    successResponse: () => wingetPublishSuccessResponse(packageIdentifier, version),
   });
-  if (!result.ok) return wingetVersionConflictResponse();
-  return wingetPublishSuccessResponse(packageIdentifier, version);
 }

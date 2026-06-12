@@ -98,10 +98,4 @@ describe("parseRpmPublishRequest", () => {
     if (result.ok) throw new Error("expected error");
     expect(result.error).toEqual({ error: "missing package file", status: 400 });
   });
-
-  test("rejects an invalid route filename hint before reading the body", async () => {
-    await expect(
-      parseRpmPublishRequest("../../etc/passwd", rawPut(new Uint8Array([1, 2, 3]))),
-    ).rejects.toMatchObject({ code: "NAME_INVALID" });
-  });
 });

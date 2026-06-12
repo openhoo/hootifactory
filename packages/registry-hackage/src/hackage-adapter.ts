@@ -200,11 +200,10 @@ class HackageAdapterState {
    * a 404 that a real client would otherwise hit.
    */
   async preferredVersions(
-    idRaw: string,
+    name: string,
     req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
-    const name = parseName(idRaw);
     const pkg = await ctx.data.packages.findByName(name);
     if (!pkg) return new Response("Not Found", { status: 404 });
     const metas = await this.liveMetas(ctx, pkg);
@@ -292,6 +291,13 @@ const hackageDefinition = registryAdapter("hackage")
     // before `/package/:id/:file` so it is not matched as a `:file` download.
     route
       .get("/package/:id/preferred-versions", "preferredVersions")
+      .params({
+        id: {
+          schema: HackageNameSchema,
+          code: "NAME_INVALID",
+          message: "invalid Hackage package name",
+        },
+      })
       .calls((state, { params, req, ctx }) => state.preferredVersions(params.id, req, ctx)),
     route
       .get("/package/:id/:file", "download")

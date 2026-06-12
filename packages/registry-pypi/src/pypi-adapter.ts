@@ -99,10 +99,6 @@ class PypiAdapterState {
   }
 
   async download(filename: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
-    filename = parseRegistryInput(PypiFilenameSchema, filename, {
-      code: "NAME_INVALID",
-      message: "invalid distribution filename",
-    });
     return serveAssetBlob(ctx, {
       role: "pypi_file",
       kind: "pypi_file",
@@ -154,6 +150,13 @@ const pypiDefinition = registryAdapter("pypi")
       .calls((state, { params, req, ctx }) => state.simpleProject(params.project, req, ctx)),
     route
       .get("/files/:filename", "download")
+      .params({
+        filename: {
+          schema: PypiFilenameSchema,
+          code: "NAME_INVALID",
+          message: "invalid distribution filename",
+        },
+      })
       .calls((state, { params, req, ctx }) => state.download(params.filename, req, ctx)),
     route.post("/", "upload").calls((state, { req, ctx }) => state.upload(req, ctx)),
     route.post("/legacy/", "upload").calls((state, { req, ctx }) => state.upload(req, ctx)),

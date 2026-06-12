@@ -55,6 +55,7 @@ export {
   routePermission,
   writePermission,
 } from "./permissions";
+export { registryRouteParamDefaults, validateRegistryRouteParams } from "./route-params";
 export type {
   RegistryBeforeHandleHook,
   RegistryPermissionInput,
@@ -65,8 +66,13 @@ export type {
   RegistryRouteInput,
   RegistryRouteList,
   RegistryRouteOptions,
+  RegistryRouteParamErrorOptions,
+  RegistryRouteParamInput,
+  RegistryRouteParamSchema,
   RegistryRouteParamSchemas,
+  RegistryRouteParamSpec,
   RegistryRouteParams,
+  RegistryRouteParamsShape,
   RegistryRoutePrefixFactory,
   RegistryRouteSpec,
 } from "./route-types";

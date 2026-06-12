@@ -77,11 +77,7 @@ class RubygemsAdapterState {
   }
 
   async compactInfo(gem: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
-    const name = parseRegistryInput(GemNameSchema, gem, {
-      code: "NAME_INVALID",
-      message: "invalid gem name",
-    });
-    const pkg = await ctx.data.packages.findByName(name);
+    const pkg = await ctx.data.packages.findByName(gem);
     if (!pkg) throw Errors.notFound();
     const versions = await ctx.data.versions.listLive(pkg, { orderByCreated: "asc" });
     const entries = versions.flatMap((row) => {
@@ -99,10 +95,6 @@ class RubygemsAdapterState {
   }
 
   async download(filename: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
-    filename = parseRegistryInput(GemFilenameSchema, filename, {
-      code: "NAME_INVALID",
-      message: "invalid gem filename",
-    });
     return serveAssetBlob(ctx, {
       role: GEM_KIND,
       kind: GEM_KIND,
@@ -201,9 +193,17 @@ const rubygemsDefinition = registryAdapter("rubygems")
       .calls((state, { req, ctx }) => state.compactNames(req, ctx)),
     route
       .get("/info/:gem", "compactInfo")
+      .params({ gem: { schema: GemNameSchema, code: "NAME_INVALID", message: "invalid gem name" } })
       .calls((state, { params, req, ctx }) => state.compactInfo(params.gem, req, ctx)),
     route
       .get("/gems/:filename", "download")
+      .params({
+        filename: {
+          schema: GemFilenameSchema,
+          code: "NAME_INVALID",
+          message: "invalid gem filename",
+        },
+      })
       .calls((state, { params, req, ctx }) => state.download(params.filename, req, ctx)),
   ]);
 

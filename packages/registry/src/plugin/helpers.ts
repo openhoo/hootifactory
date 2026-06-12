@@ -1,3 +1,4 @@
+import { gunzipSync } from "node:zlib";
 import { BoundedLruCache, Errors, type SafeFetchOptions, safeFetch } from "@hootifactory/core";
 import type { RegistryRequestContext } from "./adapter";
 import type {
@@ -10,6 +11,7 @@ import type {
   StoreBlobStreamWithRefInput,
   StoreBlobWithRefInput,
 } from "./data";
+import type { MaybePromise } from "./route-types";
 
 export interface ServeRegistryBlobOptions {
   digest: string;
@@ -103,6 +105,41 @@ export interface RepoResponseCache<Body> {
   size(): number;
 }
 
+export interface TarMember {
+  path: string;
+  data: Uint8Array;
+  size: number;
+}
+
+export interface TarMemberInfo {
+  path: string;
+  size: number;
+}
+
+export type TarMemberMatcher = string | ((member: TarMemberInfo) => boolean);
+
+export interface TarReadOptions {
+  maxEntries?: number;
+}
+
+export type TarProbeResult =
+  | { kind: "found"; member: TarMember }
+  | { kind: "absent" }
+  | { kind: "need-more" };
+
+export interface GunzipTarOptions extends TarReadOptions {
+  maxTarBytes: number;
+}
+
+const TAR_BLOCK = 512;
+const TAR_NAME_OFFSET = 0;
+const TAR_NAME_LENGTH = 100;
+const TAR_SIZE_OFFSET = 124;
+const TAR_SIZE_LENGTH = 12;
+const TAR_PREFIX_OFFSET = 345;
+const TAR_PREFIX_LENGTH = 155;
+const tarTextDecoder = new TextDecoder();
+
 export function sha1hexText(data: string): string {
   const h = new Bun.CryptoHasher("sha1");
   h.update(data);
@@ -160,6 +197,162 @@ export function bytesResponseWithEtag(
 ): Response {
   if (ifNoneMatch(req, etag)) return new Response(null, { status: 304, headers: { etag } });
   return new Response(body, { headers: { ...headers, etag } });
+}
+
+function decodeTarCString(bytes: Uint8Array): string {
+  const nul = bytes.indexOf(0);
+  const slice = nul >= 0 ? bytes.subarray(0, nul) : bytes;
+  return tarTextDecoder.decode(slice);
+}
+
+function parseTarOctal(bytes: Uint8Array): number {
+  const text = decodeTarCString(bytes).trim();
+  if (!text) return 0;
+  const value = Number.parseInt(text, 8);
+  return Number.isFinite(value) ? value : 0;
+}
+
+function tarEntryPath(header: Uint8Array): string {
+  const name = decodeTarCString(
+    header.subarray(TAR_NAME_OFFSET, TAR_NAME_OFFSET + TAR_NAME_LENGTH),
+  );
+  const prefix = decodeTarCString(
+    header.subarray(TAR_PREFIX_OFFSET, TAR_PREFIX_OFFSET + TAR_PREFIX_LENGTH),
+  );
+  return (prefix ? `${prefix}/${name}` : name).replace(/^\.\//, "");
+}
+
+function isZeroTarBlock(block: Uint8Array): boolean {
+  for (const byte of block) {
+    if (byte !== 0) return false;
+  }
+  return true;
+}
+
+function tarMemberMatches(matcher: TarMemberMatcher, member: TarMemberInfo): boolean {
+  return typeof matcher === "string" ? member.path === matcher : matcher(member);
+}
+
+export function* tarMembers(tar: Uint8Array, opts: TarReadOptions = {}): Generator<TarMember> {
+  let offset = 0;
+  let scanned = 0;
+  while (offset + TAR_BLOCK <= tar.length) {
+    if (opts.maxEntries !== undefined && scanned >= opts.maxEntries) break;
+    const header = tar.subarray(offset, offset + TAR_BLOCK);
+    if (isZeroTarBlock(header)) break;
+    const path = tarEntryPath(header);
+    const size = parseTarOctal(header.subarray(TAR_SIZE_OFFSET, TAR_SIZE_OFFSET + TAR_SIZE_LENGTH));
+    const dataStart = offset + TAR_BLOCK;
+    if (dataStart + size > tar.length) break;
+    yield { path, size, data: tar.subarray(dataStart, dataStart + size) };
+    offset = dataStart + Math.ceil(size / TAR_BLOCK) * TAR_BLOCK;
+    scanned += 1;
+  }
+}
+
+export function probeTarMember(
+  tar: Uint8Array,
+  matcher: TarMemberMatcher,
+  opts: TarReadOptions = {},
+): TarProbeResult {
+  let offset = 0;
+  let scanned = 0;
+  while (offset + TAR_BLOCK <= tar.length) {
+    if (opts.maxEntries !== undefined && scanned >= opts.maxEntries) return { kind: "absent" };
+    const header = tar.subarray(offset, offset + TAR_BLOCK);
+    if (isZeroTarBlock(header)) return { kind: "absent" };
+    const path = tarEntryPath(header);
+    const size = parseTarOctal(header.subarray(TAR_SIZE_OFFSET, TAR_SIZE_OFFSET + TAR_SIZE_LENGTH));
+    const dataStart = offset + TAR_BLOCK;
+    const info = { path, size };
+    const matches = tarMemberMatches(matcher, info);
+    if (dataStart + size > tar.length) return { kind: "need-more" };
+    if (matches) {
+      return {
+        kind: "found",
+        member: { ...info, data: tar.subarray(dataStart, dataStart + size) },
+      };
+    }
+    const next = dataStart + Math.ceil(size / TAR_BLOCK) * TAR_BLOCK;
+    if (next > tar.length) return { kind: "need-more" };
+    offset = next;
+    scanned += 1;
+  }
+  return { kind: "need-more" };
+}
+
+export function readTarEntry(
+  tar: Uint8Array,
+  matcher: TarMemberMatcher,
+  opts: TarReadOptions = {},
+): Uint8Array | null {
+  const probe = probeTarMember(tar, matcher, opts);
+  return probe.kind === "found" ? probe.member.data : null;
+}
+
+export function readTarEntryByBasename(
+  tar: Uint8Array,
+  wantedBasename: string,
+  opts: TarReadOptions = {},
+): Uint8Array | null {
+  return readTarEntry(
+    tar,
+    ({ path }) => path.slice(path.lastIndexOf("/") + 1) === wantedBasename,
+    opts,
+  );
+}
+
+export function readTarEntryText(
+  tar: Uint8Array,
+  matcher: TarMemberMatcher,
+  opts: TarReadOptions = {},
+): string | null {
+  const entry = readTarEntry(tar, matcher, opts);
+  return entry ? tarTextDecoder.decode(entry) : null;
+}
+
+export function readTarEntryByBasenameText(
+  tar: Uint8Array,
+  wantedBasename: string,
+  opts: TarReadOptions = {},
+): string | null {
+  const entry = readTarEntryByBasename(tar, wantedBasename, opts);
+  return entry ? tarTextDecoder.decode(entry) : null;
+}
+
+export function gunzipTar(archive: Uint8Array, opts: GunzipTarOptions): Uint8Array | null {
+  try {
+    return gunzipSync(archive, { maxOutputLength: opts.maxTarBytes });
+  } catch {
+    return null;
+  }
+}
+
+export function readGzipTarEntry(
+  archive: Uint8Array,
+  matcher: TarMemberMatcher,
+  opts: GunzipTarOptions,
+): Uint8Array | null {
+  const tar = gunzipTar(archive, opts);
+  return tar ? readTarEntry(tar, matcher, opts) : null;
+}
+
+export function readGzipTarEntryText(
+  archive: Uint8Array,
+  matcher: TarMemberMatcher,
+  opts: GunzipTarOptions,
+): string | null {
+  const tar = gunzipTar(archive, opts);
+  return tar ? readTarEntryText(tar, matcher, opts) : null;
+}
+
+export function readGzipTarEntryByBasenameText(
+  archive: Uint8Array,
+  wantedBasename: string,
+  opts: GunzipTarOptions,
+): string | null {
+  const tar = gunzipTar(archive, opts);
+  return tar ? readTarEntryByBasenameText(tar, wantedBasename, opts) : null;
 }
 
 export function immutableRegistryBlobCacheControl(
@@ -500,13 +693,38 @@ export interface PublishImmutableVersionBlobInput {
   versionConflict?: (pkg: RegistryPackageHandle) => Promise<boolean>;
 }
 
+export type PublishImmutableVersionBlobSuccess = {
+  ok: true;
+  pkg: RegistryPackageRow;
+  stored: RegistryStoredBlob;
+  versionId: string;
+};
+
+export type PublishImmutableVersionBlobConflict = {
+  ok: false;
+  pkg: RegistryPackageRow;
+  conflict: true;
+};
+
+export type PublishImmutableVersionBlobResult =
+  | PublishImmutableVersionBlobSuccess
+  | PublishImmutableVersionBlobConflict;
+
+export interface PublishImmutableVersionBlobMappedInput<Output>
+  extends PublishImmutableVersionBlobInput {
+  conflict(result: PublishImmutableVersionBlobConflict): MaybePromise<Output>;
+  success(result: PublishImmutableVersionBlobSuccess): MaybePromise<Output>;
+}
+
+export interface PublishImmutableVersionBlobResponseInput extends PublishImmutableVersionBlobInput {
+  conflictResponse?: (result: PublishImmutableVersionBlobConflict) => MaybePromise<Response>;
+  successResponse?: (result: PublishImmutableVersionBlobSuccess) => MaybePromise<Response>;
+}
+
 export async function publishImmutableVersionBlob(
   ctx: RegistryRequestContext,
   input: PublishImmutableVersionBlobInput,
-): Promise<
-  | { ok: true; pkg: RegistryPackageRow; stored: RegistryStoredBlob; versionId: string }
-  | { ok: false; pkg: RegistryPackageRow; conflict: true }
-> {
+): Promise<PublishImmutableVersionBlobResult> {
   const pkg = await findOrCreateRegistryPackage(ctx, input.package);
   if (await input.versionConflict?.(pkg)) {
     return { ok: false, pkg, conflict: true };
@@ -525,4 +743,26 @@ export async function publishImmutableVersionBlob(
   });
   if ("conflict" in result) return { ok: false, pkg, conflict: true };
   return { ok: true, pkg, stored, versionId: result.versionId };
+}
+
+export async function publishImmutableVersionBlobMapped<Output>(
+  ctx: RegistryRequestContext,
+  input: PublishImmutableVersionBlobMappedInput<Output>,
+): Promise<Output> {
+  const result = await publishImmutableVersionBlob(ctx, input);
+  return result.ok ? input.success(result) : input.conflict(result);
+}
+
+export async function publishImmutableVersionBlobResponse(
+  ctx: RegistryRequestContext,
+  input: PublishImmutableVersionBlobResponseInput,
+): Promise<Response> {
+  return publishImmutableVersionBlobMapped(ctx, {
+    ...input,
+    conflict: (result) =>
+      input.conflictResponse?.(result) ??
+      Response.json({ error: "version already exists" }, { status: 409 }),
+    success: (result) =>
+      input.successResponse?.(result) ?? Response.json({ ok: true }, { status: 201 }),
+  });
 }

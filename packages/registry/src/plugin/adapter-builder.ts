@@ -36,6 +36,7 @@ import {
   type routePermission,
   writePermission,
 } from "./permissions";
+import { registryRouteParamDefaults } from "./route-params";
 import type {
   MaybePromise,
   RegistryPermissionInput,
@@ -43,8 +44,9 @@ import type {
   RegistryRouteInput,
   RegistryRouteList,
   RegistryRouteOptions,
-  RegistryRouteParamSchemas,
+  RegistryRouteParamErrorOptions,
   RegistryRouteParams,
+  RegistryRouteParamsShape,
   RegistryRouteSpec,
 } from "./route-types";
 import { joinRoutePattern, registryRoute } from "./routes-dsl";
@@ -344,6 +346,20 @@ export class RegistryAdapterRouteBuilder<
     return this;
   }
 
+  /**
+   * Declare per-param zod schemas validated BEFORE both permission resolution
+   * (including `byParams` rules) and the handler. A failing param
+   * short-circuits the request to the parse error `parseRegistryInput` raises
+   * today (status 400 / code "UNSUPPORTED" / message "invalid request" unless
+   * overridden per param or via `defaults`). Schema outputs must be strings;
+   * at runtime `params` carries the validated/normalized outputs, while the
+   * static `Params` type stays string-typed (documented in route-types).
+   */
+  params(shape: RegistryRouteParamsShape<Params>, defaults?: RegistryRouteParamErrorOptions): this {
+    this.options.params = defaults ? registryRouteParamDefaults(shape, defaults) : shape;
+    return this;
+  }
+
   permission(permission: Permission): this;
   permission(permission: RegistryAdapterPermissionFactory<Params, State>): this;
   permission(permission: RegistryAdapterPermissionResolver<Params, State>): this;
@@ -404,11 +420,6 @@ export class RegistryAdapterRouteBuilder<
 
   artifactPermission(name: string, options?: RegistryArtifactPermissionParamOptions): this {
     return this.artifactParam(name, options);
-  }
-
-  params(schemas: RegistryRouteParamSchemas<Params>): this {
-    this.options.paramSchemas = schemas;
-    return this;
   }
 
   calls(

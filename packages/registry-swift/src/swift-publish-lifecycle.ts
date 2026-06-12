@@ -2,7 +2,7 @@ import {
   asJsonRecord,
   digestHex,
   findRegistryPackage,
-  publishImmutableVersionBlob,
+  publishImmutableVersionBlobMapped,
   type RegistryRequestContext,
   type RegistryStoredBlob,
 } from "@hootifactory/registry";
@@ -108,7 +108,7 @@ export async function handleSwiftPublish(
     return { status: 409, detail: "version already exists" };
   }
 
-  const result = await publishImmutableVersionBlob(ctx, {
+  return publishImmutableVersionBlobMapped<SwiftPublishResult>(ctx, {
     // `packageId` is the case-normalized identifier; the namespace mirrors it so
     // a package published as mona/LinkedList resolves under Mona/linkedlist too.
     package: { name: packageId, namespace: scope.toLowerCase() },
@@ -132,13 +132,11 @@ export async function handleSwiftPublish(
       metadata: { packageId, checksum: digestHex(stored.digest) },
     }),
     versionConflict: (pkg) => ctx.data.versions.exists(pkg, version),
+    conflict: () => ({ status: 409, detail: "version already exists" }),
+    success: (result) => ({
+      status: 201,
+      location: `${ctx.baseUrl}/${ctx.repo.mountPath}/${scope}/${name}/${version}`,
+      checksum: digestHex(result.stored.digest),
+    }),
   });
-  if (!result.ok) {
-    return { status: 409, detail: "version already exists" };
-  }
-  return {
-    status: 201,
-    location: `${ctx.baseUrl}/${ctx.repo.mountPath}/${scope}/${name}/${version}`,
-    checksum: digestHex(result.stored.digest),
-  };
 }

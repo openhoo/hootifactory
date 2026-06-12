@@ -457,6 +457,30 @@ const publishMatch = {
 } satisfies RouteMatch;
 
 describe("Homebrew publish", () => {
+  test("rejects invalid :name/:version/:tag params before permissions and the handler", async () => {
+    const ctx = withHomebrewRepo();
+    const adapter = new HomebrewAdapter();
+    const badParams = [
+      { params: { name: "Bad/Name", version: "1.2.3", tag: "arm64_sonoma" }, code: "NAME_INVALID" },
+      {
+        params: { name: "hootcli", version: "bad version", tag: "arm64_sonoma" },
+        code: "MANIFEST_INVALID",
+      },
+      { params: { name: "hootcli", version: "1.2.3", tag: "Bad-Tag" }, code: "NAME_INVALID" },
+    ] as const;
+    for (const { params, code } of badParams) {
+      const match = { ...publishMatch, params } satisfies RouteMatch;
+      // 400-before-403: garbage params short-circuit permission resolution too.
+      expect(() => adapter.requiredPermission("PUT", match)).toThrow(
+        expect.objectContaining({ status: 400, code }),
+      );
+      await expect(adapter.handle(match, publishRequest(), ctx)).rejects.toMatchObject({
+        status: 400,
+        code,
+      });
+    }
+  });
+
   test("publishes a new bottle, persisting metadata and enqueuing a scan", async () => {
     const ctx = withHomebrewRepo();
     let createdMetadata: Record<string, unknown> | undefined;
