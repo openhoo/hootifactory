@@ -78,6 +78,7 @@ function createTestDataService(): ContentAddressableRegistryDataService {
       releaseBlobRef: () => Promise.resolve(),
       staging: {
         putKey: () => Promise.resolve(),
+        putKeyStream: () => Promise.resolve(),
         readKey: () => unimplemented("data.content.staging.readKey"),
         bytesAtKey: () => Promise.resolve(new Uint8Array()),
         statKey: () => Promise.resolve(null),

@@ -391,6 +391,7 @@ export interface RegistryDataService {
     releaseBlobRef(input: RegistryBlobRefInput): Promise<void>;
     staging: {
       putKey(key: string, data: Uint8Array): Promise<void>;
+      putKeyStream(key: string, data: ReadableStream<Uint8Array>): Promise<void>;
       readKey(key: string): ReadableStream<Uint8Array>;
       bytesAtKey(key: string): Promise<Uint8Array>;
       statKey(key: string): Promise<{ size: number; etag?: string } | null>;

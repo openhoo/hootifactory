@@ -50,6 +50,8 @@ export interface BlobStore {
   existsKey(key: string): Promise<boolean>;
   statKey(key: string): Promise<BlobStat | null>;
   deleteKey(key: string): Promise<void>;
+  /** Stream data to a staging key without buffering the full payload in memory. */
+  putStreamAtKey(key: string, data: ReadableStream<Uint8Array>): Promise<void>;
   /** Promote a staging key into the CAS under the given (already verified) digest. */
   promoteToBlob(stagingKey: string, digest: string): Promise<void>;
   presignPutKey(key: string, expiresIn?: number): string;
