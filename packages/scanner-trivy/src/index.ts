@@ -118,6 +118,7 @@ export const trivyScanner: ScannerPlugin<TrivyConfig> = {
       },
       requireOutput: true,
       target: resolvedTarget,
+      allowNetwork: Boolean(config.serverUrl),
     });
   },
 };

@@ -78,6 +78,17 @@ describe("dockerScannerRunArgs", () => {
     // No cidfile when none requested.
     expect(args).not.toContain("--cidfile");
   });
+
+  test("omits --network none when allowNetwork is set", () => {
+    const args = dockerScannerRunArgs({
+      args: ["fs", "--server", "https://trivy.example.com", "/tmp/blob"],
+      image: "aquasec/trivy:latest",
+      target: "/tmp/blob",
+      allowNetwork: true,
+    });
+    expect(args).not.toContain("--network");
+    expect(args).not.toContain("none");
+  });
 });
 
 describe("isDigestPinnedImage", () => {
