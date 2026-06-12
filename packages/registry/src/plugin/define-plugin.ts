@@ -147,11 +147,7 @@ class DefinedRegistryPlugin implements RegistryPlugin {
     ctx: RegistryRequestContext,
   ): Permission {
     const spec = this.specFor(match);
-    // Param validation runs BEFORE the permission resolver: a failing param
-    // short-circuits to the parse error (RegistryError) before authorization,
-    // and the resolver only ever observes validated/normalized params.
-    const params = validateRouteParams(spec, match);
-    const input = { method, match, params, ctx };
+    const input = { method, match, params: match.params, ctx };
     return (
       resolveRoutePermission(spec.permission, input) ??
       this.input.defaultPermission?.(input) ??
@@ -161,9 +157,10 @@ class DefinedRegistryPlugin implements RegistryPlugin {
 
   handle(match: RouteMatch, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const spec = this.specFor(match);
-    // Re-validate here as well (hosts may call handle without
-    // requiredPermission): the handler observes validated params and a failing
-    // param rejects with the parseRegistryInput-shaped RegistryError.
+    // Validate params at handler call site: the handler observes validated
+    // params and a failing param rejects with the parseRegistryInput-shaped
+    // RegistryError, caught by the runtime adapter-response wrapper and
+    // formatted through the module's errorResponseKind.
     return Promise.resolve()
       .then(() => ({ match, params: validateRouteParams(spec, match), req, ctx }))
       .then(async (input) => {
