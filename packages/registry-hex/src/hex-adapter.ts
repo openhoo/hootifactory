@@ -1,11 +1,11 @@
 import {
+  jsonResponseWithEtag,
   type RegistryPlugin,
   type RegistryRequestContext,
   type RegistryRouteParamSpec,
   registryAdapter,
   registryErrorResponseForKind,
   serveVersionBlob,
-  textResponseWithEtag,
 } from "@hootifactory/registry";
 import {
   buildHexApiPackage,
@@ -72,7 +72,7 @@ class HexAdapterState {
   async names(req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const names = await ctx.data.packages.listNames();
     const sorted = [...names].map((n) => n.name).sort((a, b) => a.localeCompare(b));
-    return textResponseWithEtag(req, JSON.stringify(buildHexNamesResource(sorted)), {
+    return jsonResponseWithEtag(req, buildHexNamesResource(sorted), {
       "content-type": JSON_CONTENT_TYPE,
     });
   }
@@ -88,9 +88,13 @@ class HexAdapterState {
         packages.push({ name, versions: releases.map((r) => r.version) });
       }
     }
-    return textResponseWithEtag(req, JSON.stringify({ packages }), {
-      "content-type": JSON_CONTENT_TYPE,
-    });
+    return jsonResponseWithEtag(
+      req,
+      { packages },
+      {
+        "content-type": JSON_CONTENT_TYPE,
+      },
+    );
   }
 
   /** `GET /packages/:name` — the package's release list (JSON simplification). */
@@ -101,9 +105,9 @@ class HexAdapterState {
   ): Promise<Response> {
     const releases = await this.storedReleases(name, ctx);
     if (!releases || releases.length === 0) return jsonNotFound(`package ${name} not found`);
-    return textResponseWithEtag(
+    return jsonResponseWithEtag(
       req,
-      JSON.stringify(buildHexPackageResource({ name, releases, repoName: ctx.repo.name })),
+      buildHexPackageResource({ name, releases, repoName: ctx.repo.name }),
       { "content-type": JSON_CONTENT_TYPE },
     );
   }
@@ -119,7 +123,7 @@ class HexAdapterState {
       mountPath: ctx.repo.mountPath,
       repoName: ctx.repo.name,
     });
-    return textResponseWithEtag(req, JSON.stringify(body), {
+    return jsonResponseWithEtag(req, body, {
       "content-type": JSON_CONTENT_TYPE,
     });
   }
@@ -143,7 +147,7 @@ class HexAdapterState {
       baseUrl: ctx.baseUrl,
       mountPath: ctx.repo.mountPath,
     });
-    return textResponseWithEtag(req, JSON.stringify(body), {
+    return jsonResponseWithEtag(req, body, {
       "content-type": JSON_CONTENT_TYPE,
     });
   }

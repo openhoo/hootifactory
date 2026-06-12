@@ -1,12 +1,12 @@
 import {
   Errors,
+  jsonResponseWithEtag,
   parseRegistryInput,
   type RegistryPlugin,
   type RegistryRequestContext,
   type RegistryRouteParamSpec,
   registryAdapter,
   serveRegistryBlob,
-  textResponseWithEtag,
 } from "@hootifactory/registry";
 import {
   buildWingetPackageManifest,
@@ -125,9 +125,7 @@ class WingetAdapterState {
       packageIdentifier: canonicalIdentifier,
       versions,
     });
-    return textResponseWithEtag(req, JSON.stringify(buildWingetPackageManifestResponse(document)), {
-      "content-type": "application/json; charset=utf-8",
-    });
+    return jsonResponseWithEtag(req, buildWingetPackageManifestResponse(document));
   }
 
   requestedVersion(req: Request): string | null {

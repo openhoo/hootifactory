@@ -1,12 +1,12 @@
 import {
   Errors,
+  jsonResponseWithEtag,
   parseRegistryInput,
   type RegistryPlugin,
   type RegistryRequestContext,
   type RegistryRouteParamSpec,
   registryAdapter,
   serveRegistryBlob,
-  textResponseWithEtag,
 } from "@hootifactory/registry";
 import { readBoundedStream } from "./generic-body";
 import { handleGenericProxyIngest } from "./generic-proxy-lifecycle";
@@ -58,9 +58,13 @@ class GenericAdapterState {
     const prefix = parsePrefix(url.searchParams.get("prefix") ?? "");
     const metas = await this.listMetas(ctx);
     const entries = buildGenericIndexEntries(metas, prefix);
-    return textResponseWithEtag(req, JSON.stringify({ prefix, entries }), {
-      "content-type": INDEX_CONTENT_TYPE,
-    });
+    return jsonResponseWithEtag(
+      req,
+      { prefix, entries },
+      {
+        "content-type": INDEX_CONTENT_TYPE,
+      },
+    );
   }
 
   /** `GET`/`HEAD /<path>` — serve the stored blob with checksum sidecar headers. */

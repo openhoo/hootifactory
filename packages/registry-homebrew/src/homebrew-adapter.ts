@@ -1,5 +1,6 @@
 import {
   Errors,
+  jsonResponseWithEtag,
   parseRegistryInput,
   type RegistryPackageHandle,
   type RegistryPlugin,
@@ -76,7 +77,7 @@ class HomebrewAdapterState {
     }
     // Deterministic name ordering keeps the index document stable for ETags.
     formulas.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-    return textResponseWithEtag(req, JSON.stringify(formulas), {
+    return jsonResponseWithEtag(req, formulas, {
       "content-type": JSON_CONTENT_TYPE,
     });
   }
@@ -96,7 +97,7 @@ class HomebrewAdapterState {
     if (!pkg) throw Errors.notFound();
     const formula = await this.resolveFormula(ctx, pkg, name);
     if (!formula) throw Errors.notFound();
-    return textResponseWithEtag(req, JSON.stringify(formula), {
+    return jsonResponseWithEtag(req, formula, {
       "content-type": JSON_CONTENT_TYPE,
     });
   }

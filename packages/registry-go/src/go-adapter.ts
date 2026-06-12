@@ -1,5 +1,6 @@
 import {
   Errors,
+  jsonResponseWithEtag,
   parseRegistryInput,
   type RegistryPlugin,
   type RegistryRequestContext,
@@ -61,14 +62,10 @@ class GoAdapterState {
     const latestVer = pickLatest(rows.map((r) => r.version));
     const row = rows.find((r) => r.version === latestVer);
     if (!row) throw Errors.notFound();
-    return textResponseWithEtag(
-      req,
-      JSON.stringify({
-        Version: row.version,
-        Time: row.metadata.time ?? row.createdAt.toISOString(),
-      }),
-      { "content-type": "application/json; charset=utf-8" },
-    );
+    return jsonResponseWithEtag(req, {
+      Version: row.version,
+      Time: row.metadata.time ?? row.createdAt.toISOString(),
+    });
   }
 
   async file(
@@ -92,11 +89,10 @@ class GoAdapterState {
     if (!meta) throw Errors.notFound();
 
     if (ext === "info") {
-      return textResponseWithEtag(
-        req,
-        JSON.stringify({ Version: version, Time: meta.time ?? row.createdAt.toISOString() }),
-        { "content-type": "application/json; charset=utf-8" },
-      );
+      return jsonResponseWithEtag(req, {
+        Version: version,
+        Time: meta.time ?? row.createdAt.toISOString(),
+      });
     }
     if (ext === "mod") {
       return textResponseWithEtag(req, meta.mod ?? `module ${moduleName}\n`, {

@@ -3,6 +3,7 @@ import { createTestRegistryContext } from "../testing";
 import {
   bytesResponseWithEtag,
   immutableRegistryBlobCacheControl,
+  jsonResponseWithEtag,
   readBoundedBytes,
   repoResponseCache,
   serveAssetBlob,
@@ -56,6 +57,31 @@ describe("registry SDK helpers", () => {
       }),
       body,
       { "content-type": "application/gzip" },
+    );
+
+    expect(cached.status).toBe(304);
+    expect(cached.headers.get("etag")).toBe(etag);
+    await expect(cached.text()).resolves.toBe("");
+  });
+
+  test("jsonResponseWithEtag stringifies JSON and honors conditional requests", async () => {
+    const first = jsonResponseWithEtag(new Request("https://registry.test/index.json"), {
+      ok: true,
+      entries: ["a", "b"],
+    });
+    const etag = first.headers.get("etag");
+
+    expect(first.status).toBe(200);
+    expect(etag).toBeTruthy();
+    if (!etag) throw new Error("expected ETag");
+    expect(first.headers.get("content-type")).toBe("application/json; charset=utf-8");
+    await expect(first.json()).resolves.toEqual({ ok: true, entries: ["a", "b"] });
+
+    const cached = jsonResponseWithEtag(
+      new Request("https://registry.test/index.json", {
+        headers: { "if-none-match": etag },
+      }),
+      { ok: true, entries: ["a", "b"] },
     );
 
     expect(cached.status).toBe(304);

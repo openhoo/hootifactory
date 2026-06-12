@@ -1,9 +1,9 @@
 import {
+  jsonResponseWithEtag,
   type RegistryPlugin,
   type RegistryRequestContext,
   registryAdapter,
   serveRegistryBlob,
-  textResponseWithEtag,
 } from "@hootifactory/registry";
 import { pubBadRequest, pubNotFound } from "./pub-errors";
 import { buildPubPackageListing, buildPubVersionEntry, type PubVersionEntry } from "./pub-metadata";
@@ -75,7 +75,7 @@ class PubAdapterState {
     const entries = await this.storedEntries(packageName, ctx);
     const listing = buildPubPackageListing({ packageName, versions: entries });
     if (!listing) return pubNotFound(`package ${packageName} not found`);
-    return textResponseWithEtag(req, JSON.stringify(listing), {
+    return jsonResponseWithEtag(req, listing, {
       "content-type": PUB_JSON_CONTENT_TYPE,
     });
   }
@@ -98,9 +98,9 @@ class PubAdapterState {
     const metadata = parsePubVersionMeta(row?.metadata);
     if (!metadata) return pubNotFound(`version ${version} of package ${packageName} not found`);
     const { baseUrl, mountPath } = this.archiveUrlContext(ctx);
-    return textResponseWithEtag(
+    return jsonResponseWithEtag(
       req,
-      JSON.stringify(buildPubVersionEntry({ packageName, version, metadata, baseUrl, mountPath })),
+      buildPubVersionEntry({ packageName, version, metadata, baseUrl, mountPath }),
       { "content-type": PUB_JSON_CONTENT_TYPE },
     );
   }

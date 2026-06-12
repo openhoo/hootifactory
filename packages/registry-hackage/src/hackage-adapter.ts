@@ -1,6 +1,7 @@
 import {
   bytesResponseWithEtag,
   Errors,
+  jsonResponseWithEtag,
   parseRegistryInput,
   type RegistryPlugin,
   type RegistryRequestContext,
@@ -116,9 +117,7 @@ class HackageAdapterState {
       tarballUrl: buildTarballUrl(ctx.baseUrl, ctx.repo.mountPath, name, version),
       cabalUrl: buildCabalUrl(ctx.baseUrl, ctx.repo.mountPath, name, version),
     });
-    return textResponseWithEtag(req, JSON.stringify(summary), {
-      "content-type": "application/json; charset=utf-8",
-    });
+    return jsonResponseWithEtag(req, summary);
   }
 
   /** `GET /package/<name>` — the list of live versions for a package. */
@@ -133,9 +132,7 @@ class HackageAdapterState {
     if (metas.length === 0) return new Response("Not Found", { status: 404 });
     const versions = metas.map((meta) => meta.version).sort((a, b) => compareHackageVersions(a, b));
     const body: HackageVersionList = { name, versions };
-    return textResponseWithEtag(req, JSON.stringify(body), {
-      "content-type": "application/json; charset=utf-8",
-    });
+    return jsonResponseWithEtag(req, body);
   }
 
   /** `GET /package/:id/:file` — serve the sdist tarball or the stored `.cabal`. */
@@ -214,9 +211,7 @@ class HackageAdapterState {
     // No version is preferred/deprecated; an empty constraint string means
     // "all versions normal" to cabal's solver.
     const body: HackagePreferredVersions = { name, "preferred-versions": [], deprecated: [] };
-    return textResponseWithEtag(req, JSON.stringify(body), {
-      "content-type": "application/json; charset=utf-8",
-    });
+    return jsonResponseWithEtag(req, body);
   }
 
   /** All live versions' parsed metadata for a package (oldest first). */

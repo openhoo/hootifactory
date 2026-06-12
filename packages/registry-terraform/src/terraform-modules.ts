@@ -1,9 +1,9 @@
 import {
   digestHex,
+  jsonResponseWithEtag,
   publishImmutableVersionBlob,
   type RegistryRequestContext,
   serveRegistryBlob,
-  textResponseWithEtag,
 } from "@hootifactory/registry";
 import { parseTerraformModulePublishRequest } from "./terraform-publish";
 import {
@@ -57,9 +57,7 @@ export async function listModuleVersions(
   const body = {
     modules: [{ versions: metas.map((meta) => ({ version: meta.version })) }],
   };
-  return textResponseWithEtag(req, JSON.stringify(body), {
-    "content-type": "application/json; charset=utf-8",
-  });
+  return jsonResponseWithEtag(req, body);
 }
 
 /**

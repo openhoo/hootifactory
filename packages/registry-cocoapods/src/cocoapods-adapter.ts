@@ -1,4 +1,5 @@
 import {
+  jsonResponseWithEtag,
   type RegistryPlugin,
   type RegistryRequestContext,
   type RegistryRouteParamSpec,
@@ -190,7 +191,7 @@ class CocoapodsAdapterState {
     for (const { name, versions } of await this.listPodVersions(ctx)) {
       index[name] = versions;
     }
-    return textResponseWithEtag(req, JSON.stringify(index), {
+    return jsonResponseWithEtag(req, index, {
       "content-type": JSON_CONTENT_TYPE,
     });
   }
@@ -209,7 +210,7 @@ class CocoapodsAdapterState {
     const meta = parsePodVersionMeta(row?.metadata);
     if (!meta) return new Response("Not Found", { status: 404 });
     const served = buildServedPodspec(meta, this.downloadUrl(ctx, parts.pod, parts.version));
-    return textResponseWithEtag(req, JSON.stringify(served), {
+    return jsonResponseWithEtag(req, served, {
       "content-type": JSON_CONTENT_TYPE,
     });
   }
