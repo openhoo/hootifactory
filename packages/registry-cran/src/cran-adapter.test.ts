@@ -141,7 +141,7 @@ describe("CranAdapter", () => {
     ctx.data.packages.listNames = async () => [{ name: "demo" }];
     ctx.data.packages.findByName = async (name) => pkgRow(name);
     ctx.data.versions.listLive = async (_pkg, opts) => {
-      expect(opts).toEqual({ orderByCreated: "desc" });
+      expect(opts).toBeUndefined();
       return [versionRow(storedMeta)];
     };
 
