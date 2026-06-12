@@ -17,6 +17,7 @@ const openAPIOptions = {
       title: "Hootifactory External API",
       version: "1.0.0",
     },
+    servers: [{ url: "/api/v1" }],
     security: [{ bearerAuth: [] }],
     components: {
       securitySchemes: {
