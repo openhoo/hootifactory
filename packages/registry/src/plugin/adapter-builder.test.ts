@@ -13,6 +13,7 @@ describe("registryAdapter builder", () => {
   test("builds plugins with default permission and auth challenge sugar", async () => {
     const plugin = registryAdapter("npm")
       .module({ capabilities: ["proxyable", "virtualizable"] })
+      .proxyIngest(() => Promise.resolve(true))
       .defaultPermission(({ params }) =>
         readOnlyPermission({ type: "package", packageName: params.pkg }),
       )
@@ -197,6 +198,7 @@ describe("registryAdapter builder", () => {
         capabilities: ["proxyable", "virtualizable"],
         compressible: { handlers: ["packument"], contentTypes: ["application/json"] },
       })
+      .proxyIngest(() => Promise.resolve(true))
       .state(() => ({ id: ++stateIds }))
       .auth.basic()
       .permissions((permission) => {

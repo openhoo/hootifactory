@@ -8,6 +8,7 @@ const adapter = registryAdapter("npm")
     mountSegment: "npm",
     capabilities: { proxyable: true, virtualizable: true },
   })
+  .proxyIngest(() => Promise.resolve(true))
   .routes((route) => [
     route.get("/:pkg+", "packument", () => Response.json({ ok: true })),
     route.put("/:pkg+", "publish", () => Response.json({ ok: true })),

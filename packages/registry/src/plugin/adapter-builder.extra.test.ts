@@ -269,6 +269,7 @@ describe("RegistryAdapterBuilder — auth DSL and module callback", () => {
           .compressibleContentTypes("application/json")
           .usageSnippets(() => [{ title: "t", code: "c" }]),
       )
+      .proxyIngest(() => Promise.resolve(true))
       .routes((route) => [route.get("/x", "x").handle(() => new Response(null))])
       .build();
 
