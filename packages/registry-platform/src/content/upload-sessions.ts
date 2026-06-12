@@ -1,5 +1,15 @@
 import { Errors, parseJsonWithSchema, z } from "@hootifactory/core";
-import { and, blobRefs, db, eq, ne, repositories, sql, uploadSessions } from "@hootifactory/db";
+import {
+  and,
+  blobRefs,
+  db,
+  eq,
+  inArray,
+  ne,
+  repositories,
+  sql,
+  uploadSessions,
+} from "@hootifactory/db";
 import { logger } from "@hootifactory/observability";
 import type {
   RegistryBlobRefKind,
@@ -188,16 +198,17 @@ export async function reapExpiredContentUploadSessions(
     `),
   ).length;
 
-  // Phase 2 (post-commit): an 'aborted' row means "staged storage may still
-  // exist". Delete the staged objects outside any transaction, then drop only
-  // the rows whose cleanup fully succeeded — rows with a failed delete stay
-  // 'aborted' and are retried on the next reap. This also sweeps sessions
-  // aborted by the protocol abort/expiry paths whose best-effort deletes failed.
+  // Phase 2 (post-commit): 'aborted', 'committed', and 'closed' rows all mean
+  // "staged storage may still exist". Delete the staged objects outside any
+  // transaction, then drop only the rows whose cleanup fully succeeded — rows
+  // with a failed delete are retried on the next reap. Committed/closed sessions
+  // were previously never reaped, so their staged objects would leak if the
+  // post-commit best-effort delete failed.
   const candidates = rowsFromExecute(
     await db.execute(sql`
       select id, storage_key as "storageKey", multipart
         from upload_sessions
-       where state = ${UPLOAD_STATE.aborted}
+       where state in (${UPLOAD_STATE.aborted}, ${UPLOAD_STATE.committed}, ${UPLOAD_STATE.closed})
        order by updated_at asc
        limit ${limit}
     `),
@@ -217,7 +228,16 @@ export async function reapExpiredContentUploadSessions(
     }
     const rows = await db
       .delete(uploadSessions)
-      .where(and(eq(uploadSessions.id, session.id), eq(uploadSessions.state, UPLOAD_STATE.aborted)))
+      .where(
+        and(
+          eq(uploadSessions.id, session.id),
+          inArray(uploadSessions.state, [
+            UPLOAD_STATE.aborted,
+            UPLOAD_STATE.committed,
+            UPLOAD_STATE.closed,
+          ]),
+        ),
+      )
       .returning({ id: uploadSessions.id });
     cleaned += rows.length;
   }
