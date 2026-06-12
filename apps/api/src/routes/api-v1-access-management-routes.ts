@@ -2,6 +2,7 @@ import {
   addGroupMember,
   addOrgMember,
   authorizePermission,
+  countUsers,
   createAdminUser,
   createGroup,
   deleteGroup,
@@ -150,15 +151,18 @@ export function registerApiV1AccessManagementRoutes(apiV1Router: Hono<AppEnv>) {
       if (denied) return denied;
       const query = validateV1(c, UserListQuerySchema, c.req.query(), "invalid user query");
       if (!query.ok) return query.response;
-      const rows = await listUsers({
-        query: query.data.q,
-        limit: query.data.limit,
-        offset: query.data.offset,
-      });
+      const [total, rows] = await Promise.all([
+        countUsers(query.data.q),
+        listUsers({
+          query: query.data.q,
+          limit: query.data.limit,
+          offset: query.data.offset,
+        }),
+      ]);
       return listResponse(c, rows.map(userDto), {
         limit: query.data.limit,
         offset: query.data.offset,
-        total: rows.length,
+        total,
       });
     },
   );
