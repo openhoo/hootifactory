@@ -225,6 +225,13 @@ export function registerApiV1AccessManagementRoutes(apiV1Router: Hono<AppEnv>) {
       if (!body.ok) return body.response;
       const user = await updateUserProfile(params.data.userId, body.data);
       if (!user) return errorResponse(c, 404, "NOT_FOUND", "user not found");
+      audit(c, {
+        action: "user.update",
+        result: AUDIT_RESULT.success,
+        resourceType: "user",
+        resourceId: user.id,
+        principal: c.get("principal"),
+      });
       return dataResponse(c, userDto(user));
     },
   );
@@ -286,6 +293,13 @@ export function registerApiV1AccessManagementRoutes(apiV1Router: Hono<AppEnv>) {
       if (!user) return errorResponse(c, 404, "NOT_FOUND", "user not found");
       if (body.data.mode === "temporary") {
         const temporaryPassword = await setTemporaryPassword(user.id);
+        audit(c, {
+          action: "user.password_reset_temporary",
+          result: AUDIT_RESULT.success,
+          resourceType: "user",
+          resourceId: user.id,
+          principal: c.get("principal"),
+        });
         return dataResponse(c, { ok: true, temporaryPassword });
       }
       if (!env.EMAIL_ENABLED) {
@@ -298,6 +312,13 @@ export function registerApiV1AccessManagementRoutes(apiV1Router: Hono<AppEnv>) {
         publicUrl,
       });
       await enqueueEmail(job);
+      audit(c, {
+        action: "user.password_reset_email",
+        result: AUDIT_RESULT.success,
+        resourceType: "user",
+        resourceId: user.id,
+        principal: c.get("principal"),
+      });
       return dataResponse(c, { ok: true, temporaryPassword: null });
     },
   );
@@ -358,6 +379,15 @@ export function registerApiV1AccessManagementRoutes(apiV1Router: Hono<AppEnv>) {
       const user = await getUserById(body.data.userId);
       if (!user) return errorResponse(c, 404, "NOT_FOUND", "user not found");
       await addOrgMember(params.data.orgId, body.data.userId);
+      audit(c, {
+        orgId: params.data.orgId,
+        action: "org.member.add",
+        result: AUDIT_RESULT.success,
+        resourceType: "org",
+        resourceId: params.data.orgId,
+        principal: c.get("principal"),
+        detail: { userId: body.data.userId },
+      });
       return dataResponse(c, { ok: true });
     },
   );
@@ -380,6 +410,15 @@ export function registerApiV1AccessManagementRoutes(apiV1Router: Hono<AppEnv>) {
       });
       if (denied) return denied;
       await removeOrgMember(params.data.orgId, params.data.userId);
+      audit(c, {
+        orgId: params.data.orgId,
+        action: "org.member.remove",
+        result: AUDIT_RESULT.success,
+        resourceType: "org",
+        resourceId: params.data.orgId,
+        principal: c.get("principal"),
+        detail: { userId: params.data.userId },
+      });
       return dataResponse(c, { ok: true });
     },
   );
@@ -434,6 +473,14 @@ export function registerApiV1AccessManagementRoutes(apiV1Router: Hono<AppEnv>) {
       const body = await validateJsonV1(c, V1CreateGroupRequestSchema, "invalid group request");
       if (!body.ok) return body.response;
       const group = await createGroup({ orgId: params.data.orgId, ...body.data });
+      audit(c, {
+        orgId: params.data.orgId,
+        action: "group.create",
+        result: AUDIT_RESULT.success,
+        resourceType: "group",
+        resourceId: group.id,
+        principal: c.get("principal"),
+      });
       return dataResponse(c, groupDto(group), 201);
     },
   );
@@ -465,6 +512,14 @@ export function registerApiV1AccessManagementRoutes(apiV1Router: Hono<AppEnv>) {
       if (!body.ok) return body.response;
       const group = await updateGroup(params.data.orgId, params.data.groupId, body.data);
       if (!group) return errorResponse(c, 404, "NOT_FOUND", "group not found");
+      audit(c, {
+        orgId: params.data.orgId,
+        action: "group.update",
+        result: AUDIT_RESULT.success,
+        resourceType: "group",
+        resourceId: group.id,
+        principal: c.get("principal"),
+      });
       return dataResponse(c, groupDto(group));
     },
   );
@@ -493,6 +548,14 @@ export function registerApiV1AccessManagementRoutes(apiV1Router: Hono<AppEnv>) {
       if (denied) return denied;
       const deleted = await deleteGroup(params.data.orgId, params.data.groupId);
       if (!deleted) return errorResponse(c, 404, "NOT_FOUND", "group not found");
+      audit(c, {
+        orgId: params.data.orgId,
+        action: "group.delete",
+        result: AUDIT_RESULT.success,
+        resourceType: "group",
+        resourceId: params.data.groupId,
+        principal: c.get("principal"),
+      });
       return dataResponse(c, { ok: true });
     },
   );
@@ -581,6 +644,15 @@ export function registerApiV1AccessManagementRoutes(apiV1Router: Hono<AppEnv>) {
         }
         return errorResponse(c, 403, "FORBIDDEN", result.error);
       }
+      audit(c, {
+        orgId: params.data.orgId,
+        action: "group.member.add",
+        result: AUDIT_RESULT.success,
+        resourceType: "group",
+        resourceId: params.data.groupId,
+        principal: c.get("principal"),
+        detail: { userId: body.data.userId },
+      });
       return dataResponse(c, { ok: true });
     },
   );
@@ -610,6 +682,15 @@ export function registerApiV1AccessManagementRoutes(apiV1Router: Hono<AppEnv>) {
       const group = await getGroupInOrg(params.data.orgId, params.data.groupId);
       if (!group) return errorResponse(c, 404, "NOT_FOUND", "group not found");
       await removeGroupMember(params.data.orgId, params.data.groupId, params.data.userId);
+      audit(c, {
+        orgId: params.data.orgId,
+        action: "group.member.remove",
+        result: AUDIT_RESULT.success,
+        resourceType: "group",
+        resourceId: params.data.groupId,
+        principal: c.get("principal"),
+        detail: { userId: params.data.userId },
+      });
       return dataResponse(c, { ok: true });
     },
   );
@@ -699,6 +780,14 @@ export function registerApiV1AccessManagementRoutes(apiV1Router: Hono<AppEnv>) {
           return errorResponse(c, 404, "NOT_FOUND", result.error);
         return errorResponse(c, 403, "FORBIDDEN", result.error);
       }
+      audit(c, {
+        orgId: params.data.orgId,
+        action: "group.permission.replace",
+        result: AUDIT_RESULT.success,
+        resourceType: "group",
+        resourceId: params.data.groupId,
+        principal: c.get("principal"),
+      });
       return dataResponse(c, { ok: true });
     },
   );
