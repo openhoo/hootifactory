@@ -86,11 +86,13 @@ must test itself. Two details keep each package's number honest:
 
 **Excluded** from every package's denominator: tests, generated code
 (`*.gen.ts`, `*.d.ts`), migrations, `dist`/`node_modules`. Whole packages can be
-excluded via the script's `EXCLUDED_PACKAGES` set — **`apps/web`** is excluded
-(the web UI is covered by Playwright e2e, not unit tests). Add path-level
-exclusions via `COVERAGE_EXCLUDE` (comma-separated regex fragments matched
-against the repo-relative path). A package with no measurable runtime lines
-(pure type/barrel package) passes automatically.
+excluded via the script's `EXCLUDED_PACKAGES` set. Packages being brought under
+unit coverage incrementally can use an explicit package floor in
+`PACKAGE_COVERAGE_THRESHOLDS` (for example, `apps/web` is measured against a
+baseline floor while the rest of the workspace keeps the default 80%). Add
+path-level exclusions via `COVERAGE_EXCLUDE` (comma-separated regex fragments
+matched against the repo-relative path). A package with no measurable runtime
+lines (pure type/barrel package) passes automatically.
 
 ```bash
 bun run test:coverage                       # run unit tests, then enforce the floor

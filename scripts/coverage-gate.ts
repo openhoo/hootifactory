@@ -23,8 +23,7 @@
  *
  * Excluded from every package's denominator: tests, generated code (*.gen.ts,
  * *.d.ts), migrations, dist/node_modules. Whole packages can be excluded via
- * EXCLUDED_PACKAGES (apps/web is excluded — it is covered by Playwright e2e, not
- * unit tests). Extend exclusions with COVERAGE_EXCLUDE (comma-separated
+ * EXCLUDED_PACKAGES. Extend exclusions with COVERAGE_EXCLUDE (comma-separated
  * substrings/regex fragments matched against the repo-relative path).
  *
  * The default --metric=lines is what CI gates on and is the metric that counts
@@ -57,6 +56,7 @@ interface FileCoverage {
 
 interface PackageSummary {
   name: string; // repo-relative package dir, e.g. "packages/core"
+  threshold: number;
   totalLines: number;
   coveredLines: number;
   linePct: number;
@@ -86,15 +86,23 @@ const DEFAULT_COVERAGE_THRESHOLD = 80;
 const threshold = parseThreshold();
 const metric = parseMetric();
 
-// Whole packages excluded from the gate. apps/web is covered by Playwright e2e,
-// not unit tests, so it must never appear in the per-package report.
-const EXCLUDED_PACKAGES = new Set<string>(["apps/web"]);
+// Whole packages excluded from the gate. Extend this to skip packages that
+// should not be measured by the unit-test coverage gate.
+const EXCLUDED_PACKAGES = new Set<string>([]);
+
+// Package-specific floors for surfaces being brought under coverage enforcement
+// incrementally. These packages are still measured and failed on regressions,
+// while mature packages continue to use DEFAULT_COVERAGE_THRESHOLD.
+const PACKAGE_COVERAGE_THRESHOLDS = new Map<string, number>([
+  // apps/web was historically excluded and currently has very low coverage; keep
+  // it in the gate with a baseline floor so the exemption cannot return silently.
+  ["apps/web", 3.4],
+]);
 
 // Files that should never count toward coverage (tests, generated code, type
 // declarations, migrations). Bun already skips most test files, but we
 // belt-and-suspenders it here so the number stays meaningful and stable, and so
-// both the lcov-derived and enumerated file sets agree. (apps/web is excluded as
-// a whole package via EXCLUDED_PACKAGES, not here.)
+// both the lcov-derived and enumerated file sets agree.
 const IGNORE_PATTERNS: RegExp[] = [
   /\.(test|spec)\.[cm]?[jt]sx?$/,
   /\.d\.ts$/,
@@ -203,10 +211,11 @@ async function measurePackage(pkgRel: string): Promise<PackageSummary> {
 
   // Integer-safe comparison so a threshold like 80 isn't tripped by float error.
   let passed: boolean;
+  const packageThreshold = thresholdForPackage(pkgRel);
   if (noMeasurableCode) {
     passed = true;
   } else if (metric === "functions" && totalFuncs > 0) {
-    passed = coveredFuncs * 100 >= threshold * totalFuncs - 1e-9;
+    passed = coveredFuncs * 100 >= packageThreshold * totalFuncs - 1e-9;
   } else {
     // Lines metric, OR the functions metric for a package that has measurable
     // runtime lines but zero instrumented functions (e.g. only top-level
@@ -214,11 +223,12 @@ async function measurePackage(pkgRel: string): Promise<PackageSummary> {
     // functions ratio (0/0) is meaningless; auto-passing it would let a package
     // with uncovered runtime lines slip through under --metric=functions. We
     // therefore fall back to the line result for that package instead.
-    passed = coveredLines * 100 >= threshold * totalLines - 1e-9;
+    passed = coveredLines * 100 >= packageThreshold * totalLines - 1e-9;
   }
 
   return {
     name: pkgRel,
+    threshold: packageThreshold,
     totalLines,
     coveredLines,
     linePct,
@@ -339,16 +349,19 @@ function report(summaries: PackageSummary[], passed: boolean): void {
   const failing = summaries.filter((s) => !s.passed);
 
   console.log("");
-  console.log(`Per-package coverage gate (${metric} ≥ ${threshold}% each)`);
+  console.log(`Per-package coverage gate (${metric} ≥ configured floor)`);
   console.log("──────────────────────────────────────────────────────────");
   console.log(
-    `${"Package".padEnd(34)} ${"Cov".padStart(8)}  ${"Covered/Total".padStart(15)}  Status`,
+    `${"Package".padEnd(34)} ${"Cov".padStart(8)}  ${"Floor".padStart(8)}  ${"Covered/Total".padStart(15)}  Status`,
   );
   for (const s of summaries) {
     const label = s.noMeasurableCode ? "  n/a  " : fmtPct(pkgValue(s));
+    const floor = s.noMeasurableCode ? "  n/a  " : fmtPct(s.threshold);
     const covered = s.noMeasurableCode ? "no measurable code" : `${pkgCovered(s)}/${pkgTotal(s)}`;
     const status = s.passed ? "PASS" : "FAIL";
-    console.log(`${s.name.padEnd(34)} ${label.padStart(8)}  ${covered.padStart(15)}  ${status}`);
+    console.log(
+      `${s.name.padEnd(34)} ${label.padStart(8)}  ${floor.padStart(8)}  ${covered.padStart(15)}  ${status}`,
+    );
   }
 
   console.log("");
@@ -368,11 +381,11 @@ function report(summaries: PackageSummary[], passed: boolean): void {
 
   console.log("");
   if (passed) {
-    console.log(`✔ PASS: every package meets the ${threshold}% ${metric} floor.`);
+    console.log(`✔ PASS: every package meets its configured ${metric} floor.`);
   } else {
     const names = failing.map((s) => s.name).join(", ");
     console.log(
-      `✖ FAIL: ${failing.length} package(s) below the ${threshold}% ${metric} floor: ${names}.`,
+      `✖ FAIL: ${failing.length} package(s) below its configured ${metric} floor: ${names}.`,
     );
   }
 
@@ -386,20 +399,21 @@ function writeStepSummary(summaries: PackageSummary[], passed: boolean): void {
   }
   const failing = summaries.filter((s) => !s.passed);
   const lines: string[] = [
-    `## ${passed ? "✅" : "❌"} Per-package coverage gate — ${metric} ≥ ${threshold}% each`,
+    `## ${passed ? "✅" : "❌"} Per-package coverage gate — ${metric} ≥ configured floor`,
     "",
     passed
-      ? `All ${summaries.length} packages meet the ${threshold}% floor.`
-      : `${failing.length} of ${summaries.length} packages are below the ${threshold}% floor.`,
+      ? `All ${summaries.length} packages meet their configured floor.`
+      : `${failing.length} of ${summaries.length} packages are below their configured floor.`,
     "",
-    "| Package | Coverage | Covered / Total | Status |",
-    "| --- | --- | --- | --- |",
+    "| Package | Coverage | Floor | Covered / Total | Status |",
+    "| --- | --- | --- | --- | --- |",
   ];
   for (const s of summaries) {
     const cov = s.noMeasurableCode ? "n/a" : fmtPct(pkgValue(s));
+    const floor = s.noMeasurableCode ? "n/a" : fmtPct(s.threshold);
     const total = s.noMeasurableCode ? "no measurable code" : `${pkgCovered(s)} / ${pkgTotal(s)}`;
     const status = s.passed ? "✅ PASS" : "❌ FAIL";
-    lines.push(`| \`${s.name}\` | ${cov} | ${total} | ${status} |`);
+    lines.push(`| \`${s.name}\` | ${cov} | ${floor} | ${total} | ${status} |`);
   }
 
   for (const s of failing) {
@@ -587,6 +601,10 @@ function getArgValue(name: string): string | undefined {
 
 function fmtPct(value: number): string {
   return `${value.toFixed(2)}%`;
+}
+
+function thresholdForPackage(pkgRel: string): number {
+  return PACKAGE_COVERAGE_THRESHOLDS.get(pkgRel) ?? threshold;
 }
 
 function fail(message: string): never {
