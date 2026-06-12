@@ -3,8 +3,10 @@ import {
   Errors,
   jsonResponseWithEtag,
   parseRegistryInput,
+  RegistryError,
   type RegistryRequestContext,
   type RegistryRouteParamSpec,
+  type RouteMatch,
   registryAdapter,
   serveRegistryBlob,
 } from "@hootifactory/registry";
@@ -308,5 +310,20 @@ const wingetDefinition = registryAdapter("winget")
       ),
   ]);
 
-export class WingetAdapter extends wingetDefinition.adapterClass() {}
+export class WingetAdapter extends wingetDefinition.adapterClass() {
+  override async handle(
+    match: RouteMatch,
+    req: Request,
+    ctx: RegistryRequestContext,
+  ): Promise<Response> {
+    try {
+      return await super.handle(match, req, ctx);
+    } catch (err) {
+      if (err instanceof RegistryError) {
+        return wingetErrorResponse(err.status, err.message);
+      }
+      throw err;
+    }
+  }
+}
 export const wingetRegistryPlugin = createRegistryAdapterPlugin(WingetAdapter);
