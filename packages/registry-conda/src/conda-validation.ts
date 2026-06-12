@@ -1,4 +1,4 @@
-import { z } from "@hootifactory/registry";
+import { Sha256DigestSchema, Sha256HexSchema, z } from "@hootifactory/registry";
 
 /**
  * Conda channel subdirs (platforms). `noarch` plus the documented platform
@@ -146,8 +146,6 @@ export const CondaIndexJsonSchema = z.looseObject({
 
 export type CondaIndexJson = z.output<typeof CondaIndexJsonSchema>;
 
-const Sha256DigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
-const Sha256HexSchema = z.string().regex(/^[a-f0-9]{64}$/);
 const Md5HexSchema = z.string().regex(/^[a-f0-9]{32}$/);
 
 /**

@@ -1,4 +1,10 @@
-import { asJsonRecord, type JsonRecord, jsonRecordOrEmpty, z } from "@hootifactory/registry";
+import {
+  asJsonRecord,
+  type JsonRecord,
+  jsonRecordOrEmpty,
+  Sha256DigestSchema,
+  z,
+} from "@hootifactory/registry";
 import type { NpmDist } from "./npm-integrity";
 
 export function basename(name: string): string {
@@ -93,7 +99,7 @@ export const NpmPublishBodySchema = z.looseObject({
 
 export const NpmStoredDistSchema = z.strictObject({
   filename: NpmTarballFilenameSchema,
-  blobDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+  blobDigest: Sha256DigestSchema,
   shasum: z.string().regex(/^[a-f0-9]{40}$/),
   integrity: z.string().min(1).max(1024),
   size: z.number().int().safe().min(0),

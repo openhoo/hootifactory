@@ -35,8 +35,10 @@ export {
 export * from "./plugin/adapter";
 export * from "./plugin/auth";
 export * from "./plugin/data";
+export * from "./plugin/digest-schema";
 export * from "./plugin/errors";
 export * from "./plugin/helpers";
+export * from "./plugin/multipart";
 export * from "./plugin/plugin";
 export * from "./plugin/registry";
 export * from "./routing/route-matcher";

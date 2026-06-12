@@ -1,4 +1,4 @@
-import { z } from "@hootifactory/registry";
+import { Sha256DigestSchema, Sha256HexSchema, z } from "@hootifactory/registry";
 
 /**
  * Ansible Galaxy namespaces and collection names share the same grammar: a
@@ -43,9 +43,6 @@ export const AnsibleArtifactFileSchema = z
   .min(1)
   .max(512)
   .regex(/^[a-z][a-z0-9_]*-[a-z][a-z0-9_]*-[A-Za-z0-9.+-]+\.tar\.gz$/, "invalid artifact filename");
-
-const Sha256HexSchema = z.string().regex(/^[a-f0-9]{64}$/);
-const Sha256DigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 
 /**
  * `MANIFEST.json#collection_info` — the publisher-supplied galaxy.yml metadata

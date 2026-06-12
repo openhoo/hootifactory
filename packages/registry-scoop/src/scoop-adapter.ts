@@ -65,9 +65,9 @@ class ScoopAdapterState {
     if (!appRaw.toLowerCase().endsWith(".json")) throw Errors.notFound();
     const app = parseAppName(appRaw.slice(0, -".json".length));
     const pkg = await ctx.data.packages.findByName(app);
-    if (!pkg) return new Response("Not Found", { status: 404 });
+    if (!pkg) throw Errors.notFound();
     const meta = await this.latestMeta(ctx, pkg);
-    if (!meta) return new Response("Not Found", { status: 404 });
+    if (!meta) throw Errors.notFound();
     const downloadUrl = `${ctx.baseUrl}/${ctx.repo.mountPath}/download/${encodeURIComponent(
       app,
     )}/${encodeURIComponent(meta.version)}/${encodeURIComponent(meta.filename)}`;
@@ -83,11 +83,11 @@ class ScoopAdapterState {
     ctx: RegistryRequestContext,
   ): Promise<Response> {
     const pkg = await ctx.data.packages.findByName(app);
-    if (!pkg) return new Response("Not Found", { status: 404 });
+    if (!pkg) throw Errors.notFound();
     const row = await ctx.data.versions.findLive(pkg, version);
     const meta = parseScoopVersionMeta(row?.metadata);
     // The requested filename must match the canonical artifact this version stored.
-    if (!meta || meta.filename !== filename) return new Response("Not Found", { status: 404 });
+    if (!meta || meta.filename !== filename) throw Errors.notFound();
     return serveRegistryBlob(ctx, {
       digest: meta.blobDigest,
       kind: "scoop_artifact",

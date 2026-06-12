@@ -1,4 +1,4 @@
-import { z } from "@hootifactory/registry";
+import { Sha256DigestSchema, z } from "@hootifactory/registry";
 import type { NuspecDependencyGroup } from "./nuspec";
 
 export interface NugetVersionMeta {
@@ -52,7 +52,7 @@ const NugetDependencyGroupSchema = z.strictObject({
 });
 
 export const NugetVersionMetaSchema = z.strictObject({
-  nupkgDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+  nupkgDigest: Sha256DigestSchema,
   file: NugetFileSchema,
   displayId: NugetIdSchema.optional(),
   listed: z.boolean().optional(),

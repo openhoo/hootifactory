@@ -192,12 +192,13 @@ describe("Nix adapter", () => {
   test("GET /<storehash>.narinfo 404s when the store hash is unknown", async () => {
     const ctx = nixContext();
     ctx.data.packages.findByName = async () => null;
-    const res = await new NixAdapter().handle(
-      match("narinfo", { narinfo: `${STORE_HASH}.narinfo` }, `/${STORE_HASH}.narinfo`),
-      new Request(`https://registry.test/${STORE_HASH}.narinfo`),
-      ctx,
-    );
-    expect(res.status).toBe(404);
+    await expect(
+      new NixAdapter().handle(
+        match("narinfo", { narinfo: `${STORE_HASH}.narinfo` }, `/${STORE_HASH}.narinfo`),
+        new Request(`https://registry.test/${STORE_HASH}.narinfo`),
+        ctx,
+      ),
+    ).rejects.toMatchObject({ status: 404 });
   });
 
   test("GET /<storehash> without a .narinfo suffix throws notFound", async () => {
@@ -250,12 +251,13 @@ describe("Nix adapter", () => {
   test("GET /nar/<filehash>.nar 404s when the blob is unknown", async () => {
     const ctx = nixContext();
     ctx.data.packages.findByName = async () => null;
-    const res = await new NixAdapter().handle(
-      match("nar", { filename: `${FILE_HASH}.nar` }, `/nar/${FILE_HASH}.nar`),
-      new Request(`https://registry.test/nar/${FILE_HASH}.nar`),
-      ctx,
-    );
-    expect(res.status).toBe(404);
+    await expect(
+      new NixAdapter().handle(
+        match("nar", { filename: `${FILE_HASH}.nar` }, `/nar/${FILE_HASH}.nar`),
+        new Request(`https://registry.test/nar/${FILE_HASH}.nar`),
+        ctx,
+      ),
+    ).rejects.toMatchObject({ status: 404 });
   });
 
   test("PUT /nar/<filehash>.nar streams the NAR blob into content-addressable storage", async () => {

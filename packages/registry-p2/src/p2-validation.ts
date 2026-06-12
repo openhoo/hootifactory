@@ -1,4 +1,4 @@
-import { z } from "@hootifactory/registry";
+import { Sha256DigestSchema, z } from "@hootifactory/registry";
 
 /** OSGi Bundle-SymbolicName: letters, digits, dot, underscore, dash. */
 export function isValidSymbolicName(name: string): boolean {
@@ -25,8 +25,6 @@ export const OsgiVersionSchema = z
 /** The kind of installable unit a stored jar represents. */
 export const P2ArtifactKindSchema = z.enum(["bundle", "feature"]);
 export type P2ArtifactKind = z.output<typeof P2ArtifactKindSchema>;
-
-const Sha256DigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 
 const FILENAME_RE = /^[A-Za-z0-9._-]+\.jar$/;
 

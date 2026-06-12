@@ -1,4 +1,4 @@
-import { z } from "@hootifactory/registry";
+import { Sha256DigestSchema, z } from "@hootifactory/registry";
 
 /**
  * Chocolatey speaks the NuGet OData v2 (Atom/XML) feed protocol. Package ids,
@@ -59,7 +59,7 @@ export const ChocolateyDependencySchema = z.strictObject({
 });
 
 export const ChocolateyVersionMetaSchema = z.strictObject({
-  nupkgDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+  nupkgDigest: Sha256DigestSchema,
   packageHash: z.string().min(1).max(256),
   packageHashAlgorithm: z.enum(["SHA512", "SHA256"]),
   size: z.number().int().nonnegative(),

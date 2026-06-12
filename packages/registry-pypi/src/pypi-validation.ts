@@ -1,4 +1,4 @@
-import { asJsonRecord, z } from "@hootifactory/registry";
+import { asJsonRecord, Sha256DigestSchema, z } from "@hootifactory/registry";
 
 export interface PypiFileMeta {
   filename: string;
@@ -58,7 +58,7 @@ export const PypiUploadFieldsSchema = z.strictObject({
 
 export const PypiFileMetaSchema = z.strictObject({
   filename: PypiFilenameSchema,
-  blobDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+  blobDigest: Sha256DigestSchema,
   sha256: z.string().regex(/^[a-fA-F0-9]{64}$/),
   requiresPython: z.string().min(1).max(256).optional(),
   size: z.number().int().safe().min(0),

@@ -216,24 +216,26 @@ describe("Vagrant adapter", () => {
   test("GET /:user/:box 404s when the package is unknown", async () => {
     const ctx = vagrantContext();
     ctx.data.packages.findByName = async () => null;
-    const res = await new VagrantAdapter().handle(
-      metadataMatch,
-      new Request("https://registry.test/hashicorp/bionic64"),
-      ctx,
-    );
-    expect(res.status).toBe(404);
+    await expect(
+      new VagrantAdapter().handle(
+        metadataMatch,
+        new Request("https://registry.test/hashicorp/bionic64"),
+        ctx,
+      ),
+    ).rejects.toMatchObject({ status: 404, code: "NOT_FOUND" });
   });
 
   test("GET /:user/:box 404s when no live version carries providers", async () => {
     const ctx = vagrantContext();
     ctx.data.packages.findByName = async () => pkgRow();
     ctx.data.versions.listLive = async () => [versionRow("1.2.3", { providers: {} })];
-    const res = await new VagrantAdapter().handle(
-      metadataMatch,
-      new Request("https://registry.test/hashicorp/bionic64"),
-      ctx,
-    );
-    expect(res.status).toBe(404);
+    await expect(
+      new VagrantAdapter().handle(
+        metadataMatch,
+        new Request("https://registry.test/hashicorp/bionic64"),
+        ctx,
+      ),
+    ).rejects.toMatchObject({ status: 404, code: "NOT_FOUND" });
   });
 
   test("GET /api/v1/box/:user/:box serves the Vagrant Cloud box shape for short-name resolution", async () => {
@@ -311,12 +313,13 @@ describe("Vagrant adapter", () => {
   test("GET /api/v1/box/:user/:box 404s when the package is unknown", async () => {
     const ctx = vagrantContext();
     ctx.data.packages.findByName = async () => null;
-    const res = await new VagrantAdapter().handle(
-      cloudMetadataMatch,
-      new Request("https://registry.test/api/v1/box/hashicorp/bionic64"),
-      ctx,
-    );
-    expect(res.status).toBe(404);
+    await expect(
+      new VagrantAdapter().handle(
+        cloudMetadataMatch,
+        new Request("https://registry.test/api/v1/box/hashicorp/bionic64"),
+        ctx,
+      ),
+    ).rejects.toMatchObject({ status: 404, code: "NOT_FOUND" });
   });
 
   test("GET /:user/:box with an invalid name segment throws NAME_INVALID", async () => {
@@ -364,12 +367,13 @@ describe("Vagrant adapter", () => {
     const ctx = vagrantContext();
     ctx.data.packages.findByName = async () => pkgRow();
     ctx.data.versions.findLive = async () => null;
-    const res = await new VagrantAdapter().handle(
-      downloadMatch,
-      new Request("https://registry.test/hashicorp/bionic64/1.2.3/virtualbox"),
-      ctx,
-    );
-    expect(res.status).toBe(404);
+    await expect(
+      new VagrantAdapter().handle(
+        downloadMatch,
+        new Request("https://registry.test/hashicorp/bionic64/1.2.3/virtualbox"),
+        ctx,
+      ),
+    ).rejects.toMatchObject({ status: 404, code: "NOT_FOUND" });
   });
 
   test("download 404s when the requested provider is not stored on the version", async () => {
@@ -379,12 +383,13 @@ describe("Vagrant adapter", () => {
       versionRow("1.2.3", {
         providers: { libvirt: { blobDigest: DIGEST, sha256: HEX, sizeBytes: 4 } },
       });
-    const res = await new VagrantAdapter().handle(
-      downloadMatch,
-      new Request("https://registry.test/hashicorp/bionic64/1.2.3/virtualbox"),
-      ctx,
-    );
-    expect(res.status).toBe(404);
+    await expect(
+      new VagrantAdapter().handle(
+        downloadMatch,
+        new Request("https://registry.test/hashicorp/bionic64/1.2.3/virtualbox"),
+        ctx,
+      ),
+    ).rejects.toMatchObject({ status: 404, code: "NOT_FOUND" });
   });
 
   test("download with an invalid provider name throws NAME_INVALID", async () => {

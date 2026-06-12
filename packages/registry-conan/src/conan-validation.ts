@@ -1,4 +1,4 @@
-import { textEtag, z } from "@hootifactory/registry";
+import { Sha256DigestSchema, textEtag, z } from "@hootifactory/registry";
 
 /**
  * Conan recipe-reference name/version/user/channel segments. Conan permits
@@ -81,8 +81,6 @@ export function conanFileScope(input: {
       : `${input.reference}#${input.rrev}`;
   return `${base}/${input.filename}`;
 }
-
-const Sha256DigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 
 /** One stored file entry: the blob digest plus its byte length. */
 export const ConanFileEntrySchema = z.object({

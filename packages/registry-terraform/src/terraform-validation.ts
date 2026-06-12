@@ -1,4 +1,4 @@
-import { z } from "@hootifactory/registry";
+import { Sha256DigestSchema, Sha256HexSchema, z } from "@hootifactory/registry";
 
 // ── identifiers ──────────────────────────────────────────────────────────────
 
@@ -40,9 +40,6 @@ export const TerraformPlatformTokenSchema = z
   .min(1)
   .max(64)
   .refine((value) => PLATFORM_TOKEN_RE.test(value), "invalid platform token");
-
-const Sha256DigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
-const Sha256HexSchema = z.string().regex(/^[a-f0-9]{64}$/);
 
 // ── module metadata ──────────────────────────────────────────────────────────
 

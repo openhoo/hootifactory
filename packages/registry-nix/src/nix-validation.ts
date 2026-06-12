@@ -1,4 +1,4 @@
-import { z } from "@hootifactory/registry";
+import { Sha256DigestSchema, z } from "@hootifactory/registry";
 
 /**
  * Nix store-path hashes are 32-character base32 (Nix's own base32 alphabet:
@@ -139,7 +139,7 @@ export const NarInfoMetaSchema = z.looseObject({
   /** The bare NAR file hash (no `sha256:` prefix) the blob is stored under. */
   narFileHash: NarFileHashSchema,
   /** sha256:<hex> digest of the stored NAR blob, for scanning + download. */
-  blobDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+  blobDigest: Sha256DigestSchema,
 });
 
 export type NarInfoMeta = z.output<typeof NarInfoMetaSchema>;

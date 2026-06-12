@@ -1,5 +1,6 @@
 import {
   createRegistryAdapterPlugin,
+  Errors,
   jsonResponseWithEtag,
   type RegistryRequestContext,
   type RegistryRouteParamSpec,
@@ -173,7 +174,7 @@ class CocoapodsAdapterState {
   ): Promise<Response> {
     const shard = parseShardIndexFilename(shardFile);
     // Any single segment reaches here; only a well-formed shard filename resolves.
-    if (!shard) return new Response("Not Found", { status: 404 });
+    if (!shard) throw Errors.notFound();
     const pods = await this.listPodVersions(ctx);
     const lines = pods
       .filter((p) => podInShard(p.name, shard))
@@ -203,12 +204,12 @@ class CocoapodsAdapterState {
   async podspec(tail: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const parts = parseSpecsTail(tail);
     // A malformed or mis-sharded Specs path resolves to no pod, so 404 like the CDN.
-    if (!parts) return new Response("Not Found", { status: 404 });
+    if (!parts) throw Errors.notFound();
     const pkg = await ctx.data.packages.findByName(parts.pod);
-    if (!pkg) return new Response("Not Found", { status: 404 });
+    if (!pkg) throw Errors.notFound();
     const row = await ctx.data.versions.findLive(pkg, parts.version);
     const meta = parsePodVersionMeta(row?.metadata);
-    if (!meta) return new Response("Not Found", { status: 404 });
+    if (!meta) throw Errors.notFound();
     const served = buildServedPodspec(meta, this.downloadUrl(ctx, parts.pod, parts.version));
     return jsonResponseWithEtag(req, served, {
       "content-type": JSON_CONTENT_TYPE,
@@ -224,11 +225,11 @@ class CocoapodsAdapterState {
     ctx: RegistryRequestContext,
   ): Promise<Response> {
     const pkg = await ctx.data.packages.findByName(pod);
-    if (!pkg) return new Response("Not Found", { status: 404 });
+    if (!pkg) throw Errors.notFound();
     const row = await ctx.data.versions.findLive(pkg, version);
     const meta = parsePodVersionMeta(row?.metadata);
     // The requested filename must match the canonical artifact this version stored.
-    if (!meta || meta.filename !== filenameRaw) return new Response("Not Found", { status: 404 });
+    if (!meta || meta.filename !== filenameRaw) throw Errors.notFound();
     return serveRegistryBlob(ctx, {
       digest: meta.blobDigest,
       kind: COCOAPODS_BLOB_KIND,

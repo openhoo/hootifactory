@@ -77,7 +77,7 @@ class NixAdapterState {
     if (!rawHash) throw Errors.notFound();
     const storeHash = parseStoreHash(rawHash);
     const meta = await this.findNarInfoMeta(ctx, storeHash);
-    if (!meta) return new Response("Not Found", { status: 404 });
+    if (!meta) throw Errors.notFound();
     return textResponseWithEtag(req, buildNarInfoText(meta), {
       "content-type": "text/x-nix-narinfo",
     });
@@ -90,10 +90,10 @@ class NixAdapterState {
     const fileHash = parseFileHash(rawHash);
     const scope = narBlobScope(fileHash);
     const pkg = await ctx.data.packages.findByName(scope);
-    if (!pkg) return new Response("Not Found", { status: 404 });
+    if (!pkg) throw Errors.notFound();
     const row = await ctx.data.versions.findLive(pkg, NARINFO_VERSION);
     const blobDigest = narBlobDigest(row?.metadata);
-    if (!blobDigest) return new Response("Not Found", { status: 404 });
+    if (!blobDigest) throw Errors.notFound();
     return serveRegistryBlob(ctx, {
       digest: blobDigest,
       kind: NAR_BLOB_KIND,

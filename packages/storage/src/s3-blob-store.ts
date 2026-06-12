@@ -1,93 +1,15 @@
-import { createHash, createHmac } from "node:crypto";
-import { createWriteStream } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { rm } from "node:fs/promises";
 import { env } from "@hootifactory/config";
-import { trimChar, z } from "@hootifactory/core";
 import { S3Client } from "bun";
 import { blobKey, computeDigest, InvalidDigestError } from "./digest";
+import { signedCopyObjectRequest } from "./s3-client";
+import { isObjectMissing } from "./s3-errors";
+import { streamToTempFile, waitForDrain } from "./s3-streaming";
 import type { BlobData, BlobStat, BlobStore, PutResult } from "./types";
 
-const S3MissingObjectErrorSchema = z.looseObject({
-  code: z.literal("NoSuchKey"),
-});
-
-/**
- * True only for a genuine "object does not exist" S3 error. Bun surfaces these
- * as an S3Error with code "NoSuchKey". Any other failure (auth, network,
- * missing bucket → "UnknownError"/"NoSuchBucket", etc.) must NOT be treated as
- * "blob absent", or transient/config faults silently look like data loss.
- */
-function isObjectMissing(err: unknown): boolean {
-  return S3MissingObjectErrorSchema.safeParse(err).success;
-}
-
-/**
- * Minimal contract for the backpressure-aware writable we await on. A WriteStream
- * satisfies this; the explicit interface keeps the helper unit-testable without an
- * fs/S3 stream.
- */
-interface DrainableWritable {
-  once(event: "drain", listener: () => void): unknown;
-  once(event: "error", listener: (err: Error) => void): unknown;
-  off(event: "drain", listener: () => void): unknown;
-  off(event: "error", listener: (err: Error) => void): unknown;
-}
-
-/**
- * Await a `drain` after `write()` signalled backpressure, rejecting on `error`.
- *
- * Both listeners are registered with `once` and the *paired* listener is removed
- * the moment either settles. Without this, every backpressure cycle would leave
- * an orphaned `error` listener on the stream (the `drain` listener auto-removes,
- * the `error` one does not), so large uploads accumulate listeners and trip
- * Node's MaxListenersExceededWarning.
- */
-export function waitForDrain(out: DrainableWritable): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
-    const onDrain = () => {
-      out.off("error", onError);
-      resolve();
-    };
-    const onError = (err: Error) => {
-      out.off("drain", onDrain);
-      reject(err);
-    };
-    out.once("drain", onDrain);
-    out.once("error", onError);
-  });
-}
-
-async function streamToTempFile(
-  data: ReadableStream<Uint8Array>,
-): Promise<{ path: string; digest: string; size: number }> {
-  const dir = await mkdtemp(join(tmpdir(), "hootifactory-blob-"));
-  const path = join(dir, "payload");
-  const out = createWriteStream(path, { flags: "wx" });
-  const hasher = new Bun.CryptoHasher("sha256");
-  const reader = data.getReader();
-  let size = 0;
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      hasher.update(value);
-      size += value.byteLength;
-      if (!out.write(value)) {
-        await waitForDrain(out);
-      }
-    }
-    await new Promise<void>((resolve, reject) => {
-      out.end((err?: Error | null) => (err ? reject(err) : resolve()));
-    });
-    return { path, digest: `sha256:${hasher.digest("hex")}`, size };
-  } catch (err) {
-    out.destroy();
-    await rm(dir, { recursive: true, force: true }).catch(() => {});
-    throw err;
-  }
-}
+// Re-exported so `import { waitForDrain } from "./s3-blob-store"` keeps working
+// for callers (and tests) that depended on this module's surface.
+export { waitForDrain };
 
 export interface S3BlobStoreOptions {
   endpoint?: string;
@@ -331,104 +253,4 @@ export class S3BlobStore implements BlobStore {
       // recoverable copy failure into a failed promote.
     }
   }
-}
-
-function encodeS3Path(value: string): string {
-  return value
-    .split("/")
-    .map((part) => encodeURIComponent(part))
-    .join("/");
-}
-
-function joinUrlPath(...parts: string[]): string {
-  return `/${parts
-    .map((part) => trimChar(part, "/"))
-    .filter(Boolean)
-    .join("/")}`;
-}
-
-function sha256Hex(value: string): string {
-  return createHash("sha256").update(value).digest("hex");
-}
-
-function hmacSha256(key: string | Buffer, value: string): Buffer {
-  return createHmac("sha256", key).update(value).digest();
-}
-
-function hmacSha256Hex(key: Buffer, value: string): string {
-  return createHmac("sha256", key).update(value).digest("hex");
-}
-
-function signingKey(secretAccessKey: string, date: string, region: string): Buffer {
-  const dateKey = hmacSha256(`AWS4${secretAccessKey}`, date);
-  const regionKey = hmacSha256(dateKey, region);
-  const serviceKey = hmacSha256(regionKey, "s3");
-  return hmacSha256(serviceKey, "aws4_request");
-}
-
-function signedCopyObjectRequest(input: {
-  endpoint: string;
-  region: string;
-  bucket: string;
-  accessKeyId: string;
-  secretAccessKey: string;
-  forcePathStyle: boolean;
-  sourceKey: string;
-  targetKey: string;
-}): { url: string; headers: Record<string, string> } {
-  const endpoint = new URL(input.endpoint);
-  const basePath = endpoint.pathname === "/" ? "" : endpoint.pathname;
-  const targetPath = encodeS3Path(input.targetKey);
-  const bucketPath = encodeURIComponent(input.bucket);
-  const pathname = input.forcePathStyle
-    ? joinUrlPath(basePath, bucketPath, targetPath)
-    : joinUrlPath(basePath, targetPath);
-  const host = input.forcePathStyle ? endpoint.host : `${input.bucket}.${endpoint.host}`;
-  const url = new URL(endpoint.toString());
-  url.host = host;
-  url.pathname = pathname;
-  url.search = "";
-
-  const amzDate = new Date().toISOString().replace(/[:-]|\.\d{3}/g, "");
-  const date = amzDate.slice(0, 8);
-  const payloadHash = sha256Hex("");
-  const copySource = `/${encodeURIComponent(input.bucket)}/${encodeS3Path(input.sourceKey)}`;
-  const headers = {
-    host,
-    "x-amz-content-sha256": payloadHash,
-    "x-amz-copy-source": copySource,
-    "x-amz-date": amzDate,
-  };
-  const signedHeaders = Object.keys(headers).sort().join(";");
-  const canonicalHeaders = Object.entries(headers)
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([name, value]) => `${name}:${value.trim()}\n`)
-    .join("");
-  const canonicalRequest = [
-    "PUT",
-    url.pathname,
-    "",
-    canonicalHeaders,
-    signedHeaders,
-    payloadHash,
-  ].join("\n");
-  const credentialScope = `${date}/${input.region}/s3/aws4_request`;
-  const stringToSign = [
-    "AWS4-HMAC-SHA256",
-    amzDate,
-    credentialScope,
-    sha256Hex(canonicalRequest),
-  ].join("\n");
-  const signature = hmacSha256Hex(
-    signingKey(input.secretAccessKey, date, input.region),
-    stringToSign,
-  );
-
-  return {
-    url: url.toString(),
-    headers: {
-      ...headers,
-      authorization: `AWS4-HMAC-SHA256 Credential=${input.accessKeyId}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`,
-    },
-  };
 }

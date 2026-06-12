@@ -1,4 +1,4 @@
-import { z } from "@hootifactory/registry";
+import { Sha256DigestSchema, Sha256HexSchema, z } from "@hootifactory/registry";
 
 /**
  * Generic/raw paths are arbitrary, repo-relative, slash-separated blob addresses
@@ -47,9 +47,7 @@ export const GenericPrefixSchema = z
   .max(1024)
   .refine(isValidGenericPrefix, "invalid generic prefix");
 
-const Sha256DigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 const Md5HexSchema = z.string().regex(/^[a-f0-9]{32}$/);
-const Sha256HexSchema = z.string().regex(/^[a-f0-9]{64}$/);
 const Sha512HexSchema = z.string().regex(/^[a-f0-9]{128}$/);
 
 /**

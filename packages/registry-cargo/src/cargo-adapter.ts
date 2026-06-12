@@ -44,9 +44,9 @@ class CargoAdapterState {
   async index(path: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const name = (path.split("/").pop() ?? "").toLowerCase();
     // The request path must equal the canonical sparse-index shard for the crate.
-    if (path !== cargoIndexPath(name)) return new Response("", { status: 404 });
+    if (path !== cargoIndexPath(name)) throw Errors.notFound();
     const pkg = await this.findCrate(ctx, name);
-    if (!pkg) return new Response("", { status: 404 });
+    if (!pkg) throw Errors.notFound();
     const vers = await ctx.data.versions.listLive(pkg, { orderByCreated: "asc" });
     const lines = vers
       .flatMap((v) => {

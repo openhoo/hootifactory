@@ -1,6 +1,7 @@
 import {
   bytesResponseWithEtag,
   createRegistryAdapterPlugin,
+  Errors,
   type RegistryRequestContext,
   type RegistryRouteParamSpec,
   registryAdapter,
@@ -49,7 +50,7 @@ class AlpineAdapterState {
     ctx: RegistryRequestContext,
   ): Promise<Response> {
     const meta = await this.findByFilename(ctx, arch, filename);
-    if (!meta) return new Response("Not Found", { status: 404 });
+    if (!meta) throw Errors.notFound();
     return serveRegistryBlob(ctx, {
       digest: meta.blobDigest,
       kind: ALPINE_APK_KIND,

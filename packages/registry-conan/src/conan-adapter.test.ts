@@ -538,16 +538,17 @@ describe("Conan adapter", () => {
   test("revisions endpoints 404 when the recipe is unknown", async () => {
     const ctx = conanContext();
     ctx.data.packages.findByName = async () => null;
-    const res = await new ConanAdapter().handle(
-      {
-        entry: RECIPE_REVISIONS_ENTRY,
-        params: recipeRefParams,
-        path: "/v2/conans/zlib/1.2.13/acme/stable/revisions",
-      },
-      new Request("https://registry.test/v2/conans/zlib/1.2.13/acme/stable/revisions"),
-      ctx,
-    );
-    expect(res.status).toBe(404);
+    await expect(
+      new ConanAdapter().handle(
+        {
+          entry: RECIPE_REVISIONS_ENTRY,
+          params: recipeRefParams,
+          path: "/v2/conans/zlib/1.2.13/acme/stable/revisions",
+        },
+        new Request("https://registry.test/v2/conans/zlib/1.2.13/acme/stable/revisions"),
+        ctx,
+      ),
+    ).rejects.toMatchObject({ status: 404, code: "NOT_FOUND" });
   });
 
   test("invalid reference segment throws NAME_INVALID", async () => {
@@ -597,16 +598,17 @@ describe("Conan adapter", () => {
     const ctx = conanContext();
     ctx.data.packages.findByName = async () => pkgRow();
     ctx.data.versions.findLive = async () => versionRow(recipeMeta());
-    const res = await new ConanAdapter().handle(
-      {
-        entry: RECIPE_FILE_DOWNLOAD_ENTRY,
-        params: { ...recipeRefParams, rrev: RREV, filename: "missing.txt" },
-        path: `/v2/conans/zlib/1.2.13/acme/stable/revisions/${RREV}/files/missing.txt`,
-      },
-      new Request("https://registry.test/x"),
-      ctx,
-    );
-    expect(res.status).toBe(404);
+    await expect(
+      new ConanAdapter().handle(
+        {
+          entry: RECIPE_FILE_DOWNLOAD_ENTRY,
+          params: { ...recipeRefParams, rrev: RREV, filename: "missing.txt" },
+          path: `/v2/conans/zlib/1.2.13/acme/stable/revisions/${RREV}/files/missing.txt`,
+        },
+        new Request("https://registry.test/x"),
+        ctx,
+      ),
+    ).rejects.toMatchObject({ status: 404, code: "NOT_FOUND" });
   });
 
   test("PUT recipe file creates the revision row on the first upload", async () => {
@@ -1089,19 +1091,20 @@ describe("Conan adapter", () => {
   test("package-config search 404s when the recipe is unknown", async () => {
     const ctx = conanContext();
     ctx.data.packages.findByName = async () => null;
-    const res = await new ConanAdapter().handle(
-      {
-        entry: {
-          method: "GET",
-          pattern: "/v2/conans/:name/:version/:user/:channel/search",
-          handlerId: "packageConfigSearch",
+    await expect(
+      new ConanAdapter().handle(
+        {
+          entry: {
+            method: "GET",
+            pattern: "/v2/conans/:name/:version/:user/:channel/search",
+            handlerId: "packageConfigSearch",
+          },
+          params: recipeRefParams,
+          path: "/v2/conans/zlib/1.2.13/acme/stable/search",
         },
-        params: recipeRefParams,
-        path: "/v2/conans/zlib/1.2.13/acme/stable/search",
-      },
-      new Request("https://registry.test/x"),
-      ctx,
-    );
-    expect(res.status).toBe(404);
+        new Request("https://registry.test/x"),
+        ctx,
+      ),
+    ).rejects.toMatchObject({ status: 404, code: "NOT_FOUND" });
   });
 });

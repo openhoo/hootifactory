@@ -1,4 +1,4 @@
-import { z } from "@hootifactory/registry";
+import { Sha256DigestSchema, Sha256HexSchema, z } from "@hootifactory/registry";
 
 /**
  * Hackage package names are dash-separated alphanumeric components, where every
@@ -31,9 +31,6 @@ export const HackageVersionSchema = z
   .min(1)
   .max(128)
   .refine(isValidHackageVersion, "invalid Hackage version");
-
-const Sha256DigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
-const Sha256HexSchema = z.string().regex(/^[a-f0-9]{64}$/);
 
 /**
  * What we persist per published version: the raw `.cabal` text (the source of

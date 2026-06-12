@@ -1,4 +1,4 @@
-import { z } from "@hootifactory/registry";
+import { Sha256DigestSchema, Sha256HexSchema, z } from "@hootifactory/registry";
 
 /**
  * Hex package names: lowercase letters, digits and underscore. Hex.pm enforces a
@@ -33,9 +33,6 @@ export const HexVersionSchema = z
   .min(1)
   .max(256)
   .refine(isValidHexVersion, "invalid SemVer version");
-
-const Sha256HexSchema = z.string().regex(/^[a-f0-9]{64}$/);
-const Sha256DigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 
 /**
  * The release metadata we extract from a tarball's `metadata.config`. `name`,

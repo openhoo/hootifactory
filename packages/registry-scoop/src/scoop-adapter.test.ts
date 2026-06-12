@@ -186,16 +186,17 @@ describe("Scoop adapter", () => {
   test("GET /<app>.json 404s when the package is unknown", async () => {
     const ctx = scoopContext();
     ctx.data.packages.findByName = async () => null;
-    const res = await new ScoopAdapter().handle(
-      {
-        entry: { method: "GET", pattern: "/:app", handlerId: "manifest" },
-        params: { app: "missing.json" },
-        path: "/missing.json",
-      },
-      new Request("https://registry.test/missing.json"),
-      ctx,
-    );
-    expect(res.status).toBe(404);
+    await expect(
+      new ScoopAdapter().handle(
+        {
+          entry: { method: "GET", pattern: "/:app", handlerId: "manifest" },
+          params: { app: "missing.json" },
+          path: "/missing.json",
+        },
+        new Request("https://registry.test/missing.json"),
+        ctx,
+      ),
+    ).rejects.toMatchObject({ status: 404 });
   });
 
   test("download resolves the stored blob digest for the matching filename", async () => {
@@ -284,20 +285,21 @@ describe("Scoop adapter", () => {
     ctx.data.packages.findByName = async () => pkgRow("demo");
     // findLive returns null for an unknown / non-live version.
     ctx.data.versions.findLive = async () => null;
-    const res = await new ScoopAdapter().handle(
-      {
-        entry: {
-          method: "GET",
-          pattern: "/download/:app/:version/:filename",
-          handlerId: "download",
+    await expect(
+      new ScoopAdapter().handle(
+        {
+          entry: {
+            method: "GET",
+            pattern: "/download/:app/:version/:filename",
+            handlerId: "download",
+          },
+          params: { app: "demo", version: "9.9.9", filename: "demo-1.2.3.zip" },
+          path: "/download/demo/9.9.9/demo-1.2.3.zip",
         },
-        params: { app: "demo", version: "9.9.9", filename: "demo-1.2.3.zip" },
-        path: "/download/demo/9.9.9/demo-1.2.3.zip",
-      },
-      new Request("https://registry.test/download/demo/9.9.9/demo-1.2.3.zip"),
-      ctx,
-    );
-    expect(res.status).toBe(404);
+        new Request("https://registry.test/download/demo/9.9.9/demo-1.2.3.zip"),
+        ctx,
+      ),
+    ).rejects.toMatchObject({ status: 404 });
   });
 
   test("scan.referencedDigests surfaces the stored blob digest for scanning", () => {
@@ -311,20 +313,21 @@ describe("Scoop adapter", () => {
     const ctx = scoopContext();
     ctx.data.packages.findByName = async () => pkgRow("demo");
     ctx.data.versions.findLive = async () => versionRow(storedMeta);
-    const res = await new ScoopAdapter().handle(
-      {
-        entry: {
-          method: "GET",
-          pattern: "/download/:app/:version/:filename",
-          handlerId: "download",
+    await expect(
+      new ScoopAdapter().handle(
+        {
+          entry: {
+            method: "GET",
+            pattern: "/download/:app/:version/:filename",
+            handlerId: "download",
+          },
+          params: { app: "demo", version: "1.2.3", filename: "other.zip" },
+          path: "/download/demo/1.2.3/other.zip",
         },
-        params: { app: "demo", version: "1.2.3", filename: "other.zip" },
-        path: "/download/demo/1.2.3/other.zip",
-      },
-      new Request("https://registry.test/download/demo/1.2.3/other.zip"),
-      ctx,
-    );
-    expect(res.status).toBe(404);
+        new Request("https://registry.test/download/demo/1.2.3/other.zip"),
+        ctx,
+      ),
+    ).rejects.toMatchObject({ status: 404 });
   });
 
   test("PUT /<app> publishes the artifact and stores derived metadata", async () => {

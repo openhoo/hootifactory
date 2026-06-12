@@ -1,5 +1,5 @@
 import type { PermissionKey } from "@hootifactory/types";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, KeyRound } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -16,7 +16,9 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useOrg } from "@/features/orgs/context";
+import { usePaginatedQuery } from "@/hooks/use-paginated-query";
 import { api, apiErrorMessage } from "@/lib/api";
+import { grantNeedsRepository, grantsSummary } from "@/lib/grants";
 
 const TOKEN_PERMISSION_OPTIONS: PermissionKey[] = [
   "org.read",
@@ -35,15 +37,6 @@ const TOKEN_PERMISSION_OPTIONS: PermissionKey[] = [
   "token.revoke",
 ];
 
-function grantUsesRepositoryScope(permission: PermissionKey) {
-  return (
-    permission.startsWith("repository.") ||
-    permission.startsWith("package.") ||
-    permission.startsWith("artifact.") ||
-    permission.startsWith("policy.")
-  );
-}
-
 const TOKEN_PAGE_SIZE = 50;
 
 export function TokensPage() {
@@ -54,7 +47,6 @@ export function TokensPage() {
   const [error, setError] = useState("");
   const [grantPermission, setGrantPermission] = useState<PermissionKey>("repository.read");
   const [repositoryPattern, setRepositoryPattern] = useState("");
-  const [tokenLimit, setTokenLimit] = useState(TOKEN_PAGE_SIZE);
   const grantOptions = useMemo(
     () =>
       TOKEN_PERMISSION_OPTIONS.filter((permission) => selected?.permissions.includes(permission)),
@@ -75,9 +67,13 @@ export function TokensPage() {
     if (nextPermission) setGrantPermission(nextPermission);
   }, [grantOptions, grantPermission]);
 
-  const tokensQ = useQuery({
-    queryKey: ["tokens", selected?.id, tokenLimit],
-    queryFn: () => api.tokens(selected!.id, { limit: tokenLimit, offset: 0 }),
+  const tokensP = usePaginatedQuery({
+    queryKey: ["tokens", selected?.id],
+    queryFn: ({ limit, offset }) => api.tokens(selected!.id, { limit, offset }),
+    selectItems: (data) => data.tokens,
+    selectTotal: (data) => data.pagination.total,
+    pageSize: TOKEN_PAGE_SIZE,
+    resetKey: selected?.id,
     enabled: !!selected,
   });
   const create = useMutation({
@@ -87,7 +83,7 @@ export function TokensPage() {
         grants: [
           {
             permission: grantPermission,
-            ...(grantUsesRepositoryScope(grantPermission)
+            ...(grantNeedsRepository(grantPermission)
               ? { repository: repositoryPattern.trim() }
               : {}),
           },
@@ -107,11 +103,11 @@ export function TokensPage() {
     onError: (e) => toast.error(apiErrorMessage(e)),
   });
 
-  const tokens = tokensQ.data?.tokens ?? [];
-  const tokenTotal = tokensQ.data?.pagination.total ?? 0;
-  const canLoadMoreTokens = tokens.length < tokenTotal;
+  const tokens = tokensP.items;
+  const tokenTotal = tokensP.total;
+  const canLoadMoreTokens = tokensP.canLoadMore;
   const canSeeTokenOwners = Boolean(selected?.permissions.includes("token.read"));
-  const needsRepositoryScope = grantUsesRepositoryScope(grantPermission);
+  const needsRepositoryScope = grantNeedsRepository(grantPermission);
   const canCreateToken = Boolean(
     selected &&
       name.trim() &&
@@ -119,17 +115,6 @@ export function TokensPage() {
       grantOptions.length > 0 &&
       !create.isPending,
   );
-
-  function grantSummary(t: (typeof tokens)[number]) {
-    if (!t.grants.length) return "no grants";
-    return t.grants
-      .map((grant) => {
-        const scope =
-          grant.repository ?? grant.package ?? grant.artifact ?? grant.policy ?? grant.tokenTarget;
-        return scope ? `${grant.permission} (${scope})` : grant.permission;
-      })
-      .join("; ");
-  }
 
   return (
     <div>
@@ -248,7 +233,7 @@ export function TokensPage() {
                 </TableCell>
                 <TableCell className="capitalize">{t.type}</TableCell>
                 <TableCell className="max-w-64 truncate text-xs text-muted-foreground">
-                  {grantSummary(t)}
+                  {grantsSummary(t.grants)}
                 </TableCell>
                 <TableCell className="text-muted-foreground">
                   {t.expiresAt ? new Date(t.expiresAt).toLocaleDateString() : "never"}
@@ -297,8 +282,8 @@ export function TokensPage() {
                 type="button"
                 variant="outline"
                 size="sm"
-                onClick={() => setTokenLimit((limit) => limit + TOKEN_PAGE_SIZE)}
-                disabled={tokensQ.isFetching}
+                onClick={() => tokensP.loadMore()}
+                disabled={tokensP.query.isFetching}
               >
                 <ChevronDown />
                 Show more

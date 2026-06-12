@@ -1,4 +1,4 @@
-import { asJsonRecord, z } from "@hootifactory/registry";
+import { asJsonRecord, Sha256DigestSchema, Sha256HexSchema, z } from "@hootifactory/registry";
 
 /** Cargo sparse-index path sharding for a crate name. */
 export function cargoIndexPath(name: string): string {
@@ -73,9 +73,6 @@ export const CargoOwnersBodySchema = z.strictObject({
 });
 
 export type CargoPublishMetadata = z.output<typeof CargoPublishMetadataSchema>;
-
-const Sha256HexSchema = z.string().regex(/^[a-f0-9]{64}$/);
-const Sha256DigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 
 export const CargoIndexDependencySchema = z.strictObject({
   name: CargoCrateNameSchema,

@@ -1,7 +1,5 @@
-import { z } from "@hootifactory/registry";
+import { Sha256DigestSchema, z } from "@hootifactory/registry";
 import type { ApkPkgInfo } from "./apk-parse";
-
-const Sha256DigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 
 /**
  * What we persist per published `.apk` version. Holds the parsed `.PKGINFO`

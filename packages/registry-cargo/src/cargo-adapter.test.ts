@@ -301,27 +301,29 @@ describe("Cargo adapter", () => {
 
   test("index 404s on a path that is not the canonical shard for the crate", async () => {
     const ctx = createTestRegistryContext();
-    const res = await new CargoAdapter().handle(
-      {
-        entry: { method: "GET", pattern: "/:path+", handlerId: "index" },
-        params: { path: "xx/yy/demo_crate" },
-        path: "/xx/yy/demo_crate",
-      },
-      new Request("https://registry.test/xx/yy/demo_crate"),
-      ctx,
-    );
-    expect(res.status).toBe(404);
+    await expect(
+      new CargoAdapter().handle(
+        {
+          entry: { method: "GET", pattern: "/:path+", handlerId: "index" },
+          params: { path: "xx/yy/demo_crate" },
+          path: "/xx/yy/demo_crate",
+        },
+        new Request("https://registry.test/xx/yy/demo_crate"),
+        ctx,
+      ),
+    ).rejects.toMatchObject({ status: 404 });
   });
 
   test("index 404s when the crate has no package record", async () => {
     const ctx = createTestRegistryContext();
     ctx.data.packages.findByName = async () => null;
-    const res = await new CargoAdapter().handle(
-      indexMatch,
-      new Request("https://registry.test/de/mo/demo_crate"),
-      ctx,
-    );
-    expect(res.status).toBe(404);
+    await expect(
+      new CargoAdapter().handle(
+        indexMatch,
+        new Request("https://registry.test/de/mo/demo_crate"),
+        ctx,
+      ),
+    ).rejects.toMatchObject({ status: 404 });
   });
 
   test("yank toggles the stored index entry's yanked flag", async () => {

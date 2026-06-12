@@ -243,16 +243,17 @@ describe("Alpine adapter", () => {
     ctx.data.packages.findByName = async (name) => pkgRow(name);
     ctx.data.versions.listLive = async () => [versionRow(helloMeta("x86_64"))];
 
-    const res = await new AlpineAdapter().handle(
-      {
-        entry: DOWNLOAD_MATCH,
-        params: { arch: "x86_64", filename: "other-9.9.9-r0.apk" },
-        path: "/x86_64/other-9.9.9-r0.apk",
-      },
-      new Request("https://r.test/x86_64/other-9.9.9-r0.apk"),
-      ctx,
-    );
-    expect(res.status).toBe(404);
+    await expect(
+      new AlpineAdapter().handle(
+        {
+          entry: DOWNLOAD_MATCH,
+          params: { arch: "x86_64", filename: "other-9.9.9-r0.apk" },
+          path: "/x86_64/other-9.9.9-r0.apk",
+        },
+        new Request("https://r.test/x86_64/other-9.9.9-r0.apk"),
+        ctx,
+      ),
+    ).rejects.toMatchObject({ status: 404 });
   });
 
   test("download with a non-.apk filename throws NAME_INVALID", async () => {
