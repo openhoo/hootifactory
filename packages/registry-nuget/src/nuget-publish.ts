@@ -7,7 +7,7 @@ import {
   type NugetVersionMeta,
   normalizeNugetVersion,
 } from "./nuget-validation";
-import { extractNuspecMeta } from "./nuspec";
+import { extractNuspecMeta, extractNuspecXml } from "./nuspec";
 
 export type NugetPublishError = {
   error: string;
@@ -42,6 +42,7 @@ export async function parseNugetPublishRequest(req: Request): Promise<NugetPubli
   if (!packageBytes.ok) return packageBytes;
 
   const nuspec = extractNuspecMeta(packageBytes.bytes);
+  const nuspecXml = extractNuspecXml(packageBytes.bytes);
   if (!nuspec) {
     return {
       ok: false,
@@ -85,6 +86,7 @@ export async function parseNugetPublishRequest(req: Request): Promise<NugetPubli
         listed: true,
         semVer2: isSemVer2NugetVersion(nuspec.version),
         dependencyGroups: nuspec.dependencyGroups,
+        nuspecXml: nuspecXml ?? undefined,
       },
     },
   };

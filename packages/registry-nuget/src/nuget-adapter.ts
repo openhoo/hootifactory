@@ -256,7 +256,13 @@ class NugetAdapterState {
     if (file && file.toLowerCase() !== expected) throw Errors.notFound();
     if (file.toLowerCase().endsWith(".nuspec")) {
       const v = await ctx.data.versions.findLive(pkg, norm);
-      if (!parseNugetVersionMeta(v?.metadata)?.nupkgDigest) throw Errors.notFound();
+      const metadata = parseNugetVersionMeta(v?.metadata);
+      if (!metadata?.nupkgDigest) throw Errors.notFound();
+      if (metadata.nuspecXml) {
+        return new Response(metadata.nuspecXml, {
+          headers: { "content-type": "application/xml; charset=utf-8" },
+        });
+      }
       return new Response(
         `<?xml version="1.0" encoding="utf-8"?>\n<package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd"><metadata><id>${escapeXml(id)}</id><version>${escapeXml(norm)}</version></metadata></package>\n`,
         { headers: { "content-type": "application/xml; charset=utf-8" } },

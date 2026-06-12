@@ -39,7 +39,7 @@ const pkg = {
 function versionRow(
   version: string,
   updatedAt: Date,
-  opts: { listed?: boolean; pkg?: RegistryPackageRow } = {},
+  opts: { listed?: boolean; nuspecXml?: string; pkg?: RegistryPackageRow } = {},
 ): RegistryPackageVersionRow {
   const rowPkg = opts.pkg ?? pkg;
   return {
@@ -52,6 +52,7 @@ function versionRow(
       file: `${rowPkg.name}.${version}.nupkg`,
       displayId: rowPkg.name === "hoot.lib" ? "Hoot.Lib" : rowPkg.name,
       ...(opts.listed === undefined ? {} : { listed: opts.listed }),
+      ...(opts.nuspecXml === undefined ? {} : { nuspecXml: opts.nuspecXml }),
     },
     sizeBytes: 1,
     publishedByUserId: null,
@@ -328,6 +329,25 @@ describe("NuGet adapter download", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("application/xml; charset=utf-8");
     expect(await res.text()).toContain("<id>Hoot.Lib</id>");
+  });
+
+  test("serves stored raw nuspec XML when present", async () => {
+    const adapter = new NugetAdapter();
+    const ctx = createTestRegistryContext();
+    const nuspecXml =
+      '<?xml version="1.0" encoding="utf-8"?><package><metadata><id>Hoot.Lib</id><summary>original</summary></metadata></package>';
+    ctx.repo = { ...ctx.repo, moduleId: "nuget", mountPath: "nuget/private" };
+    ctx.data.packages.findByName = async () => pkg;
+    ctx.data.versions.findLive = async () =>
+      versionRow("1.0.0", new Date("2026-01-01T00:00:00.000Z"), { nuspecXml });
+    const res = await adapter.handle(
+      downloadMatch("hoot.lib.1.0.0.nuspec"),
+      new Request("https://registry.test/v3-flatcontainer/hoot.lib/1.0.0/hoot.lib.1.0.0.nuspec"),
+      ctx,
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("application/xml; charset=utf-8");
+    expect(await res.text()).toBe(nuspecXml);
   });
 
   test("rejects a filename that does not match the canonical id.version", async () => {

@@ -257,6 +257,11 @@ function parseDependencies(xml: string): NuspecDependencyGroup[] | null {
   return groups;
 }
 
+/** Extract the raw nuspec XML string from a .nupkg, or null. */
+export function extractNuspecXml(nupkg: Uint8Array): string | null {
+  return readNuspecXml(nupkg);
+}
+
 /** Extract NuGet package metadata from a .nupkg's nuspec, or null if it can't be parsed. */
 export function extractNuspecMeta(nupkg: Uint8Array): NuspecMeta | null {
   const xml = readNuspecXml(nupkg);
