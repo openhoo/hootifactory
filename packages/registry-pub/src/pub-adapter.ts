@@ -1,6 +1,6 @@
 import {
+  createRegistryAdapterPlugin,
   jsonResponseWithEtag,
-  type RegistryPlugin,
   type RegistryRequestContext,
   registryAdapter,
   serveRegistryBlob,
@@ -223,4 +223,4 @@ const pubDefinition = registryAdapter("pub")
   ]);
 
 export class PubAdapter extends pubDefinition.adapterClass() {}
-export const pubRegistryPlugin: RegistryPlugin = new PubAdapter();
+export const pubRegistryPlugin = createRegistryAdapterPlugin(PubAdapter);

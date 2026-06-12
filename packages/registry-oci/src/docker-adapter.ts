@@ -1,11 +1,11 @@
 import {
   type ContentAddressableRegistryRequestContext,
+  createRegistryAdapterPlugin,
   Errors,
   type HttpMethod,
   ifNoneMatch,
   immutableRegistryBlobCacheControl,
   type Permission,
-  type RegistryPlugin,
   type RegistryRequestContext,
   type RegistryRouteParamSpec,
   type RouteMatch,
@@ -316,4 +316,4 @@ const dockerDefinition = registryAdapter("docker")
   ]);
 
 export class DockerAdapter extends dockerDefinition.adapterClass() {}
-export const dockerRegistryPlugin: RegistryPlugin = new DockerAdapter();
+export const dockerRegistryPlugin = createRegistryAdapterPlugin(DockerAdapter);

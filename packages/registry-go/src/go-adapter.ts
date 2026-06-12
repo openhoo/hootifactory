@@ -1,8 +1,8 @@
 import {
+  createRegistryAdapterPlugin,
   Errors,
   jsonResponseWithEtag,
   parseRegistryInput,
-  type RegistryPlugin,
   type RegistryRequestContext,
   registryAdapter,
   serveRegistryBlob,
@@ -213,4 +213,4 @@ const goDefinition = registryAdapter("go")
   ]);
 
 export class GoAdapter extends goDefinition.adapterClass() {}
-export const goRegistryPlugin: RegistryPlugin = new GoAdapter();
+export const goRegistryPlugin = createRegistryAdapterPlugin(GoAdapter);

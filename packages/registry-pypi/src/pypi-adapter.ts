@@ -1,8 +1,8 @@
 import {
+  createRegistryAdapterPlugin,
   Errors,
   jsonResponseWithEtag,
   parseRegistryInput,
-  type RegistryPlugin,
   type RegistryRequestContext,
   registryAdapter,
   repoResponseCache,
@@ -163,4 +163,4 @@ const pypiDefinition = registryAdapter("pypi")
   ]);
 
 export class PypiAdapter extends pypiDefinition.adapterClass() {}
-export const pypiRegistryPlugin: RegistryPlugin = new PypiAdapter();
+export const pypiRegistryPlugin = createRegistryAdapterPlugin(PypiAdapter);

@@ -1,7 +1,7 @@
 import {
+  createRegistryAdapterPlugin,
   jsonResponseWithEtag,
   type RegistryMetadata,
-  type RegistryPlugin,
   type RegistryRequestContext,
   registryAdapter,
   serveVersionBlob,
@@ -363,4 +363,4 @@ const puppetDefinition = registryAdapter("puppet")
   ]);
 
 export class PuppetAdapter extends puppetDefinition.adapterClass() {}
-export const puppetRegistryPlugin: RegistryPlugin = new PuppetAdapter();
+export const puppetRegistryPlugin = createRegistryAdapterPlugin(PuppetAdapter);

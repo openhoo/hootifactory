@@ -1,8 +1,8 @@
 import {
+  createRegistryAdapterPlugin,
   type HttpMethod,
   InvalidDigestError,
   type Permission,
-  type RegistryPlugin,
   type RegistryRequestContext,
   type RouteMatch,
   readWritePermission,
@@ -263,4 +263,4 @@ const gitlfsDefinition = registryAdapter("gitlfs")
   ]);
 
 export class GitLfsAdapter extends gitlfsDefinition.adapterClass() {}
-export const gitlfsRegistryPlugin: RegistryPlugin = new GitLfsAdapter();
+export const gitlfsRegistryPlugin = createRegistryAdapterPlugin(GitLfsAdapter);

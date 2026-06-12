@@ -1,6 +1,6 @@
 import {
+  createRegistryAdapterPlugin,
   jsonResponseWithEtag,
-  type RegistryPlugin,
   type RegistryRequestContext,
   registryAdapter,
   serveRegistryBlob,
@@ -363,4 +363,4 @@ const ansibleDefinition = registryAdapter("ansible")
   ]);
 
 export class AnsibleAdapter extends ansibleDefinition.adapterClass() {}
-export const ansibleRegistryPlugin: RegistryPlugin = new AnsibleAdapter();
+export const ansibleRegistryPlugin = createRegistryAdapterPlugin(AnsibleAdapter);

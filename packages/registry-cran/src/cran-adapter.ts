@@ -1,8 +1,8 @@
 import {
   bytesResponseWithEtag,
+  createRegistryAdapterPlugin,
   Errors,
   type RegistryPackageRow,
-  type RegistryPlugin,
   type RegistryRequestContext,
   registryAdapter,
   repoResponseCache,
@@ -207,4 +207,4 @@ const cranDefinition = registryAdapter("cran")
   ]);
 
 export class CranAdapter extends cranDefinition.adapterClass() {}
-export const cranRegistryPlugin: RegistryPlugin = new CranAdapter();
+export const cranRegistryPlugin = createRegistryAdapterPlugin(CranAdapter);

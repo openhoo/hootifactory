@@ -1,6 +1,6 @@
 import {
+  createRegistryAdapterPlugin,
   jsonResponseWithEtag,
-  type RegistryPlugin,
   type RegistryRequestContext,
   type RegistryRouteParamSpec,
   registryAdapter,
@@ -314,4 +314,4 @@ const cocoapodsDefinition = registryAdapter("cocoapods")
   ]);
 
 export class CocoapodsAdapter extends cocoapodsDefinition.adapterClass() {}
-export const cocoapodsRegistryPlugin: RegistryPlugin = new CocoapodsAdapter();
+export const cocoapodsRegistryPlugin = createRegistryAdapterPlugin(CocoapodsAdapter);

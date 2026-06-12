@@ -1,8 +1,8 @@
 import {
+  createRegistryAdapterPlugin,
   Errors,
   jsonResponseWithEtag,
   parseRegistryInput,
-  type RegistryPlugin,
   type RegistryRequestContext,
   type RegistryRouteParamSpec,
   registryAdapter,
@@ -309,4 +309,4 @@ const wingetDefinition = registryAdapter("winget")
   ]);
 
 export class WingetAdapter extends wingetDefinition.adapterClass() {}
-export const wingetRegistryPlugin: RegistryPlugin = new WingetAdapter();
+export const wingetRegistryPlugin = createRegistryAdapterPlugin(WingetAdapter);

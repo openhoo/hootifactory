@@ -1,6 +1,7 @@
 // Barrel for the registry plugin SDK: re-exports the public plugin-authoring
 // surface from the focused modules under ./plugin.
 export {
+  createRegistryAdapterPlugin,
   type RegistryAdapterAppRouteDsl,
   type RegistryAdapterAppRouteList,
   type RegistryAdapterAroundHandleHook,

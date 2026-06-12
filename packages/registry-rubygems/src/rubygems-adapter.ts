@@ -1,8 +1,8 @@
 import {
   asJsonRecord,
+  createRegistryAdapterPlugin,
   Errors,
   parseRegistryInput,
-  type RegistryPlugin,
   type RegistryRequestContext,
   type RegistryVersionMetadataRow,
   registryAdapter,
@@ -208,4 +208,4 @@ const rubygemsDefinition = registryAdapter("rubygems")
   ]);
 
 export class RubygemsAdapter extends rubygemsDefinition.adapterClass() {}
-export const rubygemsRegistryPlugin: RegistryPlugin = new RubygemsAdapter();
+export const rubygemsRegistryPlugin = createRegistryAdapterPlugin(RubygemsAdapter);

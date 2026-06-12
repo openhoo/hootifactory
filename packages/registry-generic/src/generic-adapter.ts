@@ -1,8 +1,8 @@
 import {
+  createRegistryAdapterPlugin,
   Errors,
   jsonResponseWithEtag,
   parseRegistryInput,
-  type RegistryPlugin,
   type RegistryRequestContext,
   type RegistryRouteParamSpec,
   registryAdapter,
@@ -219,4 +219,4 @@ const genericDefinition = registryAdapter("generic")
   ]);
 
 export class GenericAdapter extends genericDefinition.adapterClass() {}
-export const genericRegistryPlugin: RegistryPlugin = new GenericAdapter();
+export const genericRegistryPlugin = createRegistryAdapterPlugin(GenericAdapter);

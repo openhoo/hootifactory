@@ -1,8 +1,8 @@
 import {
   bytesResponseWithEtag,
+  createRegistryAdapterPlugin,
   Errors,
   parseRegistryInput,
-  type RegistryPlugin,
   type RegistryRequestContext,
   type RegistryRouteParamSpec,
   registryAdapter,
@@ -200,4 +200,4 @@ const opamDefinition = registryAdapter("opam")
   ]);
 
 export class OpamAdapter extends opamDefinition.adapterClass() {}
-export const opamRegistryPlugin: RegistryPlugin = new OpamAdapter();
+export const opamRegistryPlugin = createRegistryAdapterPlugin(OpamAdapter);

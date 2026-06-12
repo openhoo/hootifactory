@@ -1,6 +1,6 @@
 import {
+  createRegistryAdapterPlugin,
   Errors,
-  type RegistryPlugin,
   type RegistryRequestContext,
   type RegistryRouteParamSpec,
   registryAdapter,
@@ -212,4 +212,4 @@ const cargoDefinition = registryAdapter("cargo")
   ]);
 
 export class CargoAdapter extends cargoDefinition.adapterClass() {}
-export const cargoRegistryPlugin: RegistryPlugin = new CargoAdapter();
+export const cargoRegistryPlugin = createRegistryAdapterPlugin(CargoAdapter);

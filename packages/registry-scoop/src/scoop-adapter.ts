@@ -1,8 +1,8 @@
 import {
+  createRegistryAdapterPlugin,
   Errors,
   jsonResponseWithEtag,
   parseRegistryInput,
-  type RegistryPlugin,
   type RegistryRequestContext,
   type RegistryRouteParamSpec,
   registryAdapter,
@@ -184,4 +184,4 @@ const scoopDefinition = registryAdapter("scoop")
   ]);
 
 export class ScoopAdapter extends scoopDefinition.adapterClass() {}
-export const scoopRegistryPlugin: RegistryPlugin = new ScoopAdapter();
+export const scoopRegistryPlugin = createRegistryAdapterPlugin(ScoopAdapter);

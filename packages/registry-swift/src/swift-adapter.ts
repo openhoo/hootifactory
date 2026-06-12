@@ -1,9 +1,9 @@
 import {
+  createRegistryAdapterPlugin,
   Errors,
   jsonResponseWithEtag,
   parseRegistryInput,
   RegistryError,
-  type RegistryPlugin,
   type RegistryRequestContext,
   registryAdapter,
   serveRegistryBlob,
@@ -344,4 +344,4 @@ const swiftDefinition = registryAdapter("swift")
   ]);
 
 export class SwiftAdapter extends swiftDefinition.adapterClass() {}
-export const swiftRegistryPlugin: RegistryPlugin = new SwiftAdapter();
+export const swiftRegistryPlugin = createRegistryAdapterPlugin(SwiftAdapter);

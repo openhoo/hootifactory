@@ -1,5 +1,6 @@
 import {
   asJsonRecord,
+  createRegistryAdapterPlugin,
   Errors,
   type HttpMethod,
   type Permission,
@@ -7,7 +8,6 @@ import {
   type RegistryMetadata,
   type RegistryPackageHandle,
   type RegistryPackageVersionRow,
-  type RegistryPlugin,
   type RegistryRequestContext,
   type RegistryRouteParamSpec,
   type RegistryVirtualSearchInput,
@@ -433,4 +433,4 @@ const npmDefinition = registryAdapter("npm")
   ]);
 
 export class NpmAdapter extends npmDefinition.adapterClass() {}
-export const npmRegistryPlugin: RegistryPlugin = new NpmAdapter();
+export const npmRegistryPlugin = createRegistryAdapterPlugin(NpmAdapter);

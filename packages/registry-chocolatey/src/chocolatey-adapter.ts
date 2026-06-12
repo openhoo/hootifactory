@@ -1,9 +1,9 @@
 import {
+  createRegistryAdapterPlugin,
   Errors,
   parseRegistryInput,
   type RegistryPackageHandle,
   type RegistryPackageVersionRow,
-  type RegistryPlugin,
   type RegistryRequestContext,
   type RegistryRouteParamSpec,
   registryAdapter,
@@ -371,4 +371,4 @@ const chocolateyDefinition = registryAdapter("chocolatey")
   ]);
 
 export class ChocolateyAdapter extends chocolateyDefinition.adapterClass() {}
-export const chocolateyRegistryPlugin: RegistryPlugin = new ChocolateyAdapter();
+export const chocolateyRegistryPlugin = createRegistryAdapterPlugin(ChocolateyAdapter);

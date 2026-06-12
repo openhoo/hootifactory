@@ -1,9 +1,9 @@
 import {
+  createRegistryAdapterPlugin,
   Errors,
   jsonResponseWithEtag,
   parseRegistryInput,
   type RegistryPackageHandle,
-  type RegistryPlugin,
   type RegistryRequestContext,
   registryAdapter,
   serveRegistryBlob,
@@ -191,4 +191,4 @@ const homebrewDefinition = registryAdapter("homebrew")
   ]);
 
 export class HomebrewAdapter extends homebrewDefinition.adapterClass() {}
-export const homebrewRegistryPlugin: RegistryPlugin = new HomebrewAdapter();
+export const homebrewRegistryPlugin = createRegistryAdapterPlugin(HomebrewAdapter);

@@ -1,9 +1,9 @@
 import {
   bytesResponseWithEtag,
+  createRegistryAdapterPlugin,
   Errors,
   parseRegistryInput,
   type RegistryMetadata,
-  type RegistryPlugin,
   type RegistryRequestContext,
   type RegistryRouteParamSpec,
   registryAdapter,
@@ -271,4 +271,4 @@ const condaDefinition = registryAdapter("conda")
   ]);
 
 export class CondaAdapter extends condaDefinition.adapterClass() {}
-export const condaRegistryPlugin: RegistryPlugin = new CondaAdapter();
+export const condaRegistryPlugin = createRegistryAdapterPlugin(CondaAdapter);

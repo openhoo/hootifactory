@@ -1,6 +1,6 @@
 import {
+  createRegistryAdapterPlugin,
   type RegistryPackageHandle,
-  type RegistryPlugin,
   type RegistryRequestContext,
   type RegistryRouteParamSpec,
   registryAdapter,
@@ -544,4 +544,4 @@ const conanDefinition = registryAdapter("conan")
   ]);
 
 export class ConanAdapter extends conanDefinition.adapterClass() {}
-export const conanRegistryPlugin: RegistryPlugin = new ConanAdapter();
+export const conanRegistryPlugin = createRegistryAdapterPlugin(ConanAdapter);

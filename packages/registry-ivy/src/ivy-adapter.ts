@@ -1,6 +1,6 @@
 import {
+  createRegistryAdapterPlugin,
   Errors,
-  type RegistryPlugin,
   type RegistryRequestContext,
   type RegistryRouteParamSpec,
   registryAdapter,
@@ -122,4 +122,4 @@ const ivyDefinition = registryAdapter("ivy")
   ]);
 
 export class IvyAdapter extends ivyDefinition.adapterClass() {}
-export const ivyRegistryPlugin: RegistryPlugin = new IvyAdapter();
+export const ivyRegistryPlugin = createRegistryAdapterPlugin(IvyAdapter);
