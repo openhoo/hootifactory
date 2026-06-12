@@ -1,4 +1,4 @@
-import { gunzipSync } from "node:zlib";
+import { gunzipTar, tarMembers } from "@hootifactory/registry";
 
 /**
  * Minimal USTAR tar reader/writer for Hackage. We read the `.cabal` member out
@@ -12,8 +12,6 @@ const TAR_NAME_OFFSET = 0;
 const TAR_NAME_LENGTH = 100;
 const TAR_SIZE_OFFSET = 124;
 const TAR_SIZE_LENGTH = 12;
-const TAR_PREFIX_OFFSET = 345;
-const TAR_PREFIX_LENGTH = 155;
 
 /**
  * Cap the gunzipped sdist tar so a decompression bomb (a tiny gzip expanding to
@@ -21,56 +19,6 @@ const TAR_PREFIX_LENGTH = 155;
  * A sdist tar is small; 64 MiB is generous for locating its `.cabal`.
  */
 const MAX_SDIST_TAR_BYTES = 64 * 1024 * 1024;
-
-function decodeCString(bytes: Uint8Array): string {
-  const nul = bytes.indexOf(0);
-  const slice = nul >= 0 ? bytes.subarray(0, nul) : bytes;
-  return new TextDecoder().decode(slice);
-}
-
-/** Parse an octal tar numeric field (space/NUL terminated). */
-function parseOctal(bytes: Uint8Array): number {
-  const text = decodeCString(bytes).trim();
-  if (!text) return 0;
-  const value = Number.parseInt(text, 8);
-  return Number.isFinite(value) ? value : 0;
-}
-
-/** Read the full path of a USTAR entry, honoring the `prefix` field. */
-function entryPath(header: Uint8Array): string {
-  const name = decodeCString(header.subarray(TAR_NAME_OFFSET, TAR_NAME_OFFSET + TAR_NAME_LENGTH));
-  const prefix = decodeCString(
-    header.subarray(TAR_PREFIX_OFFSET, TAR_PREFIX_OFFSET + TAR_PREFIX_LENGTH),
-  );
-  return prefix ? `${prefix}/${name}` : name;
-}
-
-function isZeroBlock(block: Uint8Array): boolean {
-  for (const byte of block) {
-    if (byte !== 0) return false;
-  }
-  return true;
-}
-
-interface TarMember {
-  path: string;
-  data: Uint8Array;
-}
-
-/** Walk an (already gunzipped) tar buffer, yielding each regular file member. */
-function* tarMembers(tar: Uint8Array): Generator<TarMember> {
-  let offset = 0;
-  while (offset + TAR_BLOCK <= tar.length) {
-    const header = tar.subarray(offset, offset + TAR_BLOCK);
-    if (isZeroBlock(header)) break;
-    const path = entryPath(header).replace(/^\.\//, "");
-    const size = parseOctal(header.subarray(TAR_SIZE_OFFSET, TAR_SIZE_OFFSET + TAR_SIZE_LENGTH));
-    const dataStart = offset + TAR_BLOCK;
-    if (dataStart + size > tar.length) break;
-    yield { path, data: tar.subarray(dataStart, dataStart + size) };
-    offset = dataStart + Math.ceil(size / TAR_BLOCK) * TAR_BLOCK;
-  }
-}
 
 /**
  * Gunzip an sdist `.tar.gz` and return the top-level `.cabal` text. A Cabal
@@ -82,14 +30,10 @@ export function extractCabalFromSdist(
   archive: Uint8Array,
   options: { readonly maxTarBytes?: number } = {},
 ): string | null {
-  let tar: Uint8Array;
-  try {
-    // node:zlib enforces `maxOutputLength` (Bun.gunzipSync ignores it), so a
-    // decompression bomb is rejected here rather than allocating unbounded.
-    tar = gunzipSync(archive, { maxOutputLength: options.maxTarBytes ?? MAX_SDIST_TAR_BYTES });
-  } catch {
-    return null;
-  }
+  // node:zlib enforces `maxOutputLength` (Bun.gunzipSync ignores it), so a
+  // decompression bomb is rejected here rather than allocating unbounded.
+  const tar = gunzipTar(archive, { maxTarBytes: options.maxTarBytes ?? MAX_SDIST_TAR_BYTES });
+  if (!tar) return null;
   for (const member of tarMembers(tar)) {
     if (!member.path.toLowerCase().endsWith(".cabal")) continue;
     // Only accept the cabal directly under the single root directory:

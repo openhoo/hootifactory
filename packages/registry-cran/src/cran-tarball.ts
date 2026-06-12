@@ -1,4 +1,5 @@
 import { createGunzip } from "node:zlib";
+import { probeTarMember } from "@hootifactory/registry";
 
 /**
  * Minimal reader for a CRAN source package (`<pkg>_<version>.tar.gz`, a gzipped
@@ -17,8 +18,6 @@ import { createGunzip } from "node:zlib";
  * any DESCRIPTION is found.
  */
 
-const TAR_BLOCK = 512;
-
 /**
  * Cap on the DECOMPRESSED PREFIX we will consume while hunting for the DESCRIPTION
  * member. A valid source package roots everything under `<pkg>/` and emits its
@@ -29,42 +28,6 @@ const TAR_BLOCK = 512;
  * a whole-tar cap, this bound does NOT also limit the total package size.
  */
 const MAX_CRAN_PREFIX_BYTES = 4 * 1024 * 1024;
-const TAR_NAME_OFFSET = 0;
-const TAR_NAME_LENGTH = 100;
-const TAR_SIZE_OFFSET = 124;
-const TAR_SIZE_LENGTH = 12;
-const TAR_PREFIX_OFFSET = 345;
-const TAR_PREFIX_LENGTH = 155;
-
-function decodeCString(bytes: Uint8Array): string {
-  const nul = bytes.indexOf(0);
-  const slice = nul >= 0 ? bytes.subarray(0, nul) : bytes;
-  return new TextDecoder().decode(slice);
-}
-
-/** Parse an octal tar numeric field (space/NUL terminated). */
-function parseOctal(bytes: Uint8Array): number {
-  const text = decodeCString(bytes).trim();
-  if (!text) return 0;
-  const value = Number.parseInt(text, 8);
-  return Number.isFinite(value) ? value : 0;
-}
-
-/** Read the full path of a USTAR entry, honoring the `prefix` field. */
-function entryPath(header: Uint8Array): string {
-  const name = decodeCString(header.subarray(TAR_NAME_OFFSET, TAR_NAME_OFFSET + TAR_NAME_LENGTH));
-  const prefix = decodeCString(
-    header.subarray(TAR_PREFIX_OFFSET, TAR_PREFIX_OFFSET + TAR_PREFIX_LENGTH),
-  );
-  return prefix ? `${prefix}/${name}` : name;
-}
-
-function isZeroBlock(block: Uint8Array): boolean {
-  for (const byte of block) {
-    if (byte !== 0) return false;
-  }
-  return true;
-}
 
 /** A top-level `<top>/DESCRIPTION` member: its bytes and its top directory name. */
 interface DescriptionEntry {
@@ -88,25 +51,18 @@ type ProbeResult =
  * decompressed bytes and re-probes), and `absent` once a terminator is reached.
  */
 function probeDescription(tar: Uint8Array): ProbeResult {
-  let offset = 0;
-  while (offset + TAR_BLOCK <= tar.length) {
-    const header = tar.subarray(offset, offset + TAR_BLOCK);
-    if (isZeroBlock(header)) return { kind: "absent" };
-    const path = entryPath(header).replace(/^\.\//, "");
-    const size = parseOctal(header.subarray(TAR_SIZE_OFFSET, TAR_SIZE_OFFSET + TAR_SIZE_LENGTH));
-    const dataStart = offset + TAR_BLOCK;
+  let topDir = "";
+  const probe = probeTarMember(tar, ({ path }) => {
     const segments = path.split("/");
     const [top, leaf] = segments;
-    if (segments.length === 2 && top && leaf === "DESCRIPTION") {
-      if (dataStart + size > tar.length) return { kind: "need-more" };
-      return { kind: "found", entry: { top, bytes: tar.subarray(dataStart, dataStart + size) } };
-    }
-    // Advance past the data, rounded up to the next 512-byte boundary.
-    const next = dataStart + Math.ceil(size / TAR_BLOCK) * TAR_BLOCK;
-    if (next > tar.length) return { kind: "need-more" };
-    offset = next;
+    const matches = segments.length === 2 && Boolean(top) && leaf === "DESCRIPTION";
+    if (matches) topDir = top as string;
+    return matches;
+  });
+  if (probe.kind === "found") {
+    return { kind: "found", entry: { top: topDir, bytes: probe.member.data } };
   }
-  return { kind: "need-more" };
+  return probe;
 }
 
 /** A gunzipped source package's `DESCRIPTION`: its text and its root directory name. */
