@@ -1,4 +1,7 @@
-import { publishImmutableVersionBlob, type RegistryRequestContext } from "@hootifactory/registry";
+import {
+  publishImmutableVersionBlobResponse,
+  type RegistryRequestContext,
+} from "@hootifactory/registry";
 import { chefCookbookUrl } from "./chef-metadata";
 import { parseChefPublishRequest } from "./chef-publish";
 import { buildChefVersionMeta } from "./chef-validation";
@@ -36,7 +39,7 @@ export async function handleChefPublish(
   const version = metadata.version;
   const scope = chefBlobScope(cookbookName, version);
 
-  const result = await publishImmutableVersionBlob(ctx, {
+  return publishImmutableVersionBlobResponse(ctx, {
     package: { name: cookbookName },
     version,
     kind: "chef_cookbook",
@@ -59,17 +62,17 @@ export async function handleChefPublish(
     }),
     // Cookbook versions are immutable: a re-publish of an existing version conflicts.
     versionConflict: (pkg) => ctx.data.versions.exists(pkg, version),
+    conflictResponse: () =>
+      chefError(
+        "COOKBOOK_VERSION_EXISTS",
+        [`cookbook version ${cookbookName} ${version} already exists`],
+        409,
+      ),
+    successResponse: () =>
+      // Match Supermarket's `json.uri api_v1_cookbook_url(@cookbook)`: an absolute URL.
+      Response.json(
+        { uri: chefCookbookUrl(ctx.baseUrl, ctx.repo.mountPath, cookbookName) },
+        { status: 201 },
+      ),
   });
-  if (!result.ok) {
-    return chefError(
-      "COOKBOOK_VERSION_EXISTS",
-      [`cookbook version ${cookbookName} ${version} already exists`],
-      409,
-    );
-  }
-  // Match Supermarket's `json.uri api_v1_cookbook_url(@cookbook)`: an absolute URL.
-  return Response.json(
-    { uri: chefCookbookUrl(ctx.baseUrl, ctx.repo.mountPath, cookbookName) },
-    { status: 201 },
-  );
 }

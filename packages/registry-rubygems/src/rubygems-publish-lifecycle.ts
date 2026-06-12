@@ -1,6 +1,6 @@
 import {
   digestHex,
-  publishImmutableVersionBlob,
+  publishImmutableVersionBlobResponse,
   type RegistryRequestContext,
 } from "@hootifactory/registry";
 import { readGemMetadata } from "./rubygems-gem";
@@ -36,7 +36,7 @@ export async function handleGemPush(req: Request, ctx: RegistryRequestContext): 
   const versionKey = gemVersionKey(version, platform);
   const filename = gemFilename(name, version, platform);
 
-  const result = await publishImmutableVersionBlob(ctx, {
+  return publishImmutableVersionBlobResponse(ctx, {
     package: { name },
     version: versionKey,
     kind: GEM_KIND,
@@ -68,10 +68,9 @@ export async function handleGemPush(req: Request, ctx: RegistryRequestContext): 
       metadata: { name, version, ...(platform ? { platform } : {}) },
     }),
     versionConflict: async (pkg) => Boolean(await ctx.data.versions.find(pkg, versionKey)),
+    conflictResponse: () =>
+      new Response(`Repushing of gem versions is not allowed.`, { status: 409 }),
+    successResponse: () =>
+      new Response(`Successfully registered gem: ${name} (${version})`, { status: 200 }),
   });
-
-  if (!result.ok) {
-    return new Response(`Repushing of gem versions is not allowed.`, { status: 409 });
-  }
-  return new Response(`Successfully registered gem: ${name} (${version})`, { status: 200 });
 }

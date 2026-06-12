@@ -9,6 +9,8 @@ import {
   ifNoneMatch,
   probeTarMember,
   publishImmutableVersionBlob,
+  publishImmutableVersionBlobMapped,
+  publishImmutableVersionBlobResponse,
   readGzipTarEntryText,
   readTarEntry,
   readTarEntryByBasename,
@@ -466,5 +468,95 @@ describe("helpers — publishImmutableVersionBlob", () => {
       versionConflict: () => Promise.resolve(false),
     });
     expect(result).toEqual({ ok: false, pkg, conflict: true });
+  });
+
+  test("returns the default created response when no success callback is supplied", async () => {
+    const { ctx } = publishContext({ versionId: "ver_9" });
+    const response = await publishImmutableVersionBlobResponse(ctx, {
+      package: { name: "left-pad" },
+      version: "1.0.0",
+      blob: { data: new Uint8Array([1]), scope: "s", kind: "k" } as never,
+      kind: "k",
+      scope: "s",
+      metadata: () => ({}),
+      sizeBytes: 3,
+      scan: {},
+    });
+    expect(response.status).toBe(201);
+    await expect(response.json()).resolves.toEqual({ ok: true });
+  });
+
+  test("maps successful publishes to non-response values", async () => {
+    const { ctx } = publishContext({ versionId: "ver_11" });
+    const result = await publishImmutableVersionBlobMapped<{
+      status: number;
+      body: Record<string, unknown>;
+    }>(ctx, {
+      package: { name: "left-pad" },
+      version: "1.0.0",
+      blob: { data: new Uint8Array([1]), scope: "s", kind: "k" } as never,
+      kind: "k",
+      scope: "s",
+      metadata: () => ({}),
+      sizeBytes: 3,
+      scan: {},
+      conflict: () => ({ status: 409, body: { error: "duplicate" } }),
+      success: (publish) => ({ status: 201, body: { versionId: publish.versionId } }),
+    });
+    expect(result).toEqual({ status: 201, body: { versionId: "ver_11" } });
+  });
+
+  test("passes the publish result to the success response callback", async () => {
+    const { ctx, stored } = publishContext({ versionId: "ver_10" });
+    const response = await publishImmutableVersionBlobResponse(ctx, {
+      package: { name: "left-pad" },
+      version: "1.0.0",
+      blob: { data: new Uint8Array([1]), scope: "s", kind: "k" } as never,
+      kind: "k",
+      scope: "s",
+      metadata: () => ({}),
+      sizeBytes: 3,
+      scan: {},
+      successResponse: async (result) =>
+        Response.json({ digest: result.stored.digest, versionId: result.versionId }),
+    });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      digest: stored.digest,
+      versionId: "ver_10",
+    });
+  });
+
+  test("returns a custom conflict response without storing the blob", async () => {
+    const { ctx, pkg } = publishContext({ versionId: "never" });
+    let stored = false;
+    const ctx2 = createTestRegistryContext({
+      data: {
+        ...ctx.data,
+        content: {
+          ...ctx.data.content,
+          storeBlobWithRef: () => {
+            stored = true;
+            return Promise.resolve(makeStoredBlob());
+          },
+        },
+      },
+    });
+    const response = await publishImmutableVersionBlobResponse(ctx2, {
+      package: { name: "left-pad" },
+      version: "1.0.0",
+      blob: { data: new Uint8Array([1]), scope: "s", kind: "k" } as never,
+      kind: "k",
+      scope: "s",
+      metadata: () => ({}),
+      sizeBytes: 3,
+      scan: {},
+      versionConflict: () => Promise.resolve(true),
+      conflictResponse: (result) =>
+        Response.json({ conflict: result.conflict, package: result.pkg.name }, { status: 409 }),
+    });
+    expect(stored).toBe(false);
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({ conflict: true, package: pkg.name });
   });
 });

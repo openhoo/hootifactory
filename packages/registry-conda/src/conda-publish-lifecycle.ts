@@ -1,6 +1,6 @@
 import {
   digestHex,
-  publishImmutableVersionBlob,
+  publishImmutableVersionBlobResponse,
   type RegistryRequestContext,
 } from "@hootifactory/registry";
 import { parseCondaPublishRequest } from "./conda-publish";
@@ -54,7 +54,7 @@ export async function handleCondaPublish(
   const versionKey = condaVersionKey(index.version, index.build, kind);
   const md5 = md5Hex(artifact);
 
-  const result = await publishImmutableVersionBlob(ctx, {
+  return publishImmutableVersionBlobResponse(ctx, {
     package: { name: index.name },
     version: versionKey,
     kind: CONDA_PACKAGE_KIND,
@@ -98,12 +98,11 @@ export async function handleCondaPublish(
     }),
     // Conda packages are immutable: a re-publish of the same file conflicts.
     versionConflict: (pkg) => ctx.data.versions.exists(pkg, versionKey),
+    conflictResponse: () => Response.json({ error: "package already exists" }, { status: 409 }),
+    successResponse: () =>
+      Response.json(
+        { ok: true, name: index.name, version: index.version, subdir, filename },
+        { status: 201 },
+      ),
   });
-  if (!result.ok) {
-    return Response.json({ error: "package already exists" }, { status: 409 });
-  }
-  return Response.json(
-    { ok: true, name: index.name, version: index.version, subdir, filename },
-    { status: 201 },
-  );
 }

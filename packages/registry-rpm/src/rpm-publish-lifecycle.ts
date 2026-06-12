@@ -1,4 +1,7 @@
-import { publishImmutableVersionBlob, type RegistryRequestContext } from "@hootifactory/registry";
+import {
+  publishImmutableVersionBlobResponse,
+  type RegistryRequestContext,
+} from "@hootifactory/registry";
 import { parseRpmPublishRequest } from "./rpm-publish";
 import type { RpmVersionMeta } from "./rpm-validation";
 
@@ -28,7 +31,7 @@ export async function handleRpmPublish(
   const { name, version, file, bytes, metadata } = parsed.plan;
   const scope = rpmBlobScope(file);
 
-  const result = await publishImmutableVersionBlob(ctx, {
+  return publishImmutableVersionBlobResponse(ctx, {
     package: { name },
     version,
     kind: RPM_BLOB_KIND,
@@ -52,9 +55,8 @@ export async function handleRpmPublish(
     // RPM files are immutable: a duplicate name+version (incl. retention
     // tombstones) is a conflict, not a replace.
     versionConflict: async (pkg) => Boolean(await ctx.data.versions.find(pkg, version)),
+    conflictResponse: () =>
+      Response.json({ error: "package version already exists" }, { status: 409 }),
+    successResponse: () => Response.json({ ok: true, name, version, file }, { status: 201 }),
   });
-  if (!result.ok) {
-    return Response.json({ error: "package version already exists" }, { status: 409 });
-  }
-  return Response.json({ ok: true, name, version, file }, { status: 201 });
 }

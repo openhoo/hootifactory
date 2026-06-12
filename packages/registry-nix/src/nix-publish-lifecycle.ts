@@ -2,7 +2,7 @@ import {
   commitPackageVersionBlob,
   findOrCreateRegistryPackage,
   InvalidDigestError,
-  publishImmutableVersionBlob,
+  publishImmutableVersionBlobResponse,
   type RegistryRequestContext,
   releaseRegistryBlobRef,
   storeRegistryBlobStreamWithRef,
@@ -150,7 +150,7 @@ export async function handleNarInfoUpload(
 
   const scope = narInfoScope(storeHash);
   const bodyBytes = new TextEncoder().encode(body);
-  const result = await publishImmutableVersionBlob(ctx, {
+  return publishImmutableVersionBlobResponse(ctx, {
     package: { name: scope },
     version: NARINFO_VERSION,
     kind: NARINFO_KIND,
@@ -181,11 +181,9 @@ export async function handleNarInfoUpload(
     // variable fields (FileHash/URL/Compression/Sig) are reconciled against the
     // referenced NAR above before either version is accepted.
     versionConflict: () => Promise.resolve(false),
+    conflictResponse: () => new Response("conflict", { status: 409 }),
+    successResponse: () => new Response(null, { status: 204 }),
   });
-  if (!result.ok) {
-    return new Response("conflict", { status: 409 });
-  }
-  return new Response(null, { status: 204 });
 }
 
 export const NARINFO_KIND = "nix_narinfo";

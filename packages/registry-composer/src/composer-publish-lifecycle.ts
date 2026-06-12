@@ -1,6 +1,6 @@
 import {
   digestHex,
-  publishImmutableVersionBlob,
+  publishImmutableVersionBlobResponse,
   type RegistryRequestContext,
 } from "@hootifactory/registry";
 import { composerDistPath } from "./composer-metadata";
@@ -41,7 +41,7 @@ export async function handleComposerUpload(
   const distPath = composerDistPath(name, version);
   const shasum = sha1Hex(bytes);
 
-  const result = await publishImmutableVersionBlob(ctx, {
+  return publishImmutableVersionBlobResponse(ctx, {
     package: { name, namespace: vendor },
     version,
     kind: COMPOSER_DIST_KIND,
@@ -65,8 +65,7 @@ export async function handleComposerUpload(
       metadata: { name, version },
     }),
     versionConflict: async (pkg) => Boolean(await ctx.data.versions.find(pkg, version)),
+    conflictResponse: () => new Response(`${name} ${version} already exists`, { status: 409 }),
+    successResponse: () => Response.json({ name, version }, { status: 201 }),
   });
-
-  if (!result.ok) return new Response(`${name} ${version} already exists`, { status: 409 });
-  return Response.json({ name, version }, { status: 201 });
 }
