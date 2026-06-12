@@ -1,7 +1,14 @@
 import { env } from "@hootifactory/config";
 import { SQL } from "bun";
 
-export function createDatabaseClient(): SQL {
+export interface CreateDatabaseClientOptions {
+  connection?: Partial<{
+    statement_timeout: string;
+    idle_in_transaction_session_timeout: string;
+  }>;
+}
+
+export function createDatabaseClient(opts: CreateDatabaseClientOptions = {}): SQL {
   return new SQL({
     url: env.DATABASE_URL,
     max: env.DATABASE_POOL_MAX,
@@ -11,6 +18,7 @@ export function createDatabaseClient(): SQL {
     connection: {
       statement_timeout: `${env.DATABASE_STATEMENT_TIMEOUT_MS}ms`,
       idle_in_transaction_session_timeout: `${env.DATABASE_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS}ms`,
+      ...opts.connection,
     },
   });
 }
