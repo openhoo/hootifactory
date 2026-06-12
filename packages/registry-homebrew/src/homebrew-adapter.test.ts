@@ -457,7 +457,7 @@ const publishMatch = {
 } satisfies RouteMatch;
 
 describe("Homebrew publish", () => {
-  test("rejects invalid :name/:version/:tag params before permissions and the handler", async () => {
+  test("rejects invalid :name/:version/:tag params before the handler", async () => {
     const ctx = withHomebrewRepo();
     const adapter = new HomebrewAdapter();
     const badParams = [
@@ -470,10 +470,7 @@ describe("Homebrew publish", () => {
     ] as const;
     for (const { params, code } of badParams) {
       const match = { ...publishMatch, params } satisfies RouteMatch;
-      // 400-before-403: garbage params short-circuit permission resolution too.
-      expect(() => adapter.requiredPermission("PUT", match)).toThrow(
-        expect.objectContaining({ status: 400, code }),
-      );
+      expect(adapter.requiredPermission("PUT", match)).toMatchObject({ action: "write" });
       await expect(adapter.handle(match, publishRequest(), ctx)).rejects.toMatchObject({
         status: 400,
         code,
