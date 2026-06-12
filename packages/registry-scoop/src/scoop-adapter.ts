@@ -47,8 +47,11 @@ class ScoopAdapterState {
   async index(req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const names = await ctx.data.packages.listNames();
     const index: Record<string, { version: string }> = {};
-    // Deterministic ordering so the ETag is stable across requests.
-    for (const { name } of [...names].sort((a, b) => a.name.localeCompare(b.name))) {
+    // Codepoint ordering (not locale-sensitive `localeCompare`) so the ETag is
+    // byte-stable across hosts/locales.
+    for (const { name } of [...names].sort((a, b) =>
+      a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
+    )) {
       const pkg = await ctx.data.packages.findByName(name);
       if (!pkg) continue;
       const latest = await this.latestMeta(ctx, pkg);
