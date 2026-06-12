@@ -11,7 +11,14 @@ import {
   validateParams,
 } from "./validation";
 
-function context(options: { param?: Record<string, string>; json?: unknown | (() => never) } = {}) {
+function context(
+  options: {
+    param?: Record<string, string>;
+    json?: unknown | (() => never);
+    headers?: Record<string, string>;
+  } = {},
+) {
+  const combinedHeaders = { "content-type": "application/json", ...options.headers };
   return {
     json(body: unknown, status = 200) {
       return new Response(JSON.stringify(body), { status });
@@ -21,6 +28,12 @@ function context(options: { param?: Record<string, string>; json?: unknown | (()
       json: async () => {
         if (typeof options.json === "function") return (options.json as () => never)();
         return options.json;
+      },
+      header: (name: string) => {
+        const lower = name.toLowerCase();
+        return lower in combinedHeaders
+          ? combinedHeaders[lower as keyof typeof combinedHeaders]
+          : undefined;
       },
     },
   } as unknown as Context<AppEnv>;
@@ -79,6 +92,41 @@ describe("request validation helpers", () => {
   test("validateJsonBody validates a parsed body", async () => {
     const result = await validateJsonBody(
       context({ json: { n: 5 } }),
+      z.strictObject({ n: z.number() }),
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data).toEqual({ n: 5 });
+  });
+
+  test("validateJsonBody rejects non-JSON content-types", async () => {
+    const result = await validateJsonBody(
+      context({ json: { n: 5 }, headers: { "content-type": "text/plain" } }),
+      z.strictObject({ n: z.number() }),
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.response.status).toBe(415);
+      expect(await result.response.json()).toEqual({
+        error: "content-type must be application/json",
+      });
+    }
+  });
+
+  test("validateJsonBody rejects content-types that only contain application/json as text", async () => {
+    const result = await validateJsonBody(
+      context({ json: { n: 5 }, headers: { "content-type": "text/plain application/json" } }),
+      z.strictObject({ n: z.number() }),
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.response.status).toBe(415);
+  });
+
+  test("validateJsonBody accepts application/json with charset", async () => {
+    const result = await validateJsonBody(
+      context({
+        json: { n: 5 },
+        headers: { "content-type": "application/json; charset=utf-8" },
+      }),
       z.strictObject({ n: z.number() }),
     );
     expect(result.ok).toBe(true);
