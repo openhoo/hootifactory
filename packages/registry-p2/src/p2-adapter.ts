@@ -114,8 +114,9 @@ class P2AdapterState {
     kind: P2ArtifactKind,
     req: Request,
     ctx: RegistryRequestContext,
+    urlFilename?: string,
   ): Promise<Response> {
-    const result = await handleP2Publish(kind, req, ctx);
+    const result = await handleP2Publish(kind, req, ctx, urlFilename);
     return Response.json(result.body, { status: result.status });
   }
 
@@ -185,10 +186,10 @@ const p2Definition = registryAdapter("p2")
       .calls((state, { params, req, ctx }) => state.download("feature", params.filename, req, ctx)),
     route
       .put("/plugins/:filename", "publishBundle")
-      .calls((state, { req, ctx }) => state.publish("bundle", req, ctx)),
+      .calls((state, { params, req, ctx }) => state.publish("bundle", req, ctx, params.filename)),
     route
       .put("/features/:filename", "publishFeature")
-      .calls((state, { req, ctx }) => state.publish("feature", req, ctx)),
+      .calls((state, { params, req, ctx }) => state.publish("feature", req, ctx, params.filename)),
   ]);
 
 export class P2Adapter extends p2Definition.adapterClass() {}
