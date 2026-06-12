@@ -21,6 +21,7 @@ import type {
   ResolvedRepo,
 } from "@hootifactory/registry";
 import { ARTIFACT_STATE, SCAN_OUTBOX_STATUS } from "@hootifactory/scan-core";
+import type { Tx } from "../governance/quota";
 import { createRegistryDataService } from "./data-service";
 
 /**
@@ -54,6 +55,7 @@ export async function recordArtifactScanOutbox(
   repo: ResolvedRepo,
   input: EnqueueScanInput,
   captureTelemetry: () => TelemetryContextCarrier = captureTelemetryContext,
+  tx?: Tx,
 ): Promise<{ artifactId: string } | null> {
   // Defense-in-depth (issue #308): every current caller passes a server-computed
   // digest, but asserting the canonical "sha256:<64-hex>" shape here makes it an
@@ -69,8 +71,9 @@ export async function recordArtifactScanOutbox(
   const captured = captureTelemetry();
   const telemetry =
     captured.trace || captured.requestId || captured.correlationId ? captured : null;
-  return db.transaction(async (tx) => {
-    const [row] = await tx
+
+  const upsert = async (dbTx: Tx) => {
+    const [row] = await dbTx
       .insert(artifacts)
       .values({
         orgId: repo.orgId,
@@ -87,7 +90,7 @@ export async function recordArtifactScanOutbox(
       })
       .returning({ id: artifacts.id });
     if (!row) return null;
-    await tx
+    await dbTx
       .insert(scanOutbox)
       .values({
         artifactId: row.id,
@@ -116,7 +119,9 @@ export async function recordArtifactScanOutbox(
         },
       });
     return { artifactId: row.id };
-  });
+  };
+
+  return tx ? upsert(tx) : db.transaction(upsert);
 }
 
 async function enqueueArtifactScan(repo: ResolvedRepo, input: EnqueueScanInput): Promise<void> {

@@ -4,13 +4,16 @@ import type {
   RegistryAssetWriteInput,
   RegistryRequestContext,
 } from "@hootifactory/registry";
+import type { Tx } from "../governance/quota";
 
 export async function upsertRegistryAsset(
   ctx: RegistryRequestContext,
   input: RegistryAssetWriteInput & { digest: string },
+  tx?: Tx,
 ): Promise<RegistryAssetRow> {
   const scope = input.scope ?? "";
-  const [row] = await db
+  const runner = tx ?? db;
+  const [row] = await runner
     .insert(registryAssets)
     .values({
       orgId: ctx.repo.orgId,

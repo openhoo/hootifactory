@@ -1,3 +1,6 @@
+import { env } from "@hootifactory/config";
+import { db } from "@hootifactory/db";
+import { captureTelemetryContext } from "@hootifactory/observability";
 import type {
   ContentAddressableRegistryDataService,
   RegistryBlobRefInput,
@@ -90,6 +93,7 @@ import {
   deleteReplacedAssetRef,
   packageId,
 } from "./data-service-helpers";
+import { recordArtifactScanOutbox } from "./request-context";
 
 export function createRegistryDataService(
   ctx: RegistryRequestContext,
@@ -298,7 +302,22 @@ export function createRegistryDataService(
           await releaseBlobRef(ctx, { digest: existing.digest, kind: input.role, scope });
           await deleteRegistryAssetRef(ctx, { digest: existing.digest, scope, role: input.role });
         }
-        return upsertRegistryAsset(ctx, assetForWrite(ctx, input));
+        const asset = assetForWrite(ctx, input);
+        if (input.scanInput && env.SCANNER_ENABLED) {
+          return db.transaction(async (tx) => {
+            const [row] = await Promise.all([
+              upsertRegistryAsset(ctx, asset, tx),
+              recordArtifactScanOutbox(
+                ctx.repo,
+                input.scanInput!,
+                () => captureTelemetryContext(),
+                tx,
+              ),
+            ]);
+            return row;
+          });
+        }
+        return upsertRegistryAsset(ctx, asset);
       },
       findByScope: (input) => findRegistryAssetByScope(ctx, input),
       list: (input) =>

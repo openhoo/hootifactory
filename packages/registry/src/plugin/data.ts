@@ -1,4 +1,4 @@
-import type { RegistryRequestContext } from "./adapter";
+import type { EnqueueScanInput, RegistryRequestContext } from "./adapter";
 
 export type RegistryBlobRefKind = string;
 
@@ -399,7 +399,9 @@ export interface RegistryDataService {
     };
   };
   assets: {
-    upsert(input: RegistryAssetWriteInput & { digest: string }): Promise<RegistryAssetRow>;
+    upsert(
+      input: RegistryAssetWriteInput & { digest: string; scanInput?: EnqueueScanInput },
+    ): Promise<RegistryAssetRow>;
     findByScope(input: {
       role: string;
       scope: string;
