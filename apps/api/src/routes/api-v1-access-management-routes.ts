@@ -351,6 +351,8 @@ export function registerApiV1AccessManagementRoutes(apiV1Router: Hono<AppEnv>) {
       if (denied) return denied;
       const body = await validateJsonV1(c, V1AddOrgMemberRequestSchema, "invalid member request");
       if (!body.ok) return body.response;
+      const user = await getUserById(body.data.userId);
+      if (!user) return errorResponse(c, 404, "NOT_FOUND", "user not found");
       await addOrgMember(params.data.orgId, body.data.userId);
       return dataResponse(c, { ok: true });
     },

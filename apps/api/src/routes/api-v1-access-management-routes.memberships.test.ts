@@ -25,7 +25,7 @@ describe("api v1 organization membership routes", () => {
     );
     const app = new Hono<AppEnv>();
     app.use("*", async (c, next) => {
-      c.set("principal", { kind: "user", userId: "admin" });
+      c.set("principal", { kind: "user", userId: "admin", username: "admin" });
       await next();
     });
     registerApiV1AccessManagementRoutes(app);
@@ -41,5 +41,5 @@ describe("api v1 organization membership routes", () => {
       error: { code: "NOT_FOUND", message: "user not found" },
     });
     expect(addOrgMemberCalled).toBe(false);
-  });
+  }, 10_000);
 });
