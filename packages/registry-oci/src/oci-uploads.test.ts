@@ -270,19 +270,27 @@ describe("OCI uploadStatus", () => {
 
   test("aborts and rejects an expired session", async () => {
     const ctx = ctxFor();
+    const deleted: string[] = [];
     let marked = false;
     ctx.data.contentStore.loadUploadSession = async () =>
-      session({ expiresAt: new Date(Date.now() - 1_000) });
+      session({
+        expiresAt: new Date(Date.now() - 1_000),
+        multipart: JSON.stringify({ chunks: [{ key: "chunk-0", size: 3 }] }),
+      });
     ctx.data.contentStore.markUploadSessionAborted = async ({ scope, uuid }) => {
       expect(scope).toBe(IMAGE);
       expect(uuid).toBe(UPLOAD_UUID);
       marked = true;
+    };
+    ctx.data.content.staging.deleteKey = async (key) => {
+      deleted.push(key);
     };
 
     await expect(uploadStatus(IMAGE, UPLOAD_UUID, ctx)).rejects.toMatchObject({
       code: "BLOB_UPLOAD_UNKNOWN",
     });
     expect(marked).toBe(true);
+    expect(deleted).toEqual(["oci/uploads/upload_1", "chunk-0"]);
   });
 
   test("rejects a session that is no longer open", async () => {
@@ -323,6 +331,34 @@ describe("OCI cancelUpload", () => {
     expect(events).toContain("delete:oci/uploads/upload_1");
     expect(events).toContain("delete:chunk-0");
     expect(events).toContain("markAborted");
+  });
+
+  test("aborts, cleans up, and rejects an expired session", async () => {
+    const ctx = ctxFor();
+    const events: string[] = [];
+    ctx.data.content.staging.deleteKey = async (key) => {
+      events.push(`delete:${key}`);
+    };
+    ctx.data.contentStore.withLockedUploadSession = async ({ run }) => {
+      const mutations = noopMutations({
+        markAborted: async () => {
+          events.push("markAborted");
+        },
+      });
+      return run(
+        session({
+          expiresAt: new Date(Date.now() - 1_000),
+          storageKey: "oci/uploads/upload_1",
+          multipart: JSON.stringify({ chunks: [{ key: "chunk-0", size: 3 }] }),
+        }),
+        mutations,
+      );
+    };
+
+    await expect(cancelUpload(IMAGE, UPLOAD_UUID, ctx)).rejects.toMatchObject({
+      code: "BLOB_UPLOAD_UNKNOWN",
+    });
+    expect(events).toEqual(["markAborted", "delete:oci/uploads/upload_1", "delete:chunk-0"]);
   });
 });
 
