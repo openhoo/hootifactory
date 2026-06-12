@@ -61,14 +61,14 @@ function dbFileNames(repo: string): Set<string> {
  */
 class ArchAdapterState {
   /**
-   * Collect the CANONICAL sync-DB entries: exactly one per package name — the
-   * highest version under pacman `vercmp` ordering. A real pacman sync DB (as
-   * produced by `repo-add`) holds a single desc per name; libalpm keys its sync
-   * cache by name, so emitting multiple same-NAME entries makes the installed
-   * version non-deterministic. We still serve every published `.pkg` blob; only
-   * the DB is narrowed to the latest per name.
+   * Collect sync-DB entries. When `arch` is given entries are filtered to the
+   * requested architecture (including `any`) and the dedup is keyed by
+   * `(pkgname, arch)` — folding `any` into the requested arch so that a
+   * `any`-arch package replaces its arch-specific counterpart when it has a
+   * higher version. Without `arch` a single latest entry per package name is
+   * returned across all architectures (used by the AUR search RPC).
    */
-  private async collectEntries(ctx: RegistryRequestContext): Promise<ArchDbEntry[]> {
+  private async collectEntries(ctx: RegistryRequestContext, arch?: string): Promise<ArchDbEntry[]> {
     const pkgs: RegistryPackageHandle[] = await ctx.data.packages.list();
     if (pkgs.length === 0) return [];
     const byPackage = await ctx.data.versions.listLiveForPackages(pkgs, {
@@ -79,9 +79,14 @@ class ArchAdapterState {
       for (const row of rows) {
         const meta = parseArchVersionMeta(row.metadata);
         if (!meta) continue;
-        const current = latestByName.get(meta.pkgname);
+        if (arch !== undefined && meta.arch !== arch && meta.arch !== "any") continue;
+        const key =
+          arch !== undefined
+            ? `${meta.pkgname}:${meta.arch === "any" ? arch : meta.arch}`
+            : meta.pkgname;
+        const current = latestByName.get(key);
         if (!current || archVercmp(meta.pkgver, current.pkgver) > 0) {
-          latestByName.set(meta.pkgname, meta);
+          latestByName.set(key, meta);
         }
       }
     }
@@ -91,12 +96,13 @@ class ArchAdapterState {
   /** `GET /<repo>/os/<arch>/<file>` — sync DB, or a package blob, by extension. */
   async fetch(
     repo: string,
+    arch: string,
     file: string,
     req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
     if (dbFileNames(repo).has(file)) {
-      return this.serveDb(req, ctx);
+      return this.serveDb(arch, req, ctx);
     }
     if (isArchPkgFile(file)) {
       return this.download(file, req, ctx);
@@ -105,8 +111,12 @@ class ArchAdapterState {
   }
 
   /** Serve the regenerated sync DB (gzip'd tar) with a content-stable ETag. */
-  private async serveDb(req: Request, ctx: RegistryRequestContext): Promise<Response> {
-    const db = buildArchDb(await this.collectEntries(ctx));
+  private async serveDb(
+    arch: string,
+    req: Request,
+    ctx: RegistryRequestContext,
+  ): Promise<Response> {
+    const db = buildArchDb(await this.collectEntries(ctx, arch));
     return bytesResponseWithEtag(req, db.gz, DB_GZIP);
   }
 
@@ -239,7 +249,9 @@ const archDefinition = registryAdapter("arch")
     route
       .get("/:repo/os/:arch/:file", "fetch")
       .params({ repo: repoParam, arch: archParam })
-      .calls((state, { params, req, ctx }) => state.fetch(params.repo, params.file, req, ctx)),
+      .calls((state, { params, req, ctx }) =>
+        state.fetch(params.repo, params.arch, params.file, req, ctx),
+      ),
     route
       .put("/:repo/os/:arch/:file", "publish")
       .params({ repo: repoParam, arch: archParam })
