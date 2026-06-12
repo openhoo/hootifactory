@@ -71,23 +71,30 @@ function makeDb(opts: { selectResult?: unknown[]; insertReturning?: unknown[] } 
     return proxy;
   }
 
+  function makeTxMethods(): Record<string, (...args: unknown[]) => unknown> {
+    return {
+      insert: (...args: unknown[]) => {
+        recorder.calls.push({ method: "insert", args });
+        return chain("write");
+      },
+      update: (...args: unknown[]) => {
+        recorder.calls.push({ method: "update", args });
+        return chain("write");
+      },
+      delete: (...args: unknown[]) => {
+        recorder.calls.push({ method: "delete", args });
+        return chain("write");
+      },
+      select: (...args: unknown[]) => {
+        recorder.calls.push({ method: "select", args });
+        return chain("select");
+      },
+    };
+  }
+
   const db = {
-    insert: (...args: unknown[]) => {
-      recorder.calls.push({ method: "insert", args });
-      return chain("write");
-    },
-    update: (...args: unknown[]) => {
-      recorder.calls.push({ method: "update", args });
-      return chain("write");
-    },
-    delete: (...args: unknown[]) => {
-      recorder.calls.push({ method: "delete", args });
-      return chain("write");
-    },
-    select: (...args: unknown[]) => {
-      recorder.calls.push({ method: "select", args });
-      return chain("select");
-    },
+    ...makeTxMethods(),
+    transaction: (cb: (tx: unknown) => unknown) => Promise.resolve(cb(makeTxMethods())),
   };
   return { db: db as FakeDb, recorder };
 }
