@@ -29,6 +29,7 @@ const IMAGE_INDEX_MEDIA_TYPES = new Set<string>([
   OCI_MEDIA_TYPES.dockerManifestListV2,
 ]);
 export const MAX_OCI_DESCRIPTOR_ARRAY_ITEMS = 4096;
+export const MAX_OCI_MANIFEST_BYTES = 4 * 1024 * 1024;
 
 const TAG_RE = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$/;
 const NAME_RE =
