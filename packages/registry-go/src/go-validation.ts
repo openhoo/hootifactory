@@ -99,6 +99,14 @@ export function compareSemver(a: string, b: string): number {
   return 0;
 }
 
+/** Extract the expected major version from a Go semantic import suffix. */
+export function modulePathMajor(modulePath: string): number | null {
+  const match = modulePath.match(/\/v(\d+)$/);
+  if (!match) return null;
+  const major = Number(match[1]);
+  return major >= 2 ? major : null;
+}
+
 /** Go @latest: highest release version; only fall back to a prerelease if no release exists. */
 export function pickLatest(versions: string[]): string | undefined {
   if (versions.length === 0) return undefined;
