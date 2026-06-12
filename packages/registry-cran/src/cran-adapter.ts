@@ -16,6 +16,25 @@ import { parseCranTarballFilename, parseCranVersionMeta } from "./cran-validatio
 const TEXT_PLAIN = { "content-type": "text/plain; charset=utf-8" } as const;
 const INDEX_TTL_MS = 5_000;
 
+/** Split a CRAN version string into numeric segments for comparison. */
+function cranVersionSegments(version: string): number[] {
+  return version.split(/[.-]/).map(Number);
+}
+
+/** Compare two CRAN version strings (returns -1, 0, or 1). */
+function compareCranVersion(a: string, b: string): number {
+  const sa = cranVersionSegments(a);
+  const sb = cranVersionSegments(b);
+  const len = Math.max(sa.length, sb.length);
+  for (let i = 0; i < len; i++) {
+    const va = sa[i] ?? 0;
+    const vb = sb[i] ?? 0;
+    if (va < vb) return -1;
+    if (va > vb) return 1;
+  }
+  return 0;
+}
+
 interface IndexCacheBody {
   text: string;
   gz: Uint8Array;
@@ -117,14 +136,21 @@ class CranAdapterState {
     return res;
   }
 
-  /** Latest live version's stored CRAN metadata (versions ordered by creation). */
+  /** Highest live version's stored CRAN metadata, ordered by CRAN version. */
   private async latestMeta(ctx: RegistryRequestContext, pkg: RegistryPackageRow) {
-    const rows = await ctx.data.versions.listLive(pkg, { orderByCreated: "desc" });
+    const rows = await ctx.data.versions.listLive(pkg);
+    let best: {
+      row: (typeof rows)[0];
+      meta: NonNullable<ReturnType<typeof parseCranVersionMeta>>;
+    } | null = null;
     for (const row of rows) {
       const meta = parseCranVersionMeta(row.metadata);
-      if (meta) return meta;
+      if (!meta) continue;
+      if (!best || compareCranVersion(meta.version, best.meta.version) > 0) {
+        best = { row, meta };
+      }
     }
-    return null;
+    return best?.meta ?? null;
   }
 }
 
