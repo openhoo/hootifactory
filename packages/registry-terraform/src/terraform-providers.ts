@@ -1,5 +1,6 @@
 import {
   digestHex,
+  Errors,
   jsonResponseWithEtag,
   type RegistryRequestContext,
   serveRegistryBlob,
@@ -63,9 +64,9 @@ export async function listProviderVersions(
   ctx: RegistryRequestContext,
 ): Promise<Response> {
   const pkg = await ctx.data.packages.findByName(providerPackageName(namespace, type));
-  if (!pkg) return new Response("Not Found", { status: 404 });
+  if (!pkg) throw Errors.notFound();
   const metas = await liveProviderMetas(ctx, pkg);
-  if (metas.length === 0) return new Response("Not Found", { status: 404 });
+  if (metas.length === 0) throw Errors.notFound();
   const body = {
     versions: metas.map((meta) => ({
       version: meta.version,
@@ -90,9 +91,9 @@ export async function providerDownloadInfo(
   ctx: RegistryRequestContext,
 ): Promise<Response> {
   const meta = await findLiveProvider(ctx, namespace, type, version);
-  if (!meta) return new Response("Not Found", { status: 404 });
+  if (!meta) throw Errors.notFound();
   const platform = meta.platforms.find((p) => p.os === os && p.arch === arch);
-  if (!platform) return new Response("Not Found", { status: 404 });
+  if (!platform) throw Errors.notFound();
 
   const base = `${ctx.baseUrl}/${ctx.repo.mountPath}/v1/providers/${encodeURIComponent(
     namespace,
@@ -130,7 +131,7 @@ export async function serveProviderZip(
 ): Promise<Response> {
   const meta = await findLiveProvider(ctx, namespace, type, version);
   const platform = meta?.platforms.find((p) => p.os === os && p.arch === arch);
-  if (!platform) return new Response("Not Found", { status: 404 });
+  if (!platform) throw Errors.notFound();
   return serveRegistryBlob(ctx, {
     digest: platform.blobDigest,
     kind: PROVIDER_ZIP_KIND,
@@ -149,7 +150,7 @@ export async function serveProviderShasums(
   ctx: RegistryRequestContext,
 ): Promise<Response> {
   const meta = await findLiveProvider(ctx, namespace, type, version);
-  if (!meta) return new Response("Not Found", { status: 404 });
+  if (!meta) throw Errors.notFound();
   return serveRegistryBlob(ctx, {
     digest: meta.shasumsDigest,
     kind: PROVIDER_SHASUMS_KIND,
@@ -168,7 +169,7 @@ export async function serveProviderShasumsSignature(
   ctx: RegistryRequestContext,
 ): Promise<Response> {
   const meta = await findLiveProvider(ctx, namespace, type, version);
-  if (!meta?.shasumsSignatureDigest) return new Response("Not Found", { status: 404 });
+  if (!meta?.shasumsSignatureDigest) throw Errors.notFound();
   return serveRegistryBlob(ctx, {
     digest: meta.shasumsSignatureDigest,
     kind: PROVIDER_SHASUMS_KIND,

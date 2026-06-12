@@ -1,5 +1,6 @@
 import {
   createRegistryAdapterPlugin,
+  Errors,
   type RegistryPackageHandle,
   type RegistryRequestContext,
   type RegistryRouteParamSpec,
@@ -120,9 +121,9 @@ class ConanAdapterState {
   /** GET .../revisions — list recipe revisions newest-first. */
   async recipeRevisions(reference: ConanReference, ctx: RegistryRequestContext): Promise<Response> {
     const pkg = await this.findRecipe(ctx, reference);
-    if (!pkg) return notFound();
+    if (!pkg) throw Errors.notFound();
     const metas = await this.revisionsOfKind(ctx, pkg, "recipe");
-    if (metas.length === 0) return notFound();
+    if (metas.length === 0) throw Errors.notFound();
     return conanJsonResponse({
       revisions: metas.map((meta) => ({ revision: meta.rrev, time: meta.time })),
     });
@@ -131,9 +132,9 @@ class ConanAdapterState {
   /** GET .../latest — the newest recipe revision. */
   async recipeLatest(reference: ConanReference, ctx: RegistryRequestContext): Promise<Response> {
     const pkg = await this.findRecipe(ctx, reference);
-    if (!pkg) return notFound();
+    if (!pkg) throw Errors.notFound();
     const [latest] = await this.revisionsOfKind(ctx, pkg, "recipe");
-    if (!latest) return notFound();
+    if (!latest) throw Errors.notFound();
     return conanJsonResponse({ revision: latest.rrev, time: latest.time });
   }
 
@@ -144,10 +145,10 @@ class ConanAdapterState {
     ctx: RegistryRequestContext,
   ): Promise<Response> {
     const pkg = await this.findRecipe(ctx, reference);
-    if (!pkg) return notFound();
+    if (!pkg) throw Errors.notFound();
     const row = await ctx.data.versions.findLive(pkg, recipeVersionKey(rrev));
     const meta = parseConanRevisionMeta(row?.metadata);
-    if (meta?.kind !== "recipe") return notFound();
+    if (meta?.kind !== "recipe") throw Errors.notFound();
     return conanJsonResponse(buildConanFilesResponse(meta.files));
   }
 
@@ -159,9 +160,9 @@ class ConanAdapterState {
     ctx: RegistryRequestContext,
   ): Promise<Response> {
     const pkg = await this.findRecipe(ctx, reference);
-    if (!pkg) return notFound();
+    if (!pkg) throw Errors.notFound();
     const metas = await this.revisionsOfKind(ctx, pkg, "package", { rrev, packageId: pkgid });
-    if (metas.length === 0) return notFound();
+    if (metas.length === 0) throw Errors.notFound();
     return conanJsonResponse({
       revisions: metas.map((meta) => ({ revision: meta.prev, time: meta.time })),
     });
@@ -175,9 +176,9 @@ class ConanAdapterState {
     ctx: RegistryRequestContext,
   ): Promise<Response> {
     const pkg = await this.findRecipe(ctx, reference);
-    if (!pkg) return notFound();
+    if (!pkg) throw Errors.notFound();
     const [latest] = await this.revisionsOfKind(ctx, pkg, "package", { rrev, packageId: pkgid });
-    if (!latest) return notFound();
+    if (!latest) throw Errors.notFound();
     return conanJsonResponse({ revision: latest.prev, time: latest.time });
   }
 
@@ -190,10 +191,10 @@ class ConanAdapterState {
     ctx: RegistryRequestContext,
   ): Promise<Response> {
     const pkg = await this.findRecipe(ctx, reference);
-    if (!pkg) return notFound();
+    if (!pkg) throw Errors.notFound();
     const row = await ctx.data.versions.findLive(pkg, packageVersionKey(rrev, pkgid, prev));
     const meta = parseConanRevisionMeta(row?.metadata);
-    if (meta?.kind !== "package") return notFound();
+    if (meta?.kind !== "package") throw Errors.notFound();
     return conanJsonResponse(buildConanFilesResponse(meta.files));
   }
 
@@ -204,12 +205,12 @@ class ConanAdapterState {
     ctx: RegistryRequestContext,
   ): Promise<Response> {
     const pkg = await this.findRecipe(ctx, target.reference);
-    if (!pkg) return notFound();
+    if (!pkg) throw Errors.notFound();
     const version = versionKeyForTarget(target);
     const row = await ctx.data.versions.findLive(pkg, version);
     const meta = parseConanRevisionMeta(row?.metadata);
     const entry = meta?.files[target.filename];
-    if (!meta || !entry) return notFound();
+    if (!meta || !entry) throw Errors.notFound();
     const reference = referenceToPackageName(target.reference);
     const scope = conanFileScope({
       reference,
@@ -225,7 +226,6 @@ class ConanAdapterState {
       contentType: "application/octet-stream",
       blocked: () =>
         conanJsonResponse({ error: "artifact blocked by scan policy" }, { status: 403 }),
-      missing: () => notFound(),
     });
   }
 
@@ -262,11 +262,11 @@ class ConanAdapterState {
     ctx: RegistryRequestContext,
   ): Promise<Response> {
     const pkg = await this.findRecipe(ctx, reference);
-    if (!pkg) return notFound();
+    if (!pkg) throw Errors.notFound();
     let rrev: string;
     if (rrevRaw === undefined) {
       const [latest] = await this.revisionsOfKind(ctx, pkg, "recipe");
-      if (!latest) return notFound();
+      if (!latest) throw Errors.notFound();
       rrev = latest.rrev;
     } else {
       rrev = rrevRaw;
@@ -312,10 +312,6 @@ class ConanAdapterState {
     }
     return conanJsonResponse(out);
   }
-}
-
-function notFound(): Response {
-  return conanJsonResponse({ error: "Not Found" }, { status: 404 });
 }
 
 const conanDefinition = registryAdapter("conan")

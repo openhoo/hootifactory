@@ -1,5 +1,6 @@
 import {
   createRegistryAdapterPlugin,
+  Errors,
   jsonResponseWithEtag,
   type RegistryRequestContext,
   type RegistryRouteParamSpec,
@@ -70,7 +71,7 @@ class VagrantAdapterState {
     ctx: RegistryRequestContext,
   ): Promise<Response> {
     const collected = await this.collectLiveVersions(user, box, ctx);
-    if (!collected) return new Response("Not Found", { status: 404 });
+    if (!collected) throw Errors.notFound();
     const { name, rows } = collected;
 
     const versions: VagrantBoxMetadata["versions"] = [];
@@ -107,7 +108,7 @@ class VagrantAdapterState {
     ctx: RegistryRequestContext,
   ): Promise<Response> {
     const collected = await this.collectLiveVersions(user, box, ctx);
-    if (!collected) return new Response("Not Found", { status: 404 });
+    if (!collected) throw Errors.notFound();
     const { name, rows } = collected;
 
     const versions: VagrantCloudBox["versions"] = [];
@@ -173,11 +174,11 @@ class VagrantAdapterState {
     const name = boxName(user, box);
 
     const pkg = await ctx.data.packages.findByName(name);
-    if (!pkg) return new Response("Not Found", { status: 404 });
+    if (!pkg) throw Errors.notFound();
     const row = await ctx.data.versions.findLive(pkg, version);
     const meta = parseVagrantVersionMeta(row?.metadata);
     const providerFile = meta?.providers[provider];
-    if (!providerFile) return new Response("Not Found", { status: 404 });
+    if (!providerFile) throw Errors.notFound();
 
     return serveRegistryBlob(ctx, {
       digest: providerFile.blobDigest,

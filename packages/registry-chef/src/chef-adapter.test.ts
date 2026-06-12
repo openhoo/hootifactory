@@ -403,20 +403,21 @@ describe("Chef adapter", () => {
     const ctx = chefContext();
     ctx.data.packages.findByName = async () => pkgRow("nginx");
     ctx.data.versions.listLive = async () => [];
-    const res = await handle(
-      {
-        entry: {
-          method: "GET",
-          pattern: "/api/v1/cookbooks/:name/versions/:version",
-          handlerId: "cookbookVersion",
+    await expect(
+      handle(
+        {
+          entry: {
+            method: "GET",
+            pattern: "/api/v1/cookbooks/:name/versions/:version",
+            handlerId: "cookbookVersion",
+          },
+          params: { name: "nginx", version: "latest" },
+          path: "/api/v1/cookbooks/nginx/versions/latest",
         },
-        params: { name: "nginx", version: "latest" },
-        path: "/api/v1/cookbooks/nginx/versions/latest",
-      },
-      new Request("https://registry.test/api/v1/cookbooks/nginx/versions/latest"),
-      ctx,
-    );
-    expect(res.status).toBe(404);
+        new Request("https://registry.test/api/v1/cookbooks/nginx/versions/latest"),
+        ctx,
+      ),
+    ).rejects.toMatchObject({ status: 404, code: "NOT_FOUND" });
   });
 
   test("GET /api/v1/cookbooks/:name returns cookbook JSON with version URLs", async () => {
@@ -459,16 +460,17 @@ describe("Chef adapter", () => {
   test("GET /api/v1/cookbooks/:name 404s for an unknown cookbook", async () => {
     const ctx = chefContext();
     ctx.data.packages.findByName = async () => null;
-    const res = await handle(
-      {
-        entry: { method: "GET", pattern: "/api/v1/cookbooks/:name", handlerId: "cookbook" },
-        params: { name: "missing" },
-        path: "/api/v1/cookbooks/missing",
-      },
-      new Request("https://registry.test/api/v1/cookbooks/missing"),
-      ctx,
-    );
-    expect(res.status).toBe(404);
+    await expect(
+      handle(
+        {
+          entry: { method: "GET", pattern: "/api/v1/cookbooks/:name", handlerId: "cookbook" },
+          params: { name: "missing" },
+          path: "/api/v1/cookbooks/missing",
+        },
+        new Request("https://registry.test/api/v1/cookbooks/missing"),
+        ctx,
+      ),
+    ).rejects.toMatchObject({ status: 404, code: "NOT_FOUND" });
   });
 
   test("GET version detail returns file url + average_rating + dependencies", async () => {
@@ -543,20 +545,21 @@ describe("Chef adapter", () => {
     const ctx = chefContext();
     ctx.data.packages.findByName = async () => pkgRow("nginx");
     ctx.data.versions.findLive = async () => null;
-    const res = await handle(
-      {
-        entry: {
-          method: "GET",
-          pattern: "/api/v1/cookbooks/:name/versions/:version/download",
-          handlerId: "download",
+    await expect(
+      handle(
+        {
+          entry: {
+            method: "GET",
+            pattern: "/api/v1/cookbooks/:name/versions/:version/download",
+            handlerId: "download",
+          },
+          params: { name: "nginx", version: "9_9_9" },
+          path: "/api/v1/cookbooks/nginx/versions/9_9_9/download",
         },
-        params: { name: "nginx", version: "9_9_9" },
-        path: "/api/v1/cookbooks/nginx/versions/9_9_9/download",
-      },
-      new Request("https://registry.test/api/v1/cookbooks/nginx/versions/9_9_9/download"),
-      ctx,
-    );
-    expect(res.status).toBe(404);
+        new Request("https://registry.test/api/v1/cookbooks/nginx/versions/9_9_9/download"),
+        ctx,
+      ),
+    ).rejects.toMatchObject({ status: 404, code: "NOT_FOUND" });
   });
 
   test("an invalid cookbook name throws NAME_INVALID", async () => {

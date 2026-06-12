@@ -86,12 +86,12 @@ class LuarocksAdapterState {
     const arch = parsed.kind === "rockspec" ? "rockspec" : parsed.arch;
 
     const pkg = await ctx.data.packages.findByName(rock);
-    if (!pkg) return new Response("Not Found", { status: 404 });
+    if (!pkg) throw Errors.notFound();
     const row = await ctx.data.versions.findLive(pkg, version);
     const meta = parseLuarocksVersionMeta(row?.metadata);
     const blob = meta?.blobs[arch];
     // The requested filename must match the canonical artifact this arch stored.
-    if (!blob || blob.filename !== filename) return new Response("Not Found", { status: 404 });
+    if (!blob || blob.filename !== filename) throw Errors.notFound();
 
     return serveRegistryBlob(ctx, {
       digest: blob.digest,
@@ -184,10 +184,10 @@ class LuarocksAdapterState {
   ): Promise<Response> {
     const numericId = Number(versionId);
     if (!Number.isInteger(numericId) || numericId <= 0) {
-      return Response.json({ error: "invalid version id" }, { status: 404 });
+      throw Errors.notFound();
     }
     const ref = this.uploadApiVersions.resolve(numericId);
-    if (!ref) return Response.json({ error: "unknown version id" }, { status: 404 });
+    if (!ref) throw Errors.notFound();
 
     const contentType = req.headers.get("content-type") ?? "";
     if (!contentType.toLowerCase().startsWith("multipart/form-data")) {

@@ -1,5 +1,6 @@
 import {
   digestHex,
+  Errors,
   jsonResponseWithEtag,
   publishImmutableVersionBlob,
   type RegistryRequestContext,
@@ -51,9 +52,9 @@ export async function listModuleVersions(
   ctx: RegistryRequestContext,
 ): Promise<Response> {
   const pkg = await ctx.data.packages.findByName(modulePackageName(namespace, name, system));
-  if (!pkg) return new Response("Not Found", { status: 404 });
+  if (!pkg) throw Errors.notFound();
   const metas = await liveModuleMetas(ctx, pkg);
-  if (metas.length === 0) return new Response("Not Found", { status: 404 });
+  if (metas.length === 0) throw Errors.notFound();
   const body = {
     modules: [{ versions: metas.map((meta) => ({ version: meta.version })) }],
   };
@@ -72,7 +73,7 @@ export async function moduleDownloadRedirect(
   ctx: RegistryRequestContext,
 ): Promise<Response> {
   const meta = await findLiveModule(ctx, namespace, name, system, version);
-  if (!meta) return new Response("Not Found", { status: 404 });
+  if (!meta) throw Errors.notFound();
   // The `?archive=tar.gz` hint is REQUIRED: go-getter (which fetches the module
   // from X-Terraform-Get) selects the decompressor from the URL, not the response
   // Content-Type. A bare `/archive` path would be treated as a single raw file and
@@ -99,7 +100,7 @@ export async function serveModuleArchive(
   ctx: RegistryRequestContext,
 ): Promise<Response> {
   const meta = await findLiveModule(ctx, namespace, name, system, version);
-  if (!meta) return new Response("Not Found", { status: 404 });
+  if (!meta) throw Errors.notFound();
   return serveRegistryBlob(ctx, {
     digest: meta.blobDigest,
     kind: MODULE_BLOB_KIND,

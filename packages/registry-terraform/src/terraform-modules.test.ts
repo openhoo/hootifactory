@@ -95,14 +95,15 @@ describe("Terraform module protocol", () => {
   test("GET versions 404s for an unknown module", async () => {
     const ctx = terraformContext();
     ctx.data.packages.findByName = async () => null;
-    const res = await listModuleVersions(
-      "hashicorp",
-      "consul",
-      "aws",
-      new Request("https://registry.test/v1/modules/hashicorp/consul/aws/versions"),
-      ctx,
-    );
-    expect(res.status).toBe(404);
+    await expect(
+      listModuleVersions(
+        "hashicorp",
+        "consul",
+        "aws",
+        new Request("https://registry.test/v1/modules/hashicorp/consul/aws/versions"),
+        ctx,
+      ),
+    ).rejects.toMatchObject({ status: 404, code: "NOT_FOUND" });
   });
 
   test("download returns 204 with an X-Terraform-Get header at the archive route", async () => {
@@ -126,8 +127,9 @@ describe("Terraform module protocol", () => {
     const ctx = terraformContext();
     ctx.data.packages.findByName = async () => pkgRow("p");
     ctx.data.versions.findLive = async () => null;
-    const res = await moduleDownloadRedirect("hashicorp", "consul", "aws", "9.9.9", ctx);
-    expect(res.status).toBe(404);
+    await expect(
+      moduleDownloadRedirect("hashicorp", "consul", "aws", "9.9.9", ctx),
+    ).rejects.toMatchObject({ status: 404, code: "NOT_FOUND" });
   });
 
   test("archive serves the stored blob digest", async () => {

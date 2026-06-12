@@ -151,18 +151,19 @@ describe("Terraform provider protocol", () => {
     const ctx = terraformContext();
     ctx.data.packages.findByName = async () => pkgRow("p");
     ctx.data.versions.findLive = async () => versionRow(providerMeta("2.0.0"), "2.0.0");
-    const res = await providerDownloadInfo(
-      "hashicorp",
-      "random",
-      "2.0.0",
-      "windows",
-      "arm64",
-      new Request(
-        "https://registry.test/v1/providers/hashicorp/random/2.0.0/download/windows/arm64",
+    await expect(
+      providerDownloadInfo(
+        "hashicorp",
+        "random",
+        "2.0.0",
+        "windows",
+        "arm64",
+        new Request(
+          "https://registry.test/v1/providers/hashicorp/random/2.0.0/download/windows/arm64",
+        ),
+        ctx,
       ),
-      ctx,
-    );
-    expect(res.status).toBe(404);
+    ).rejects.toMatchObject({ status: 404 });
   });
 
   test("zip serves the platform's stored blob", async () => {
@@ -740,13 +741,14 @@ describe("Terraform provider protocol", () => {
         "2.0.0",
       );
 
-    const res = await serveProviderShasumsSignature(
-      "hashicorp",
-      "random",
-      "2.0.0",
-      new Request("https://registry.test/v1/providers/hashicorp/random/2.0.0/shasums.sig"),
-      ctx,
-    );
-    expect(res.status).toBe(404);
+    await expect(
+      serveProviderShasumsSignature(
+        "hashicorp",
+        "random",
+        "2.0.0",
+        new Request("https://registry.test/v1/providers/hashicorp/random/2.0.0/shasums.sig"),
+        ctx,
+      ),
+    ).rejects.toMatchObject({ status: 404 });
   });
 });

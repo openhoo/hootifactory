@@ -1,5 +1,6 @@
 import {
   createRegistryAdapterPlugin,
+  Errors,
   jsonResponseWithEtag,
   parseRegistryInput,
   type RegistryMetadata,
@@ -161,7 +162,7 @@ class ChefAdapterState {
   async cookbook(nameRaw: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const name = parseCookbookName(nameRaw);
     const cookbook = await this.cookbookDocument(name, ctx);
-    if (!cookbook) return new Response("Not Found", { status: 404 });
+    if (!cookbook) throw Errors.notFound();
     return jsonResponseWithEtag(req, cookbook, { "content-type": JSON_CONTENT_TYPE });
   }
 
@@ -190,7 +191,7 @@ class ChefAdapterState {
   ): Promise<Response> {
     const name = parseCookbookName(nameRaw);
     const stored = await this.resolveVersion(name, versionRaw, ctx);
-    if (!stored) return new Response("Not Found", { status: 404 });
+    if (!stored) throw Errors.notFound();
     return jsonResponseWithEtag(
       req,
       buildChefCookbookVersion({
@@ -212,7 +213,7 @@ class ChefAdapterState {
   ): Promise<Response> {
     const name = parseCookbookName(nameRaw);
     const stored = await this.resolveVersion(name, versionRaw, ctx);
-    if (!stored) return new Response("Not Found", { status: 404 });
+    if (!stored) throw Errors.notFound();
     return serveRegistryBlob(ctx, {
       digest: stored.metadata.tarballDigest,
       kind: "chef_cookbook",

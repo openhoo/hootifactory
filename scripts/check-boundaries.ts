@@ -33,22 +33,13 @@ const workspaceImportPattern =
 // new package + a manifest line — never a boundary-checker edit.
 const NON_PLUGIN_REGISTRY = new Set(["registry", "registry-platform", "registry-runtime"]);
 const NON_PLUGIN_SCANNER = new Set(["scanner", "scanner-runtime"]);
+// All but one of the legacy hand-rolled 404 sites now throw Errors.notFound()
+// (formatted per the module's errorResponseKind). The lone holdout returns a
+// context-specific "version not found: <version>" body on the npm dist-tag path
+// that the generic Errors.notFound() formatter can't preserve, so it stays
+// grandfathered here; every other plugin is now enforced.
 const LEGACY_HAND_ROLLED_404_ALLOWLIST = new Set([
-  "packages/registry-alpine/src/alpine-adapter.ts",
-  "packages/registry-cargo/src/cargo-adapter.ts",
-  "packages/registry-chef/src/chef-adapter.ts",
-  "packages/registry-cocoapods/src/cocoapods-adapter.ts",
-  "packages/registry-conan/src/conan-adapter.ts",
-  "packages/registry-hackage/src/hackage-adapter.ts",
-  "packages/registry-luarocks/src/luarocks-adapter.ts",
-  "packages/registry-nix/src/nix-adapter.ts",
   "packages/registry-npm/src/npm-publish-lifecycle.ts",
-  "packages/registry-opam/src/opam-adapter.ts",
-  "packages/registry-scoop/src/scoop-adapter.ts",
-  "packages/registry-terraform/src/terraform-modules.ts",
-  "packages/registry-terraform/src/terraform-providers.ts",
-  "packages/registry-vagrant/src/vagrant-adapter.ts",
-  "packages/registry-winget/src/winget-adapter.ts",
 ]);
 const HAND_ROLLED_404_PATTERNS = [
   /\bnew Response\([^)]*\bstatus\s*:\s*404/,

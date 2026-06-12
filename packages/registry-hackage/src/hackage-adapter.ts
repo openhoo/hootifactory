@@ -109,10 +109,10 @@ class HackageAdapterState {
     ctx: RegistryRequestContext,
   ): Promise<Response> {
     const pkg = await ctx.data.packages.findByName(name);
-    if (!pkg) return new Response("Not Found", { status: 404 });
+    if (!pkg) throw Errors.notFound();
     const row = await ctx.data.versions.findLive(pkg, version);
     const meta = parseHackageVersionMeta(row?.metadata);
-    if (!meta) return new Response("Not Found", { status: 404 });
+    if (!meta) throw Errors.notFound();
     const summary = buildPackageSummary(meta, {
       tarballUrl: buildTarballUrl(ctx.baseUrl, ctx.repo.mountPath, name, version),
       cabalUrl: buildCabalUrl(ctx.baseUrl, ctx.repo.mountPath, name, version),
@@ -127,9 +127,9 @@ class HackageAdapterState {
     ctx: RegistryRequestContext,
   ): Promise<Response> {
     const pkg = await ctx.data.packages.findByName(name);
-    if (!pkg) return new Response("Not Found", { status: 404 });
+    if (!pkg) throw Errors.notFound();
     const metas = await this.liveMetas(ctx, pkg);
-    if (metas.length === 0) return new Response("Not Found", { status: 404 });
+    if (metas.length === 0) throw Errors.notFound();
     const versions = metas.map((meta) => meta.version).sort((a, b) => compareHackageVersions(a, b));
     const body: HackageVersionList = { name, versions };
     return jsonResponseWithEtag(req, body);
@@ -146,10 +146,10 @@ class HackageAdapterState {
     if (!split) throw Errors.nameInvalid("invalid Hackage package id");
     const { name, version } = split;
     const pkg = await ctx.data.packages.findByName(name);
-    if (!pkg) return new Response("Not Found", { status: 404 });
+    if (!pkg) throw Errors.notFound();
     const row = await ctx.data.versions.findLive(pkg, version);
     const meta = parseHackageVersionMeta(row?.metadata);
-    if (!meta) return new Response("Not Found", { status: 404 });
+    if (!meta) throw Errors.notFound();
 
     // Route params arrive already percent-decoded from the router; decoding
     // again would double-decode and could throw on a literal `%` (→ 500).
@@ -168,7 +168,7 @@ class HackageAdapterState {
         blocked: () => new Response("blocked by scan policy", { status: 403 }),
       });
     }
-    return new Response("Not Found", { status: 404 });
+    throw Errors.notFound();
   }
 
   async publish(idRaw: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
@@ -204,9 +204,9 @@ class HackageAdapterState {
     ctx: RegistryRequestContext,
   ): Promise<Response> {
     const pkg = await ctx.data.packages.findByName(name);
-    if (!pkg) return new Response("Not Found", { status: 404 });
+    if (!pkg) throw Errors.notFound();
     const metas = await this.liveMetas(ctx, pkg);
-    if (metas.length === 0) return new Response("Not Found", { status: 404 });
+    if (metas.length === 0) throw Errors.notFound();
     // No version is preferred/deprecated; an empty constraint string means
     // "all versions normal" to cabal's solver.
     const body: HackagePreferredVersions = { name, "preferred-versions": [], deprecated: [] };
