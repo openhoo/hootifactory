@@ -149,4 +149,66 @@ describe("Go upload request parsing", () => {
       validateGoUploadPlan("example.com/hoot", submittedMismatch),
     );
   });
+
+  test("rejects versions whose major contradicts the module path suffix", async () => {
+    const v2onNoSuffix = await parseGoUploadRequest(
+      "example.com/hoot",
+      "v2.0.0",
+      requestWithUpload(moduleZip("example.com/hoot", "v2.0.0")),
+    );
+    expect(validateGoUploadPlan("example.com/hoot", v2onNoSuffix)).toEqual({
+      body: { error: "version major does not match module path major suffix" },
+      status: 400,
+    });
+
+    const v1onV2 = await parseGoUploadRequest(
+      "example.com/hoot/v2",
+      "v1.0.0",
+      requestWithUpload(moduleZip("example.com/hoot/v2", "v1.0.0")),
+    );
+    expect(validateGoUploadPlan("example.com/hoot/v2", v1onV2)).toEqual({
+      body: { error: "version major does not match module path major suffix" },
+      status: 400,
+    });
+
+    const v3onV2 = await parseGoUploadRequest(
+      "example.com/hoot/v2",
+      "v3.0.0",
+      requestWithUpload(moduleZip("example.com/hoot/v2", "v3.0.0")),
+    );
+    expect(validateGoUploadPlan("example.com/hoot/v2", v3onV2)).toEqual({
+      body: { error: "version major does not match module path major suffix" },
+      status: 400,
+    });
+  });
+
+  test("allows versions whose major matches the module path suffix", async () => {
+    const v0 = await parseGoUploadRequest(
+      "example.com/hoot",
+      "v0.1.0",
+      requestWithUpload(moduleZip("example.com/hoot", "v0.1.0")),
+    );
+    expect(validateGoUploadPlan("example.com/hoot", v0)).toBeNull();
+
+    const v1 = await parseGoUploadRequest(
+      "example.com/hoot",
+      "v1.2.3",
+      requestWithUpload(moduleZip("example.com/hoot", "v1.2.3")),
+    );
+    expect(validateGoUploadPlan("example.com/hoot", v1)).toBeNull();
+
+    const v2 = await parseGoUploadRequest(
+      "example.com/hoot/v2",
+      "v2.0.0",
+      requestWithUpload(moduleZip("example.com/hoot/v2", "v2.0.0")),
+    );
+    expect(validateGoUploadPlan("example.com/hoot/v2", v2)).toBeNull();
+
+    const v3 = await parseGoUploadRequest(
+      "example.com/hoot/v3",
+      "v3.1.0",
+      requestWithUpload(moduleZip("example.com/hoot/v3", "v3.1.0")),
+    );
+    expect(validateGoUploadPlan("example.com/hoot/v3", v3)).toBeNull();
+  });
 });

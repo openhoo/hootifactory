@@ -3,6 +3,7 @@ import {
   compareSemver,
   decodeBang,
   isPseudoVersion,
+  modulePathMajor,
   parseGoVersionMeta,
   parseSemver,
   pickLatest,
@@ -69,5 +70,15 @@ describe("Go validation helpers", () => {
         extra: true,
       }),
     ).toBeNull();
+  });
+
+  test("extracts major version from Go module path suffix", () => {
+    expect(modulePathMajor("example.com/m")).toBeNull();
+    expect(modulePathMajor("example.com/m/v0")).toBeNull();
+    expect(modulePathMajor("example.com/m/v1")).toBeNull();
+    expect(modulePathMajor("example.com/m/v2")).toBe(2);
+    expect(modulePathMajor("example.com/m/v3")).toBe(3);
+    expect(modulePathMajor("example.com/m/v10")).toBe(10);
+    expect(modulePathMajor("example.com/v2/m")).toBeNull();
   });
 });

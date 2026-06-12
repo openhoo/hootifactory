@@ -4,6 +4,8 @@ import {
   GoUploadFieldsSchema,
   type GoVersionMeta,
   GoVersionSchema,
+  modulePathMajor,
+  parseSemver,
 } from "./go-validation";
 import { decodeModuleDirective, validateGoModuleZipResult } from "./go-zip";
 
@@ -76,6 +78,17 @@ export function validateGoUploadPlan(moduleName: string, plan: GoUploadPlan): Go
       body: { error: "go.mod module path does not match upload URL" },
       status: 400,
     };
+  }
+
+  const pathMajor = modulePathMajor(moduleName);
+  const verMajor = parseSemver(version)?.nums[0];
+  if (verMajor != null) {
+    if (pathMajor != null ? verMajor !== pathMajor : verMajor >= 2) {
+      return {
+        body: { error: "version major does not match module path major suffix" },
+        status: 400,
+      };
+    }
   }
   return null;
 }
