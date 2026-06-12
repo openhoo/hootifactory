@@ -1,3 +1,13 @@
+// Why a hand-rolled Postgres outbox here instead of pg-boss (which the
+// mail-worker uses via @hootifactory/queue)? Scanning is a *durable gate on the
+// publish path*: the registry upsert writes a scan_outbox row in the SAME
+// transaction as the artifact, so a published artifact can never be missing its
+// scan intent. This worker then claims rows with FOR UPDATE SKIP LOCKED and owns
+// its own retry/backoff, stuck-scan reclaim, and idempotent rescans against that
+// table. pg-boss is the right tool for fire-and-forget side effects with no
+// publish-transaction coupling (transactional email); it is deliberately NOT
+// reused here because its job table is separate from the artifact write and
+// would reintroduce the lost-scan window this outbox exists to close.
 import { mapWithBoundedConcurrency } from "@hootifactory/core";
 import { and, db, eq, scanOutbox, sql } from "@hootifactory/db";
 import { logger, withSpan, withTelemetryContext } from "@hootifactory/observability";
