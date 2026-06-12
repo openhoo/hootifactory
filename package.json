@@ -23,7 +23,7 @@
     "e2e:install": "bun run scripts/playwright.ts install chromium",
     "check:boundaries": "bun run scripts/check-boundaries.ts",
     "check:commits": "bun run scripts/check-commits.ts",
-    "typecheck": "bun run --filter '*' typecheck",
+    "typecheck": "bun run --filter '*' typecheck && tsc --noEmit",
     "lint": "biome check .",
     "format": "biome check --write .",
     "db:generate": "drizzle-kit generate",

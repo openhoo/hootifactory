@@ -91,7 +91,7 @@ async function startUpload(
 ): Promise<{ uuid: string; path: string }> {
   const res = await ctx.post(`/${mountPath}/${image}/blobs/uploads`);
   expect(res.status()).toBe(202);
-  const uuid = res.headers()["docker-upload-uuid"];
+  const uuid = res.headers()["docker-upload-uuid"]!;
   expect(uuid).toBeTruthy();
   expect(res.headers().range).toBe("0-0");
   return { uuid, path: `/${mountPath}/${image}/blobs/uploads/${uuid}` };
@@ -1315,7 +1315,7 @@ test.describe("docker registry connection & streaming transport", () => {
     expect(etag).toBe(`"${manifestDigest}"`);
     expect(get.headers()["docker-content-digest"]).toBe(manifestDigest);
 
-    const matched = await owner.ctx.get(url, { headers: { ...accept, "if-none-match": etag } });
+    const matched = await owner.ctx.get(url, { headers: { ...accept, "if-none-match": etag! } });
     expect(matched.status()).toBe(304);
     expect(Buffer.from(await matched.body()).length).toBe(0);
 

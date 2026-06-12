@@ -429,7 +429,9 @@ test.describe("go module proxy (protocol)", () => {
     expect(
       (await upload("v1.0.0", createGoModuleZip(moduleName, "v1.0.0", "mutated"))).status(),
     ).toBe(409);
-    expect((await upload("v1.0.2", new TextEncoder().encode("not-a-real-zip"))).status()).toBe(400);
+    expect(
+      (await upload("v1.0.2", Buffer.from(new TextEncoder().encode("not-a-real-zip")))).status(),
+    ).toBe(400);
     expect((await upload("v1.0.1")).status()).toBe(200);
 
     const pruned = await (

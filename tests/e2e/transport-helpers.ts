@@ -156,7 +156,7 @@ export async function publishNpmFixture(
     visibility: "public",
   });
   const pkg = `hoot-npm-${SUFFIX()}`;
-  let firstBytes = Buffer.alloc(0);
+  let firstBytes: Buffer = Buffer.alloc(0);
   for (let i = 0; i < versions; i++) {
     const version = `1.0.${i}`;
     const tarball = pad(`npm-tarball-${pkg}-${version}-payload-with-repeated-content`, 96);
@@ -439,7 +439,8 @@ export async function assertGzipNegotiated(
   url: string,
   accept?: string,
 ): Promise<{ etag: string; body: Buffer }> {
-  const baseHeaders = accept ? { accept } : {};
+  const baseHeaders: Record<string, string> = {};
+  if (accept) baseHeaders.accept = accept;
   const identity = await ctx.get(url, {
     headers: { ...baseHeaders, "accept-encoding": "identity" },
   });
@@ -459,7 +460,7 @@ export async function assertGzipNegotiated(
     headers: { ...baseHeaders, "accept-encoding": "gzip;q=0" },
   });
   expect(refused.headers()["content-encoding"]).toBeFalsy();
-  return { etag, body: identityBody };
+  return { etag: etag!, body: identityBody };
 }
 
 /** Assert an endpoint is never gzip-encoded even when the client offers gzip. */
@@ -484,13 +485,14 @@ export async function assertConditional304(
   url: string,
   accept?: string,
 ): Promise<string> {
-  const baseHeaders = accept ? { accept } : {};
+  const baseHeaders: Record<string, string> = {};
+  if (accept) baseHeaders.accept = accept;
   const first = await ctx.get(url, { headers: baseHeaders });
   expect(first.status()).toBe(200);
   const etag = first.headers().etag;
   expect(etag).toMatch(/^".+"$/);
 
-  const matched = await ctx.get(url, { headers: { ...baseHeaders, "if-none-match": etag } });
+  const matched = await ctx.get(url, { headers: { ...baseHeaders, "if-none-match": etag! } });
   expect(matched.status()).toBe(304);
 
   const wildcard = await ctx.get(url, { headers: { ...baseHeaders, "if-none-match": "*" } });
@@ -500,5 +502,5 @@ export async function assertConditional304(
     headers: { ...baseHeaders, "if-none-match": '"deadbeef"' },
   });
   expect(stale.status()).toBe(200);
-  return etag;
+  return etag!;
 }
