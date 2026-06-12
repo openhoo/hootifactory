@@ -28,14 +28,18 @@ import { snippetsFor } from "@/lib/module";
 import { CreateRepositoryWizard } from "./create-wizard";
 
 const PACKAGE_PAGE_SIZE = 50;
+const REPO_PAGE_SIZE = 50;
 
 export function ReposPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [query, setQuery] = useState("");
+  const [repoLimit, setRepoLimit] = useState(REPO_PAGE_SIZE);
 
-  const repos = useRepos();
+  const repos = useRepos({ limit: repoLimit, offset: 0 });
 
   const all = repos.data?.repositories ?? [];
+  const repoTotal = repos.data?.pagination.total ?? 0;
+  const canLoadMoreRepos = all.length < repoTotal;
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return q ? all.filter((r) => r.name.toLowerCase().includes(q)) : all;
@@ -131,6 +135,25 @@ export function ReposPage() {
               )}
             </TableBody>
           </Table>
+          {all.length > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-4 py-3">
+              <span className="text-xs text-muted-foreground">
+                Showing {all.length} of {repoTotal}
+              </span>
+              {canLoadMoreRepos && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setRepoLimit((limit) => limit + REPO_PAGE_SIZE)}
+                  disabled={repos.isFetching}
+                >
+                  <ChevronDown />
+                  Show more
+                </Button>
+              )}
+            </div>
+          )}
         </Card>
       )}
     </div>

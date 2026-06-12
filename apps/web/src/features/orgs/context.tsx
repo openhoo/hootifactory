@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { createContext, useContext } from "react";
-import { api, type Org } from "@/lib/api";
+import { api, type Org, type PaginationQuery } from "@/lib/api";
 
 export interface OrgContextValue {
   orgs: Org[];
@@ -18,11 +18,11 @@ export function useOrg() {
   return useContext(OrgContext);
 }
 
-export function useRepos() {
+export function useRepos(query?: PaginationQuery) {
   const { selected } = useOrg();
   return useQuery({
-    queryKey: ["repos", selected?.id],
-    queryFn: () => api.repos(selected!.id),
+    queryKey: ["repos", selected?.id, query?.limit, query?.offset],
+    queryFn: () => api.repos(selected!.id, query),
     enabled: !!selected,
   });
 }

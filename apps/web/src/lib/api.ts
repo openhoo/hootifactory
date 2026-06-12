@@ -5,6 +5,7 @@ export {
   apiErrorMessage,
   createHootifactoryClient,
   type OrgSummary as Org,
+  type PaginationQuery,
   type V1ApiToken as TokenInfo,
   type V1Group as Group,
   type V1PackageSummary as Pkg,

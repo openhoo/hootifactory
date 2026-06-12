@@ -11,6 +11,7 @@ export function DashboardPage() {
   const { selected } = useOrg();
   const repos = useRepos();
   const list = repos.data?.repositories ?? [];
+  const repoCount = repos.data?.pagination.total ?? list.length;
   const byModule = useMemo(
     () =>
       list.reduce<Record<string, number>>((acc, r) => {
@@ -30,7 +31,7 @@ export function DashboardPage() {
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <StatCard label="Repositories" icon={<Boxes className="size-4" />}>
           <div className="font-heading text-3xl font-semibold tabular-nums">
-            {repos.isError ? "—" : list.length}
+            {repos.isError ? "—" : repoCount}
           </div>
         </StatCard>
         <StatCard label="Modules in use" icon={<Layers className="size-4" />}>
