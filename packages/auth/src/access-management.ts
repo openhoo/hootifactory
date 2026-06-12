@@ -85,7 +85,7 @@ export async function createAdminUser(input: {
     .insert(users)
     .values({
       username: input.username,
-      email: input.email,
+      email: input.email.toLowerCase(),
       displayName: input.displayName ?? null,
       passwordHash: temporaryPassword ? await hashPassword(temporaryPassword) : null,
     })
@@ -100,7 +100,11 @@ export async function updateUserProfile(
 ): Promise<UserRow | null> {
   const [user] = await db
     .update(users)
-    .set({ ...input, updatedAt: new Date() })
+    .set({
+      ...input,
+      ...(input.email !== undefined ? { email: input.email.toLowerCase() } : {}),
+      updatedAt: new Date(),
+    })
     .where(eq(users.id, userId))
     .returning();
   return user ?? null;
