@@ -279,10 +279,11 @@ export async function processClaimedIntent(
           "scan.outbox.attempts": intent.attempts,
         },
         async () => {
+          let scanError: unknown = null;
           try {
             await runScan(intent.artifactId, scannerRuntime);
-            await markSucceeded(intent, dbClient);
           } catch (err) {
+            scanError = err;
             logger.error("scan job failed", {
               artifactId: intent.artifactId,
               attempt: intent.attempts,
@@ -295,7 +296,20 @@ export async function processClaimedIntent(
                 error: recordErr,
               });
             });
-            await markFailed(intent, err, maxAttempts, dbClient);
+          }
+
+          try {
+            if (scanError) {
+              await markFailed(intent, scanError, maxAttempts, dbClient);
+            } else {
+              await markSucceeded(intent, dbClient);
+            }
+          } catch (dbErr) {
+            logger.error("failed to finalize scan intent", {
+              "scan.outbox.id": intent.id,
+              "artifact.id": intent.artifactId,
+              error: dbErr,
+            });
           }
         },
       ),
@@ -312,21 +326,27 @@ export async function runScanCycle(
   deps: ScanLoopDeps = {},
 ): Promise<number> {
   const dbClient = deps.db ?? db;
-  const intents = await withSpan(
-    "scan.outbox.claim",
-    { "worker.batch_size": config.batchSize },
-    () => claimScanIntents(config.batchSize, dbClient),
-  );
-  if (intents.length === 0) {
+  try {
+    const intents = await withSpan(
+      "scan.outbox.claim",
+      { "worker.batch_size": config.batchSize },
+      () => claimScanIntents(config.batchSize, dbClient),
+    );
+    if (intents.length === 0) {
+      await sleep(config.pollingIntervalSeconds * 1000);
+      return 0;
+    }
+    const heartbeatMs = Math.max(
+      10_000,
+      Math.min(30_000, (config.scanReclaimTimeoutSeconds * 1000) / 10),
+    );
+    await mapWithBoundedConcurrency(intents, config.concurrency, (intent) =>
+      processClaimedIntent(intent, scannerRuntime, config.maxAttempts, deps, heartbeatMs),
+    );
+    return intents.length;
+  } catch (err) {
+    logger.error("scan cycle failed", { error: err });
     await sleep(config.pollingIntervalSeconds * 1000);
     return 0;
   }
-  const heartbeatMs = Math.max(
-    10_000,
-    Math.min(30_000, (config.scanReclaimTimeoutSeconds * 1000) / 10),
-  );
-  await mapWithBoundedConcurrency(intents, config.concurrency, (intent) =>
-    processClaimedIntent(intent, scannerRuntime, config.maxAttempts, deps, heartbeatMs),
-  );
-  return intents.length;
 }
