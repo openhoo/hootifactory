@@ -82,7 +82,7 @@ export async function findRegistryAssetByScope(
     .select()
     .from(registryAssets)
     .where(and(...filters))
-    .orderBy(desc(registryAssets.createdAt), desc(registryAssets.id))
+    .orderBy(desc(registryAssets.updatedAt), desc(registryAssets.id))
     .limit(1);
   return row ?? null;
 }
