@@ -1,4 +1,4 @@
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "@tanstack/react-router";
 import { Boxes, ChevronDown, Package, Plus, Search, Terminal } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -143,9 +143,8 @@ export function RepoDetailPage({ repoId }: { repoId: string }) {
   const pkgsQ = useQuery({
     queryKey: ["packages", repoId, packageLimit],
     queryFn: () => api.packages(repoId, { limit: packageLimit, offset: 0 }),
-    // Keep the current page visible while "Show more" loads the next, larger page
-    // (each limit is a new query key), instead of flashing a full-panel spinner.
-    placeholderData: keepPreviousData,
+    placeholderData: (previousData, previousQuery) =>
+      previousQuery?.queryKey[1] === repoId ? previousData : undefined,
   });
 
   if (repoQ.isLoading) return <Loading />;
@@ -278,5 +277,5 @@ export function RepoDetailPage({ repoId }: { repoId: string }) {
 
 export function RepoDetailRoutePage() {
   const { repoId } = useParams({ strict: false }) as { repoId: string };
-  return <RepoDetailPage repoId={repoId} />;
+  return <RepoDetailPage key={repoId} repoId={repoId} />;
 }
