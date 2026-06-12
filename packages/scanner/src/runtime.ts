@@ -79,6 +79,7 @@ export function dockerScannerRunArgs(input: {
   image: string;
   options?: ScannerRuntimeOptions;
   target: string;
+  allowNetwork?: boolean;
 }): string[] {
   const target = resolve(input.target);
   const targetDir = dirname(target);
@@ -113,13 +114,16 @@ export function dockerScannerRunArgs(input: {
     "/var/tmp:rw,noexec,nosuid,size=64m,mode=1777",
     "--user",
     dockerScannerUser(),
-    "--network",
-    "none",
+  ];
+  if (!input.allowNetwork) {
+    args.push("--network", "none");
+  }
+  args.push(
     "--mount",
     `type=bind,source=${targetDir},target=${targetDir},readonly`,
     "--workdir",
     targetDir,
-  ];
+  );
   if (input.options?.dockerStorageSize) {
     args.push("--storage-opt", `size=${input.options.dockerStorageSize}`);
   }
@@ -197,6 +201,7 @@ export async function runScannerCli(input: {
   image: string;
   options: ScannerRuntimeOptions;
   target: string;
+  allowNetwork?: boolean;
 }): Promise<string | null> {
   const target = resolve(input.target);
   const useDocker = usesDocker(input.options);
@@ -213,6 +218,7 @@ export async function runScannerCli(input: {
         image: input.image,
         options: input.options,
         target,
+        allowNetwork: input.allowNetwork,
       })
     : input.args;
   const timeoutMs = input.options.timeoutMs ?? 120_000;
@@ -280,6 +286,7 @@ export async function runCliScanner<T>(input: {
   parse: (text: string) => T[];
   requireOutput?: boolean;
   target: string;
+  allowNetwork?: boolean;
 }): Promise<T[]> {
   const resolvedTarget = resolve(input.target);
   const text = await runScannerCli({
@@ -290,6 +297,7 @@ export async function runCliScanner<T>(input: {
     image: input.image,
     options: input.options,
     target: resolvedTarget,
+    allowNetwork: input.allowNetwork,
   });
   if (!text) {
     if (input.requireOutput) throw new Error(`${input.label} produced no output`);
