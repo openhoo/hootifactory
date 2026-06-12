@@ -16,7 +16,6 @@ describe("public @hootifactory/auth barrel", () => {
     expect(typeof auth.permissionImplies).toBe("function"); // permissions
     expect(typeof auth.isAnonymous).toBe("function"); // principal
     expect(typeof auth.issueRegistryToken).toBe("function"); // registry-jwt
-    expect(typeof auth.grantGrants).toBe("function"); // scope
     expect(typeof auth.createSession).toBe("function"); // sessions
     expect(typeof auth.consumeSharedAuthThrottleBucket).toBe("function"); // throttle
     expect(typeof auth.validateTokenGrant).toBe("function"); // token-grants

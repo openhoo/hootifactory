@@ -543,16 +543,13 @@ describe("npm adapter dist-tags routes", () => {
     ).rejects.toMatchObject({ status: 404, code: "NOT_FOUND" });
   });
 
-  test("distTagDelete removes the tag and clears latest when deleting latest", async () => {
+  test("distTagDelete removes an existing tag", async () => {
     const ctx = createTestRegistryContext();
     const deleted: string[] = [];
-    let latestCleared = false;
     ctx.data.packages.findByName = async () => fullPackageRow("pkg_1", "pkg");
+    ctx.data.tags.listLive = async () => ({ latest: "1.0.0", beta: "1.1.0" });
     ctx.data.tags.delete = async (_pkg, tag) => {
       deleted.push(tag);
-    };
-    ctx.data.tags.updateLatestVersion = async (_pkg, version) => {
-      if (version === null) latestCleared = true;
     };
 
     const beta = await new NpmAdapter().handle(
@@ -561,21 +558,45 @@ describe("npm adapter dist-tags routes", () => {
       ctx,
     );
     expect(beta.status).toBe(200);
+    expect(await beta.json()).toEqual({ ok: true });
     expect(deleted).toEqual(["beta"]);
-    expect(latestCleared).toBe(false);
+  });
+
+  test("distTagDelete rejects deletion of the latest tag", async () => {
+    const ctx = createTestRegistryContext();
+    ctx.data.packages.findByName = async () => fullPackageRow("pkg_1", "pkg");
+    ctx.data.tags.listLive = async () => ({ latest: "1.0.0" });
+    ctx.data.tags.delete = async () => {};
 
     const latestMatch: RouteMatch = {
       ...distTagDeleteMatch,
       params: { pkg: "pkg", tag: "latest" },
     };
-    const removeLatest = await new NpmAdapter().handle(
-      latestMatch,
-      new Request("https://registry.test/-/package/pkg/dist-tags/latest", { method: "DELETE" }),
-      ctx,
-    );
-    expect(removeLatest.status).toBe(200);
-    expect(latestCleared).toBe(true);
+    await expect(
+      new NpmAdapter().handle(
+        latestMatch,
+        new Request("https://registry.test/-/package/pkg/dist-tags/latest", { method: "DELETE" }),
+        ctx,
+      ),
+    ).rejects.toMatchObject({ status: 403, code: "DENIED" });
+  });
 
+  test("distTagDelete returns 404 when the tag does not exist", async () => {
+    const ctx = createTestRegistryContext();
+    ctx.data.packages.findByName = async () => fullPackageRow("pkg_1", "pkg");
+    ctx.data.tags.listLive = async () => ({ latest: "1.0.0" });
+    ctx.data.tags.delete = async () => {};
+
+    await expect(
+      new NpmAdapter().handle(
+        distTagDeleteMatch,
+        new Request("https://registry.test/-/package/pkg/dist-tags/beta", { method: "DELETE" }),
+        ctx,
+      ),
+    ).rejects.toMatchObject({ status: 404, code: "NOT_FOUND" });
+  });
+
+  test("distTagDelete returns 404 when the package does not exist", async () => {
     const missingCtx = createTestRegistryContext();
     missingCtx.data.packages.findByName = async () => null;
     await expect(
