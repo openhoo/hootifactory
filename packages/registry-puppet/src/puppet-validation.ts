@@ -1,4 +1,4 @@
-import { z } from "@hootifactory/registry";
+import { Sha256DigestSchema, Sha256HexSchema, z } from "@hootifactory/registry";
 
 /**
  * Puppet Forge identifiers. A module is owned by a Forge username and has a short
@@ -114,8 +114,6 @@ export function puppetReleaseFileName(owner: string, name: string, version: stri
   return `${puppetReleaseSlug(owner, name, version)}.tar.gz`;
 }
 
-const Sha256DigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
-const Sha256HexSchema = z.string().regex(/^[a-f0-9]{64}$/);
 const Md5HexSchema = z.string().regex(/^[a-f0-9]{32}$/);
 
 /**

@@ -221,6 +221,21 @@ function buildRules(): BoundaryRule[] {
       forbidden: [/@hootifactory\/db\b/, /\bctx\.db\b/],
     },
     {
+      // Lock in the SDK digest-schema convergence: a plugin must validate sha256
+      // digests with the shared Sha256DigestSchema / Sha256HexSchema exported by
+      // @hootifactory/registry, never a re-declared `z.string().regex(/^sha256:…
+      // {64}$/)` (or bare 64-hex) validator that can silently drift from the
+      // canonical DIGEST_RE. Extraction regexes (`.match(/[0-9a-f]{64}/)`) and
+      // non-64-hex patterns (sha1's {40}) are untouched.
+      name: "registry plugins use shared SDK digest schemas, not hand-rolled sha256 validators",
+      roots: registryPluginSrcRoots,
+      ignoreTests: true,
+      forbidden: [
+        /regex\(\s*\/\^sha256:\[(?:0-9a-f|a-f0-9)\]\{64\}\$\//,
+        /regex\(\s*\/\^\[(?:0-9a-f|a-f0-9)\]\{64\}\$\//,
+      ],
+    },
+    {
       name: "repository configuration route slice stays DB-free",
       roots: [
         "apps/api/src/routes/api-v1-repository-config-routes.ts",

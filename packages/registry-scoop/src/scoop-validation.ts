@@ -1,4 +1,4 @@
-import { z } from "@hootifactory/registry";
+import { Sha256DigestSchema, Sha256HexSchema, z } from "@hootifactory/registry";
 
 /** Scoop app names: letters, digits, dot, underscore, dash. */
 export function isValidScoopAppName(name: string): boolean {
@@ -69,9 +69,6 @@ export const ScoopPublishManifestSchema = z.looseObject({
 });
 
 export type ScoopPublishManifest = z.output<typeof ScoopPublishManifestSchema>;
-
-const Sha256DigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
-const Sha256HexSchema = z.string().regex(/^[a-f0-9]{64}$/);
 
 /**
  * What we persist per version. It is the publisher's manifest (minus the

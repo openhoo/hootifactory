@@ -1,4 +1,4 @@
-import { z } from "@hootifactory/registry";
+import { Sha256DigestSchema, Sha256HexSchema, z } from "@hootifactory/registry";
 
 /**
  * opam package names: letters, digits, dash and underscore. opam itself forbids
@@ -58,9 +58,6 @@ export const OpamDependSchema = z.object({
 });
 
 export type OpamDepend = z.output<typeof OpamDependSchema>;
-
-const Sha256DigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
-const Sha256HexSchema = z.string().regex(/^[a-f0-9]{64}$/);
 
 /**
  * The publish-side `manifest` part. The publisher supplies descriptive fields

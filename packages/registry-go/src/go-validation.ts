@@ -1,6 +1,4 @@
-import { z } from "@hootifactory/registry";
-
-const Sha256DigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
+import { Sha256DigestSchema, z } from "@hootifactory/registry";
 
 export const GoVersionMetaSchema = z.strictObject({
   mod: z.string().min(1).max(1_000_000),

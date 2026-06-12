@@ -1,4 +1,4 @@
-import { z } from "@hootifactory/registry";
+import { Sha256DigestSchema, Sha256HexSchema, z } from "@hootifactory/registry";
 
 /**
  * Vagrant box names are `:user/:box`. Each segment accepts letters (either case),
@@ -40,9 +40,6 @@ export const VagrantProviderSchema = z
   .min(1)
   .max(128)
   .regex(PROVIDER_RE, "invalid Vagrant provider name");
-
-const Sha256DigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
-const Sha256HexSchema = z.string().regex(/^[a-f0-9]{64}$/);
 
 /**
  * One provider's `.box` artifact stored under a box version. The blob coordinates
