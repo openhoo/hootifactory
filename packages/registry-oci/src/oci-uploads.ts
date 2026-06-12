@@ -27,11 +27,26 @@ import {
 import {
   bodyBytes,
   deleteUploadChunks,
+  type UploadChunk,
   uploadChunkStream,
   uploadMultipartState,
 } from "./upload-state";
 
 const UPLOAD_TTL_MS = 24 * 60 * 60 * 1000;
+
+interface UploadCleanupInfo {
+  storageKey: string;
+  chunks: UploadChunk[];
+}
+
+class ExpiredUploadSessionError extends Error {
+  constructor(
+    readonly registryError: unknown,
+    readonly cleanup: UploadCleanupInfo,
+  ) {
+    super("expired OCI upload session");
+  }
+}
 
 function contentStore(ctx: RegistryRequestContext) {
   return (ctx as ContentAddressableRegistryRequestContext).data.contentStore;
@@ -97,8 +112,10 @@ export async function uploadStatus(
   ctx: RegistryRequestContext,
 ): Promise<Response> {
   const parsedUuid = parseUploadUuid(uuid);
-  const session = await loadOpenSession(image, parsedUuid, ctx);
-  return buildOciUploadStatusResponse({ ctx, image, uuid, offset: session.offsetBytes });
+  return withUploadExpirationCleanup(ctx, async () => {
+    const session = await loadOpenSession(image, parsedUuid, ctx);
+    return buildOciUploadStatusResponse({ ctx, image, uuid, offset: session.offsetBytes });
+  });
 }
 
 export async function patchUpload(
@@ -108,33 +125,9 @@ export async function patchUpload(
   ctx: RegistryRequestContext,
 ): Promise<Response> {
   const parsedUuid = parseUploadUuid(uuid);
-  const chunk = await bodyBytes(req);
-  const pending = await contentStore(ctx).withLockedUploadSession({
-    scope: image,
-    uuid: parsedUuid,
-    run: async (session, mutations) => {
-      const openSession = await assertLoadedOpenSession({
-        image,
-        uuid: parsedUuid,
-        ctx,
-        session,
-        mutations,
-      });
-      validateContentRange(req, openSession.offsetBytes, chunk.length);
-      const next = planUploadChunk(openSession, chunk);
-      await mutations.assertStagingBudget({
-        nextOffsetBytes: next.offset,
-        maxStagedUploadBytes: ctx.limits.maxStagedUploadBytes,
-      });
-      return next;
-    },
-  });
-
-  let stagedKey = pending.key;
-  try {
-    if (stagedKey) await ctx.data.content.staging.putKey(stagedKey, chunk);
-
-    const offset = await contentStore(ctx).withLockedUploadSession({
+  return withUploadExpirationCleanup(ctx, async () => {
+    const chunk = await bodyBytes(req);
+    const pending = await contentStore(ctx).withLockedUploadSession({
       scope: image,
       uuid: parsedUuid,
       run: async (session, mutations) => {
@@ -146,28 +139,54 @@ export async function patchUpload(
           mutations,
         });
         validateContentRange(req, openSession.offsetBytes, chunk.length);
-        const next = planUploadChunk(openSession, chunk, stagedKey);
-        if (next.startOffset !== pending.startOffset || next.offset !== pending.offset) {
-          throw Errors.blobUploadInvalid({
-            reason: "upload offset changed while staging chunk",
-            expected: pending.startOffset,
-            actual: next.startOffset,
-          });
-        }
+        const next = planUploadChunk(openSession, chunk);
         await mutations.assertStagingBudget({
           nextOffsetBytes: next.offset,
           maxStagedUploadBytes: ctx.limits.maxStagedUploadBytes,
         });
-        await mutations.updateOpen({ offsetBytes: next.offset, multipart: next.multipart });
-        return next.offset;
+        return next;
       },
     });
-    stagedKey = undefined;
-    return buildOciUploadAcceptedResponse({ ctx, image, uuid, offset });
-  } catch (err) {
-    if (stagedKey) await ctx.data.content.staging.deleteKey(stagedKey).catch(() => {});
-    throw err;
-  }
+
+    let stagedKey = pending.key;
+    try {
+      if (stagedKey) await ctx.data.content.staging.putKey(stagedKey, chunk);
+
+      const offset = await contentStore(ctx).withLockedUploadSession({
+        scope: image,
+        uuid: parsedUuid,
+        run: async (session, mutations) => {
+          const openSession = await assertLoadedOpenSession({
+            image,
+            uuid: parsedUuid,
+            ctx,
+            session,
+            mutations,
+          });
+          validateContentRange(req, openSession.offsetBytes, chunk.length);
+          const next = planUploadChunk(openSession, chunk, stagedKey);
+          if (next.startOffset !== pending.startOffset || next.offset !== pending.offset) {
+            throw Errors.blobUploadInvalid({
+              reason: "upload offset changed while staging chunk",
+              expected: pending.startOffset,
+              actual: next.startOffset,
+            });
+          }
+          await mutations.assertStagingBudget({
+            nextOffsetBytes: next.offset,
+            maxStagedUploadBytes: ctx.limits.maxStagedUploadBytes,
+          });
+          await mutations.updateOpen({ offsetBytes: next.offset, multipart: next.multipart });
+          return next.offset;
+        },
+      });
+      stagedKey = undefined;
+      return buildOciUploadAcceptedResponse({ ctx, image, uuid, offset });
+    } catch (err) {
+      if (stagedKey) await ctx.data.content.staging.deleteKey(stagedKey).catch(() => {});
+      throw err;
+    }
+  });
 }
 
 export async function putUpload(
@@ -183,42 +202,10 @@ export async function putUpload(
     { code: "DIGEST_INVALID", message: "missing or invalid digest" },
   );
 
-  const chunk = await bodyBytes(req);
   const parsedUuid = parseUploadUuid(uuid);
-  const pending = await contentStore(ctx).withLockedUploadSession({
-    scope: image,
-    uuid: parsedUuid,
-    run: async (session, mutations) => {
-      const openSession = await assertLoadedOpenSession({
-        image,
-        uuid: parsedUuid,
-        ctx,
-        session,
-        mutations,
-      });
-      validateContentRange(req, openSession.offsetBytes, chunk.length);
-      const state = uploadMultipartState(openSession.multipart);
-      const existing = state.chunks.reduce((sum, part) => sum + part.size, 0);
-      assertUploadOffset(existing, openSession.offsetBytes);
-      return { storageKey: openSession.storageKey, chunks: state.chunks };
-    },
-  });
-
-  let uploaded: RegistryUploadedBlob | null = null;
-  try {
-    uploaded = await ctx.data.content
-      .uploadBlobStream({
-        data: uploadChunkStream(ctx, pending.chunks, chunk),
-        expectedDigest: digest,
-      })
-      .catch((err) => {
-        if (err instanceof InvalidDigestError) {
-          throw Errors.digestInvalid({ expected: digest, error: err.message });
-        }
-        throw err;
-      });
-
-    const committed = await contentStore(ctx).withLockedUploadSession({
+  return withUploadExpirationCleanup(ctx, async () => {
+    const chunk = await bodyBytes(req);
+    const pending = await contentStore(ctx).withLockedUploadSession({
       scope: image,
       uuid: parsedUuid,
       run: async (session, mutations) => {
@@ -233,39 +220,73 @@ export async function putUpload(
         const state = uploadMultipartState(openSession.multipart);
         const existing = state.chunks.reduce((sum, part) => sum + part.size, 0);
         assertUploadOffset(existing, openSession.offsetBytes);
-        const stored = await mutations.commitBlobWithRef({
-          blob: uploaded!,
-          kind: "oci_layer",
-          scope: image,
-          mediaType: "application/octet-stream",
-        });
-        await mutations.commit(stored.size);
-        return {
-          size: stored.size,
-          blobRefId: stored.blobRefId,
-          storageKey: openSession.storageKey,
-          chunks: state.chunks,
-        };
+        return { storageKey: openSession.storageKey, chunks: state.chunks };
       },
     });
-    uploaded = null;
-    await ctx.data.assets.upsert({
-      digest,
-      role: "oci_layer",
-      scope: image,
-      blobRefId: committed.blobRefId,
-      path: `${image}/blobs/${digest}`,
-      mediaType: "application/octet-stream",
-      sizeBytes: committed.size,
-    });
-    await ctx.data.content.staging.deleteKey(committed.storageKey).catch(() => {});
-    await deleteUploadChunks(ctx, committed.chunks);
 
-    return buildOciUploadCommittedResponse({ ctx, image, digest, size: committed.size });
-  } catch (err) {
-    if (uploaded) await ctx.data.content.discardUploadedBlob(uploaded);
-    throw err;
-  }
+    let uploaded: RegistryUploadedBlob | null = null;
+    try {
+      uploaded = await ctx.data.content
+        .uploadBlobStream({
+          data: uploadChunkStream(ctx, pending.chunks, chunk),
+          expectedDigest: digest,
+        })
+        .catch((err) => {
+          if (err instanceof InvalidDigestError) {
+            throw Errors.digestInvalid({ expected: digest, error: err.message });
+          }
+          throw err;
+        });
+
+      const committed = await contentStore(ctx).withLockedUploadSession({
+        scope: image,
+        uuid: parsedUuid,
+        run: async (session, mutations) => {
+          const openSession = await assertLoadedOpenSession({
+            image,
+            uuid: parsedUuid,
+            ctx,
+            session,
+            mutations,
+          });
+          validateContentRange(req, openSession.offsetBytes, chunk.length);
+          const state = uploadMultipartState(openSession.multipart);
+          const existing = state.chunks.reduce((sum, part) => sum + part.size, 0);
+          assertUploadOffset(existing, openSession.offsetBytes);
+          const stored = await mutations.commitBlobWithRef({
+            blob: uploaded!,
+            kind: "oci_layer",
+            scope: image,
+            mediaType: "application/octet-stream",
+          });
+          await mutations.commit(stored.size);
+          return {
+            size: stored.size,
+            blobRefId: stored.blobRefId,
+            storageKey: openSession.storageKey,
+            chunks: state.chunks,
+          };
+        },
+      });
+      uploaded = null;
+      await ctx.data.assets.upsert({
+        digest,
+        role: "oci_layer",
+        scope: image,
+        blobRefId: committed.blobRefId,
+        path: `${image}/blobs/${digest}`,
+        mediaType: "application/octet-stream",
+        sizeBytes: committed.size,
+      });
+      await ctx.data.content.staging.deleteKey(committed.storageKey).catch(() => {});
+      await deleteUploadChunks(ctx, committed.chunks);
+
+      return buildOciUploadCommittedResponse({ ctx, image, digest, size: committed.size });
+    } catch (err) {
+      if (uploaded) await ctx.data.content.discardUploadedBlob(uploaded);
+      throw err;
+    }
+  });
 }
 
 export async function cancelUpload(
@@ -274,23 +295,29 @@ export async function cancelUpload(
   ctx: RegistryRequestContext,
 ): Promise<Response> {
   const parsedUuid = parseUploadUuid(uuid);
-  await contentStore(ctx).withLockedUploadSession({
-    scope: image,
-    uuid: parsedUuid,
-    run: async (session, mutations) => {
-      const openSession = await assertLoadedOpenSession({
-        image,
-        uuid: parsedUuid,
-        ctx,
-        session,
-        mutations,
-      });
-      await ctx.data.content.staging.deleteKey(openSession.storageKey).catch(() => {});
-      await deleteUploadChunks(ctx, uploadMultipartState(openSession.multipart).chunks);
-      await mutations.deleteSession();
-    },
+  return withUploadExpirationCleanup(ctx, async () => {
+    const info = await contentStore(ctx).withLockedUploadSession({
+      scope: image,
+      uuid: parsedUuid,
+      run: async (session, mutations) => {
+        if (!session) throw Errors.blobUploadUnknown({ uuid: parsedUuid });
+        if (session.state !== "open") {
+          throw Errors.blobUploadUnknown({ uuid: parsedUuid, state: session.state });
+        }
+        if (session.expiresAt.getTime() <= Date.now()) {
+          await mutations.markAborted();
+          throw new ExpiredUploadSessionError(
+            Errors.blobUploadUnknown({ uuid: parsedUuid, reason: "expired" }),
+            uploadCleanupInfo(session),
+          );
+        }
+        await mutations.markAborted();
+        return uploadCleanupInfo(session);
+      },
+    });
+    await cleanupUploadStaging(ctx, info);
+    return new Response(null, { status: 204 });
   });
-  return new Response(null, { status: 204 });
 }
 
 async function tryCrossRepositoryMount(input: {
@@ -387,10 +414,44 @@ async function assertOpenSession(input: {
   }
   if (input.session.expiresAt.getTime() > Date.now()) return;
 
-  await input.ctx.data.content.staging.deleteKey(input.session.storageKey).catch(() => {});
-  await deleteUploadChunks(input.ctx, uploadMultipartState(input.session.multipart).chunks);
   await input.markAborted();
-  throw Errors.blobUploadUnknown({ uuid: input.uuid, reason: "expired" });
+  throw new ExpiredUploadSessionError(
+    Errors.blobUploadUnknown({ uuid: input.uuid, reason: "expired" }),
+    uploadCleanupInfo(input.session),
+  );
+}
+
+function uploadCleanupInfo(session: {
+  storageKey: string;
+  multipart: string | null;
+}): UploadCleanupInfo {
+  return {
+    storageKey: session.storageKey,
+    chunks: uploadMultipartState(session.multipart).chunks,
+  };
+}
+
+async function cleanupUploadStaging(
+  ctx: RegistryRequestContext,
+  info: UploadCleanupInfo,
+): Promise<void> {
+  await ctx.data.content.staging.deleteKey(info.storageKey).catch(() => {});
+  await deleteUploadChunks(ctx, info.chunks);
+}
+
+async function withUploadExpirationCleanup<T>(
+  ctx: RegistryRequestContext,
+  run: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await run();
+  } catch (err) {
+    if (err instanceof ExpiredUploadSessionError) {
+      await cleanupUploadStaging(ctx, err.cleanup);
+      throw err.registryError;
+    }
+    throw err;
+  }
 }
 
 function planUploadChunk(
