@@ -291,7 +291,15 @@ export function createRegistryDataService(
       },
     },
     assets: {
-      upsert: (input) => upsertRegistryAsset(ctx, assetForWrite(ctx, input)),
+      upsert: async (input) => {
+        const scope = input.scope ?? "";
+        const existing = await findRegistryAssetByScope(ctx, { role: input.role, scope });
+        if (existing && existing.digest !== input.digest) {
+          await releaseBlobRef(ctx, { digest: existing.digest, kind: input.role, scope });
+          await deleteRegistryAssetRef(ctx, { digest: existing.digest, scope, role: input.role });
+        }
+        return upsertRegistryAsset(ctx, assetForWrite(ctx, input));
+      },
       findByScope: (input) => findRegistryAssetByScope(ctx, input),
       list: (input) =>
         listRegistryAssets(ctx, {
