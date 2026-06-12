@@ -131,7 +131,7 @@ describe("reapExpiredContentUploadSessions (DB + MinIO)", () => {
     expect(await sessionState(abortedId)).toBeNull();
   });
 
-  test("committed sessions are never touched by the reaper", async () => {
+  test("committed sessions are reaped and their staged objects cleaned up", async () => {
     const committedKey = stagingKey();
     await blobStore.putAtKey(committedKey, new Uint8Array([1]));
     const committedId = await insertSession({
@@ -141,7 +141,7 @@ describe("reapExpiredContentUploadSessions (DB + MinIO)", () => {
     });
 
     await reapExpiredContentUploadSessions({ limit: 50 });
-    expect(await sessionState(committedId)).toBe(UPLOAD_STATE.committed);
-    expect(await blobStore.existsKey(committedKey)).toBe(true);
+    expect(await sessionState(committedId)).toBeNull();
+    expect(await blobStore.existsKey(committedKey)).toBe(false);
   });
 });
