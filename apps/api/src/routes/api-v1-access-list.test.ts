@@ -32,6 +32,7 @@ const getArtifactWithRepository = mock(async () => ({
 
 mock.module("@hootifactory/auth", () => ({
   authorize: async (): Promise<Decision> => ({ allowed: orgAllowed }),
+  authorizePermission: async (): Promise<Decision> => ({ allowed: orgAllowed }),
   createRequestAuthorizer:
     () => async (_action: string, resource: { type: string; repositoryId?: string }) => {
       if (resource.type === "org") return { allowed: orgAllowed };

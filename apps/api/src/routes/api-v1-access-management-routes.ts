@@ -1,7 +1,6 @@
 import {
   addGroupMember,
   addOrgMember,
-  authorizePermission,
   countUsers,
   createAdminUser,
   createGroup,
@@ -50,16 +49,15 @@ import {
   V1UserResponseSchema,
 } from "@hootifactory/contracts";
 import { isUniqueViolation } from "@hootifactory/core";
-import type { PermissionKey, ResourceRef } from "@hootifactory/types";
-import type { Context, Hono } from "hono";
+import type { Hono } from "hono";
 import type { AppEnv } from "../types";
 import {
-  authorizationDenied,
   dataResponse,
   doc,
   errorResponse,
   listResponse,
   PaginationQuerySchema,
+  requirePermission,
   UserListQuerySchema,
   validateJsonV1,
   validatePagination,
@@ -106,16 +104,6 @@ function grantDto(grant: Awaited<ReturnType<typeof grantsForGroup>>[number]) {
     tokenTarget: grant.tokenTarget ?? undefined,
     tokenId: grant.targetTokenId ?? undefined,
   };
-}
-
-async function requirePermission(
-  c: Context<AppEnv>,
-  permission: PermissionKey,
-  resource: ResourceRef,
-) {
-  const decision = await authorizePermission(c.get("principal"), permission, resource);
-  if (decision.allowed) return undefined;
-  return authorizationDenied(c, decision);
 }
 
 export function registerApiV1AccessManagementRoutes(apiV1Router: Hono<AppEnv>) {

@@ -18,6 +18,8 @@ export interface S3BlobStoreOptions {
   bucket?: string;
   accessKeyId?: string;
   secretAccessKey?: string;
+  /** Force path-style addressing (MinIO and other non-AWS S3 backends need it). */
+  forcePathStyle?: boolean;
   /**
    * Invoked when the SigV4-signed server-side CopyObject fails (network error
    * or non-2xx response) before promoteToBlob falls back to a full streaming
@@ -60,7 +62,7 @@ export class S3BlobStore implements BlobStore {
     this.bucket = opts.bucket ?? env.S3_BUCKET;
     this.accessKeyId = opts.accessKeyId ?? env.S3_ACCESS_KEY_ID;
     this.secretAccessKey = opts.secretAccessKey ?? env.S3_SECRET_ACCESS_KEY;
-    this.forcePathStyle = env.S3_FORCE_PATH_STYLE;
+    this.forcePathStyle = opts.forcePathStyle ?? env.S3_FORCE_PATH_STYLE;
     this.onCopyError = opts.onCopyError;
     this.client = new S3Client({
       endpoint: this.endpoint,

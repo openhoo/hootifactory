@@ -1,4 +1,9 @@
-import { authorize, createRequestAuthorizer, type Principal } from "@hootifactory/auth";
+import {
+  authorize,
+  authorizePermission,
+  createRequestAuthorizer,
+  type Principal,
+} from "@hootifactory/auth";
 import { mapWithBoundedConcurrency } from "@hootifactory/core";
 import type { ResolvedRepo } from "@hootifactory/registry";
 import {
@@ -12,7 +17,7 @@ import {
   getRepositoryById,
   listRepositoriesForOrg,
 } from "@hootifactory/registry-platform/repositories";
-import type { Action, PolicyName } from "@hootifactory/types";
+import type { Action, Decision, PermissionKey, PolicyName, ResourceRef } from "@hootifactory/types";
 import type { Context } from "hono";
 import type { AppEnv } from "../types";
 import { authorizationDenied, errorResponse } from "./api-v1-responses";
@@ -34,10 +39,33 @@ export function requireUserPrincipal(c: Context<AppEnv>): UserPrincipalResult {
   return { ok: true, principal: p };
 }
 
+/**
+ * Settle an authorization Decision into the delivery-layer convention: undefined
+ * when allowed (the caller continues), otherwise the single canonical denial
+ * Response. Every resource/permission guard below funnels through here so the
+ * "allowed -> continue / denied -> authorizationDenied" tail lives in one place.
+ */
+function settleDecision(c: Context<AppEnv>, decision: Decision): Response | undefined {
+  return decision.allowed ? undefined : authorizationDenied(c, decision);
+}
+
+/**
+ * Authorize a raw permission key against a resource. Use for system/org-level
+ * management actions whose required permission is explicit rather than derived
+ * from a read/write/delete Action (e.g. "user.read", "group.create"). This is
+ * the permission-based sibling of {@link requireOrg} et al.; it replaces the
+ * per-slice copies that previously re-implemented the same body.
+ */
+export async function requirePermission(
+  c: Context<AppEnv>,
+  permission: PermissionKey,
+  resource: ResourceRef,
+) {
+  return settleDecision(c, await authorizePermission(c.get("principal"), permission, resource));
+}
+
 export async function requireOrg(c: Context<AppEnv>, orgId: string, action: Action) {
-  const decision = await authorize(c.get("principal"), action, { type: "org", orgId });
-  if (decision.allowed) return undefined;
-  return authorizationDenied(c, decision);
+  return settleDecision(c, await authorize(c.get("principal"), action, { type: "org", orgId }));
 }
 
 export async function repositoryById(repoId: string) {
@@ -45,15 +73,16 @@ export async function repositoryById(repoId: string) {
 }
 
 export async function authorizeRepository(c: Context<AppEnv>, repo: ResolvedRepo, action: Action) {
-  const decision = await authorize(c.get("principal"), action, {
-    type: "repository",
-    orgId: repo.orgId,
-    repositoryId: repo.id,
-    repositoryName: repo.name,
-    visibility: repo.visibility,
-  });
-  if (decision.allowed) return undefined;
-  return authorizationDenied(c, decision);
+  return settleDecision(
+    c,
+    await authorize(c.get("principal"), action, {
+      type: "repository",
+      orgId: repo.orgId,
+      repositoryId: repo.id,
+      repositoryName: repo.name,
+      visibility: repo.visibility,
+    }),
+  );
 }
 
 export async function requireRepository(
@@ -78,16 +107,17 @@ export async function authorizePackage(
   row: PackageWithRepositoryRow,
   action: Action,
 ) {
-  const decision = await authorize(c.get("principal"), action, {
-    type: "package",
-    orgId: row.repo.orgId,
-    repositoryId: row.repo.id,
-    repositoryName: row.repo.name,
-    packageName: row.pkg.name,
-    visibility: row.repo.visibility,
-  });
-  if (decision.allowed) return undefined;
-  return authorizationDenied(c, decision);
+  return settleDecision(
+    c,
+    await authorize(c.get("principal"), action, {
+      type: "package",
+      orgId: row.repo.orgId,
+      repositoryId: row.repo.id,
+      repositoryName: row.repo.name,
+      packageName: row.pkg.name,
+      visibility: row.repo.visibility,
+    }),
+  );
 }
 
 export async function artifactWithRepository(artifactId: string) {
@@ -99,16 +129,17 @@ export async function authorizeArtifact(
   row: ArtifactWithRepositoryRow,
   action: Action,
 ) {
-  const decision = await authorize(c.get("principal"), action, {
-    type: "artifact",
-    orgId: row.repo.orgId,
-    repositoryId: row.repo.id,
-    repositoryName: row.repo.name,
-    artifactRef: row.art.digest,
-    visibility: row.repo.visibility,
-  });
-  if (decision.allowed) return undefined;
-  return authorizationDenied(c, decision);
+  return settleDecision(
+    c,
+    await authorize(c.get("principal"), action, {
+      type: "artifact",
+      orgId: row.repo.orgId,
+      repositoryId: row.repo.id,
+      repositoryName: row.repo.name,
+      artifactRef: row.art.digest,
+      visibility: row.repo.visibility,
+    }),
+  );
 }
 
 export async function authorizeArtifactFindings(
@@ -122,16 +153,17 @@ export async function authorizeArtifactFindings(
       reason: "authentication required",
     });
   }
-  const decision = await authorize(c.get("principal"), "read", {
-    type: "artifact",
-    orgId: row.repo.orgId,
-    repositoryId: row.repo.id,
-    repositoryName: row.repo.name,
-    artifactRef: row.art.digest,
-    visibility: row.repo.visibility,
-  });
-  if (decision.allowed) return undefined;
-  return authorizationDenied(c, decision);
+  return settleDecision(
+    c,
+    await authorize(c.get("principal"), "read", {
+      type: "artifact",
+      orgId: row.repo.orgId,
+      repositoryId: row.repo.id,
+      repositoryName: row.repo.name,
+      artifactRef: row.art.digest,
+      visibility: row.repo.visibility,
+    }),
+  );
 }
 
 export async function authorizePolicy(
@@ -143,16 +175,17 @@ export async function authorizePolicy(
     repo?: ResolvedRepo;
   },
 ) {
-  const decision = await authorize(c.get("principal"), input.action, {
-    type: "policy",
-    orgId: input.orgId,
-    repositoryId: input.repo?.id,
-    repositoryName: input.repo?.name,
-    policy: input.policy,
-    visibility: input.repo?.visibility,
-  });
-  if (decision.allowed) return undefined;
-  return authorizationDenied(c, decision);
+  return settleDecision(
+    c,
+    await authorize(c.get("principal"), input.action, {
+      type: "policy",
+      orgId: input.orgId,
+      repositoryId: input.repo?.id,
+      repositoryName: input.repo?.name,
+      policy: input.policy,
+      visibility: input.repo?.visibility,
+    }),
+  );
 }
 
 export async function listAccessibleRepositories(
