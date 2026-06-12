@@ -26,10 +26,17 @@ export function buildInfoFile(versions: GemVersionEntry[]): string {
   const lines = ["---"];
   for (const entry of versions) {
     if (entry.yanked) continue;
-    const deps = entry.deps.map((dep) => `${dep.name}:${dep.requirements}`).join(",");
+    const deps = entry.deps
+      .filter((dep) => isSafeInfoField(dep.name) && isSafeInfoField(dep.requirements))
+      .map((dep) => `${dep.name}:${dep.requirements}`)
+      .join(",");
     lines.push(`${gemVersionIdentifier(entry)} ${deps}|checksum:${entry.sha256}`);
   }
   return `${lines.join("\n")}\n`;
+}
+
+function isSafeInfoField(s: string): boolean {
+  return !s.includes(",") && !s.includes(":") && !s.includes("|");
 }
 
 export interface GemVersionsSummary {
