@@ -228,7 +228,7 @@ class WingetAdapterState {
     packageIdentifier: string,
     version: string,
     filename: string,
-    req: Request,
+    _req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
     const pkg = await ctx.data.packages.findByName(packageIdentifier.toLowerCase());
@@ -242,7 +242,6 @@ class WingetAdapterState {
       kind: "generic_file",
       scope: wingetInstallerScope(packageIdentifier, version, filename),
       contentType: "application/octet-stream",
-      redirect: req.method === "GET",
       blocked: () => new Response("blocked by scan policy", { status: 403 }),
     });
   }

@@ -21,13 +21,12 @@ class MavenAdapterState {
     return handleMavenUpload(path, req, ctx);
   }
 
-  async download(path: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  async download(path: string, _req: Request, ctx: RegistryRequestContext): Promise<Response> {
     return serveAssetBlob(ctx, {
       role: MAVEN_FILE_KIND,
       kind: MAVEN_FILE_KIND,
       scope: path,
       contentType: contentTypeForPath(path),
-      redirect: req.method === "GET",
     });
   }
 }

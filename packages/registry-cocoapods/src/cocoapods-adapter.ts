@@ -220,7 +220,7 @@ class CocoapodsAdapterState {
     pod: string,
     version: string,
     filenameRaw: string,
-    req: Request,
+    _req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
     const pkg = await ctx.data.packages.findByName(pod);
@@ -234,7 +234,6 @@ class CocoapodsAdapterState {
       kind: COCOAPODS_BLOB_KIND,
       scope: cocoapodsBlobScope(pod, version, meta.filename),
       contentType: "application/gzip",
-      redirect: req.method === "GET",
       blocked: () => new Response("blocked by scan policy", { status: 403 }),
     });
   }

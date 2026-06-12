@@ -84,7 +84,7 @@ class NixAdapterState {
   }
 
   /** `GET /nar/<filehash>.nar[.ext]` — serve the content-addressed NAR blob. */
-  async serveNar(filename: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  async serveNar(filename: string, _req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const rawHash = fileHashFromNarParam(filename);
     if (!rawHash) throw Errors.notFound();
     const fileHash = parseFileHash(rawHash);
@@ -99,7 +99,6 @@ class NixAdapterState {
       kind: NAR_BLOB_KIND,
       scope,
       contentType: "application/x-nix-nar",
-      redirect: req.method === "GET",
       blocked: () => new Response("blocked by scan policy", { status: 403 }),
     });
   }

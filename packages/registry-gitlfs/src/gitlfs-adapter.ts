@@ -158,9 +158,9 @@ class GitLfsAdapterState {
   /** `GET|HEAD /objects/:oid` — serve the stored object content by oid. */
   async getObject(
     oidRaw: string,
-    req: Request,
+    _req: Request,
     ctx: RegistryRequestContext,
-    headOnly: boolean,
+    _headOnly: boolean,
   ): Promise<Response> {
     const oid = parseOid(oidRaw);
     if (oid instanceof Response) return oid;
@@ -169,7 +169,6 @@ class GitLfsAdapterState {
       kind: LFS_BLOB_KIND,
       scope: LFS_BLOB_SCOPE,
       contentType: "application/octet-stream",
-      redirect: !headOnly && req.method === "GET",
       blocked: () => lfsJson({ message: "object blocked by scan policy" }, 403),
       missing: () => lfsJson({ message: "object does not exist" }, 404),
     });

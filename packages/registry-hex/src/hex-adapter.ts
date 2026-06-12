@@ -153,7 +153,7 @@ class HexAdapterState {
   }
 
   /** `GET /tarballs/<name>-<version>.tar` — serve the hosted release tarball blob. */
-  async download(filename: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  async download(filename: string, _req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const split = splitTarballFile(filename);
     if (!split) return jsonNotFound("tarball not found");
     return serveVersionBlob(ctx, {
@@ -164,7 +164,6 @@ class HexAdapterState {
       parseMetadata: parseHexVersionMeta,
       digest: ({ metadata }) => metadata.blobDigest,
       contentType: "application/octet-stream",
-      redirect: req.method === "GET",
       missing: () => jsonNotFound(`tarball ${filename} not found`),
     });
   }

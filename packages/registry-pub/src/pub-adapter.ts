@@ -105,7 +105,7 @@ class PubAdapterState {
     );
   }
 
-  async download(fileRaw: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  async download(fileRaw: string, _req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const parsed = parsePubParam(PubArchiveFileSchema, fileRaw, "invalid archive filename");
     if (!parsed.ok) return parsed.response;
     const file = parsed.value;
@@ -121,7 +121,6 @@ class PubAdapterState {
       kind: "pub_archive",
       scope: pubBlobScope(split.packageName, split.version),
       contentType: "application/gzip",
-      redirect: req.method === "GET",
       blocked: () => new Response("blocked by scan policy", { status: 403 }),
     });
   }

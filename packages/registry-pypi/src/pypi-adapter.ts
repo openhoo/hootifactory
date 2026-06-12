@@ -98,13 +98,12 @@ class PypiAdapterState {
     });
   }
 
-  async download(filename: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  async download(filename: string, _req: Request, ctx: RegistryRequestContext): Promise<Response> {
     return serveAssetBlob(ctx, {
       role: "pypi_file",
       kind: "pypi_file",
       scope: filename,
       contentType: "application/octet-stream",
-      redirect: req.method === "GET",
     });
   }
 

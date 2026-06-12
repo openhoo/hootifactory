@@ -94,13 +94,12 @@ class RubygemsAdapterState {
     return textResponseWithEtag(req, `---\n${names.map((n) => `${n}\n`).join("")}`, TEXT_PLAIN);
   }
 
-  async download(filename: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  async download(filename: string, _req: Request, ctx: RegistryRequestContext): Promise<Response> {
     return serveAssetBlob(ctx, {
       role: GEM_KIND,
       kind: GEM_KIND,
       scope: filename,
       contentType: "application/octet-stream",
-      redirect: req.method === "GET",
     });
   }
 }

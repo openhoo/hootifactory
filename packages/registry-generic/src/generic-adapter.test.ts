@@ -451,14 +451,12 @@ describe("Generic adapter", () => {
     expect(res.status).toBe(413);
   });
 
-  test("HEAD /<path> resolves the stored blob without a redirect and advertises size + checksums", async () => {
+  test("HEAD /<path> resolves the stored blob and advertises size + checksums", async () => {
     const ctx = genericContext();
-    const served: { redirect?: boolean } = {};
     ctx.data.packages.findByName = async (name) => pkgRow(name);
     ctx.data.versions.findLive = async () => versionRow(metaFor("app.bin"));
     ctx.data.content.blobRefExists = async () => true;
-    ctx.data.content.serveBlobIfClean = async ({ contentType, redirect, extraHeaders }) => {
-      served.redirect = redirect;
+    ctx.data.content.serveBlobIfClean = async ({ contentType, extraHeaders }) => {
       return new Response(null, { headers: { "content-type": contentType, ...extraHeaders } });
     };
     const res = await new GenericAdapter().handle(
@@ -471,7 +469,6 @@ describe("Generic adapter", () => {
       ctx,
     );
     expect(res.status).toBe(200);
-    expect(served.redirect).toBe(false);
     // A HEAD carries no body, so the exact size is surfaced for the client to
     // size the artifact before issuing the GET.
     expect(res.headers.get("content-length")).toBe(String(DATA.length));

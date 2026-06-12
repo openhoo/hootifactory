@@ -125,7 +125,7 @@ export async function serveProviderZip(
   version: string,
   os: string,
   arch: string,
-  req: Request,
+  _req: Request,
   ctx: RegistryRequestContext,
 ): Promise<Response> {
   const meta = await findLiveProvider(ctx, namespace, type, version);
@@ -136,7 +136,6 @@ export async function serveProviderZip(
     kind: PROVIDER_ZIP_KIND,
     scope: providerZipScope(namespace, type, version, os, arch),
     contentType: "application/zip",
-    redirect: req.method === "GET",
     blocked: () => new Response("blocked by scan policy", { status: 403 }),
   });
 }
@@ -146,7 +145,7 @@ export async function serveProviderShasums(
   namespace: string,
   type: string,
   version: string,
-  req: Request,
+  _req: Request,
   ctx: RegistryRequestContext,
 ): Promise<Response> {
   const meta = await findLiveProvider(ctx, namespace, type, version);
@@ -156,7 +155,6 @@ export async function serveProviderShasums(
     kind: PROVIDER_SHASUMS_KIND,
     scope: providerShasumsScope(namespace, type, version, "SHASUMS"),
     contentType: "text/plain; charset=utf-8",
-    redirect: req.method === "GET",
     blocked: () => new Response("blocked by scan policy", { status: 403 }),
   });
 }
@@ -166,7 +164,7 @@ export async function serveProviderShasumsSignature(
   namespace: string,
   type: string,
   version: string,
-  req: Request,
+  _req: Request,
   ctx: RegistryRequestContext,
 ): Promise<Response> {
   const meta = await findLiveProvider(ctx, namespace, type, version);
@@ -176,7 +174,6 @@ export async function serveProviderShasumsSignature(
     kind: PROVIDER_SHASUMS_KIND,
     scope: providerShasumsScope(namespace, type, version, "SHASUMS.sig"),
     contentType: "application/octet-stream",
-    redirect: req.method === "GET",
     blocked: () => new Response("blocked by scan policy", { status: 403 }),
   });
 }

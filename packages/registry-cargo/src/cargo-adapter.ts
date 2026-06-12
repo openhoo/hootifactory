@@ -60,7 +60,7 @@ class CargoAdapterState {
   async download(
     crate: string,
     version: string,
-    req: Request,
+    _req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
     // The sparse index advertises the original-case crate name, so cargo requests
@@ -77,7 +77,6 @@ class CargoAdapterState {
       kind: "generic_file",
       scope: cargoBlobScope(lower, version),
       contentType: "application/octet-stream",
-      redirect: req.method === "GET",
       blocked: () => new Response("blocked by scan policy", { status: 403 }),
     });
   }

@@ -203,7 +203,6 @@ export interface RegistryBlobResponseOptions {
   extraHeaders?: Record<string, string>;
   blocked: () => Response;
   notModified?: () => Response | null;
-  redirect?: boolean;
 }
 
 export interface RegistryBlobRefInput {

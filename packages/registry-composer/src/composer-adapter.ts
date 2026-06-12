@@ -75,7 +75,7 @@ class ComposerAdapterState {
     );
   }
 
-  async download(path: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  async download(path: string, _req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const asset = await ctx.data.assets.findByScope({ role: COMPOSER_DIST_KIND, scope: path });
     if (!asset) throw Errors.notFound();
     return serveRegistryBlob(ctx, {
@@ -83,7 +83,6 @@ class ComposerAdapterState {
       kind: COMPOSER_DIST_KIND,
       scope: path,
       contentType: "application/zip",
-      redirect: req.method === "GET",
       blocked: () => new Response("dist blocked by scan policy", { status: 403 }),
     });
   }

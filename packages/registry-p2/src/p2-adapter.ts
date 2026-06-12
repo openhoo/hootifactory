@@ -94,7 +94,7 @@ class P2AdapterState {
   async download(
     kind: P2ArtifactKind,
     filename: string,
-    req: Request,
+    _req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
     const scope = p2JarScope(kind, filename);
@@ -105,7 +105,6 @@ class P2AdapterState {
       kind: P2_JAR_KIND,
       scope,
       contentType: "application/java-archive",
-      redirect: req.method === "GET",
       blocked: () => new Response("artifact blocked by scan policy", { status: 403 }),
     });
   }

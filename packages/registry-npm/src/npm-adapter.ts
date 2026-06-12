@@ -240,7 +240,6 @@ class NpmAdapterState {
       contentType: "application/octet-stream",
       req,
       etag,
-      redirect: req.method === "GET",
       blocked: () => Response.json({ error: "artifact blocked by scan policy" }, { status: 403 }),
     });
   }

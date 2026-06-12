@@ -45,7 +45,7 @@ class AlpineAdapterState {
   async download(
     arch: string,
     filename: string,
-    req: Request,
+    _req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
     const meta = await this.findByFilename(ctx, arch, filename);
@@ -55,7 +55,6 @@ class AlpineAdapterState {
       kind: ALPINE_APK_KIND,
       scope: alpineBlobScope(arch, filename),
       contentType: "application/vnd.alpine.apk",
-      redirect: req.method === "GET",
       blocked: () => new Response("blocked by scan policy", { status: 403 }),
     });
   }

@@ -72,7 +72,7 @@ class LuarocksAdapterState {
   }
 
   /** `GET /<rock>-<version>.rockspec | <rock>-<version>.<arch>.rock` — serve a blob. */
-  async download(filename: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  async download(filename: string, _req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const parsed = parseArtifactFilename(filename);
     if (!parsed) throw Errors.notFound();
     const rock = parseRegistryInput(RockNameSchema, parsed.rock, {
@@ -98,7 +98,6 @@ class LuarocksAdapterState {
       kind: LUAROCKS_BLOB_KIND,
       scope: luarocksBlobScope(rock, version, filename),
       contentType: ROCK_CONTENT_TYPE,
-      redirect: req.method === "GET",
       blocked: () => new Response("blocked by scan policy", { status: 403 }),
     });
   }

@@ -50,7 +50,7 @@ class IvyAdapterState {
   /** Serve a stored Ivy file (descriptor or artifact) via its path-scoped asset. */
   private async downloadFile(
     path: string,
-    req: Request,
+    _req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
     const asset = await ctx.data.assets.findByScope({ role: IVY_FILE_KIND, scope: path });
@@ -60,7 +60,6 @@ class IvyAdapterState {
       kind: IVY_FILE_KIND,
       scope: path,
       contentType: contentTypeForPath(path),
-      redirect: req.method === "GET",
       blocked: () =>
         registryErrorResponseForModule(IVY_ERROR_MODULE, {
           status: 403,

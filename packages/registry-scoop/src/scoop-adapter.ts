@@ -79,7 +79,7 @@ class ScoopAdapterState {
     app: string,
     version: string,
     filename: string,
-    req: Request,
+    _req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
     const pkg = await ctx.data.packages.findByName(app);
@@ -93,7 +93,6 @@ class ScoopAdapterState {
       kind: "scoop_artifact",
       scope: scoopBlobScope(app, version, filename),
       contentType: "application/octet-stream",
-      redirect: req.method === "GET",
       blocked: () => new Response("blocked by scan policy", { status: 403 }),
     });
   }

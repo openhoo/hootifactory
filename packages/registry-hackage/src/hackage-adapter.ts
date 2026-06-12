@@ -165,7 +165,6 @@ class HackageAdapterState {
         kind: "hackage_sdist",
         scope: hackageBlobScope(name, version),
         contentType: "application/gzip",
-        redirect: req.method === "GET",
         blocked: () => new Response("blocked by scan policy", { status: 403 }),
       });
     }

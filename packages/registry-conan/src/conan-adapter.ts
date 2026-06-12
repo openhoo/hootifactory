@@ -200,7 +200,7 @@ class ConanAdapterState {
   /** GET .../files/:filename — serve a stored recipe or package file blob. */
   async fileDownload(
     target: ConanFileTarget,
-    req: Request,
+    _req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
     const pkg = await this.findRecipe(ctx, target.reference);
@@ -223,7 +223,6 @@ class ConanAdapterState {
       kind: CONAN_FILE_KIND,
       scope,
       contentType: "application/octet-stream",
-      redirect: req.method === "GET",
       blocked: () =>
         conanJsonResponse({ error: "artifact blocked by scan policy" }, { status: 403 }),
       missing: () => notFound(),

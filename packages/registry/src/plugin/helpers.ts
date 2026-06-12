@@ -25,7 +25,6 @@ export interface ServeRegistryBlobOptions {
   req?: Request;
   etag?: string;
   notModified?: () => Response | null;
-  redirect?: boolean;
   missing?: () => Response;
 }
 
@@ -390,7 +389,6 @@ export async function serveRegistryBlob(
     extraHeaders,
     blocked: opts.blocked ?? blockedByScanPolicy,
     notModified,
-    redirect: opts.redirect,
   });
 }
 

@@ -229,15 +229,14 @@ describe("PyPI adapter", () => {
 
   test("download serves the stored blob for an existing distribution", async () => {
     const ctx = createTestRegistryContext();
-    const served: { digest?: string; redirect?: boolean } = {};
+    const served: { digest?: string } = {};
     ctx.data.assets.findByScope = async (input) => {
       expect(input).toMatchObject({ role: "pypi_file", scope: "demo_pkg-1.0.0-py3-none-any.whl" });
       return assetRow();
     };
     ctx.data.content.blobRefExists = async () => true;
-    ctx.data.content.serveBlobIfClean = async ({ digest, contentType, redirect }) => {
+    ctx.data.content.serveBlobIfClean = async ({ digest, contentType }) => {
       served.digest = digest;
-      served.redirect = redirect;
       return new Response("wheel-bytes", { headers: { "content-type": contentType } });
     };
 
@@ -249,7 +248,6 @@ describe("PyPI adapter", () => {
 
     expect(res.status).toBe(200);
     expect(served.digest).toBe(assetRow().digest);
-    expect(served.redirect).toBe(true);
     await expect(res.text()).resolves.toBe("wheel-bytes");
   });
 
