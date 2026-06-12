@@ -135,7 +135,7 @@ class PuppetAdapterState {
   }
 
   /** `GET /v3/files/:filename` — serve the hosted release tarball blob. */
-  async file(filenameRaw: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  async file(filenameRaw: string, _req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const filename = PuppetFileNameSchema.safeParse(filenameRaw);
     if (!filename.success) return puppetBadRequest("invalid release filename");
     const ref = fileToRelease(filename.data);
@@ -152,7 +152,6 @@ class PuppetAdapterState {
           ? metadata.blobDigest
           : null,
       contentType: ARCHIVE_CONTENT_TYPE,
-      redirect: req.method === "GET",
       missing: () => puppetNotFound(`file ${filenameRaw} not found`),
     });
   }

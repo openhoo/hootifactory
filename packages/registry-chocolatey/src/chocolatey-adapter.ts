@@ -230,7 +230,7 @@ class ChocolateyAdapterState {
   async download(
     id: string,
     version: string,
-    req: Request,
+    _req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
     const norm = normalizeChocolateyVersion(version);
@@ -245,7 +245,6 @@ class ChocolateyAdapterState {
       kind: "generic_file",
       scope: chocolateyBlobScope(id.toLowerCase(), norm),
       contentType: "application/zip",
-      redirect: req.method === "GET",
       blocked: () => new Response("blocked by scan policy", { status: 403 }),
     });
   }

@@ -207,7 +207,7 @@ class ChefAdapterState {
   async download(
     nameRaw: string,
     versionRaw: string,
-    req: Request,
+    _req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
     const name = parseCookbookName(nameRaw);
@@ -218,7 +218,6 @@ class ChefAdapterState {
       kind: "chef_cookbook",
       scope: chefBlobScope(name, stored.version),
       contentType: TARBALL_MEDIA_TYPE,
-      redirect: req.method === "GET",
       blocked: () => new Response("blocked by scan policy", { status: 403 }),
     });
   }

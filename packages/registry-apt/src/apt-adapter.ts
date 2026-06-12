@@ -98,7 +98,7 @@ class AptAdapterState {
     return bytesResponseWithEtag(req, entry.gz, { "content-type": "application/gzip" });
   }
 
-  async download(path: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  async download(path: string, _req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const poolPath = parseRegistryInput(PoolPathSchema, `pool/${path}`, {
       code: "NAME_INVALID",
       message: "invalid pool path",
@@ -108,7 +108,6 @@ class AptAdapterState {
       kind: APT_DEB_KIND,
       scope: poolPath,
       contentType: "application/vnd.debian.binary-package",
-      redirect: req.method === "GET",
     });
   }
 

@@ -67,7 +67,6 @@ describe("serveBlobIfClean", () => {
         digest: "sha256:deadbeef",
         contentType: "application/octet-stream",
         blocked: () => new Response("blocked by scan policy", { status: 403 }),
-        redirect: true,
       },
       async () => false,
     );
@@ -84,7 +83,6 @@ describe("serveBlobIfClean", () => {
         digest: "sha256:deadbeef",
         contentType: "application/octet-stream",
         blocked: () => new Response("blocked by scan policy", { status: 403 }),
-        redirect: true,
       },
       async () => false,
     );

@@ -208,7 +208,7 @@ class AnsibleAdapterState {
   /** `GET /api/v3/collections/download/:filename` — serve the hosted artifact blob. */
   async download(
     filenameRaw: string,
-    req: Request,
+    _req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
     const file = parseAnsibleParam(
@@ -233,7 +233,6 @@ class AnsibleAdapterState {
       kind: ARTIFACT_BLOB_KIND,
       scope: ansibleBlobScope(fqcn, split.version),
       contentType: ARTIFACT_MEDIA_TYPE,
-      redirect: req.method === "GET",
       blocked: () => new Response("blocked by scan policy", { status: 403 }),
     });
   }

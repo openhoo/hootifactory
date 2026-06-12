@@ -92,7 +92,7 @@ class OpamAdapterState {
     name: string,
     version: string,
     filename: string,
-    req: Request,
+    _req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
     const pkg = await ctx.data.packages.findByName(name);
@@ -106,7 +106,6 @@ class OpamAdapterState {
       kind: OPAM_ARCHIVE_KIND,
       scope: opamBlobScope(name, version, filename),
       contentType: opamArchiveMediaType(filename),
-      redirect: req.method === "GET",
       blocked: () => new Response("blocked by scan policy", { status: 403 }),
     });
   }

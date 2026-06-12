@@ -167,7 +167,7 @@ class SwiftAdapterState {
     scope: string,
     name: string,
     versionRaw: string,
-    req: Request,
+    _req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
     const version = parseVersion(versionRaw);
@@ -187,7 +187,6 @@ class SwiftAdapterState {
         digest: `sha-256=${checksumBase64}`,
         "content-version": CONTENT_VERSION,
       },
-      redirect: req.method === "GET",
       blocked: () => problemResponse(403, "blocked by scan policy"),
     });
   }

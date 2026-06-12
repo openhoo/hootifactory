@@ -102,7 +102,7 @@ class HomebrewAdapterState {
     });
   }
 
-  async download(file: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  async download(file: string, _req: Request, ctx: RegistryRequestContext): Promise<Response> {
     // The bottle filename IS the stored asset/blob-ref scope, so resolve the blob
     // directly by it. We never split name/version out of the filename — that stem
     // is ambiguous (both admit `-`/`.`), and real brew downloads by URL, never by
@@ -115,7 +115,6 @@ class HomebrewAdapterState {
       kind: BOTTLE_ASSET_ROLE,
       scope: file,
       contentType: BOTTLE_MEDIA_TYPE,
-      redirect: req.method === "GET",
       blocked: () => new Response("blocked by scan policy", { status: 403 }),
     });
   }

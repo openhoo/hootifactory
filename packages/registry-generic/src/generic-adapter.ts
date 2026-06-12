@@ -95,7 +95,6 @@ class GenericAdapterState {
       extraHeaders,
       req,
       etag,
-      redirect: req.method === "GET",
     });
   }
 

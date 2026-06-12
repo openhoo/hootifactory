@@ -243,7 +243,7 @@ class NugetAdapterState {
     id: string,
     version: string,
     file: string,
-    req: Request,
+    _req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
     const pkg = await this.findPkg(ctx, id);
@@ -270,7 +270,6 @@ class NugetAdapterState {
       parseMetadata: parseNugetVersionMeta,
       digest: ({ metadata }) => metadata.nupkgDigest,
       contentType: "application/octet-stream",
-      redirect: req.method === "GET",
     });
   }
 

@@ -74,7 +74,7 @@ class RpmAdapterState {
     return bytesResponseWithEtag(req, primary.gz, { "content-type": "application/gzip" }, etag);
   }
 
-  async download(file: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
+  async download(file: string, _req: Request, ctx: RegistryRequestContext): Promise<Response> {
     file = parseRpmFile(file);
     const asset = await ctx.data.assets.findByScope({ role: "rpm_package", scope: file });
     if (!asset) throw Errors.notFound();
@@ -83,7 +83,6 @@ class RpmAdapterState {
       kind: RPM_BLOB_KIND,
       scope: rpmBlobScope(file),
       contentType: "application/x-rpm",
-      redirect: req.method === "GET",
       blocked: () => new Response("blocked by scan policy", { status: 403 }),
     });
   }

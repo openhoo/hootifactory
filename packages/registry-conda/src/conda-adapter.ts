@@ -102,7 +102,7 @@ class CondaAdapterState {
   async download(
     subdir: string,
     filenameRaw: string,
-    req: Request,
+    _req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
     // A download path that is not a `.conda`/`.tar.bz2` package filename is a
@@ -132,7 +132,6 @@ class CondaAdapterState {
       digest: ({ metadata }) =>
         metadata.subdir === subdir && metadata.filename === filename ? metadata.blobDigest : null,
       contentType: CONDA_MEDIA_TYPE,
-      redirect: req.method === "GET",
     });
   }
 

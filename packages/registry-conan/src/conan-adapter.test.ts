@@ -564,7 +564,7 @@ describe("Conan adapter", () => {
     ).rejects.toMatchObject({ status: 400, code: "NAME_INVALID" });
   });
 
-  test("file download resolves the stored blob digest and redirects on GET", async () => {
+  test("file download resolves the stored blob digest", async () => {
     const ctx = conanContext();
     const served: { digest?: string } = {};
     ctx.data.packages.findByName = async () => pkgRow();

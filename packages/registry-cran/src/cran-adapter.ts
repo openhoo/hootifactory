@@ -112,7 +112,7 @@ class CranAdapterState {
   private async serveTarball(
     name: string,
     version: string,
-    req: Request,
+    _req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
     const scope = cranBlobScope(name, version);
@@ -124,7 +124,6 @@ class CranAdapterState {
       parseMetadata: parseCranVersionMeta,
       digest: ({ metadata }) => metadata.blobDigest,
       contentType: "application/gzip",
-      redirect: req.method === "GET",
     });
   }
 

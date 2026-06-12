@@ -17,7 +17,6 @@ type BlobResponseOptions = {
   extraHeaders?: Record<string, string>;
   blocked: () => Response;
   notModified?: () => Response | null;
-  redirect?: boolean;
 };
 
 function attachmentFilename(name: string): string {

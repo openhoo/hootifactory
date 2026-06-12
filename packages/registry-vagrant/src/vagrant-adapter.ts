@@ -167,7 +167,7 @@ class VagrantAdapterState {
     box: string,
     version: string,
     provider: string,
-    req: Request,
+    _req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
     const name = boxName(user, box);
@@ -184,7 +184,6 @@ class VagrantAdapterState {
       kind: BOX_ASSET_ROLE,
       scope: `${name}@${version}/${provider}`,
       contentType: BOX_MEDIA_TYPE,
-      redirect: req.method === "GET",
       blocked: () => new Response("blocked by scan policy", { status: 403 }),
     });
   }

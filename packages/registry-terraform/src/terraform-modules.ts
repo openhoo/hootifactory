@@ -95,7 +95,7 @@ export async function serveModuleArchive(
   name: string,
   system: string,
   version: string,
-  req: Request,
+  _req: Request,
   ctx: RegistryRequestContext,
 ): Promise<Response> {
   const meta = await findLiveModule(ctx, namespace, name, system, version);
@@ -105,7 +105,6 @@ export async function serveModuleArchive(
     kind: MODULE_BLOB_KIND,
     scope: moduleBlobScope(namespace, name, system, version),
     contentType: "application/gzip",
-    redirect: req.method === "GET",
     blocked: () => new Response("blocked by scan policy", { status: 403 }),
   });
 }

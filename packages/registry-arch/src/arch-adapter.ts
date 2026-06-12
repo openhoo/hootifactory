@@ -113,7 +113,7 @@ class ArchAdapterState {
   /** Serve a package blob, resolved from the stored asset by filename scope. */
   private async download(
     file: string,
-    req: Request,
+    _req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
     const scope = archBlobScope(file);
@@ -124,7 +124,6 @@ class ArchAdapterState {
       kind: ARCH_PKG_KIND,
       scope,
       contentType: PKG_CONTENT_TYPE,
-      redirect: req.method === "GET",
       blocked: () => new Response("blocked by scan policy", { status: 403 }),
     });
   }

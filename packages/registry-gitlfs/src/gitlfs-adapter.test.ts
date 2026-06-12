@@ -531,12 +531,10 @@ describe("Git LFS adapter", () => {
     expect(res.status).toBe(404);
   });
 
-  test("HEAD serves headers without following a redirect", async () => {
+  test("HEAD serves headers and body metadata", async () => {
     const ctx = lfsContext();
-    const seen: { redirect?: boolean } = {};
     ctx.data.content.blobRefExists = async () => true;
-    ctx.data.content.serveBlobIfClean = async ({ redirect, contentType }) => {
-      seen.redirect = redirect;
+    ctx.data.content.serveBlobIfClean = async ({ contentType }) => {
       return new Response(null, { headers: { "content-type": contentType } });
     };
     const res = await new GitLfsAdapter().handle(
@@ -545,7 +543,6 @@ describe("Git LFS adapter", () => {
       ctx,
     );
     expect(res.status).toBe(200);
-    expect(seen.redirect).toBe(false);
   });
 
   test("an object stored in one repo is not visible from a different repo", async () => {
