@@ -32,7 +32,7 @@ function tarRecord(name: string, data: Uint8Array): Uint8Array {
   put("ustar", 257, 6);
   put("00", 263, 2);
   let sum = 0;
-  for (let i = 0; i < 512; i++) sum += block[i];
+  for (let i = 0; i < 512; i++) sum += block[i]!;
   put(`${sum.toString(8).padStart(6, "0")}\0 `, 148, 8); // header checksum
   block.set(data, 512);
   return block;
@@ -64,7 +64,7 @@ const CRC_TABLE = (() => {
 })();
 function crc32(buf: Uint8Array): number {
   let c = 0xffffffff;
-  for (let i = 0; i < buf.length; i++) c = (CRC_TABLE[(c ^ buf[i]) & 0xff] ?? 0) ^ (c >>> 8);
+  for (let i = 0; i < buf.length; i++) c = (CRC_TABLE[(c ^ buf[i]!) & 0xff] ?? 0) ^ (c >>> 8);
   return (c ^ 0xffffffff) >>> 0;
 }
 

@@ -116,7 +116,7 @@ test.describe("npm protocol publish validation", () => {
     expect(
       (
         await owner.ctx.get(`/${repo.mountPath}/${pkg}`, {
-          headers: { "if-none-match": packumentEtag },
+          headers: { "if-none-match": packumentEtag! },
         })
       ).status(),
     ).toBe(304);
@@ -128,7 +128,7 @@ test.describe("npm protocol publish validation", () => {
     expect(
       (
         await owner.ctx.get(`/${repo.mountPath}/${pkg}/-/${pkg}-1.0.0.tgz`, {
-          headers: { "if-none-match": tarballEtag },
+          headers: { "if-none-match": tarballEtag! },
         })
       ).status(),
     ).toBe(304);

@@ -444,7 +444,7 @@ test.describe("virtual + proxy repositories (Dockerized real npm)", () => {
     expect(packument.versions["1.1.0"].dist.tarball).not.toContain(`/${b.mountPath}/`);
 
     const notModified = await owner.ctx.get(`/${v.mountPath}/${pkg}`, {
-      headers: { "if-none-match": etag },
+      headers: { "if-none-match": etag! },
     });
     expect(notModified.status()).toBe(304);
     expect(notModified.headers().etag).toBe(etag);
@@ -596,7 +596,7 @@ test.describe("virtual + proxy repositories (Dockerized real npm)", () => {
     publish(baseURL!, upstream.mountPath, token, pkg, "1.1.0", "fresh");
 
     const refreshed = await owner.ctx.get(`/${proxy.mountPath}/${pkg}`, {
-      headers: { "if-none-match": oldEtag },
+      headers: { "if-none-match": oldEtag! },
     });
     expect(refreshed.status()).toBe(200);
     expect((await refreshed.json())["dist-tags"].latest).toBe("1.1.0");
