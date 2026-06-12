@@ -272,6 +272,8 @@ export async function commitUploadedBlobRefTx(
   opts: { mediaType?: string; kind: BlobRefKind; scope: string },
 ): Promise<StoredBlob> {
   await lockDigestTx(tx, put.digest);
+  const stat = await blobStore.stat(put.digest);
+  if (!stat) throw Errors.blobUnknown({ digest: put.digest });
   return commitBlobPutTx(tx, ctx, put, opts);
 }
 
