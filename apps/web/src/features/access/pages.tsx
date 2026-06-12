@@ -638,7 +638,11 @@ export function AccessPage() {
                       <select
                         className="h-9 w-full rounded-md border bg-background px-2 text-sm"
                         value={newGrant.permission}
-                        disabled={!canManageGroupPermissions || assignablePermissions.length === 0}
+                        disabled={
+                          !canManageGroupPermissions ||
+                          assignablePermissions.length === 0 ||
+                          !groupPermissionsQ.isSuccess
+                        }
                         onChange={(event) => {
                           const permission = event.target.value as TokenGrant["permission"];
                           setNewGrant({
@@ -661,7 +665,9 @@ export function AccessPage() {
                     <Field label="Scope">
                       <Input
                         disabled={
-                          !canManageGroupPermissions || !grantNeedsRepository(newGrant.permission)
+                          !canManageGroupPermissions ||
+                          !grantNeedsRepository(newGrant.permission) ||
+                          !groupPermissionsQ.isSuccess
                         }
                         value={newGrant.repository ?? ""}
                         onChange={(event) =>
@@ -672,7 +678,11 @@ export function AccessPage() {
                     <Button
                       type="button"
                       className="h-9"
-                      disabled={!canManageGroupPermissions || assignablePermissions.length === 0}
+                      disabled={
+                        !canManageGroupPermissions ||
+                        assignablePermissions.length === 0 ||
+                        !groupPermissionsQ.isSuccess
+                      }
                       onClick={addDraftGrant}
                     >
                       <Plus />
@@ -727,7 +737,11 @@ export function AccessPage() {
                       <Button
                         type="button"
                         onClick={() => savePermissions.mutate()}
-                        disabled={!canManageGroupPermissions || savePermissions.isPending}
+                        disabled={
+                          !canManageGroupPermissions ||
+                          savePermissions.isPending ||
+                          !groupPermissionsQ.isSuccess
+                        }
                       >
                         <Save />
                         Save permissions
