@@ -74,6 +74,34 @@ export async function claimScanIntents(
   return claimedScanIntentsFromExecute(result);
 }
 
+/**
+ * Start a periodic heartbeat that refreshes locked_at on the claimed row so
+ * reclaimStuckScans does not reclaim a live, long-running scan. Returns a stop
+ * function (call to cancel the interval).
+ *
+ * Uses claimedAttemptFilter: if a reclaim or another worker picks up the row, the
+ * filter no longer matches and the heartbeat UPDATE becomes a no-op.
+ */
+export function startLockHeartbeat(
+  intent: ClaimedScanIntent,
+  intervalMs: number,
+  dbClient: typeof db = db,
+): () => void {
+  const timer = setInterval(() => {
+    dbClient
+      .update(scanOutbox)
+      .set({ lockedAt: new Date(), updatedAt: new Date() })
+      .where(claimedAttemptFilter(intent))
+      .execute()
+      .catch(() => {
+        // Heartbeat failures are benign: if the DB is temporarily unreachable the
+        // next tick will retry; if the row was reclaimed, the filter no longer
+        // matches and the update is a no-op.
+      });
+  }, intervalMs);
+  return () => clearInterval(timer);
+}
+
 // Terminal writes are gated by claimedAttemptFilter (optimistic concurrency): a
 // worker finalizes only the exact attempt it claimed. If a re-publish reset the row
 // to 'pending' and another worker re-claimed it (advancing attempts), or a reclaim
@@ -234,41 +262,47 @@ export async function processClaimedIntent(
   scannerRuntime: ScannerRuntime,
   maxAttempts: number,
   deps: ScanLoopDeps = {},
+  heartbeatMs?: number,
 ): Promise<void> {
   const dbClient = deps.db ?? db;
   const runScan = deps.processScan ?? processScan;
   const recordFailure = deps.recordScanFailure ?? recordScanFailure;
   const restoreTelemetry = deps.withTelemetryContext ?? withTelemetryContext;
-  return restoreTelemetry(intent.telemetry, () =>
-    withSpan(
-      "scan.outbox.process",
-      {
-        "scan.outbox.id": intent.id,
-        "artifact.id": intent.artifactId,
-        "scan.outbox.attempts": intent.attempts,
-      },
-      async () => {
-        try {
-          await runScan(intent.artifactId, scannerRuntime);
-          await markSucceeded(intent, dbClient);
-        } catch (err) {
-          logger.error("scan job failed", {
-            artifactId: intent.artifactId,
-            attempt: intent.attempts,
-            error: err,
-          });
-          await recordFailure(intent.artifactId, err).catch((recordErr) => {
-            logger.error("scan failure recording failed", {
+  const stopHeartbeat = heartbeatMs ? startLockHeartbeat(intent, heartbeatMs, dbClient) : () => {};
+  try {
+    return restoreTelemetry(intent.telemetry, () =>
+      withSpan(
+        "scan.outbox.process",
+        {
+          "scan.outbox.id": intent.id,
+          "artifact.id": intent.artifactId,
+          "scan.outbox.attempts": intent.attempts,
+        },
+        async () => {
+          try {
+            await runScan(intent.artifactId, scannerRuntime);
+            await markSucceeded(intent, dbClient);
+          } catch (err) {
+            logger.error("scan job failed", {
               artifactId: intent.artifactId,
-              originalError: err instanceof Error ? err.message : String(err),
-              error: recordErr,
+              attempt: intent.attempts,
+              error: err,
             });
-          });
-          await markFailed(intent, err, maxAttempts, dbClient);
-        }
-      },
-    ),
-  );
+            await recordFailure(intent.artifactId, err).catch((recordErr) => {
+              logger.error("scan failure recording failed", {
+                artifactId: intent.artifactId,
+                originalError: err instanceof Error ? err.message : String(err),
+                error: recordErr,
+              });
+            });
+            await markFailed(intent, err, maxAttempts, dbClient);
+          }
+        },
+      ),
+    );
+  } finally {
+    stopHeartbeat();
+  }
 }
 
 /** Run one claim/process cycle: claim a batch and fan it out over the scanners. */
@@ -287,8 +321,12 @@ export async function runScanCycle(
     await sleep(config.pollingIntervalSeconds * 1000);
     return 0;
   }
+  const heartbeatMs = Math.max(
+    10_000,
+    Math.min(30_000, (config.scanReclaimTimeoutSeconds * 1000) / 10),
+  );
   await mapWithBoundedConcurrency(intents, config.concurrency, (intent) =>
-    processClaimedIntent(intent, scannerRuntime, config.maxAttempts, deps),
+    processClaimedIntent(intent, scannerRuntime, config.maxAttempts, deps, heartbeatMs),
   );
   return intents.length;
 }
