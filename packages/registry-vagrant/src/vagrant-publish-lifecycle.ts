@@ -94,13 +94,6 @@ export async function handleVagrantPublish(
     return Response.json({ error: "box provider already exists" }, { status: 409 });
   }
 
-  await ctx.enqueueScan({
-    digest: stored.digest,
-    name,
-    version,
-    mediaType: BOX_MEDIA_TYPE,
-  });
-
   return Response.json({ ok: true, name, version, provider }, { status: 201 });
 }
 
@@ -181,5 +174,11 @@ function upsertProviderAsset(
     mediaType: BOX_MEDIA_TYPE,
     sizeBytes: opts.sizeBytes,
     metadata: { provider: opts.provider },
+    scanInput: {
+      digest: opts.stored.digest,
+      name: opts.package.name,
+      version: opts.version,
+      mediaType: BOX_MEDIA_TYPE,
+    },
   });
 }

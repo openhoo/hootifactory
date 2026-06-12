@@ -322,27 +322,27 @@ describe("LuaRocks adapter", () => {
       committed.metadata = input.metadata;
       return "ver_1";
     };
-    ctx.data.assets.upsert = async (input) => ({
-      id: "asset_1",
-      orgId: "org_1",
-      repositoryId: "repo_1",
-      packageId: input.package?.id ?? null,
-      packageVersionId: input.packageVersion?.id ?? null,
-      blobRefId: input.blobRefId ?? null,
-      role: input.role,
-      scope: input.scope ?? "",
-      path: input.path ?? null,
-      digest: input.digest,
-      mediaType: input.mediaType ?? null,
-      sizeBytes: input.sizeBytes ?? 0,
-      metadata: input.metadata ?? {},
-      deletedAt: null,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    });
     const scanned: { digest?: string } = {};
-    ctx.enqueueScan = async (input) => {
-      scanned.digest = input.digest;
+    ctx.data.assets.upsert = async (input) => {
+      scanned.digest = input.scanInput?.digest;
+      return {
+        id: "asset_1",
+        orgId: "org_1",
+        repositoryId: "repo_1",
+        packageId: input.package?.id ?? null,
+        packageVersionId: input.packageVersion?.id ?? null,
+        blobRefId: input.blobRefId ?? null,
+        role: input.role,
+        scope: input.scope ?? "",
+        path: input.path ?? null,
+        digest: input.digest,
+        mediaType: input.mediaType ?? null,
+        sizeBytes: input.sizeBytes ?? 0,
+        metadata: input.metadata ?? {},
+        deletedAt: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
     };
 
     const res = await new LuarocksAdapter().handle(

@@ -76,13 +76,6 @@ export async function handleHomebrewPublish(
     return Response.json({ error: "bottle already exists" }, { status: 409 });
   }
 
-  await ctx.enqueueScan({
-    digest: stored.digest,
-    name,
-    version,
-    mediaType: BOTTLE_MEDIA_TYPE,
-  });
-
   return Response.json({ ok: true, name, version, tag }, { status: 201 });
 }
 
@@ -178,5 +171,11 @@ function upsertBottleAsset(
     mediaType: BOTTLE_MEDIA_TYPE,
     sizeBytes: opts.sizeBytes,
     metadata: { tag: opts.tag },
+    scanInput: {
+      digest: opts.stored.digest,
+      name: opts.package.name,
+      version: opts.version,
+      mediaType: BOTTLE_MEDIA_TYPE,
+    },
   });
 }

@@ -74,15 +74,13 @@ function setup() {
   };
   ctx.data.assets.upsert = async (input) => {
     captured.assetScopes.push(input.scope ?? "");
+    if (input.scanInput) captured.scans.push(input.scanInput);
     return assetRow(input.scope ?? "");
   };
   ctx.data.packages.findOrCreate = async ({ name }) => packageRow(name);
   ctx.data.versions.upsert = async (input) => {
     captured.version = input;
     return "ver_1";
-  };
-  ctx.enqueueScan = async (input) => {
-    captured.scans.push(input);
   };
   return { ctx, captured };
 }

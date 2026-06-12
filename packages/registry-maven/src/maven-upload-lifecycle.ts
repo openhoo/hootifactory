@@ -41,18 +41,21 @@ export async function handleMavenUpload(
       path,
       mediaType,
       sizeBytes: stored.size,
+      ...(coords && isScannableMavenArtifact(path)
+        ? {
+            scanInput: {
+              digest: stored.digest,
+              name: `${coords.groupId}:${coords.artifactId}`,
+              version: coords.version,
+              mediaType,
+            },
+          }
+        : {}),
     });
     // Scan the bytes that actually carry executable code (jar/war/ear/aar/.module);
     // checksum/signature sidecars (.sha1/.md5/.sha256/.sha512/.asc) and metadata
     // files carry none.
     if (coords && isScannableMavenArtifact(path)) {
-      const name = `${coords.groupId}:${coords.artifactId}`;
-      await ctx.enqueueScan({
-        digest: stored.digest,
-        name,
-        version: coords.version,
-        mediaType,
-      });
       await referenceBinaryDigest(ctx, coords, stored.digest);
     }
     return new Response(null, { status: 201 });
@@ -73,6 +76,12 @@ export async function handleMavenUpload(
     path,
     mediaType,
     sizeBytes: bytes.byteLength,
+    scanInput: {
+      digest: stored.digest,
+      name: `${primaryPom.groupId}:${primaryPom.artifactId}`,
+      version: primaryPom.version,
+      mediaType: "application/xml",
+    },
   });
 
   if (primaryPom) {
@@ -89,12 +98,6 @@ export async function handleMavenUpload(
         pomDigest: stored.digest,
       },
       sizeBytes: bytes.byteLength,
-    });
-    await ctx.enqueueScan({
-      digest: stored.digest,
-      name,
-      version: primaryPom.version,
-      mediaType: "application/xml",
     });
   }
 

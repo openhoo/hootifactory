@@ -78,12 +78,12 @@ export async function handleAptUpload(input: {
       suite,
       component,
     },
-  });
-  await ctx.enqueueScan({
-    digest: stored.digest,
-    name,
-    version,
-    mediaType: "application/vnd.debian.binary-package",
+    scanInput: {
+      digest: stored.digest,
+      name,
+      version,
+      mediaType: "application/vnd.debian.binary-package",
+    },
   });
   return new Response(null, { status: 201 });
 }

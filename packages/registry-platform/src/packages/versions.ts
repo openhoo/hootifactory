@@ -1,3 +1,4 @@
+import { env } from "@hootifactory/config";
 import { Errors } from "@hootifactory/core";
 import { and, blobRefs, blobs, db, eq, packageVersions, versionTags } from "@hootifactory/db";
 import { computeDigest, type RegistryRequestContext } from "@hootifactory/registry";
@@ -20,7 +21,9 @@ import {
   assertStorageQuotaRowAllows,
   lockOrgQuotaTx,
   orgAlreadyReferencesDigestTx,
+  type Tx,
 } from "../governance/quota";
+import { recordArtifactScanOutbox } from "../runtime/scan-outbox";
 
 export function publisherOf(ctx: RegistryRequestContext): {
   publishedByUserId: string | null;
@@ -107,6 +110,7 @@ export async function upsertPackageVersionWithBlobRef(
     version: string;
     metadata: Record<string, unknown>;
     sizeBytes: number;
+    scan?: { name?: string; version?: string; mediaType?: string };
     blob: {
       data: Uint8Array;
       mediaType?: string;
@@ -204,6 +208,14 @@ export async function upsertPackageVersionWithBlobRef(
         .returning({ id: packageVersions.id });
       if (!versionRow) throw new Error("failed to upsert package version");
       if (chargeArtifact) await adjustArtifactsUsedTx(tx, ctx.repo.orgId, 1);
+      if (opts.scan && env.SCANNER_ENABLED) {
+        await recordArtifactScanOutbox(
+          ctx.repo,
+          { digest: put.digest, ...opts.scan },
+          undefined,
+          tx,
+        );
+      }
 
       return {
         deleteCasDigest: previousDigest,
@@ -234,20 +246,22 @@ export async function createPackageVersion(
     metadata: Record<string, unknown>;
     sizeBytes: number;
   },
+  tx?: Tx,
 ): Promise<string | null> {
   const publisher = publisherOf(ctx);
-  return db.transaction(async (tx) => {
-    const quota = await lockOrgQuotaTx(tx, ctx.repo.orgId);
-    const [row] = await tx
+  const create = async (dbTx: Tx) => {
+    const quota = await lockOrgQuotaTx(dbTx, ctx.repo.orgId);
+    const [row] = await dbTx
       .insert(packageVersions)
       .values(packageVersionValues(ctx, opts, publisher))
       .onConflictDoNothing()
       .returning({ id: packageVersions.id });
     if (!row) return null;
     assertArtifactQuotaRowAllows(quota, 1);
-    await adjustArtifactsUsedTx(tx, ctx.repo.orgId, 1);
+    await adjustArtifactsUsedTx(dbTx, ctx.repo.orgId, 1);
     return row.id;
-  });
+  };
+  return tx ? create(tx) : db.transaction(create);
 }
 
 /**
@@ -266,26 +280,37 @@ export async function commitVersionOrReleaseBlob(
     metadata: Record<string, unknown>;
     sizeBytes: number;
     scan: { name?: string; version?: string; mediaType?: string };
+    extraScans?: Array<{ digest: string; name?: string; version?: string; mediaType?: string }>;
   },
 ): Promise<{ versionId: string } | { conflict: true }> {
-  const versionId = await createPackageVersion(ctx, {
+  const createInput = {
     packageId: opts.packageId,
     version: opts.version,
     metadata: opts.metadata,
     sizeBytes: opts.sizeBytes,
-  });
+  };
+  const versionId = env.SCANNER_ENABLED
+    ? await db.transaction(async (tx) => {
+        const created = await createPackageVersion(ctx, createInput, tx);
+        if (!created) return null;
+        await recordArtifactScanOutbox(
+          ctx.repo,
+          { digest: opts.stored.digest, ...opts.scan },
+          undefined,
+          tx,
+        );
+        for (const scan of opts.extraScans ?? []) {
+          await recordArtifactScanOutbox(ctx.repo, scan, undefined, tx);
+        }
+        return created;
+      })
+    : await createPackageVersion(ctx, createInput);
   if (!versionId) {
     if (opts.stored.refCreated) {
       await releaseBlobRef(ctx, { digest: opts.stored.digest, kind: opts.kind, scope: opts.scope });
     }
     return { conflict: true };
   }
-  await ctx.enqueueScan({
-    digest: opts.stored.digest,
-    name: opts.scan.name,
-    version: opts.scan.version,
-    mediaType: opts.scan.mediaType,
-  });
   return { versionId };
 }
 

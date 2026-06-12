@@ -128,16 +128,17 @@ export async function handleConanFileUpload(
     mediaType: "application/octet-stream",
     sizeBytes: bytes.byteLength,
     metadata: { reference, rrev: target.rrev, filename: target.filename },
+    ...(isScannableConanFile(target.filename)
+      ? {
+          scanInput: {
+            digest: stored.digest,
+            name: reference,
+            version,
+            mediaType: "application/octet-stream",
+          },
+        }
+      : {}),
   });
-
-  if (isScannableConanFile(target.filename)) {
-    await ctx.enqueueScan({
-      digest: stored.digest,
-      name: reference,
-      version,
-      mediaType: "application/octet-stream",
-    });
-  }
 
   return new Response(null, {
     status: 201,

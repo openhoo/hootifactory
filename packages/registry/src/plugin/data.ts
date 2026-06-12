@@ -245,7 +245,9 @@ export interface StoreBlobWithRefInput {
   mediaType?: string;
   kind: RegistryBlobRefKind;
   scope: string;
-  asset?: RegistryAssetWriteInput;
+  asset?: RegistryAssetWriteInput & {
+    scan?: { name?: string; version?: string; mediaType?: string };
+  };
 }
 
 export interface StoreBlobStreamWithRefInput {
@@ -254,7 +256,9 @@ export interface StoreBlobStreamWithRefInput {
   mediaType?: string;
   kind: RegistryBlobRefKind;
   scope: string;
-  asset?: RegistryAssetWriteInput;
+  asset?: RegistryAssetWriteInput & {
+    scan?: { name?: string; version?: string; mediaType?: string };
+  };
 }
 
 export interface RegistryAssetWriteInput {
@@ -317,6 +321,7 @@ export interface RegistryDataService {
     upsert(input: UpsertPackageVersionInput): Promise<string>;
     upsertWithBlobRef(
       input: UpsertPackageVersionInput & {
+        scan?: { name?: string; version?: string; mediaType?: string };
         blob: {
           data: Uint8Array;
           mediaType?: string;
@@ -336,6 +341,7 @@ export interface RegistryDataService {
       metadata: Record<string, unknown>;
       sizeBytes: number;
       scan: { name?: string; version?: string; mediaType?: string };
+      extraScans?: Array<{ digest: string; name?: string; version?: string; mediaType?: string }>;
       asset?: RegistryAssetWriteInput;
     }): Promise<{ versionId: string } | { conflict: true }>;
     patch<T>(input: {

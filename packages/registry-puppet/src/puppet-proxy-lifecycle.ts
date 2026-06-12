@@ -88,6 +88,11 @@ export async function handlePuppetProxyIngest(
       version: release.version,
       metadata: { ...meta },
       sizeBytes: tarball.length,
+      scan: {
+        name: slug,
+        version: release.version,
+        mediaType: ARCHIVE_MEDIA_TYPE,
+      },
       blob: {
         data: tarball,
         kind: "puppet_release",
@@ -105,12 +110,6 @@ export async function handlePuppetProxyIngest(
     if (stored.digest !== meta.blobDigest) {
       throw new Error("stored puppet release digest mismatch");
     }
-    await ctx.enqueueScan({
-      digest: stored.digest,
-      name: slug,
-      version: release.version,
-      mediaType: ARCHIVE_MEDIA_TYPE,
-    });
   });
 
   return Boolean(pkg);

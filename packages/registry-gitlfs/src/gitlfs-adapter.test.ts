@@ -367,7 +367,6 @@ describe("Git LFS adapter", () => {
     const captured: {
       stored?: StoreBlobStreamWithRefInput;
       bytes?: Uint8Array;
-      scannedDigest?: string;
     } = {};
     ctx.data.content.storeBlobStreamWithRef = async (
       input: StoreBlobStreamWithRefInput,
@@ -381,9 +380,6 @@ describe("Git LFS adapter", () => {
         refCreated: true,
         blobRefId: "ref_1",
       };
-    };
-    ctx.enqueueScan = async (input) => {
-      captured.scannedDigest = input.digest;
     };
 
     const putRes = await new GitLfsAdapter().handle(
@@ -400,7 +396,7 @@ describe("Git LFS adapter", () => {
     // The CAS verifies the streamed bytes against the oid's digest itself.
     expect(captured.stored?.expectedDigest).toBe(HELLO_DIGEST);
     expect(captured.bytes && Array.from(captured.bytes)).toEqual(Array.from(HELLO));
-    expect(captured.scannedDigest).toBe(HELLO_DIGEST);
+    expect(captured.stored?.asset?.scan).toEqual({ mediaType: "application/octet-stream" });
 
     // Now GET the object back: serveRegistryBlob checks blobRefExists then serves.
     const served: { digest?: string } = {};
@@ -453,6 +449,7 @@ describe("Git LFS adapter", () => {
       // The adapter substitutes an already-closed stream for a missing body so the
       // CAS still receives a (zero-length) stream to hash.
       drained = (await new Response(input.data).arrayBuffer()).byteLength;
+      expect(input.asset?.scan).toEqual({ mediaType: "application/octet-stream" });
       return {
         digest: `sha256:${EMPTY_OID}`,
         size: 0,
@@ -460,10 +457,6 @@ describe("Git LFS adapter", () => {
         refCreated: true,
         blobRefId: "ref_empty",
       };
-    };
-    let scanned = false;
-    ctx.enqueueScan = async () => {
-      scanned = true;
     };
 
     const res = await new GitLfsAdapter().handle(
@@ -473,7 +466,6 @@ describe("Git LFS adapter", () => {
     );
     expect(res.status).toBe(200);
     expect(drained).toBe(0);
-    expect(scanned).toBe(true);
   });
 
   test("PUT rethrows non-digest storage errors instead of masking them as 422", async () => {

@@ -80,9 +80,6 @@ function proxyContext(stored: StoredVersion[]) {
   const ctx = createTestRegistryContext();
   ctx.repo = { ...ctx.repo, moduleId: "puppet", mountPath: "puppet/mirror" };
   const enqueued: { digest: string; version: string }[] = [];
-  ctx.enqueueScan = async (input) => {
-    enqueued.push({ digest: input.digest, version: input.version ?? "" });
-  };
   const existingPkg = {
     id: "pkg_puppetlabs-apache",
     orgId: "org_1",
@@ -124,6 +121,9 @@ function proxyContext(stored: StoredVersion[]) {
     }));
   ctx.data.versions.upsertWithBlobRef = async (input) => {
     const digest = computeDigest(input.blob.data);
+    if (input.scan) {
+      enqueued.push({ digest, version: input.scan.version ?? "" });
+    }
     stored.push({
       version: input.version,
       metadata: input.metadata as Record<string, unknown>,

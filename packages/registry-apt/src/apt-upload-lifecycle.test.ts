@@ -54,10 +54,8 @@ function setup(existing: RegistryAssetRow | null = null) {
   };
   ctx.data.assets.upsert = async (input) => {
     captured.assetMeta = input.metadata;
+    captured.scanName = input.scanInput?.name;
     return {} as RegistryAssetRow;
-  };
-  ctx.enqueueScan = async (input) => {
-    captured.scanName = input.name;
   };
   return { ctx, captured };
 }

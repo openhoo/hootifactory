@@ -93,7 +93,25 @@ import {
   deleteReplacedAssetRef,
   packageId,
 } from "./data-service-helpers";
-import { recordArtifactScanOutbox } from "./request-context";
+import { recordArtifactScanOutbox } from "./scan-outbox";
+
+async function upsertAssetWithOptionalScan(
+  ctx: RegistryRequestContext,
+  asset: ReturnType<typeof assetForWrite> & { digest: string },
+  scan?: { name?: string; version?: string; mediaType?: string },
+) {
+  if (!scan || !env.SCANNER_ENABLED) return upsertRegistryAsset(ctx, asset);
+  return db.transaction(async (tx) => {
+    const row = await upsertRegistryAsset(ctx, asset, tx);
+    await recordArtifactScanOutbox(
+      ctx.repo,
+      { digest: asset.digest, ...scan },
+      () => captureTelemetryContext(),
+      tx,
+    );
+    return row;
+  });
+}
 
 export function createRegistryDataService(
   ctx: RegistryRequestContext,
@@ -250,7 +268,7 @@ export function createRegistryDataService(
           scope: input.scope,
           mediaType: input.mediaType,
         });
-        if (asset) await upsertRegistryAsset(ctx, asset);
+        if (asset) await upsertAssetWithOptionalScan(ctx, asset, input.asset?.scan);
         return stored;
       },
       storeBlobStreamWithRef: async (input) => {
@@ -260,7 +278,7 @@ export function createRegistryDataService(
           scope: input.scope,
           mediaType: input.mediaType,
         });
-        if (asset) await upsertRegistryAsset(ctx, asset);
+        if (asset) await upsertAssetWithOptionalScan(ctx, asset, input.asset?.scan);
         return stored;
       },
       ensureBlobRef: async (input) => {
@@ -303,17 +321,16 @@ export function createRegistryDataService(
           await deleteRegistryAssetRef(ctx, { digest: existing.digest, scope, role: input.role });
         }
         const asset = assetForWrite(ctx, input);
-        if (input.scanInput && env.SCANNER_ENABLED) {
+        const scanInput = input.scanInput;
+        if (scanInput && env.SCANNER_ENABLED) {
           return db.transaction(async (tx) => {
-            const [row] = await Promise.all([
-              upsertRegistryAsset(ctx, asset, tx),
-              recordArtifactScanOutbox(
-                ctx.repo,
-                input.scanInput!,
-                () => captureTelemetryContext(),
-                tx,
-              ),
-            ]);
+            const row = await upsertRegistryAsset(ctx, asset, tx);
+            await recordArtifactScanOutbox(
+              ctx.repo,
+              scanInput,
+              () => captureTelemetryContext(),
+              tx,
+            );
             return row;
           });
         }

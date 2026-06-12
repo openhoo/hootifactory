@@ -81,10 +81,12 @@ export async function handlePypiUpload(
   const added = await addFileToVersion(ctx, {
     package: pkg,
     version,
+    name,
     rawName,
     requiresPython,
     fileMeta,
     stored,
+    scanMediaType: pypiScanMediaType(filetype),
   });
   if (!added.ok) {
     if (stored.refCreated) {
@@ -105,13 +107,6 @@ export async function handlePypiUpload(
     );
   }
 
-  await ctx.enqueueScan({
-    digest: stored.digest,
-    name,
-    version,
-    mediaType: pypiScanMediaType(filetype),
-  });
-
   return new Response(null, { status: 200 });
 }
 
@@ -120,10 +115,12 @@ async function addFileToVersion(
   opts: {
     package: { id: string; orgId: string; repositoryId: string; name: string };
     version: string;
+    name: string;
     rawName: string;
     requiresPython?: string;
     fileMeta: PypiFileMeta;
     stored: Awaited<ReturnType<typeof storeRegistryBlobStreamWithRef>>;
+    scanMediaType: string;
   },
 ): Promise<AddPypiFileResult> {
   const created = await ctx.data.versions.create({
@@ -148,6 +145,12 @@ async function addFileToVersion(
       mediaType: "application/octet-stream",
       sizeBytes: opts.fileMeta.size,
       metadata: { filetype: opts.fileMeta.filetype },
+      scanInput: {
+        digest: opts.stored.digest,
+        name: opts.name,
+        version: opts.version,
+        mediaType: opts.scanMediaType,
+      },
     });
     return { ok: true, versionId: created };
   }
@@ -192,6 +195,12 @@ async function addFileToVersion(
       mediaType: "application/octet-stream",
       sizeBytes: opts.fileMeta.size,
       metadata: { filetype: opts.fileMeta.filetype },
+      scanInput: {
+        digest: opts.stored.digest,
+        name: opts.name,
+        version: opts.version,
+        mediaType: opts.scanMediaType,
+      },
     });
   }
   return result;

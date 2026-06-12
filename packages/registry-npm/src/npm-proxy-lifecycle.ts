@@ -134,6 +134,11 @@ export async function handleNpmProxyIngest(
         version,
         metadata: { manifest, dist },
         sizeBytes: tarball.length,
+        scan: {
+          name: pkgName,
+          version,
+          mediaType: "application/octet-stream",
+        },
         blob: {
           data: tarball,
           kind: "npm_tarball",
@@ -155,12 +160,6 @@ export async function handleNpmProxyIngest(
       });
       if (stored.digest !== dist.blobDigest) throw new Error("stored npm tarball digest mismatch");
       ingestedVersions.set(version, { id: versionId, packageId: targetPkg.id, version });
-      await ctx.enqueueScan({
-        digest: stored.digest,
-        name: pkgName,
-        version,
-        mediaType: "application/octet-stream",
-      });
     },
   );
 

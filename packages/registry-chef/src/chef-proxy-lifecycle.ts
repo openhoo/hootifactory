@@ -78,6 +78,11 @@ export async function handleChefProxyIngest(
         version: detail.version,
         metadata: buildUpstreamVersionMeta(detail, parsed, digest),
         sizeBytes: tarball.length,
+        scan: {
+          name: cookbookName,
+          version: detail.version,
+          mediaType: TARBALL_MEDIA_TYPE,
+        },
         blob: {
           data: tarball,
           kind: "chef_cookbook",
@@ -93,12 +98,6 @@ export async function handleChefProxyIngest(
         },
       });
       if (stored.digest !== digest) throw new Error("stored chef tarball digest mismatch");
-      await ctx.enqueueScan({
-        digest: stored.digest,
-        name: cookbookName,
-        version: detail.version,
-        mediaType: TARBALL_MEDIA_TYPE,
-      });
     },
   );
 

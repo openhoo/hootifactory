@@ -52,6 +52,7 @@ describe("Conda proxy ingest", () => {
     ctx.data.versions.exists = async () => false;
     ctx.data.versions.upsertWithBlobRef = async (input) => {
       upserts.push({ version: input.version, metadata: input.metadata });
+      scanned = Boolean(input.scan);
       return {
         stored: {
           digest: `sha256:${PACKAGE_SHA256}`,
@@ -63,10 +64,6 @@ describe("Conda proxy ingest", () => {
         versionId: "ver_1",
       };
     };
-    ctx.enqueueScan = async () => {
-      scanned = true;
-    };
-
     mockUpstream(
       {
         info: { subdir: "linux-64" },

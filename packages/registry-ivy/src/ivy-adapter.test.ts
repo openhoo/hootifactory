@@ -342,6 +342,7 @@ describe("IvyAdapter", () => {
     };
     ctx.data.assets.upsert = async (input) => {
       captured.assetScope = input.scope ?? "";
+      captured.scan = input.scanInput;
       return assetRow(input.scope ?? "");
     };
     ctx.data.packages.findOrCreate = async ({ name }) => {
@@ -353,10 +354,6 @@ describe("IvyAdapter", () => {
       captured.metadata = input.metadata;
       return "ver_1";
     };
-    ctx.enqueueScan = async (input) => {
-      captured.scan = input;
-    };
-
     const publishRes = await new IvyAdapter().handle(
       createTestRouteMatch(
         { method: "PUT", pattern: "/:path+", handlerId: "upload" },
@@ -418,9 +415,9 @@ describe("IvyAdapter", () => {
       expect(input.data).toBeInstanceOf(ReadableStream);
       return stored;
     };
-    ctx.data.assets.upsert = async (input) => assetRow(input.scope ?? "");
-    ctx.enqueueScan = async (input) => {
-      captured.scan = input;
+    ctx.data.assets.upsert = async (input) => {
+      captured.scan = input.scanInput;
+      return assetRow(input.scope ?? "");
     };
 
     const res = await new IvyAdapter().handle(
@@ -504,6 +501,7 @@ describe("IvyAdapter", () => {
     };
     ctx.data.assets.upsert = async (input) => {
       captured.assetScope = input.scope ?? "";
+      captured.scan = input.scanInput;
       return assetRow(input.scope ?? "");
     };
     ctx.data.packages.findOrCreate = async ({ name }) => {
@@ -515,10 +513,6 @@ describe("IvyAdapter", () => {
       captured.metadata = input.metadata;
       return "ver_1";
     };
-    ctx.enqueueScan = async (input) => {
-      captured.scan = input;
-    };
-
     const publishRes = await new IvyAdapter().handle(
       createTestRouteMatch(
         { method: "PUT", pattern: "/:path+", handlerId: "upload" },
@@ -581,9 +575,9 @@ describe("IvyAdapter", () => {
       expect(input.data).toBeInstanceOf(ReadableStream);
       return stored;
     };
-    ctx.data.assets.upsert = async (input) => assetRow(input.scope ?? "");
-    ctx.enqueueScan = async (input) => {
-      captured.scan = input;
+    ctx.data.assets.upsert = async (input) => {
+      captured.scan = input.scanInput;
+      return assetRow(input.scope ?? "");
     };
 
     const res = await new IvyAdapter().handle(

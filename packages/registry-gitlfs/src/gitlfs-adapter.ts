@@ -202,6 +202,7 @@ class GitLfsAdapterState {
           path: oid,
           mediaType: "application/octet-stream",
           metadata: { oid },
+          scan: { mediaType: "application/octet-stream" },
         },
       });
     } catch (err) {
@@ -210,8 +211,6 @@ class GitLfsAdapterState {
       }
       throw err;
     }
-    // Wire the object into the scan pipeline (no-op when scanning is disabled).
-    await ctx.enqueueScan({ digest, mediaType: "application/octet-stream" });
     return new Response(null, { status: 200 });
   }
 
