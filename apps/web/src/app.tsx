@@ -86,7 +86,8 @@ const AUTH_PATHS = new Set(["/login", "/forgot-password", "/reset-password"]);
 function redirectOnUnauthorized(error: unknown) {
   if (!(error instanceof ApiError) || error.status !== 401) return;
   if (AUTH_PATHS.has(router.state.location.pathname)) return;
-  queryClient.removeQueries({ queryKey: ["me"] });
+  localStorage.removeItem("hoot_org");
+  queryClient.clear();
   void router.navigate({ to: "/login" });
 }
 
