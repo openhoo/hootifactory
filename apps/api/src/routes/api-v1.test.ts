@@ -137,4 +137,16 @@ describe("API v1 OpenAPI contracts", () => {
     expect(createToken?.required).toContain("grants");
     expect(JSON.stringify(createToken)).toContain("Fine-grained token permission grants.");
   });
+
+  test("renders the docs page with a server-side populated endpoint list", async () => {
+    const response = await app.fetch(new Request("http://localhost/api/v1/docs"));
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/html");
+
+    const body = await response.text();
+    expect(body).toContain('<ul id="paths">');
+    expect(body).toContain("<code>/me</code>");
+    expect(body).not.toMatch(/<script\b/i);
+    expect(body).not.toContain("</script>");
+  });
 });
