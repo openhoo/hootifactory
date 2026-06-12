@@ -125,11 +125,15 @@ describe("blobs CAS refcount/quota/GC (DB + MinIO)", () => {
     expect(await refState(digest)).toMatchObject({ refCount: 1, state: "active" });
     expect(await blobRefRows(digest)).toBe(1);
 
-    // Releasing the last ref drops ref_count to 0 (trigger) and the release path
-    // synchronously reclaims the now-unreferenced CAS blob (row + S3 object).
+    // Releasing the last ref drops ref_count to 0 and leaves the blob pending
+    // during the configured grace period.
     await releaseBlobRef(ctx, { digest, kind: "layer", scope: "s2" });
-    expect(await refState(digest)).toBeNull();
+    expect(await refState(digest)).toMatchObject({ refCount: 0, state: "pending_delete" });
     expect(await blobRefRows(digest)).toBe(0);
+    expect(await blobStore.stat(digest)).not.toBeNull();
+
+    await sweepUnreferencedCasBlobs({ limit: 50, graceMs: 0 });
+    expect(await refState(digest)).toBeNull();
     expect(await blobStore.stat(digest)).toBeNull();
   });
 

@@ -17,6 +17,7 @@ import {
 import { computeDigest, type RegistryRequestContext } from "@hootifactory/registry";
 import { createTestRegistryContext, createTestResolvedRepo } from "@hootifactory/registry/testing";
 import { blobStore } from "@hootifactory/storage";
+import { sweepUnreferencedCasBlobs } from "../content/blobs";
 import { upsertPackageVersionWithBlobRef } from "./versions";
 
 // DB+MinIO-backed coverage for the publish path that pairs a package-version
@@ -157,8 +158,14 @@ describe("upsertPackageVersionWithBlobRef (DB + MinIO)", () => {
 
     // Same (packageId, version) row was updated, not duplicated.
     expect(second.versionId).toBe(first.versionId);
-    // The old blob lost its last ref and was reclaimed post-commit (row + object).
+    // The old blob lost its last ref and is grace-gated before physical reclaim.
     expect(await blobRefRows(first.stored.digest)).toBe(0);
+    expect(await blobRow(first.stored.digest)).toMatchObject({
+      refCount: 0,
+      state: "pending_delete",
+    });
+    expect(await blobStore.stat(first.stored.digest)).not.toBeNull();
+    await sweepUnreferencedCasBlobs({ limit: 50, graceMs: 0 });
     expect(await blobRow(first.stored.digest)).toBeNull();
     expect(await blobStore.stat(first.stored.digest)).toBeNull();
     // The new blob is live and the org is charged for exactly the new bytes.

@@ -18,7 +18,7 @@ import {
 import { computeDigest, type RegistryRequestContext } from "@hootifactory/registry";
 import { createTestRegistryContext, createTestResolvedRepo } from "@hootifactory/registry/testing";
 import { blobStore } from "@hootifactory/storage";
-import { storeBlobWithRef } from "../content/blobs";
+import { storeBlobWithRef, sweepUnreferencedCasBlobs } from "../content/blobs";
 import { applyRetention } from "./retention";
 import { applyDueRetentionPolicies } from "./retention-sweep";
 
@@ -135,6 +135,15 @@ async function blobExists(digest: string): Promise<boolean> {
   return Boolean(row);
 }
 
+async function blobState(digest: string) {
+  const [row] = await db
+    .select({ refCount: blobs.refCount, state: blobs.state })
+    .from(blobs)
+    .where(eq(blobs.digest, digest))
+    .limit(1);
+  return row ?? null;
+}
+
 async function versionDeleted(id: string): Promise<boolean> {
   const [row] = await db
     .select({ deletedAt: packageVersions.deletedAt })
@@ -219,10 +228,16 @@ describe("applyRetention CAS/quota reclamation (DB + MinIO)", () => {
     expect(await versionDeleted(v2)).toBe(true);
     expect(await versionDeleted(v3)).toBe(false);
 
-    // Shared digest is kept (surviving v3 asset needs it); unique digest released.
+    // Shared digest is kept (surviving v3 asset needs it); unique digest is
+    // released and grace-gated before physical reclaim.
     expect(await repoRefExists(repo, sharedDigest)).toBe(true);
     expect(await repoRefExists(repo, uniqueDigest)).toBe(false);
     expect(await blobExists(sharedDigest)).toBe(true);
+    expect(await blobState(uniqueDigest)).toMatchObject({
+      refCount: 0,
+      state: "pending_delete",
+    });
+    await sweepUnreferencedCasBlobs({ limit: 50, graceMs: 0 });
     expect(await blobExists(uniqueDigest)).toBe(false);
 
     // Storage decremented by exactly the unique blob's size; artifacts by 2.
