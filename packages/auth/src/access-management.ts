@@ -1,6 +1,7 @@
 import {
   and,
   apiTokens,
+  count,
   db,
   desc,
   eq,
@@ -43,22 +44,28 @@ export const permissionCatalog: PermissionCatalogEntry[] = PERMISSIONS.map((key)
   description: PERMISSION_DESCRIPTIONS[key],
 }));
 
+function userListFilter(query?: string) {
+  if (!query) return undefined;
+  return or(
+    ilike(users.username, `%${query}%`),
+    ilike(users.email, `%${query}%`),
+    ilike(users.displayName, `%${query}%`),
+  );
+}
+
 export async function listUsers(input: { query?: string; limit: number; offset: number }) {
-  const filters = input.query
-    ? [
-        ilike(users.username, `%${input.query}%`),
-        ilike(users.email, `%${input.query}%`),
-        ilike(users.displayName, `%${input.query}%`),
-      ]
-    : [];
-  const where = filters.length > 0 ? or(...filters) : undefined;
   return db
     .select()
     .from(users)
-    .where(where)
+    .where(userListFilter(input.query))
     .orderBy(desc(users.createdAt))
     .limit(input.limit)
     .offset(input.offset);
+}
+
+export async function countUsers(query?: string): Promise<number> {
+  const rows = await db.select({ value: count() }).from(users).where(userListFilter(query));
+  return rows[0]?.value ?? 0;
 }
 
 export async function getUserById(userId: string): Promise<UserRow | null> {
