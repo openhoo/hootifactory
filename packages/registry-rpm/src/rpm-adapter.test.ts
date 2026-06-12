@@ -270,7 +270,7 @@ describe("RPM adapter", () => {
     });
   });
 
-  test("publish rejects an invalid :file param before permissions and the handler", async () => {
+  test("publish rejects an invalid :file param before the handler", async () => {
     const ctx = rpmCtx();
     const adapter = new RpmAdapter();
     const match = {
@@ -278,10 +278,10 @@ describe("RPM adapter", () => {
       params: { file: "../../etc/passwd" },
       path: "/packages/../../etc/passwd",
     } satisfies RouteMatch;
-    // 400-before-403: garbage params short-circuit permission resolution too.
-    expect(() => adapter.requiredPermission("PUT", match)).toThrow(
-      expect.objectContaining({ status: 400, code: "NAME_INVALID" }),
-    );
+    expect(adapter.requiredPermission("PUT", match)).toEqual({
+      action: "write",
+      resource: { type: "artifact", artifactRef: "../../etc/passwd" },
+    });
     await expect(
       adapter.handle(
         match,
