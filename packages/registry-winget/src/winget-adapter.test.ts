@@ -242,12 +242,13 @@ describe("WingetAdapter", () => {
     ctx.data.packages.findByName = async () => {
       throw new Error("should not query packages for an invalid Version");
     };
-    const call = new WingetAdapter().handle(
+    const res = await new WingetAdapter().handle(
       manifestMatch,
       new Request("https://registry.test/api/packageManifests/Acme.Widget?Version=bad%20version"),
       ctx,
     );
-    await expect(call).rejects.toMatchObject({ status: 404 });
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual([{ ErrorCode: 404, ErrorMessage: "invalid PackageVersion" }]);
   });
 
   const searchMatch = {
