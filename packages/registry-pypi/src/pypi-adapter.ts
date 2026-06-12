@@ -1,9 +1,11 @@
 import {
+  Errors,
   parseRegistryInput,
   type RegistryPlugin,
   type RegistryRequestContext,
   registryAdapter,
-  serveRegistryBlob,
+  repoResponseCache,
+  serveAssetBlob,
   textEtag,
   textResponseWithEtag,
 } from "@hootifactory/registry";
@@ -24,47 +26,11 @@ import {
 const SIMPLE_ROOT_CACHE_TTL_MS = 5_000;
 type SimpleRootVariant = "html" | "json";
 
-interface SimpleRootCacheEntry {
-  body: string;
-  etag: string;
-  expiresAt: number;
-}
-
 class PypiAdapterState {
-  readonly simpleRootCache = new Map<string, SimpleRootCacheEntry>();
-
-  simpleRootCacheKey(ctx: RegistryRequestContext, variant: SimpleRootVariant): string {
-    return `${ctx.repo.id}:${variant}`;
-  }
-
-  cachedSimpleRoot(
-    ctx: RegistryRequestContext,
-    variant: SimpleRootVariant,
-  ): SimpleRootCacheEntry | null {
-    const entry = this.simpleRootCache.get(this.simpleRootCacheKey(ctx, variant));
-    if (!entry) return null;
-    if (entry.expiresAt > Date.now()) return entry;
-    this.simpleRootCache.delete(this.simpleRootCacheKey(ctx, variant));
-    return null;
-  }
-
-  storeSimpleRoot(
-    ctx: RegistryRequestContext,
-    variant: SimpleRootVariant,
-    body: string,
-  ): SimpleRootCacheEntry {
-    const entry = {
-      body,
-      etag: textEtag(body),
-      expiresAt: Date.now() + SIMPLE_ROOT_CACHE_TTL_MS,
-    };
-    this.simpleRootCache.set(this.simpleRootCacheKey(ctx, variant), entry);
-    return entry;
-  }
+  readonly simpleRootCache = repoResponseCache<string>({ ttlMs: SIMPLE_ROOT_CACHE_TTL_MS });
 
   clearSimpleRootCache(ctx: RegistryRequestContext): void {
-    this.simpleRootCache.delete(this.simpleRootCacheKey(ctx, "html"));
-    this.simpleRootCache.delete(this.simpleRootCacheKey(ctx, "json"));
+    this.simpleRootCache.clear(ctx);
   }
 
   redirectToSlash(req: Request): Response | null {
@@ -79,32 +45,15 @@ class PypiAdapterState {
     if (redirect) return redirect;
 
     const variant = preferredSimpleResponse(req.headers.get("accept"));
-    const cached = this.cachedSimpleRoot(ctx, variant);
-    if (cached) {
-      return textResponseWithEtag(
-        req,
-        cached.body,
-        this.simpleRootHeaders(req, variant),
-        cached.etag,
-      );
-    }
-
-    const rows = await ctx.data.packages.listNames();
-    const projects = rows.map((r) => r.name);
-    if (variant === "json") {
-      const entry = this.storeSimpleRoot(
-        ctx,
-        variant,
-        JSON.stringify(buildSimpleRootJson(projects)),
-      );
-      return textResponseWithEtag(
-        req,
-        entry.body,
-        this.simpleRootHeaders(req, variant),
-        entry.etag,
-      );
-    }
-    const entry = this.storeSimpleRoot(ctx, variant, renderRootHtml(projects));
+    const entry = await this.simpleRootCache.get(ctx, variant, async () => {
+      const rows = await ctx.data.packages.listNames();
+      const projects = rows.map((r) => r.name);
+      const body =
+        variant === "json"
+          ? JSON.stringify(buildSimpleRootJson(projects))
+          : renderRootHtml(projects);
+      return { body, etag: textEtag(body) };
+    });
     return textResponseWithEtag(req, entry.body, this.simpleRootHeaders(req, variant), entry.etag);
   }
 
@@ -131,7 +80,7 @@ class PypiAdapterState {
     });
     const name = normalizeName(projectRaw);
     const pkg = await ctx.data.packages.findByName(name);
-    if (!pkg) return new Response("Not Found", { status: 404 });
+    if (!pkg) throw Errors.notFound();
     // Live versions only — pruned releases must drop out of the PEP 503 index.
     const versions = await ctx.data.versions.listLive(pkg);
     const files = buildSimpleProjectFiles(versions, {
@@ -153,17 +102,12 @@ class PypiAdapterState {
   }
 
   async download(filename: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
-    const file = await ctx.data.assets.findByScope({ role: "pypi_file", scope: filename });
-    if (!file) {
-      return new Response("Not Found", { status: 404 });
-    }
-    return serveRegistryBlob(ctx, {
-      digest: file.digest,
+    return serveAssetBlob(ctx, {
+      role: "pypi_file",
       kind: "pypi_file",
-      scope: file.scope,
+      scope: filename,
       contentType: "application/octet-stream",
       redirect: req.method === "GET",
-      blocked: () => new Response("artifact blocked by scan policy", { status: 403 }),
     });
   }
 

@@ -1,14 +1,15 @@
 import {
   asJsonRecord,
+  bytesResponseWithEtag,
   Errors,
-  ifNoneMatch,
   parseRegistryInput,
   type RegistryAssetRow,
   type RegistryPlugin,
   type RegistryRequestContext,
   type RegistryRouteParamSpec,
   registryAdapter,
-  serveRegistryBlob,
+  repoResponseCache,
+  serveAssetBlob,
   textResponseWithEtag,
 } from "@hootifactory/registry";
 import { type AptDebEntry, type AptSnapshot, buildAptSnapshot } from "./apt-index";
@@ -36,15 +37,9 @@ const componentParam: RegistryRouteParamSpec = {
   code: "NAME_INVALID",
   message: "invalid component",
 };
-
-interface SnapshotCacheEntry {
-  snapshot: AptSnapshot;
-  expiresAt: number;
-}
-
 /** APT (Debian): pool upload/download + generated Release/Packages indexes. */
 class AptAdapterState {
-  readonly snapshotCache = new Map<string, SnapshotCacheEntry>();
+  readonly snapshotCache = repoResponseCache<AptSnapshot>({ ttlMs: SNAPSHOT_TTL_MS });
 
   async listDebAssets(ctx: RegistryRequestContext): Promise<RegistryAssetRow[]> {
     const all: RegistryAssetRow[] = [];
@@ -58,30 +53,27 @@ class AptAdapterState {
   }
 
   async snapshot(ctx: RegistryRequestContext, suite: string): Promise<AptSnapshot> {
-    const key = `${ctx.repo.id}:${suite}`;
-    const cached = this.snapshotCache.get(key);
-    if (cached && cached.expiresAt > Date.now()) return cached.snapshot;
-
-    const assets = await this.listDebAssets(ctx);
-    const entries: AptDebEntry[] = [];
-    let latestMs = 0;
-    for (const asset of assets) {
-      const meta = asJsonRecord(asset.metadata);
-      if (!meta || meta.suite !== suite) continue;
-      const entry = toDebEntry(asset, meta);
-      if (entry) {
-        entries.push(entry);
-        latestMs = Math.max(latestMs, asset.createdAt.getTime());
+    const entry = await this.snapshotCache.get(ctx, suite, async () => {
+      const assets = await this.listDebAssets(ctx);
+      const entries: AptDebEntry[] = [];
+      let latestMs = 0;
+      for (const asset of assets) {
+        const meta = asJsonRecord(asset.metadata);
+        if (!meta || meta.suite !== suite) continue;
+        const entry = toDebEntry(asset, meta);
+        if (entry) {
+          entries.push(entry);
+          latestMs = Math.max(latestMs, asset.createdAt.getTime());
+        }
       }
-    }
-    const date = formatDebDate(latestMs > 0 ? new Date(latestMs) : new Date(0));
-    const snapshot = buildAptSnapshot(suite, date, entries);
-    this.snapshotCache.set(key, { snapshot, expiresAt: Date.now() + SNAPSHOT_TTL_MS });
-    return snapshot;
+      const date = formatDebDate(latestMs > 0 ? new Date(latestMs) : new Date(0));
+      return { body: buildAptSnapshot(suite, date, entries), etag: "" };
+    });
+    return entry.body;
   }
 
   clearSnapshot(ctx: RegistryRequestContext, suite: string): void {
-    this.snapshotCache.delete(`${ctx.repo.id}:${suite}`);
+    this.snapshotCache.clear(ctx, suite);
   }
 
   async release(suite: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
@@ -103,9 +95,7 @@ class AptAdapterState {
     const entry = snapshot.packages.get(`${component}/binary-${arch}`);
     if (!entry) throw Errors.notFound();
     if (!gz) return textResponseWithEtag(req, entry.text, TEXT_PLAIN);
-    const etag = `"${new Bun.CryptoHasher("md5").update(entry.gz).digest("hex")}"`;
-    if (ifNoneMatch(req, etag)) return new Response(null, { status: 304, headers: { etag } });
-    return new Response(entry.gz, { headers: { "content-type": "application/gzip", etag } });
+    return bytesResponseWithEtag(req, entry.gz, { "content-type": "application/gzip" });
   }
 
   async download(path: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
@@ -113,15 +103,12 @@ class AptAdapterState {
       code: "NAME_INVALID",
       message: "invalid pool path",
     });
-    const asset = await ctx.data.assets.findByScope({ role: APT_DEB_KIND, scope: poolPath });
-    if (!asset) throw Errors.notFound();
-    return serveRegistryBlob(ctx, {
-      digest: asset.digest,
+    return serveAssetBlob(ctx, {
+      role: APT_DEB_KIND,
       kind: APT_DEB_KIND,
       scope: poolPath,
       contentType: "application/vnd.debian.binary-package",
       redirect: req.method === "GET",
-      blocked: () => new Response("package blocked by scan policy", { status: 403 }),
     });
   }
 
@@ -140,10 +127,6 @@ class AptAdapterState {
     if (res.status >= 200 && res.status < 300) this.clearSnapshot(ctx, suite);
     return res;
   }
-}
-
-function notFound(): Response {
-  return new Response("not found", { status: 404 });
 }
 
 function formatDebDate(date: Date): string {
@@ -229,8 +212,12 @@ const aptDefinition = registryAdapter("apt")
       .get("/dists/:suite/Release", "release")
       .params({ suite: suiteParam })
       .calls((state, { params, req, ctx }) => state.release(params.suite, req, ctx)),
-    route.get("/dists/:suite/InRelease", "inRelease", () => notFound()),
-    route.get("/dists/:suite/Release.gpg", "releaseSig", () => notFound()),
+    route.get("/dists/:suite/InRelease", "inRelease", () => {
+      throw Errors.notFound();
+    }),
+    route.get("/dists/:suite/Release.gpg", "releaseSig", () => {
+      throw Errors.notFound();
+    }),
     route
       .get("/dists/:suite/:component/:archdir/Packages", "packages")
       .params({ suite: suiteParam, component: componentParam })

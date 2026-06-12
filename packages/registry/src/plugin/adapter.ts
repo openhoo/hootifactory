@@ -8,7 +8,7 @@ import type {
   ResourceRef,
   Visibility,
 } from "@hootifactory/types";
-import type { RegistryDataService } from "./data";
+import type { ContentAddressableRegistryDataService, RegistryDataService } from "./data";
 
 export type {
   Action,
@@ -160,6 +160,10 @@ export interface RegistryRequestContext {
   enqueueScan(input: EnqueueScanInput): Promise<void>;
   log: Logger;
 }
+
+export type ContentAddressableRegistryRequestContext = RegistryRequestContext & {
+  data: ContentAddressableRegistryDataService;
+};
 
 export interface EnqueueScanInput {
   digest: string;

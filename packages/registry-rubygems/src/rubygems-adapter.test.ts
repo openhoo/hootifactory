@@ -125,15 +125,16 @@ describe("RubygemsAdapter", () => {
   test("returns 404 from compact info for an unknown gem", async () => {
     const ctx = createTestRegistryContext();
     const adapter = new RubygemsAdapter();
-    const res = await adapter.handle(
-      createTestRouteMatch(
-        { method: "GET", pattern: "/info/:gem", handlerId: "compactInfo" },
-        { gem: "nope" },
+    await expect(
+      adapter.handle(
+        createTestRouteMatch(
+          { method: "GET", pattern: "/info/:gem", handlerId: "compactInfo" },
+          { gem: "nope" },
+        ),
+        new Request("https://registry.test/info/nope"),
+        ctx,
       ),
-      new Request("https://registry.test/info/nope"),
-      ctx,
-    );
-    expect(res.status).toBe(404);
+    ).rejects.toMatchObject({ status: 404, code: "NOT_FOUND" });
   });
 
   test("downloads a stored gem via its filename-scoped asset", async () => {

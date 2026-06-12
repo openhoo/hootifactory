@@ -1,5 +1,8 @@
-import { type RegistryRequestContext, safeFetch } from "@hootifactory/registry";
-import { readBoundedStream } from "./generic-body";
+import {
+  type RegistryRequestContext,
+  readBoundedBytes,
+  upstreamFetch,
+} from "@hootifactory/registry";
 import { handleGenericStore } from "./generic-store-lifecycle";
 import { isValidGenericPath, normalizeGenericContentType } from "./generic-validation";
 
@@ -37,35 +40,13 @@ export async function handleGenericProxyIngest(
   if (!host) return false;
 
   const url = genericUpstreamUrl(upstreamBase, path);
-  let response: Response;
-  try {
-    // safeFetch rejects private/loopback/metadata hosts and re-validates redirects;
-    // the upstream blob must stay on the configured host.
-    response = await safeFetch(url, {
-      allowedHosts: [host],
-      enforcePublicNetwork: ctx.limits.enforcePublicNetwork,
-    });
-  } catch {
-    return false;
-  }
-  if (!response.ok) return false;
+  const response = await upstreamFetch(ctx, url, { pinHost: host });
+  if (!response?.ok) return false;
 
-  const bytes = await readBoundedBody(response, ctx.limits.maxUploadBytes);
-  if (!bytes) return false;
+  const read = await readBoundedBytes(response, ctx.limits.maxUploadBytes);
+  if (!read) return false;
 
   const contentType = normalizeGenericContentType(response.headers.get("content-type"));
-  await handleGenericStore(path, bytes, contentType, ctx);
+  await handleGenericStore(path, read.bytes, contentType, ctx);
   return true;
-}
-
-/** Read a response body, enforcing the configured upload byte ceiling. */
-async function readBoundedBody(res: Response, maxBytes: number): Promise<Uint8Array | null> {
-  // Reject up front when the upstream declares an oversized body, otherwise
-  // stream it and stop the moment the running count crosses the limit.
-  const declared = Number(res.headers.get("content-length") ?? 0);
-  if (declared > maxBytes) {
-    await res.body?.cancel().catch(() => {});
-    return null;
-  }
-  return readBoundedStream(res.body, maxBytes);
 }

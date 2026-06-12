@@ -1,4 +1,5 @@
 import {
+  type ContentAddressableRegistryRequestContext,
   Errors,
   type RegistryPackageHandle,
   type RegistryRequestContext,
@@ -6,6 +7,10 @@ import {
 } from "@hootifactory/registry";
 import { type OciManifestPutRequest, parseOciManifestPutRequest } from "./oci-manifest-put";
 import { manifestBlobDigests, parseReference } from "./oci-validation";
+
+function contentStore(ctx: RegistryRequestContext) {
+  return (ctx as ContentAddressableRegistryRequestContext).data.contentStore;
+}
 
 interface OciManifestCreatedHeadersInput {
   baseUrl: string;
@@ -45,7 +50,7 @@ export async function putOciManifest(
 
   // Commit the manifest and its tags atomically so a concurrent manifest delete
   // cannot cascade-remove a tag this push just created.
-  const manifest = await ctx.data.contentStore.commitManifest({
+  const manifest = await contentStore(ctx).commitManifest({
     package: pkg,
     tags: manifestPut.acceptedTags,
     manifest: {
@@ -62,7 +67,7 @@ export async function putOciManifest(
     },
   });
   const versionId = await recordOciManifestVersions(ctx, pkg, manifestPut);
-  await ctx.data.contentStore.replaceManifestBlobRefs({
+  await contentStore(ctx).replaceManifestBlobRefs({
     package: pkg,
     manifest,
     digests: manifestPut.referencedBlobs,
@@ -107,7 +112,7 @@ async function assertOciManifestBlobRefsExist(
   referencedBlobs: string[],
 ): Promise<void> {
   if (referencedBlobs.length === 0) return;
-  const present = await ctx.data.contentStore.listExistingBlobRefDigests({
+  const present = await contentStore(ctx).listExistingBlobRefDigests({
     scope: image,
     digests: referencedBlobs,
   });
@@ -122,7 +127,7 @@ async function assertReferencedOciManifestsExist(
   referencedManifests: string[],
 ): Promise<void> {
   if (referencedManifests.length === 0) return;
-  const present = await ctx.data.contentStore.listExistingManifestDigests({
+  const present = await contentStore(ctx).listExistingManifestDigests({
     package: pkg,
     digests: referencedManifests,
   });
@@ -173,7 +178,7 @@ export async function resolveOciManifestForImage(
 ) {
   const pkg = await ctx.data.packages.findByName(image);
   if (!pkg) return null;
-  return ctx.data.contentStore.resolveManifest({ package: pkg, reference });
+  return contentStore(ctx).resolveManifest({ package: pkg, reference });
 }
 
 export async function deleteOciManifestReference(
@@ -185,18 +190,18 @@ export async function deleteOciManifestReference(
   if (!pkg) throw Errors.manifestUnknown({ reference: opts.reference });
 
   if (ref.kind === "digest") {
-    const scoped = await ctx.data.contentStore.resolveManifest({
+    const scoped = await contentStore(ctx).resolveManifest({
       package: pkg,
       reference: opts.reference,
     });
     if (!scoped) throw Errors.manifestUnknown({ reference: opts.reference });
 
-    await ctx.data.contentStore.deleteTagsForManifest({ package: pkg, manifest: scoped });
+    await contentStore(ctx).deleteTagsForManifest({ package: pkg, manifest: scoped });
     await ctx.data.versions.markPackageVersionsDeletedByDigest({
       package: pkg,
       digest: opts.reference,
     });
-    await ctx.data.contentStore.deleteManifestIfUnassociated({
+    await contentStore(ctx).deleteManifestIfUnassociated({
       manifest: scoped,
       digest: opts.reference,
     });
@@ -204,7 +209,7 @@ export async function deleteOciManifestReference(
     return;
   }
 
-  const deleted = await ctx.data.contentStore.deleteTag({
+  const deleted = await contentStore(ctx).deleteTag({
     package: pkg,
     tag: opts.reference,
   });
@@ -234,14 +239,14 @@ async function liveOciManifestRowsForImage(
 ): Promise<{ digest: string; raw: string }[]> {
   const pkg = await ctx.data.packages.findByName(image);
   if (!pkg) return [];
-  return ctx.data.contentStore.listLiveManifestsForPackage(pkg);
+  return contentStore(ctx).listLiveManifestsForPackage(pkg);
 }
 
 export async function deleteOciBlobReference(
   ctx: RegistryRequestContext,
   opts: { image: string; digest: string },
 ): Promise<void> {
-  if (!(await ctx.data.contentStore.blobRefExists({ scope: opts.image, digest: opts.digest }))) {
+  if (!(await contentStore(ctx).blobRefExists({ scope: opts.image, digest: opts.digest }))) {
     throw Errors.blobUnknown({ digest: opts.digest });
   }
   await releaseRegistryBlobRef(ctx, {
@@ -257,7 +262,7 @@ export async function isOciBlobBlocked(
 ): Promise<boolean> {
   const pkg = await ctx.data.packages.findByName(opts.image);
   if (!pkg) return false;
-  const manifestDigests = await ctx.data.contentStore.listManifestDigestsReferencingBlob({
+  const manifestDigests = await contentStore(ctx).listManifestDigestsReferencingBlob({
     package: pkg,
     digest: opts.digest,
   });

@@ -81,6 +81,13 @@ export interface RegistryRouteParamSpec extends RegistryRouteParamErrorOptions {
 
 export type RegistryRouteParamInput = RegistryRouteParamSchema | RegistryRouteParamSpec;
 
+/** Compatibility alias for the first simple schema-only route-param API. */
+export type RegistryRouteParamSchemas<
+  Params extends Record<string, string> = Record<string, string>,
+> = {
+  readonly [K in keyof Params]?: RegistryRouteParamSchema;
+};
+
 /** Map of route-param name -> schema (or schema + error overrides). */
 export type RegistryRouteParamsShape<
   Params extends Record<string, string> = Record<string, string>,
@@ -90,6 +97,8 @@ export type RegistryRouteParamsShape<
 
 export interface RegistryRouteSpec<Params extends Record<string, string> = Record<string, string>>
   extends RouteEntry {
+  /** Compatibility alias; prefer `params` for per-param error overrides. */
+  paramSchemas?: RegistryRouteParamSchemas<Params>;
   permission?: RegistryPermissionResolver<Params>;
   /**
    * Per-param schemas validated BEFORE permission resolution and BEFORE the

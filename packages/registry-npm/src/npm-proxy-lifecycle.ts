@@ -2,9 +2,10 @@ import {
   inheritUrlCredentials,
   mapWithBoundedConcurrency,
   type RegistryRequestContext,
-  safeFetch,
+  readBoundedBytes,
+  safeJsonParse,
+  upstreamFetch,
 } from "@hootifactory/registry";
-import { responseJson } from "./npm-http";
 import {
   type NpmTarballDigests,
   upstreamDistMatchesDigests,
@@ -177,15 +178,17 @@ async function fetchNpmUpstreamPackument(
   ctx: RegistryRequestContext,
 ) {
   const url = npmUpstreamPackumentUrl(upstreamBase, packageName);
-  // safeFetch rejects private/loopback/metadata hosts and re-validates redirects.
-  const res = await safeFetch(url, {
-    enforcePublicNetwork: ctx.limits.enforcePublicNetwork,
+  const upstreamHost = npmUpstreamHost(upstreamBase);
+  if (!upstreamHost) return null;
+  const res = await upstreamFetch(ctx, url, {
+    pinHost: upstreamHost,
     headers: { accept: "application/json" },
-  }).catch(() => null);
+  });
   if (!res?.ok) return null;
-  return parseNpmUpstreamPackument(
-    await responseJson(res, Math.min(ctx.limits.maxUploadBytes, 10 * 1024 * 1024)),
-  );
+  const read = await readBoundedBytes(res, Math.min(ctx.limits.maxUploadBytes, 10 * 1024 * 1024));
+  if (!read) return null;
+  const decoded = safeJsonParse(new TextDecoder().decode(read.bytes));
+  return parseNpmUpstreamPackument(decoded.success ? decoded.data : null);
 }
 
 async function fetchVerifiedNpmTarball(input: {
@@ -195,19 +198,17 @@ async function fetchVerifiedNpmTarball(input: {
   upstreamDist: Parameters<typeof upstreamDistMatchesDigests>[0];
   ctx: RegistryRequestContext;
 }): Promise<{ tarball: Uint8Array; digests: NpmTarballDigests } | null> {
-  let response: Response | null = null;
-  try {
-    // Upstream packument JSON is untrusted; tarballs must stay on the configured host.
-    if (!isNpmTarballUrlOnUpstreamHost(input.tarballUrl, input.upstreamHost)) return null;
-    // Same-host tarball fetches reuse the upstream base's credentials (the
-    // stored metadata keeps the original, credential-free upstream URL).
-    response = await safeFetch(inheritUrlCredentials(input.tarballUrl, input.upstreamBase), {
-      allowedHosts: [input.upstreamHost],
-      enforcePublicNetwork: input.ctx.limits.enforcePublicNetwork,
-    });
-  } catch {
-    return null;
-  }
+  // Upstream packument JSON is untrusted; tarballs must stay on the configured host.
+  if (!isNpmTarballUrlOnUpstreamHost(input.tarballUrl, input.upstreamHost)) return null;
+  // Same-host tarball fetches reuse the upstream base's credentials (the
+  // stored metadata keeps the original, credential-free upstream URL).
+  const response = await upstreamFetch(
+    input.ctx,
+    inheritUrlCredentials(input.tarballUrl, input.upstreamBase),
+    {
+      pinHost: input.upstreamHost,
+    },
+  );
   if (!response?.ok) return null;
   const result = await responseBytesWithDigests(response, input.ctx.limits.maxUploadBytes);
   if (!result) return null;
@@ -220,54 +221,17 @@ async function responseBytesWithDigests(
   res: Response,
   maxBytes: number,
 ): Promise<{ tarball: Uint8Array; digests: NpmTarballDigests } | null> {
-  const declared = Number(res.headers.get("content-length") ?? 0);
-  if (declared > maxBytes) {
-    await res.body?.cancel().catch(() => {});
-    return null;
-  }
-  const reader = res.body?.getReader();
-  if (!reader) {
-    return {
-      tarball: new Uint8Array(0),
-      digests: {
-        blobDigest: "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-        shasum: "da39a3ee5e6b4b0d3255bfef95601890afd80709",
-        integrity:
-          "sha512-z4PhNX7vuL3xVChQ1m2AB9Yg5AULVxXcg/SpIdNs6c5H0NE8XYXysP+DGNKHfuwvY7kxvUdBeoGlODJ6+SfaPg==",
-      },
-    };
-  }
-
-  const sha256 = new Bun.CryptoHasher("sha256");
-  const sha1 = new Bun.CryptoHasher("sha1");
+  const read = await readBoundedBytes(res, maxBytes, { digests: ["sha1", "sha256"] });
+  const blobDigest = read?.digests.sha256;
+  const shasum = read?.digests.sha1;
+  if (!read || !blobDigest || !shasum) return null;
   const sha512 = new Bun.CryptoHasher("sha512");
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > maxBytes) {
-      await reader.cancel().catch(() => {});
-      return null;
-    }
-    sha256.update(value);
-    sha1.update(value);
-    sha512.update(value);
-    chunks.push(value);
-  }
-
-  const tarball = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    tarball.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
+  sha512.update(read.bytes);
   return {
-    tarball,
+    tarball: read.bytes,
     digests: {
-      blobDigest: `sha256:${sha256.digest("hex")}`,
-      shasum: sha1.digest("hex"),
+      blobDigest,
+      shasum,
       integrity: `sha512-${sha512.digest("base64")}`,
     },
   };

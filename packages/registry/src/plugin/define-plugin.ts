@@ -63,6 +63,13 @@ function resolveRoutePermission(
   return typeof resolver === "function" ? resolver(input) : resolver;
 }
 
+function validateRouteParams(
+  spec: AnyRegistryRouteSpec,
+  match: RouteMatch,
+): Record<string, string> {
+  return validateRegistryRouteParams(spec.params ?? spec.paramSchemas, match.params);
+}
+
 class DefinedRegistryPlugin implements RegistryPlugin {
   readonly id: RegistryPlugin["id"];
   readonly displayName: RegistryModuleDescriptor["displayName"];
@@ -111,10 +118,11 @@ class DefinedRegistryPlugin implements RegistryPlugin {
       // Carry every RouteEntry field (method/pattern/handlerId + declarative
       // flags) into the compiled entry by stripping only the spec-only members,
       // so a newly-added RouteEntry flag is never silently dropped here.
-      const { permission, handler, params, ...entry } = spec;
+      const { permission, handler, params, paramSchemas, ...entry } = spec;
       void permission;
       void handler;
       void params;
+      void paramSchemas;
       return entry;
     });
     routes.forEach((spec, index) => {
@@ -142,7 +150,7 @@ class DefinedRegistryPlugin implements RegistryPlugin {
     // Param validation runs BEFORE the permission resolver: a failing param
     // short-circuits to the parse error (RegistryError) before authorization,
     // and the resolver only ever observes validated/normalized params.
-    const params = validateRegistryRouteParams(spec.params, match.params);
+    const params = validateRouteParams(spec, match);
     const input = { method, match, params, ctx };
     return (
       resolveRoutePermission(spec.permission, input) ??
@@ -157,12 +165,7 @@ class DefinedRegistryPlugin implements RegistryPlugin {
     // requiredPermission): the handler observes validated params and a failing
     // param rejects with the parseRegistryInput-shaped RegistryError.
     return Promise.resolve()
-      .then(() => ({
-        match,
-        params: validateRegistryRouteParams(spec.params, match.params),
-        req,
-        ctx,
-      }))
+      .then(() => ({ match, params: validateRouteParams(spec, match), req, ctx }))
       .then(async (input) => {
         await this.input.beforeHandle?.(input);
         return spec.handler(input);

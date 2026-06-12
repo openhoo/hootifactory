@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { createTestRegistryContext, createTestResolvedRepo, createTestRouteMatch } from "./index";
+import { registryAdapter } from "../plugin/plugin";
+import {
+  createTestRegistryContext,
+  createTestResolvedRepo,
+  createTestRouteMatch,
+  dispatchTestRequest,
+} from "./index";
 
 describe("registry testing helpers", () => {
   test("createTestResolvedRepo yields a private hosted repo with overridable fields", () => {
@@ -82,5 +88,37 @@ describe("registry testing helpers", () => {
 
     const explicit = createTestRouteMatch(entry, { pkg: "left-pad" }, "/left-pad");
     expect(explicit).toEqual({ entry, params: { pkg: "left-pad" }, path: "/left-pad" });
+  });
+
+  test("dispatchTestRequest matches routes, resolves permission, and calls the handler", async () => {
+    const authorized: unknown[] = [];
+    const plugin = registryAdapter("npm")
+      .module({ capabilities: ["virtualizable"] })
+      .routes((route) => [
+        route
+          .get("/:pkg+", "packument")
+          .packageParam("pkg")
+          .json(({ params }) => ({ package: params.pkg })),
+      ])
+      .build();
+
+    const res = await dispatchTestRequest(
+      plugin,
+      new Request("https://registry.example.test/@scope/pkg"),
+      {
+        authorize: (action, resource) => {
+          authorized.push({ action, resource });
+          return Promise.resolve({ allowed: true });
+        },
+      },
+    );
+
+    expect(await res.json()).toEqual({ package: "@scope/pkg" });
+    expect(authorized).toEqual([
+      {
+        action: "read",
+        resource: { repositoryName: "repo", type: "package", packageName: "@scope/pkg" },
+      },
+    ]);
   });
 });

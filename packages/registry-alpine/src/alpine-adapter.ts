@@ -1,5 +1,5 @@
 import {
-  ifNoneMatch,
+  bytesResponseWithEtag,
   type RegistryPlugin,
   type RegistryRequestContext,
   type RegistryRouteParamSpec,
@@ -38,11 +38,7 @@ class AlpineAdapterState {
   async index(arch: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const entries = await this.indexEntries(ctx, arch);
     const tarGz = buildApkIndexTarGz(entries);
-    const etag = `"${new Bun.CryptoHasher("sha1").update(tarGz).digest("hex")}"`;
-    if (ifNoneMatch(req, etag)) return new Response(null, { status: 304, headers: { etag } });
-    return new Response(tarGz, {
-      headers: { "content-type": "application/gzip", etag },
-    });
+    return bytesResponseWithEtag(req, tarGz, { "content-type": "application/gzip" });
   }
 
   /** `GET /<arch>/<name>-<version>.apk` — serve the stored package blob. */

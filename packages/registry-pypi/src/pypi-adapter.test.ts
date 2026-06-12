@@ -189,13 +189,13 @@ describe("PyPI adapter", () => {
     ctx.repo = { ...ctx.repo, moduleId: "pypi", mountPath: "pypi/private" };
     ctx.data.packages.findByName = async () => null;
 
-    const res = await new PypiAdapter().handle(
-      simpleProjectMatch,
-      new Request("https://registry.test/simple/Demo_Pkg/"),
-      ctx,
-    );
-
-    expect(res.status).toBe(404);
+    await expect(
+      new PypiAdapter().handle(
+        simpleProjectMatch,
+        new Request("https://registry.test/simple/Demo_Pkg/"),
+        ctx,
+      ),
+    ).rejects.toMatchObject({ status: 404, code: "NOT_FOUND" });
   });
 
   test("simple project renders HTML links for live releases", async () => {
@@ -257,13 +257,13 @@ describe("PyPI adapter", () => {
     const ctx = createTestRegistryContext();
     ctx.data.assets.findByScope = async () => null;
 
-    const res = await new PypiAdapter().handle(
-      downloadMatch,
-      new Request("https://registry.test/files/demo_pkg-1.0.0-py3-none-any.whl"),
-      ctx,
-    );
-
-    expect(res.status).toBe(404);
+    await expect(
+      new PypiAdapter().handle(
+        downloadMatch,
+        new Request("https://registry.test/files/demo_pkg-1.0.0-py3-none-any.whl"),
+        ctx,
+      ),
+    ).rejects.toMatchObject({ status: 404, code: "NOT_FOUND" });
   });
 
   test("download rejects an unsafe distribution filename", async () => {

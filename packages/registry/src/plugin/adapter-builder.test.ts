@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { z } from "@hootifactory/core";
 import { createTestRegistryContext, createTestRouteMatch } from "../testing";
 import type { HttpMethod, RegistryPlugin, RouteMatch } from "./adapter";
 import {
@@ -71,6 +72,28 @@ describe("registryAdapter builder", () => {
       },
     ];
     expect(adapter.routes()).toEqual(expected);
+  });
+
+  test("validates fluent route params before calls handlers", async () => {
+    const plugin = registryAdapter("npm")
+      .module({ capabilities: ["virtualizable"] })
+      .routes((route) => [
+        route
+          .get("/:pkg+", "packument")
+          .params({ pkg: z.string().trim().toLowerCase() })
+          .calls((_state, { params }) => Response.json({ package: params.pkg })),
+      ])
+      .build();
+    const [entry] = plugin.routes();
+    const match = createTestRouteMatch(entry!, { pkg: " Left-Pad " }, "/%20Left-Pad%20");
+
+    const res = await plugin.handle(
+      match,
+      new Request("https://registry.example.test/%20Left-Pad%20"),
+      createTestRegistryContext(),
+    );
+
+    expect(await res.json()).toEqual({ package: "left-pad" });
   });
 
   test("module() merges later inputs field-by-field (later values win)", () => {

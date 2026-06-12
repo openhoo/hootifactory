@@ -1,12 +1,13 @@
 import {
-  ifNoneMatch,
+  bytesResponseWithEtag,
+  Errors,
   parseRegistryInput,
   type RegistryMetadata,
   type RegistryPlugin,
   type RegistryRequestContext,
   type RegistryRouteParamSpec,
   registryAdapter,
-  serveRegistryBlob,
+  serveVersionBlob,
   textResponseWithEtag,
 } from "@hootifactory/registry";
 import { handleCondaProxyIngest } from "./conda-proxy";
@@ -94,9 +95,7 @@ class CondaAdapterState {
     const doc = await this.buildSubdirRepodata(ctx, subdir);
     const body = new TextEncoder().encode(serializeCondaRepodata(doc));
     const compressed = Bun.zstdCompressSync(body);
-    const etag = `"${new Bun.CryptoHasher("md5").update(compressed).digest("hex")}"`;
-    if (ifNoneMatch(req, etag)) return new Response(null, { status: 304, headers: { etag } });
-    return new Response(compressed, { headers: { "content-type": "application/zstd", etag } });
+    return bytesResponseWithEtag(req, compressed, { "content-type": "application/zstd" });
   }
 
   /** `GET /<subdir>/<filename>` — serve the hosted package blob. */
@@ -114,47 +113,27 @@ class CondaAdapterState {
     // would surface as a hard CondaHTTPError and abort the install before the
     // working `repodata.json` is ever requested, so answer these with 404.
     if (!CondaFilenameSchema.safeParse(filenameRaw).success) {
-      return new Response("Not Found", { status: 404 });
+      throw Errors.notFound();
     }
     const filename = parseRegistryInput(CondaFilenameSchema, filenameRaw, {
       code: "NAME_INVALID",
       message: "invalid package filename",
     });
-    const meta = await this.findPackageMeta(ctx, subdir, filename);
-    if (!meta) return new Response("Not Found", { status: 404 });
-    return serveRegistryBlob(ctx, {
-      digest: meta.blobDigest,
-      kind: CONDA_PACKAGE_KIND,
-      scope: condaBlobScope(subdir, filename),
-      contentType: CONDA_MEDIA_TYPE,
-      redirect: req.method === "GET",
-      blocked: () => new Response("blocked by scan policy", { status: 403 }),
-    });
-  }
-
-  /**
-   * Resolve the stored version metadata for a `<subdir>/<filename>` pair. The
-   * filename encodes `<name>-<version>-<build>` and the extension selects the
-   * package kind, so we can resolve the package + version row directly instead
-   * of scanning every package in the repo.
-   */
-  private async findPackageMeta(
-    ctx: RegistryRequestContext,
-    subdir: string,
-    filename: string,
-  ): Promise<CondaVersionMeta | null> {
     const coords = parseCondaFilename(filename);
     const kind = condaPackageKind(filename);
-    if (!coords || !kind) return null;
-    const pkg = await ctx.data.packages.findByName(coords.name);
-    if (!pkg) return null;
+    if (!coords || !kind) throw Errors.notFound();
     const versionKey = condaVersionKey(coords.version, coords.build, kind);
-    const row = await ctx.data.versions.findLive(pkg, versionKey);
-    const meta = row ? parseCondaVersionMeta(row.metadata) : null;
-    // Guard against a metadata/path mismatch: the stored record must point at
-    // exactly this subdir + filename.
-    if (!meta || meta.subdir !== subdir || meta.filename !== filename) return null;
-    return meta;
+    return serveVersionBlob<CondaVersionMeta>(ctx, {
+      name: coords.name,
+      version: versionKey,
+      kind: CONDA_PACKAGE_KIND,
+      scope: condaBlobScope(subdir, filename),
+      parseMetadata: parseCondaVersionMeta,
+      digest: ({ metadata }) =>
+        metadata.subdir === subdir && metadata.filename === filename ? metadata.blobDigest : null,
+      contentType: CONDA_MEDIA_TYPE,
+      redirect: req.method === "GET",
+    });
   }
 
   async publish(

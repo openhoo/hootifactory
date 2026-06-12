@@ -1,11 +1,10 @@
 import {
   asJsonRecord,
-  Errors,
   type RegistryPlugin,
   type RegistryRequestContext,
   type RegistryRouteParamSpec,
   registryAdapter,
-  serveRegistryBlob,
+  serveAssetBlob,
 } from "@hootifactory/registry";
 import { handleMavenUpload, MAVEN_FILE_KIND } from "./maven-upload-lifecycle";
 import { contentTypeForPath, MavenPathSchema, mavenPackageForPath } from "./maven-validation";
@@ -23,15 +22,12 @@ class MavenAdapterState {
   }
 
   async download(path: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
-    const asset = await ctx.data.assets.findByScope({ role: MAVEN_FILE_KIND, scope: path });
-    if (!asset) throw Errors.notFound();
-    return serveRegistryBlob(ctx, {
-      digest: asset.digest,
+    return serveAssetBlob(ctx, {
+      role: MAVEN_FILE_KIND,
       kind: MAVEN_FILE_KIND,
       scope: path,
       contentType: contentTypeForPath(path),
       redirect: req.method === "GET",
-      blocked: () => new Response("artifact blocked by scan policy", { status: 403 }),
     });
   }
 }

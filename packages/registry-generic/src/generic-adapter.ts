@@ -1,6 +1,5 @@
 import {
   Errors,
-  ifNoneMatch,
   parseRegistryInput,
   type RegistryPlugin,
   type RegistryRequestContext,
@@ -75,7 +74,6 @@ class GenericAdapterState {
     // Checksum sidecars. `x-checksum-md5` is omitted for legacy blobs stored
     // before md5 was tracked (meta.md5 absent), matching raw-store conventions.
     const extraHeaders: Record<string, string> = {
-      etag,
       "x-checksum-sha256": meta.sha256,
       "x-checksum-sha512": meta.sha512,
     };
@@ -91,12 +89,9 @@ class GenericAdapterState {
       scope: genericBlobScope(path),
       contentType: meta.contentType,
       extraHeaders,
+      req,
+      etag,
       redirect: req.method === "GET",
-      blocked: () => new Response("blocked by scan policy", { status: 403 }),
-      // Honor If-None-Match so a conditional GET/HEAD revalidating the advertised
-      // ETag short-circuits to 304 instead of re-streaming the whole blob.
-      notModified: () =>
-        ifNoneMatch(req, etag) ? new Response(null, { status: 304, headers: { etag } }) : null,
     });
   }
 

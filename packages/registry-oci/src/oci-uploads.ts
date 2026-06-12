@@ -3,6 +3,7 @@ import type {
   RegistryUploadSessionRow,
 } from "@hootifactory/registry";
 import {
+  type ContentAddressableRegistryRequestContext,
   Errors,
   InvalidDigestError,
   parseRegistryInput,
@@ -31,6 +32,10 @@ import {
 } from "./upload-state";
 
 const UPLOAD_TTL_MS = 24 * 60 * 60 * 1000;
+
+function contentStore(ctx: RegistryRequestContext) {
+  return (ctx as ContentAddressableRegistryRequestContext).data.contentStore;
+}
 
 export async function startUpload(
   image: string,
@@ -76,7 +81,7 @@ export async function startUpload(
 
   const uuid = crypto.randomUUID();
   const key = stagingKey(uuid);
-  await ctx.data.contentStore.createUploadSession({
+  await contentStore(ctx).createUploadSession({
     id: uuid,
     scope: image,
     storageKey: key,
@@ -104,7 +109,7 @@ export async function patchUpload(
 ): Promise<Response> {
   const parsedUuid = parseUploadUuid(uuid);
   const chunk = await bodyBytes(req);
-  const pending = await ctx.data.contentStore.withLockedUploadSession({
+  const pending = await contentStore(ctx).withLockedUploadSession({
     scope: image,
     uuid: parsedUuid,
     run: async (session, mutations) => {
@@ -129,7 +134,7 @@ export async function patchUpload(
   try {
     if (stagedKey) await ctx.data.content.staging.putKey(stagedKey, chunk);
 
-    const offset = await ctx.data.contentStore.withLockedUploadSession({
+    const offset = await contentStore(ctx).withLockedUploadSession({
       scope: image,
       uuid: parsedUuid,
       run: async (session, mutations) => {
@@ -180,7 +185,7 @@ export async function putUpload(
 
   const chunk = await bodyBytes(req);
   const parsedUuid = parseUploadUuid(uuid);
-  const pending = await ctx.data.contentStore.withLockedUploadSession({
+  const pending = await contentStore(ctx).withLockedUploadSession({
     scope: image,
     uuid: parsedUuid,
     run: async (session, mutations) => {
@@ -213,7 +218,7 @@ export async function putUpload(
         throw err;
       });
 
-    const committed = await ctx.data.contentStore.withLockedUploadSession({
+    const committed = await contentStore(ctx).withLockedUploadSession({
       scope: image,
       uuid: parsedUuid,
       run: async (session, mutations) => {
@@ -269,7 +274,7 @@ export async function cancelUpload(
   ctx: RegistryRequestContext,
 ): Promise<Response> {
   const parsedUuid = parseUploadUuid(uuid);
-  await ctx.data.contentStore.withLockedUploadSession({
+  await contentStore(ctx).withLockedUploadSession({
     scope: image,
     uuid: parsedUuid,
     run: async (session, mutations) => {
@@ -294,12 +299,10 @@ async function tryCrossRepositoryMount(input: {
   from?: string;
   ctx: RegistryRequestContext;
 }): Promise<Response | null> {
-  const sources = (await input.ctx.data.contentStore.listMountSources(input.mount)).map(
-    (source) => ({
-      ...source,
-      full: `${source.mountPath.replace(/^v2\//, "")}/${source.scope}`,
-    }),
-  );
+  const sources = (await contentStore(input.ctx).listMountSources(input.mount)).map((source) => ({
+    ...source,
+    full: `${source.mountPath.replace(/^v2\//, "")}/${source.scope}`,
+  }));
   const pool = input.from ? sources.filter((source) => source.full === input.from) : sources;
   for (const source of pool) {
     const decision = await input.ctx.authorize("read", {
@@ -332,7 +335,7 @@ async function tryCrossRepositoryMount(input: {
 }
 
 async function loadSession(image: string, uuid: string, ctx: RegistryRequestContext) {
-  return ctx.data.contentStore.loadUploadSession({ scope: image, uuid });
+  return contentStore(ctx).loadUploadSession({ scope: image, uuid });
 }
 
 async function loadOpenSession(image: string, uuid: string, ctx: RegistryRequestContext) {
@@ -343,7 +346,7 @@ async function loadOpenSession(image: string, uuid: string, ctx: RegistryRequest
     uuid,
     ctx,
     session,
-    markAborted: () => ctx.data.contentStore.markUploadSessionAborted({ scope: image, uuid }),
+    markAborted: () => contentStore(ctx).markUploadSessionAborted({ scope: image, uuid }),
   });
   return session;
 }

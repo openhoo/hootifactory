@@ -1,4 +1,5 @@
 import {
+  bytesResponseWithEtag,
   Errors,
   parseRegistryInput,
   type RegistryPlugin,
@@ -64,13 +65,7 @@ class HackageAdapterState {
     const entries = await this.indexEntries(ctx);
     const body = format === "tar" ? buildIndexTar(entries) : buildIndexTarGz(entries);
     const contentType = format === "tar" ? "application/x-tar" : "application/gzip";
-    const etag = `"${new Bun.CryptoHasher("sha1").update(body).digest("hex")}"`;
-    if (ifNoneMatch(req, etag)) {
-      return new Response(null, { status: 304, headers: { etag } });
-    }
-    return new Response(body, {
-      headers: { "content-type": contentType, etag },
-    });
+    return bytesResponseWithEtag(req, body, { "content-type": contentType });
   }
 
   /** Collect the index entries (`<name>/<version>/<name>.cabal`) in deterministic order. */
@@ -237,15 +232,6 @@ class HackageAdapterState {
     }
     return metas;
   }
-}
-
-function ifNoneMatch(req: Request, etag: string): boolean {
-  const header = req.headers.get("if-none-match");
-  if (!header) return false;
-  return header
-    .split(",")
-    .map((v) => v.trim())
-    .some((v) => v === "*" || v === etag || v === `W/${etag}`);
 }
 
 const hackageDefinition = registryAdapter("hackage")

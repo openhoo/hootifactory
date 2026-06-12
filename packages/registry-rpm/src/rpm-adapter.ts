@@ -1,6 +1,6 @@
 import {
+  bytesResponseWithEtag,
   Errors,
-  ifNoneMatch,
   type RegistryPackageHandle,
   type RegistryPlugin,
   type RegistryRequestContext,
@@ -62,15 +62,7 @@ class RpmAdapterState {
   async primary(req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const primary = await this.buildRepoPrimary(ctx);
     const etag = `"${primary.sha256Gz}"`;
-    // The gz bytes are a pure function of the repo state, so the sha256-derived
-    // etag lets clients skip re-downloading unchanged metadata on refresh.
-    if (ifNoneMatch(req, etag)) return new Response(null, { status: 304, headers: { etag } });
-    return new Response(primary.gz, {
-      headers: {
-        "content-type": "application/gzip",
-        etag,
-      },
-    });
+    return bytesResponseWithEtag(req, primary.gz, { "content-type": "application/gzip" }, etag);
   }
 
   async download(file: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {

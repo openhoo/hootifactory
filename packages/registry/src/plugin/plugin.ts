@@ -69,6 +69,7 @@ export type {
   RegistryRouteParamErrorOptions,
   RegistryRouteParamInput,
   RegistryRouteParamSchema,
+  RegistryRouteParamSchemas,
   RegistryRouteParamSpec,
   RegistryRouteParams,
   RegistryRouteParamsShape,

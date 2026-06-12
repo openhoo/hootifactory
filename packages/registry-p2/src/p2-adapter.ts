@@ -1,6 +1,6 @@
 import {
+  bytesResponseWithEtag,
   Errors,
-  ifNoneMatch,
   type RegistryPlugin,
   type RegistryRequestContext,
   type RegistryRouteParamSpec,
@@ -87,9 +87,7 @@ class P2AdapterState {
   private serveXml(req: Request, xml: string, jarEntryName: string | null): Response {
     if (!jarEntryName) return textResponseWithEtag(req, xml, XML_HEADERS);
     const jar = zipSingleEntry(jarEntryName, new TextEncoder().encode(xml));
-    const etag = `"${new Bun.CryptoHasher("sha1").update(jar).digest("hex")}"`;
-    if (ifNoneMatch(req, etag)) return new Response(null, { status: 304, headers: { etag } });
-    return new Response(jar, { headers: { ...JAR_HEADERS, etag } });
+    return bytesResponseWithEtag(req, jar, JAR_HEADERS);
   }
 
   /** `GET /plugins/<file>` or `/features/<file>` — serve a stored jar blob. */
