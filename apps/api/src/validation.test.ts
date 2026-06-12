@@ -112,6 +112,15 @@ describe("request validation helpers", () => {
     }
   });
 
+  test("validateJsonBody rejects content-types that only contain application/json as text", async () => {
+    const result = await validateJsonBody(
+      context({ json: { n: 5 }, headers: { "content-type": "text/plain application/json" } }),
+      z.strictObject({ n: z.number() }),
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.response.status).toBe(415);
+  });
+
   test("validateJsonBody accepts application/json with charset", async () => {
     const result = await validateJsonBody(
       context({

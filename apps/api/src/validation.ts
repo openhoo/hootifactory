@@ -33,7 +33,8 @@ export async function validateJsonBody<T extends ZodType>(
   message = "invalid request body",
 ): Promise<ValidationResult<z.output<T>>> {
   const contentType = c.req.header("content-type");
-  if (contentType == null || !contentType.includes("application/json")) {
+  const mediaType = contentType?.split(";", 1)[0]?.trim().toLowerCase();
+  if (mediaType !== "application/json") {
     return { ok: false, response: c.json({ error: "content-type must be application/json" }, 415) };
   }
   let body: unknown;
