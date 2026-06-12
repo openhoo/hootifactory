@@ -5,6 +5,7 @@ import {
   type RegistryMetadata,
   type RegistryPlugin,
   type RegistryRequestContext,
+  type RegistryRouteParamSpec,
   registryAdapter,
   serveVersionBlob,
   textResponseWithEtag,
@@ -35,12 +36,11 @@ import {
 
 const REPODATA_CONTENT_TYPE = { "content-type": "application/json; charset=utf-8" } as const;
 
-function parseSubdir(subdir: string): string {
-  return parseRegistryInput(CondaSubdirSchema, subdir, {
-    code: "NAME_INVALID",
-    message: "invalid Conda subdir",
-  });
-}
+const subdirParam: RegistryRouteParamSpec = {
+  schema: CondaSubdirSchema,
+  code: "NAME_INVALID",
+  message: "invalid Conda subdir",
+};
 
 /**
  * Conda channel. Clients add a repo's mount URL as a channel and fetch
@@ -77,8 +77,7 @@ class CondaAdapterState {
   }
 
   /** `GET /<subdir>/repodata.json` — the channel index for one subdir. */
-  async repodata(subdirRaw: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
-    const subdir = parseSubdir(subdirRaw);
+  async repodata(subdir: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const doc = await this.buildSubdirRepodata(ctx, subdir);
     return textResponseWithEtag(req, serializeCondaRepodata(doc), REPODATA_CONTENT_TYPE);
   }
@@ -89,11 +88,10 @@ class CondaAdapterState {
    * by its suffix, so the bytes must be real zstd (`application/zstd`), not gzip.
    */
   async repodataCompressed(
-    subdirRaw: string,
+    subdir: string,
     req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
-    const subdir = parseSubdir(subdirRaw);
     const doc = await this.buildSubdirRepodata(ctx, subdir);
     const body = new TextEncoder().encode(serializeCondaRepodata(doc));
     const compressed = Bun.zstdCompressSync(body);
@@ -102,12 +100,11 @@ class CondaAdapterState {
 
   /** `GET /<subdir>/<filename>` — serve the hosted package blob. */
   async download(
-    subdirRaw: string,
+    subdir: string,
     filenameRaw: string,
     req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
-    const subdir = parseSubdir(subdirRaw);
     // A download path that is not a `.conda`/`.tar.bz2` package filename is a
     // miss, not a malformed request: stock conda probes index variants conda
     // does not serve here — `current_repodata.json`, `current_repodata.json.zst`,
@@ -140,19 +137,14 @@ class CondaAdapterState {
   }
 
   async publish(
-    subdirRaw: string,
-    filenameRaw: string,
+    subdir: string,
+    filename: string,
     req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
-    const subdir = parseSubdir(subdirRaw);
     // The permission check (and audit scope) is performed against the URL
     // `:subdir/:filename`; the publish must store exactly that path, never the
     // filename the uploaded part happens to carry.
-    const filename = parseRegistryInput(CondaFilenameSchema, filenameRaw, {
-      code: "NAME_INVALID",
-      message: "invalid package filename",
-    });
     return handleCondaPublish(subdir, filename, req, ctx);
   }
 
@@ -246,6 +238,7 @@ const condaDefinition = registryAdapter("conda")
     // Literal index routes declared before the `/:subdir/:filename` catch-all.
     route
       .get("/:subdir/repodata.json", "repodata")
+      .params({ subdir: subdirParam })
       .metadata("subdir", { proxyRefresh: true })
       .calls((state, { params, req, ctx }) => state.repodata(params.subdir, req, ctx)),
     // Modern conda/mamba fetch the `.zst` index FIRST and only fall back to
@@ -253,15 +246,25 @@ const condaDefinition = registryAdapter("conda")
     // marked mergeable because virtual metadata returns plain JSON text.
     route
       .get("/:subdir/repodata.json.zst", "repodataZst")
+      .params({ subdir: subdirParam })
       .proxyRefresh("subdir")
       .calls((state, { params, req, ctx }) => state.repodataCompressed(params.subdir, req, ctx)),
     route
       .get("/:subdir/:filename", "download")
+      .params({ subdir: subdirParam })
       .calls((state, { params, req, ctx }) =>
         state.download(params.subdir, params.filename, req, ctx),
       ),
     route
       .put("/:subdir/:filename", "publish")
+      .params({
+        subdir: subdirParam,
+        filename: {
+          schema: CondaFilenameSchema,
+          code: "NAME_INVALID",
+          message: "invalid package filename",
+        },
+      })
       .calls((state, { params, req, ctx }) =>
         state.publish(params.subdir, params.filename, req, ctx),
       ),

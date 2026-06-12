@@ -1,8 +1,8 @@
 import {
   bytesResponseWithEtag,
-  parseRegistryInput,
   type RegistryPlugin,
   type RegistryRequestContext,
+  type RegistryRouteParamSpec,
   registryAdapter,
   serveRegistryBlob,
 } from "@hootifactory/registry";
@@ -13,19 +13,17 @@ import { type ApkIndexEntry, buildApkIndexTarGz } from "./apkindex";
 
 const APKINDEX_NAME = "APKINDEX.tar.gz";
 
-function parseArch(arch: string): string {
-  return parseRegistryInput(AlpineArchSchema, arch, {
-    code: "NAME_INVALID",
-    message: "invalid Alpine architecture",
-  });
-}
+const archParam: RegistryRouteParamSpec = {
+  schema: AlpineArchSchema,
+  code: "NAME_INVALID",
+  message: "invalid Alpine architecture",
+};
 
-function parseApkFilename(filename: string): string {
-  return parseRegistryInput(AlpineApkFilenameSchema, filename, {
-    code: "NAME_INVALID",
-    message: "invalid .apk filename",
-  });
-}
+const apkFilenameParam: RegistryRouteParamSpec = {
+  schema: AlpineApkFilenameSchema,
+  code: "NAME_INVALID",
+  message: "invalid .apk filename",
+};
 
 /**
  * Alpine (apk) repository. Publishing a `.apk` into `<arch>` parses its
@@ -37,8 +35,7 @@ function parseApkFilename(filename: string): string {
  */
 class AlpineAdapterState {
   /** `GET /<arch>/APKINDEX.tar.gz` — regenerate the index over the arch's live versions. */
-  async index(archRaw: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
-    const arch = parseArch(archRaw);
+  async index(arch: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const entries = await this.indexEntries(ctx, arch);
     const tarGz = buildApkIndexTarGz(entries);
     return bytesResponseWithEtag(req, tarGz, { "content-type": "application/gzip" });
@@ -46,13 +43,11 @@ class AlpineAdapterState {
 
   /** `GET /<arch>/<name>-<version>.apk` — serve the stored package blob. */
   async download(
-    archRaw: string,
-    filenameRaw: string,
+    arch: string,
+    filename: string,
     req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
-    const arch = parseArch(archRaw);
-    const filename = parseApkFilename(filenameRaw);
     const meta = await this.findByFilename(ctx, arch, filename);
     if (!meta) return new Response("Not Found", { status: 404 });
     return serveRegistryBlob(ctx, {
@@ -66,18 +61,17 @@ class AlpineAdapterState {
   }
 
   async publish(
-    archRaw: string,
+    arch: string,
     req: Request,
     ctx: RegistryRequestContext,
-    filenameRaw?: string,
+    filename?: string,
   ): Promise<Response> {
-    const arch = parseArch(archRaw);
-    // `PUT /:arch/:filename` carries a path segment; reject anything that is not a
-    // `.apk` filename before parsing the body. The canonical name is derived from
-    // `.PKGINFO`, but authorization on this route is scoped to the URL segment, so
-    // we forward it to the handler which rejects a mismatch (confused-deputy guard).
-    const urlFilename = filenameRaw !== undefined ? parseApkFilename(filenameRaw) : undefined;
-    const result = await handleAlpinePublish(arch, req, ctx, urlFilename);
+    // `PUT /:arch/:filename` carries a path segment; its route params schema
+    // rejects anything that is not a `.apk` filename before the body is parsed.
+    // The canonical name is derived from `.PKGINFO`, but authorization on that
+    // route is scoped to the URL segment, so we forward it to the handler which
+    // rejects a mismatch (confused-deputy guard).
+    const result = await handleAlpinePublish(arch, req, ctx, filename);
     return Response.json(result.body, { status: result.status });
   }
 
@@ -161,19 +155,23 @@ const alpineDefinition = registryAdapter("alpine")
     // `APKINDEX.tar.gz` is a literal second segment declared before `/:arch/:filename`.
     route
       .get(`/:arch/${APKINDEX_NAME}`, "index")
+      .params({ arch: archParam })
       .calls((state, { params, req, ctx }) => state.index(params.arch, req, ctx)),
     route
       .get("/:arch/:filename", "download")
+      .params({ arch: archParam, filename: apkFilenameParam })
       .calls((state, { params, req, ctx }) =>
         state.download(params.arch, params.filename, req, ctx),
       ),
     route
       .put("/:arch/:filename", "publishNamed")
+      .params({ arch: archParam, filename: apkFilenameParam })
       .calls((state, { params, req, ctx }) =>
         state.publish(params.arch, req, ctx, params.filename),
       ),
     route
       .put("/:arch", "publish")
+      .params({ arch: archParam })
       .calls((state, { params, req, ctx }) => state.publish(params.arch, req, ctx)),
   ]);
 

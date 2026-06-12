@@ -1,11 +1,5 @@
 import { parseRegistryInput } from "@hootifactory/registry";
-import {
-  type HomebrewFormulaInfo,
-  HomebrewFormulaInfoSchema,
-  HomebrewNameSchema,
-  HomebrewTagSchema,
-  HomebrewVersionSchema,
-} from "./homebrew-validation";
+import { type HomebrewFormulaInfo, HomebrewFormulaInfoSchema } from "./homebrew-validation";
 
 export type HomebrewPublishError = {
   error: string;
@@ -24,42 +18,18 @@ export type HomebrewPublishPlanResult =
   | { ok: true; plan: HomebrewPublishPlan }
   | { ok: false; error: HomebrewPublishError };
 
-function parseName(name: string): string {
-  return parseRegistryInput(HomebrewNameSchema, name, {
-    code: "NAME_INVALID",
-    message: "invalid formula name",
-  });
-}
-
-function parseVersion(version: string): string {
-  return parseRegistryInput(HomebrewVersionSchema, version, {
-    code: "MANIFEST_INVALID",
-    message: "invalid formula version",
-  });
-}
-
-function parseTag(tag: string): string {
-  return parseRegistryInput(HomebrewTagSchema, tag, {
-    code: "NAME_INVALID",
-    message: "invalid bottle tag",
-  });
-}
-
 /**
  * Parse a bottle-publish request: multipart/form-data with a required `bottle`
  * file part (the tar.gz) and an optional `formula` JSON part carrying
- * descriptive metadata. The formula name/version/tag come from the URL path.
+ * descriptive metadata. The formula name/version/tag come from the URL path
+ * (validated by the publish route's `.params()` schemas before this runs).
  */
 export async function parseHomebrewPublishRequest(
-  nameRaw: string,
-  versionRaw: string,
-  tagRaw: string,
+  name: string,
+  version: string,
+  tag: string,
   req: Request,
 ): Promise<HomebrewPublishPlanResult> {
-  const name = parseName(nameRaw);
-  const version = parseVersion(versionRaw);
-  const tag = parseTag(tagRaw);
-
   const contentType = req.headers.get("content-type") ?? "";
   if (!contentType.includes("multipart/form-data")) {
     return { ok: false, error: { error: "expected multipart/form-data", status: 400 } };

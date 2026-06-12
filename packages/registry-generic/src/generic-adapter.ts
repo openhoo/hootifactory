@@ -3,6 +3,7 @@ import {
   parseRegistryInput,
   type RegistryPlugin,
   type RegistryRequestContext,
+  type RegistryRouteParamSpec,
   registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
@@ -20,12 +21,11 @@ import {
   parseGenericVersionMeta,
 } from "./generic-validation";
 
-function parsePath(path: string): string {
-  return parseRegistryInput(GenericPathSchema, path, {
-    code: "NAME_INVALID",
-    message: "invalid generic path",
-  });
-}
+const pathParam: RegistryRouteParamSpec = {
+  schema: GenericPathSchema,
+  code: "NAME_INVALID",
+  message: "invalid generic path",
+};
 
 function parsePrefix(prefix: string): string {
   // The index builder treats `docs` and `docs/` as the same directory, so accept
@@ -64,8 +64,7 @@ class GenericAdapterState {
   }
 
   /** `GET`/`HEAD /<path>` — serve the stored blob with checksum sidecar headers. */
-  async download(pathRaw: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
-    const path = parsePath(pathRaw);
+  async download(path: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const pkg = await ctx.data.packages.findByName(path);
     if (!pkg) throw Errors.notFound();
     const row = await ctx.data.versions.findLive(pkg, GENERIC_VERSION);
@@ -97,8 +96,7 @@ class GenericAdapterState {
   }
 
   /** `PUT /<path>` — store a raw blob at the path (overwriting any existing blob). */
-  async publish(pathRaw: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
-    const path = parsePath(pathRaw);
+  async publish(path: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     // Stream the body with a running byte count so an oversized upload is rejected
     // as soon as it crosses the limit, rather than being fully buffered first.
     const body = await readBoundedStream(req.body, ctx.limits.maxUploadBytes);
@@ -119,8 +117,7 @@ class GenericAdapterState {
   }
 
   /** `DELETE /<path>` — remove the stored blob, releasing its CAS ref. */
-  async remove(pathRaw: string, ctx: RegistryRequestContext): Promise<Response> {
-    const path = parsePath(pathRaw);
+  async remove(path: string, ctx: RegistryRequestContext): Promise<Response> {
     const pkg = await ctx.data.packages.findByName(path);
     if (!pkg) throw Errors.notFound();
     const row = await ctx.data.versions.findLive(pkg, GENERIC_VERSION);
@@ -200,16 +197,20 @@ const genericDefinition = registryAdapter("generic")
     // On a proxy repo, a read miss mirrors the upstream blob by `params.path`.
     route
       .get("/:path+", "download")
+      .params({ path: pathParam })
       .proxyRefresh("path")
       .calls((state, { params, req, ctx }) => state.download(params.path, req, ctx)),
     route
       .head("/:path+", "head")
+      .params({ path: pathParam })
       .calls((state, { params, req, ctx }) => state.download(params.path, req, ctx)),
     route
       .put("/:path+", "publish")
+      .params({ path: pathParam })
       .calls((state, { params, req, ctx }) => state.publish(params.path, req, ctx)),
     route
       .delete("/:path+", "remove")
+      .params({ path: pathParam })
       .calls((state, { params, ctx }) => state.remove(params.path, ctx)),
   ]);
 

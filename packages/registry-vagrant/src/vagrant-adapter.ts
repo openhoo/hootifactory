@@ -1,7 +1,7 @@
 import {
-  parseRegistryInput,
   type RegistryPlugin,
   type RegistryRequestContext,
+  type RegistryRouteParamSpec,
   registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
@@ -22,26 +22,29 @@ import {
 
 const JSON_CONTENT_TYPE = "application/json; charset=utf-8";
 
-function parseNameSegment(value: string, what: string): string {
-  return parseRegistryInput(VagrantNameSegmentSchema, value, {
-    code: "NAME_INVALID",
-    message: `invalid Vagrant box ${what}`,
-  });
-}
+const userParam: RegistryRouteParamSpec = {
+  schema: VagrantNameSegmentSchema,
+  code: "NAME_INVALID",
+  message: "invalid Vagrant box user",
+};
 
-function parseVersion(version: string): string {
-  return parseRegistryInput(VagrantVersionSchema, version, {
-    code: "MANIFEST_INVALID",
-    message: "invalid Vagrant box version",
-  });
-}
+const boxParam: RegistryRouteParamSpec = {
+  schema: VagrantNameSegmentSchema,
+  code: "NAME_INVALID",
+  message: "invalid Vagrant box name",
+};
 
-function parseProvider(provider: string): string {
-  return parseRegistryInput(VagrantProviderSchema, provider, {
-    code: "NAME_INVALID",
-    message: "invalid Vagrant provider name",
-  });
-}
+const versionParam: RegistryRouteParamSpec = {
+  schema: VagrantVersionSchema,
+  code: "MANIFEST_INVALID",
+  message: "invalid Vagrant box version",
+};
+
+const providerParam: RegistryRouteParamSpec = {
+  schema: VagrantProviderSchema,
+  code: "NAME_INVALID",
+  message: "invalid Vagrant provider name",
+};
 
 /**
  * Vagrant box registry. The client reads box metadata from `GET /:user/:box`
@@ -61,14 +64,14 @@ class VagrantAdapterState {
 
   /** `GET /:user/:box` — box metadata aggregated over every live version. */
   async metadata(
-    userRaw: string,
-    boxRaw: string,
+    user: string,
+    box: string,
     req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
-    const collected = await this.collectLiveVersions(userRaw, boxRaw, ctx);
+    const collected = await this.collectLiveVersions(user, box, ctx);
     if (!collected) return new Response("Not Found", { status: 404 });
-    const { name, user, box, rows } = collected;
+    const { name, rows } = collected;
 
     const versions: VagrantBoxMetadata["versions"] = [];
     let description: string | undefined;
@@ -98,14 +101,14 @@ class VagrantAdapterState {
    * route, emitted in the Cloud field shape (`tag`, `download_url`).
    */
   async cloudMetadata(
-    userRaw: string,
-    boxRaw: string,
+    user: string,
+    box: string,
     req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
-    const collected = await this.collectLiveVersions(userRaw, boxRaw, ctx);
+    const collected = await this.collectLiveVersions(user, box, ctx);
     if (!collected) return new Response("Not Found", { status: 404 });
-    const { name, user, box, rows } = collected;
+    const { name, rows } = collected;
 
     const versions: VagrantCloudBox["versions"] = [];
     let description: string | undefined;
@@ -133,17 +136,13 @@ class VagrantAdapterState {
    * provider (both 404 to the client). Shared by the catalog and Cloud read routes.
    */
   private async collectLiveVersions(
-    userRaw: string,
-    boxRaw: string,
+    user: string,
+    box: string,
     ctx: RegistryRequestContext,
   ): Promise<{
     name: string;
-    user: string;
-    box: string;
     rows: { version: string; meta: NonNullable<ReturnType<typeof parseVagrantVersionMeta>> }[];
   } | null> {
-    const user = parseNameSegment(userRaw, "user");
-    const box = parseNameSegment(boxRaw, "name");
     const name = boxName(user, box);
     const pkg = await ctx.data.packages.findByName(name);
     if (!pkg) return null;
@@ -159,22 +158,18 @@ class VagrantAdapterState {
       rows.push({ version: row.version, meta });
     }
     if (rows.length === 0) return null;
-    return { name, user, box, rows };
+    return { name, rows };
   }
 
   /** `GET /:user/:box/:version/:provider` — serve the hosted `.box` blob. */
   async download(
-    userRaw: string,
-    boxRaw: string,
-    versionRaw: string,
-    providerRaw: string,
+    user: string,
+    box: string,
+    version: string,
+    provider: string,
     req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
-    const user = parseNameSegment(userRaw, "user");
-    const box = parseNameSegment(boxRaw, "name");
-    const version = parseVersion(versionRaw);
-    const provider = parseProvider(providerRaw);
     const name = boxName(user, box);
 
     const pkg = await ctx.data.packages.findByName(name);
@@ -267,6 +262,7 @@ const vagrantDefinition = registryAdapter("vagrant")
     // so it can never be shadowed by the bare `/:user/:box` catalog route.
     route
       .get("/api/v1/box/:user/:box", "cloudMetadata")
+      .params({ user: userParam, box: boxParam })
       .calls((state, { params, req, ctx }) =>
         state.cloudMetadata(params.user, params.box, req, ctx),
       ),
@@ -274,16 +270,19 @@ const vagrantDefinition = registryAdapter("vagrant")
     // metadata route (the route-matcher tries routes in order).
     route
       .get("/:user/:box/:version/:provider", "download")
+      .params({ user: userParam, box: boxParam, version: versionParam, provider: providerParam })
       .calls((state, { params, req, ctx }) =>
         state.download(params.user, params.box, params.version, params.provider, req, ctx),
       ),
     route
       .put("/:user/:box/:version/:provider", "publish")
+      .params({ user: userParam, box: boxParam, version: versionParam, provider: providerParam })
       .handle(({ params, req, ctx }) =>
         handleVagrantPublish(params.user, params.box, params.version, params.provider, req, ctx),
       ),
     route
       .get("/:user/:box", "metadata")
+      .params({ user: userParam, box: boxParam })
       .calls((state, { params, req, ctx }) => state.metadata(params.user, params.box, req, ctx)),
   ]);
 

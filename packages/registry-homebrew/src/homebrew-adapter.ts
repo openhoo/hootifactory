@@ -14,6 +14,8 @@ import {
   BOTTLE_ASSET_ROLE,
   BOTTLE_MEDIA_TYPE,
   HomebrewNameSchema,
+  HomebrewTagSchema,
+  HomebrewVersionSchema,
   isValidBottleFileName,
   parseHomebrewVersionMeta,
 } from "./homebrew-validation";
@@ -168,9 +170,20 @@ const homebrewDefinition = registryAdapter("homebrew")
     route
       .get("/api/formula/:name", "formula")
       .calls((state, { params, req, ctx }) => state.formula(params.name, req, ctx)),
-    route.put("/api/formula/:name/:version/:tag", "publish", ({ params, req, ctx }) =>
-      handleHomebrewPublish(params.name, params.version, params.tag, req, ctx),
-    ),
+    route
+      .put("/api/formula/:name/:version/:tag", "publish")
+      .params({
+        name: { schema: HomebrewNameSchema, code: "NAME_INVALID", message: "invalid formula name" },
+        version: {
+          schema: HomebrewVersionSchema,
+          code: "MANIFEST_INVALID",
+          message: "invalid formula version",
+        },
+        tag: { schema: HomebrewTagSchema, code: "NAME_INVALID", message: "invalid bottle tag" },
+      })
+      .handle(({ params, req, ctx }) =>
+        handleHomebrewPublish(params.name, params.version, params.tag, req, ctx),
+      ),
     route
       .get("/bottles/:file", "download")
       .calls((state, { params, req, ctx }) => state.download(params.file, req, ctx)),

@@ -1,4 +1,5 @@
 import { gunzipSync } from "node:zlib";
+import { readTarEntry as readSdkTarEntry } from "@hootifactory/registry";
 
 /**
  * Dependency-free reader for the gemspec inside a `.gem`. A `.gem` is an
@@ -23,42 +24,9 @@ export interface GemMetadata {
   dependencies: GemDependency[];
 }
 
-function decodeTarName(header: Uint8Array): string {
-  let end = 0;
-  while (end < 100 && header[end] !== 0) end += 1;
-  return new TextDecoder().decode(header.subarray(0, end));
-}
-
-function parseOctal(header: Uint8Array, offset: number, length: number): number {
-  let str = "";
-  for (let i = offset; i < offset + length; i += 1) {
-    const code = header[i];
-    if (code === undefined || code === 0 || code === 0x20) continue;
-    str += String.fromCharCode(code);
-  }
-  if (!str) return 0;
-  const value = Number.parseInt(str, 8);
-  return Number.isFinite(value) ? value : -1;
-}
-
 /** Return the bytes of the first tar entry named `wanted` (or `./wanted`), or null. */
 export function readTarEntry(tar: Uint8Array, wanted: string): Uint8Array | null {
-  let offset = 0;
-  let scanned = 0;
-  while (offset + 512 <= tar.length && scanned < MAX_TAR_ENTRIES) {
-    const header = tar.subarray(offset, offset + 512);
-    const name = decodeTarName(header);
-    if (name === "") break; // zero block: end of archive
-    const size = parseOctal(header, 124, 12);
-    const dataStart = offset + 512;
-    if (size < 0 || dataStart + size > tar.length) break;
-    if (name === wanted || name === `./${wanted}`) {
-      return tar.subarray(dataStart, dataStart + size);
-    }
-    offset = dataStart + Math.ceil(size / 512) * 512;
-    scanned += 1;
-  }
-  return null;
+  return readSdkTarEntry(tar, wanted, { maxEntries: MAX_TAR_ENTRIES });
 }
 
 export function readGemMetadata(gem: Uint8Array): GemMetadata | null {

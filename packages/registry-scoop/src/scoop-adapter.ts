@@ -3,6 +3,7 @@ import {
   parseRegistryInput,
   type RegistryPlugin,
   type RegistryRequestContext,
+  type RegistryRouteParamSpec,
   registryAdapter,
   serveRegistryBlob,
   textResponseWithEtag,
@@ -23,12 +24,17 @@ function parseAppName(app: string): string {
   });
 }
 
-function parseAppVersion(version: string): string {
-  return parseRegistryInput(ScoopVersionSchema, version, {
-    code: "MANIFEST_INVALID",
-    message: "invalid Scoop version",
-  });
-}
+const appParam: RegistryRouteParamSpec = {
+  schema: ScoopAppNameSchema,
+  code: "NAME_INVALID",
+  message: "invalid Scoop app name",
+};
+
+const versionParam: RegistryRouteParamSpec = {
+  schema: ScoopVersionSchema,
+  code: "MANIFEST_INVALID",
+  message: "invalid Scoop version",
+};
 
 /**
  * Scoop bucket. A repo's mount URL is added as a `scoop bucket`, and clients then
@@ -71,18 +77,12 @@ class ScoopAdapterState {
 
   /** `GET /download/<app>/<version>/<filename>` — serve the hosted artifact blob. */
   async download(
-    appRaw: string,
-    versionRaw: string,
-    filenameRaw: string,
+    app: string,
+    version: string,
+    filename: string,
     req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
-    const app = parseAppName(appRaw);
-    const version = parseAppVersion(versionRaw);
-    const filename = parseRegistryInput(ScoopFilenameSchema, filenameRaw, {
-      code: "NAME_INVALID",
-      message: "invalid artifact filename",
-    });
     const pkg = await ctx.data.packages.findByName(app);
     if (!pkg) return new Response("Not Found", { status: 404 });
     const row = await ctx.data.versions.findLive(pkg, version);
@@ -99,8 +99,7 @@ class ScoopAdapterState {
     });
   }
 
-  async publish(appRaw: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
-    const app = parseAppName(appRaw);
+  async publish(app: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     return handleScoopPublish(app, req, ctx);
   }
 
@@ -167,6 +166,15 @@ const scoopDefinition = registryAdapter("scoop")
     route.get("/index.json", "index").calls((state, { req, ctx }) => state.index(req, ctx)),
     route
       .get("/download/:app/:version/:filename", "download")
+      .params({
+        app: appParam,
+        version: versionParam,
+        filename: {
+          schema: ScoopFilenameSchema,
+          code: "NAME_INVALID",
+          message: "invalid artifact filename",
+        },
+      })
       .calls((state, { params, req, ctx }) =>
         state.download(params.app, params.version, params.filename, req, ctx),
       ),
@@ -175,6 +183,7 @@ const scoopDefinition = registryAdapter("scoop")
       .calls((state, { params, req, ctx }) => state.manifest(params.app, req, ctx)),
     route
       .put("/:app", "publish")
+      .params({ app: appParam })
       .calls((state, { params, req, ctx }) => state.publish(params.app, req, ctx)),
   ]);
 
