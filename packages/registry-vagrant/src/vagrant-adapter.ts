@@ -1,10 +1,10 @@
 import {
+  jsonResponseWithEtag,
   parseRegistryInput,
   type RegistryPlugin,
   type RegistryRequestContext,
   registryAdapter,
   serveRegistryBlob,
-  textResponseWithEtag,
 } from "@hootifactory/registry";
 import { boxName, handleVagrantPublish } from "./vagrant-publish-lifecycle";
 import {
@@ -86,7 +86,7 @@ class VagrantAdapterState {
 
     const body: VagrantBoxMetadata = { name, versions };
     if (description !== undefined) body.description = description;
-    return textResponseWithEtag(req, JSON.stringify(body), {
+    return jsonResponseWithEtag(req, body, {
       "content-type": JSON_CONTENT_TYPE,
     });
   }
@@ -122,7 +122,7 @@ class VagrantAdapterState {
 
     const body: VagrantCloudBox = { tag: name, name, versions };
     if (description !== undefined) body.description = description;
-    return textResponseWithEtag(req, JSON.stringify(body), {
+    return jsonResponseWithEtag(req, body, {
       "content-type": JSON_CONTENT_TYPE,
     });
   }

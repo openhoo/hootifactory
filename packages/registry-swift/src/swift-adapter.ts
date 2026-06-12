@@ -1,5 +1,6 @@
 import {
   Errors,
+  jsonResponseWithEtag,
   parseRegistryInput,
   RegistryError,
   type RegistryPlugin,
@@ -97,9 +98,13 @@ class SwiftAdapterState {
     const base = `${ctx.baseUrl}/${ctx.repo.mountPath}/${scope}/${name}`;
     const releases: Record<string, { url: string }> = {};
     for (const row of rows) releases[row.version] = { url: `${base}/${row.version}` };
-    return textResponseWithEtag(req, JSON.stringify({ releases }), {
-      "content-type": JSON_CONTENT_TYPE,
-    });
+    return jsonResponseWithEtag(
+      req,
+      { releases },
+      {
+        "content-type": JSON_CONTENT_TYPE,
+      },
+    );
   }
 
   /**
@@ -153,7 +158,7 @@ class SwiftAdapterState {
         "source-archive": { url: `${base}/${version}.zip` },
       },
     };
-    return textResponseWithEtag(req, JSON.stringify(body), {
+    return jsonResponseWithEtag(req, body, {
       "content-type": JSON_CONTENT_TYPE,
     });
   }

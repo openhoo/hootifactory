@@ -1,6 +1,7 @@
 import {
   Errors,
   ifNoneMatch,
+  jsonResponseWithEtag,
   parseRegistryInput,
   type RegistryPackageHandle,
   type RegistryPackageVersionFingerprintRow,
@@ -12,7 +13,6 @@ import {
   repoResponseCache,
   serveVersionBlob,
   textEtag,
-  textResponseWithEtag,
 } from "@hootifactory/registry";
 import { handleNugetPublish } from "./nuget-publish-lifecycle";
 import { buildNugetRegistrationIndex, buildNugetRegistrationItem } from "./nuget-registration";
@@ -94,19 +94,15 @@ class NugetAdapterState {
 
   serviceIndex(req: Request, ctx: RegistryRequestContext): Response {
     const base = this.base(ctx);
-    return textResponseWithEtag(
-      req,
-      JSON.stringify({
-        version: "3.0.0",
-        resources: [
-          { "@id": `${base}/v3-flatcontainer/`, "@type": "PackageBaseAddress/3.0.0" },
-          { "@id": `${base}/v3/package`, "@type": "PackagePublish/2.0.0" },
-          { "@id": `${base}/v3/registrations/`, "@type": "RegistrationsBaseUrl/3.6.0" },
-          { "@id": `${base}/v3/query`, "@type": "SearchQueryService/3.5.0" },
-        ],
-      }),
-      { "content-type": "application/json; charset=utf-8" },
-    );
+    return jsonResponseWithEtag(req, {
+      version: "3.0.0",
+      resources: [
+        { "@id": `${base}/v3-flatcontainer/`, "@type": "PackageBaseAddress/3.0.0" },
+        { "@id": `${base}/v3/package`, "@type": "PackagePublish/2.0.0" },
+        { "@id": `${base}/v3/registrations/`, "@type": "RegistrationsBaseUrl/3.6.0" },
+        { "@id": `${base}/v3/query`, "@type": "SearchQueryService/3.5.0" },
+      ],
+    });
   }
 
   async findPkg(ctx: RegistryRequestContext, id: string) {
@@ -138,9 +134,7 @@ class NugetAdapterState {
       .map((row) => row.version)
       .sort(compareNugetVersions);
     if (versions.length === 0) throw Errors.notFound();
-    return textResponseWithEtag(req, JSON.stringify({ versions }), {
-      "content-type": "application/json; charset=utf-8",
-    });
+    return jsonResponseWithEtag(req, { versions });
   }
 
   async registration(
@@ -183,19 +177,14 @@ class NugetAdapterState {
     if (!row) throw Errors.notFound();
     const metadata = parseNugetVersionMeta(row.metadata);
     if (!metadata) throw Errors.notFound();
-    return textResponseWithEtag(
+    return jsonResponseWithEtag(
       req,
-      JSON.stringify(
-        buildNugetRegistrationItem({
-          id,
-          version: row.version,
-          metadata,
-          base,
-        }),
-      ),
-      {
-        "content-type": "application/json; charset=utf-8",
-      },
+      buildNugetRegistrationItem({
+        id,
+        version: row.version,
+        metadata,
+        base,
+      }),
     );
   }
 
@@ -233,9 +222,7 @@ class NugetAdapterState {
         totalHits += 1;
       }
     } while (offset < totalPackages);
-    return textResponseWithEtag(req, JSON.stringify({ totalHits, data }), {
-      "content-type": "application/json; charset=utf-8",
-    });
+    return jsonResponseWithEtag(req, { totalHits, data });
   }
 
   async download(

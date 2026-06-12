@@ -1,9 +1,9 @@
 import {
+  jsonResponseWithEtag,
   type RegistryPlugin,
   type RegistryRequestContext,
   registryAdapter,
   serveRegistryBlob,
-  textResponseWithEtag,
 } from "@hootifactory/registry";
 import { ansibleBadRequest, ansibleNotFound } from "./ansible-errors";
 import {
@@ -108,9 +108,7 @@ class AnsibleAdapterState {
       mountPath: ctx.repo.mountPath,
     });
     if (!summary) return ansibleNotFound(`collection ${fqcn} not found`);
-    return textResponseWithEtag(req, JSON.stringify(summary), {
-      "content-type": "application/json; charset=utf-8",
-    });
+    return jsonResponseWithEtag(req, summary);
   }
 
   /** `GET /api/v3/collections/:namespace/:name/versions/` — the paginated version list. */
@@ -142,9 +140,7 @@ class AnsibleAdapterState {
       limit,
       offset,
     });
-    return textResponseWithEtag(req, JSON.stringify(list), {
-      "content-type": "application/json; charset=utf-8",
-    });
+    return jsonResponseWithEtag(req, list);
   }
 
   /** `GET /api/v3/collections/:namespace/:name/versions/:version/` — version detail. */
@@ -169,19 +165,16 @@ class AnsibleAdapterState {
     if (!metadata) {
       return ansibleNotFound(`version ${ver.value} of collection ${fqcn} not found`);
     }
-    return textResponseWithEtag(
+    return jsonResponseWithEtag(
       req,
-      JSON.stringify(
-        buildVersionDetail({
-          namespace: ns.value,
-          name: nm.value,
-          version: ver.value,
-          metadata,
-          baseUrl: ctx.baseUrl,
-          mountPath: ctx.repo.mountPath,
-        }),
-      ),
-      { "content-type": "application/json; charset=utf-8" },
+      buildVersionDetail({
+        namespace: ns.value,
+        name: nm.value,
+        version: ver.value,
+        metadata,
+        baseUrl: ctx.baseUrl,
+        mountPath: ctx.repo.mountPath,
+      }),
     );
   }
 
@@ -202,18 +195,14 @@ class AnsibleAdapterState {
     if (!metadata) return ansibleNotFound(`import task ${idRaw} not found`);
     // Imports are synchronous: started_at/finished_at use the publish timestamp.
     const at = metadata.published;
-    return textResponseWithEtag(
-      req,
-      JSON.stringify({
-        id: idRaw,
-        state: "completed",
-        started_at: at,
-        finished_at: at,
-        error: null,
-        messages: [],
-      }),
-      { "content-type": "application/json; charset=utf-8" },
-    );
+    return jsonResponseWithEtag(req, {
+      id: idRaw,
+      state: "completed",
+      started_at: at,
+      finished_at: at,
+      error: null,
+      messages: [],
+    });
   }
 
   /** `GET /api/v3/collections/download/:filename` — serve the hosted artifact blob. */

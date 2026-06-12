@@ -1,4 +1,5 @@
 import {
+  jsonResponseWithEtag,
   parseRegistryInput,
   type RegistryMetadata,
   type RegistryPackageHandle,
@@ -6,7 +7,6 @@ import {
   type RegistryRequestContext,
   registryAdapter,
   serveRegistryBlob,
-  textResponseWithEtag,
 } from "@hootifactory/registry";
 import {
   buildChefCookbook,
@@ -14,6 +14,7 @@ import {
   buildChefCookbookListItem,
   buildChefCookbookVersion,
   buildChefUniverseEntry,
+  type ChefCookbook,
   type ChefCookbookListItem,
   type ChefStoredVersion,
   type ChefUniverse,
@@ -87,7 +88,7 @@ class ChefAdapterState {
       }
       universe[name] = entries;
     }
-    return textResponseWithEtag(req, JSON.stringify(universe), {
+    return jsonResponseWithEtag(req, universe, {
       "content-type": JSON_CONTENT_TYPE,
     });
   }
@@ -146,32 +147,35 @@ class ChefAdapterState {
     // cannot request an unbounded slice.
     const size = clampPositiveInt(params.get("items"), 10, 100);
     const window = items.slice(start, start + size);
-    const body = JSON.stringify(
+    return jsonResponseWithEtag(
+      req,
       buildChefCookbookList({ items: window, total: items.length, start }),
+      { "content-type": JSON_CONTENT_TYPE },
     );
-    return textResponseWithEtag(req, body, { "content-type": JSON_CONTENT_TYPE });
   }
 
   /** `GET /api/v1/cookbooks/:name` — the cookbook JSON (versions as URLs). */
   async cookbook(nameRaw: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const name = parseCookbookName(nameRaw);
-    const body = await this.cookbookBody(name, ctx);
-    if (!body) return new Response("Not Found", { status: 404 });
-    return textResponseWithEtag(req, body, { "content-type": JSON_CONTENT_TYPE });
+    const cookbook = await this.cookbookDocument(name, ctx);
+    if (!cookbook) return new Response("Not Found", { status: 404 });
+    return jsonResponseWithEtag(req, cookbook, { "content-type": JSON_CONTENT_TYPE });
   }
 
-  /** Serialized cookbook JSON, or null when the cookbook has no live versions. */
-  private async cookbookBody(name: string, ctx: RegistryRequestContext): Promise<string | null> {
+  /** Cookbook JSON document, or null when the cookbook has no live versions. */
+  private async cookbookDocument(
+    name: string,
+    ctx: RegistryRequestContext,
+  ): Promise<ChefCookbook | null> {
     const pkg = await ctx.data.packages.findByName(name);
     if (!pkg) return null;
     const versions = await this.storedVersions(pkg, ctx);
-    const cookbook = buildChefCookbook({
+    return buildChefCookbook({
       baseUrl: ctx.baseUrl,
       mountPath: ctx.repo.mountPath,
       name,
       versions,
     });
-    return cookbook ? JSON.stringify(cookbook) : null;
   }
 
   /** `GET /api/v1/cookbooks/:name/versions/:version` — single-version detail. */
@@ -184,16 +188,14 @@ class ChefAdapterState {
     const name = parseCookbookName(nameRaw);
     const stored = await this.resolveVersion(name, versionRaw, ctx);
     if (!stored) return new Response("Not Found", { status: 404 });
-    return textResponseWithEtag(
+    return jsonResponseWithEtag(
       req,
-      JSON.stringify(
-        buildChefCookbookVersion({
-          baseUrl: ctx.baseUrl,
-          mountPath: ctx.repo.mountPath,
-          name,
-          version: stored,
-        }),
-      ),
+      buildChefCookbookVersion({
+        baseUrl: ctx.baseUrl,
+        mountPath: ctx.repo.mountPath,
+        name,
+        version: stored,
+      }),
       { "content-type": JSON_CONTENT_TYPE },
     );
   }
@@ -270,9 +272,9 @@ class ChefAdapterState {
     ctx: RegistryRequestContext,
   ): Promise<RegistryMetadata | null> {
     name = parseCookbookName(name);
-    const body = await this.cookbookBody(name, ctx);
-    if (!body) return null;
-    return { contentType: JSON_CONTENT_TYPE, body };
+    const cookbook = await this.cookbookDocument(name, ctx);
+    if (!cookbook) return null;
+    return { contentType: JSON_CONTENT_TYPE, body: JSON.stringify(cookbook) };
   }
 
   /** Merge per-member cookbook listings: union their version URL lists, first wins. */

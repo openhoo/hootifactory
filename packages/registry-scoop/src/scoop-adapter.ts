@@ -1,11 +1,11 @@
 import {
   Errors,
+  jsonResponseWithEtag,
   parseRegistryInput,
   type RegistryPlugin,
   type RegistryRequestContext,
   registryAdapter,
   serveRegistryBlob,
-  textResponseWithEtag,
 } from "@hootifactory/registry";
 import { handleScoopPublish, scoopBlobScope } from "./scoop-publish-lifecycle";
 import {
@@ -48,9 +48,7 @@ class ScoopAdapterState {
       const latest = await this.latestMeta(ctx, pkg);
       if (latest) index[name] = { version: latest.version };
     }
-    return textResponseWithEtag(req, JSON.stringify(index), {
-      "content-type": "application/json; charset=utf-8",
-    });
+    return jsonResponseWithEtag(req, index);
   }
 
   /** `GET /<app>.json` — the app manifest assembled from the latest live version. */
@@ -64,9 +62,7 @@ class ScoopAdapterState {
     const downloadUrl = `${ctx.baseUrl}/${ctx.repo.mountPath}/download/${encodeURIComponent(
       app,
     )}/${encodeURIComponent(meta.version)}/${encodeURIComponent(meta.filename)}`;
-    return textResponseWithEtag(req, JSON.stringify(buildScoopAppManifest(meta, downloadUrl)), {
-      "content-type": "application/json; charset=utf-8",
-    });
+    return jsonResponseWithEtag(req, buildScoopAppManifest(meta, downloadUrl));
   }
 
   /** `GET /download/<app>/<version>/<filename>` — serve the hosted artifact blob. */

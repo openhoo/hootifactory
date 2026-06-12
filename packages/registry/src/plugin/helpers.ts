@@ -132,6 +132,8 @@ export function bytesEtag(body: Uint8Array): string {
   return `"${sha1hexBytes(body)}"`;
 }
 
+const JSON_RESPONSE_HEADERS = { "content-type": "application/json; charset=utf-8" } as const;
+
 export function textResponseWithEtag(
   req: Request,
   body: string,
@@ -140,6 +142,14 @@ export function textResponseWithEtag(
 ): Response {
   if (ifNoneMatch(req, etag)) return new Response(null, { status: 304, headers: { etag } });
   return new Response(body, { headers: { ...headers, etag } });
+}
+
+export function jsonResponseWithEtag(
+  req: Request,
+  body: unknown,
+  headers: Record<string, string> = JSON_RESPONSE_HEADERS,
+): Response {
+  return textResponseWithEtag(req, JSON.stringify(body) ?? "null", headers);
 }
 
 export function bytesResponseWithEtag(

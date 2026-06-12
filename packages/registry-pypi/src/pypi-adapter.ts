@@ -1,5 +1,6 @@
 import {
   Errors,
+  jsonResponseWithEtag,
   parseRegistryInput,
   type RegistryPlugin,
   type RegistryRequestContext,
@@ -88,13 +89,9 @@ class PypiAdapterState {
       mountPath: ctx.repo.mountPath,
     });
     if (preferredSimpleResponse(req.headers.get("accept")) === "json") {
-      return textResponseWithEtag(
-        req,
-        JSON.stringify(buildSimpleProjectJson(name, versions, files)),
-        {
-          "content-type": SIMPLE_JSON_CONTENT_TYPE,
-        },
-      );
+      return jsonResponseWithEtag(req, buildSimpleProjectJson(name, versions, files), {
+        "content-type": SIMPLE_JSON_CONTENT_TYPE,
+      });
     }
     return textResponseWithEtag(req, renderProjectHtml(name, files), {
       "content-type": simpleHtmlContentType(req.headers.get("accept")),

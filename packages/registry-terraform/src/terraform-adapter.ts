@@ -1,11 +1,11 @@
 import {
+  jsonResponseWithEtag,
   parseRegistryInput,
   type RegistryAppRoute,
   type RegistryAppRouteContext,
   type RegistryPlugin,
   type RegistryRequestContext,
   registryAdapter,
-  textResponseWithEtag,
 } from "@hootifactory/registry";
 import {
   listModuleVersions,
@@ -98,9 +98,7 @@ export function terraformAppRoutes(): RegistryAppRoute[] {
  * same full mount path the download / archive URL builders already use.
  */
 export function serveTerraformDiscoveryDoc(req: Request, ctx: RegistryRequestContext): Response {
-  return textResponseWithEtag(req, JSON.stringify(buildTerraformDiscoveryDoc(ctx.repo.mountPath)), {
-    "content-type": "application/json; charset=utf-8",
-  });
+  return jsonResponseWithEtag(req, buildTerraformDiscoveryDoc(ctx.repo.mountPath));
 }
 
 /**
