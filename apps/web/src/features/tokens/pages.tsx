@@ -1,6 +1,6 @@
 import type { PermissionKey } from "@hootifactory/types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { KeyRound } from "lucide-react";
+import { ChevronDown, KeyRound } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Code, EmptyState, Field, PageTitle, Pill, SubmitButton } from "@/components/common";
@@ -44,6 +44,8 @@ function grantUsesRepositoryScope(permission: PermissionKey) {
   );
 }
 
+const TOKEN_PAGE_SIZE = 50;
+
 export function TokensPage() {
   const { selected } = useOrg();
   const qc = useQueryClient();
@@ -52,6 +54,7 @@ export function TokensPage() {
   const [error, setError] = useState("");
   const [grantPermission, setGrantPermission] = useState<PermissionKey>("repository.read");
   const [repositoryPattern, setRepositoryPattern] = useState("");
+  const [tokenLimit, setTokenLimit] = useState(TOKEN_PAGE_SIZE);
   const grantOptions = useMemo(
     () =>
       TOKEN_PERMISSION_OPTIONS.filter((permission) => selected?.permissions.includes(permission)),
@@ -73,8 +76,8 @@ export function TokensPage() {
   }, [grantOptions, grantPermission]);
 
   const tokensQ = useQuery({
-    queryKey: ["tokens", selected?.id],
-    queryFn: () => api.tokens(selected!.id),
+    queryKey: ["tokens", selected?.id, tokenLimit],
+    queryFn: () => api.tokens(selected!.id, { limit: tokenLimit, offset: 0 }),
     enabled: !!selected,
   });
   const create = useMutation({
@@ -105,6 +108,8 @@ export function TokensPage() {
   });
 
   const tokens = tokensQ.data?.tokens ?? [];
+  const tokenTotal = tokensQ.data?.pagination.total ?? 0;
+  const canLoadMoreTokens = tokens.length < tokenTotal;
   const canSeeTokenOwners = Boolean(selected?.permissions.includes("token.read"));
   const needsRepositoryScope = grantUsesRepositoryScope(grantPermission);
   const canCreateToken = Boolean(
@@ -282,6 +287,25 @@ export function TokensPage() {
             )}
           </TableBody>
         </Table>
+        {tokens.length > 0 && (
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-4 py-3">
+            <span className="text-xs text-muted-foreground">
+              Showing {tokens.length} of {tokenTotal}
+            </span>
+            {canLoadMoreTokens && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setTokenLimit((limit) => limit + TOKEN_PAGE_SIZE)}
+                disabled={tokensQ.isFetching}
+              >
+                <ChevronDown />
+                Show more
+              </Button>
+            )}
+          </div>
+        )}
       </Card>
     </div>
   );
