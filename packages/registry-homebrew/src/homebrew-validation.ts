@@ -1,4 +1,4 @@
-import { z } from "@hootifactory/registry";
+import { Sha256DigestSchema, Sha256HexSchema, z } from "@hootifactory/registry";
 
 /**
  * Homebrew formula names are lowercase tokens. The brew client mirrors a
@@ -49,9 +49,6 @@ export const HomebrewFormulaInfoSchema = z.strictObject({
 });
 
 export type HomebrewFormulaInfo = z.output<typeof HomebrewFormulaInfoSchema>;
-
-const Sha256HexSchema = z.string().regex(/^[a-f0-9]{64}$/);
-const Sha256DigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 
 /** One bottle file (per platform tag) stored under a formula version. */
 export const HomebrewBottleFileSchema = z.strictObject({

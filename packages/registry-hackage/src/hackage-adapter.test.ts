@@ -310,16 +310,19 @@ describe("Hackage adapter", () => {
   test("GET /package/<name> 404s when the package is unknown", async () => {
     const ctx = hackageContext();
     ctx.data.packages.findByName = async () => null;
-    const res = await new HackageAdapter().handle(
-      {
-        entry: { method: "GET", pattern: "/package/:id", handlerId: "summary" },
-        params: { id: "missing" },
-        path: "/package/missing",
-      },
-      new Request("https://registry.test/package/missing"),
-      ctx,
-    );
-    expect(res.status).toBe(404);
+    // The handler throws Errors.notFound(); the platform wrapper formats the
+    // RegistryError into the module's 404 envelope.
+    await expect(
+      new HackageAdapter().handle(
+        {
+          entry: { method: "GET", pattern: "/package/:id", handlerId: "summary" },
+          params: { id: "missing" },
+          path: "/package/missing",
+        },
+        new Request("https://registry.test/package/missing"),
+        ctx,
+      ),
+    ).rejects.toMatchObject({ status: 404, code: "NOT_FOUND" });
   });
 
   test("download serves the stored sdist blob for the canonical tarball name", async () => {
@@ -370,32 +373,34 @@ describe("Hackage adapter", () => {
     const ctx = hackageContext();
     ctx.data.packages.findByName = async () => pkgRow("demo");
     ctx.data.versions.findLive = async () => versionRow(storedMeta);
-    const res = await new HackageAdapter().handle(
-      {
-        entry: { method: "GET", pattern: "/package/:id/:file", handlerId: "download" },
-        params: { id: "demo-1.2.3", file: "other.txt" },
-        path: "/package/demo-1.2.3/other.txt",
-      },
-      new Request("https://registry.test/package/demo-1.2.3/other.txt"),
-      ctx,
-    );
-    expect(res.status).toBe(404);
+    await expect(
+      new HackageAdapter().handle(
+        {
+          entry: { method: "GET", pattern: "/package/:id/:file", handlerId: "download" },
+          params: { id: "demo-1.2.3", file: "other.txt" },
+          path: "/package/demo-1.2.3/other.txt",
+        },
+        new Request("https://registry.test/package/demo-1.2.3/other.txt"),
+        ctx,
+      ),
+    ).rejects.toMatchObject({ status: 404, code: "NOT_FOUND" });
   });
 
   test("download 404s when the version is missing or not live", async () => {
     const ctx = hackageContext();
     ctx.data.packages.findByName = async () => pkgRow("demo");
     ctx.data.versions.findLive = async () => null;
-    const res = await new HackageAdapter().handle(
-      {
-        entry: { method: "GET", pattern: "/package/:id/:file", handlerId: "download" },
-        params: { id: "demo-9.9.9", file: "demo-9.9.9.tar.gz" },
-        path: "/package/demo-9.9.9/demo-9.9.9.tar.gz",
-      },
-      new Request("https://registry.test/package/demo-9.9.9/demo-9.9.9.tar.gz"),
-      ctx,
-    );
-    expect(res.status).toBe(404);
+    await expect(
+      new HackageAdapter().handle(
+        {
+          entry: { method: "GET", pattern: "/package/:id/:file", handlerId: "download" },
+          params: { id: "demo-9.9.9", file: "demo-9.9.9.tar.gz" },
+          path: "/package/demo-9.9.9/demo-9.9.9.tar.gz",
+        },
+        new Request("https://registry.test/package/demo-9.9.9/demo-9.9.9.tar.gz"),
+        ctx,
+      ),
+    ).rejects.toMatchObject({ status: 404, code: "NOT_FOUND" });
   });
 
   test("download with a malformed package id throws NAME_INVALID", async () => {
@@ -601,20 +606,21 @@ describe("Hackage adapter", () => {
   test("preferred-versions 404s for an unknown package", async () => {
     const ctx = hackageContext();
     ctx.data.packages.findByName = async () => null;
-    const res = await new HackageAdapter().handle(
-      {
-        entry: {
-          method: "GET",
-          pattern: "/package/:id/preferred-versions",
-          handlerId: "preferredVersions",
+    await expect(
+      new HackageAdapter().handle(
+        {
+          entry: {
+            method: "GET",
+            pattern: "/package/:id/preferred-versions",
+            handlerId: "preferredVersions",
+          },
+          params: { id: "missing" },
+          path: "/package/missing/preferred-versions",
         },
-        params: { id: "missing" },
-        path: "/package/missing/preferred-versions",
-      },
-      new Request("https://registry.test/package/missing/preferred-versions"),
-      ctx,
-    );
-    expect(res.status).toBe(404);
+        new Request("https://registry.test/package/missing/preferred-versions"),
+        ctx,
+      ),
+    ).rejects.toMatchObject({ status: 404, code: "NOT_FOUND" });
   });
 
   test("POST /packages/ publishes a multipart upload, deriving id from the .cabal", async () => {

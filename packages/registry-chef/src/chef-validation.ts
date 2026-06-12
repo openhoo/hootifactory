@@ -1,4 +1,4 @@
-import { z } from "@hootifactory/registry";
+import { Sha256DigestSchema, z } from "@hootifactory/registry";
 
 /**
  * Chef cookbook names: lowercase letters, digits, underscore, and dash. Supermarket
@@ -64,8 +64,6 @@ export const ChefDependenciesSchema = z.record(
 );
 
 export type ChefDependencies = z.output<typeof ChefDependenciesSchema>;
-
-const Sha256DigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 
 /**
  * The publish-side `cookbook` JSON part. The publisher describes the cookbook;

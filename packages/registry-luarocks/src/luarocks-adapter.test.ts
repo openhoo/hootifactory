@@ -263,33 +263,35 @@ describe("LuaRocks adapter", () => {
   test("download 404s for an unknown rock", async () => {
     const ctx = luarocksContext();
     ctx.data.packages.findByName = async () => null;
-    const res = await new LuarocksAdapter().handle(
-      {
-        entry: { method: "GET", pattern: "/:filename", handlerId: "download" },
-        params: { filename: "missing-1.0.0-1.src.rock" },
-        path: "/missing-1.0.0-1.src.rock",
-      },
-      new Request("https://registry.test/missing-1.0.0-1.src.rock"),
-      ctx,
-    );
-    expect(res.status).toBe(404);
+    await expect(
+      new LuarocksAdapter().handle(
+        {
+          entry: { method: "GET", pattern: "/:filename", handlerId: "download" },
+          params: { filename: "missing-1.0.0-1.src.rock" },
+          path: "/missing-1.0.0-1.src.rock",
+        },
+        new Request("https://registry.test/missing-1.0.0-1.src.rock"),
+        ctx,
+      ),
+    ).rejects.toMatchObject({ status: 404 });
   });
 
   test("download 404s when the requested filename does not match the stored arch", async () => {
     const ctx = luarocksContext();
     ctx.data.packages.findByName = async () => pkgRow("demo");
     ctx.data.versions.findLive = async () => versionRow(storedMeta);
-    const res = await new LuarocksAdapter().handle(
-      {
-        entry: { method: "GET", pattern: "/:filename", handlerId: "download" },
-        // arch present in metadata but a different (spoofed) filename.
-        params: { filename: "demo-1.0.0-1.linux-x86_64.rock" },
-        path: "/demo-1.0.0-1.linux-x86_64.rock",
-      },
-      new Request("https://registry.test/demo-1.0.0-1.linux-x86_64.rock"),
-      ctx,
-    );
-    expect(res.status).toBe(404);
+    await expect(
+      new LuarocksAdapter().handle(
+        {
+          entry: { method: "GET", pattern: "/:filename", handlerId: "download" },
+          // arch present in metadata but a different (spoofed) filename.
+          params: { filename: "demo-1.0.0-1.linux-x86_64.rock" },
+          path: "/demo-1.0.0-1.linux-x86_64.rock",
+        },
+        new Request("https://registry.test/demo-1.0.0-1.linux-x86_64.rock"),
+        ctx,
+      ),
+    ).rejects.toMatchObject({ status: 404 });
   });
 
   test("download throws notFound for an unparseable filename", async () => {
@@ -706,23 +708,24 @@ describe("LuaRocks adapter", () => {
     const ctx = luarocksContext();
     const form = new FormData();
     form.append("rock_file", new Blob([new Uint8Array([1])]), "x.rock");
-    const res = await new LuarocksAdapter().handle(
-      {
-        entry: {
-          method: "POST",
-          pattern: "/api/1/:apikey/upload_rock/:versionId",
-          handlerId: "apiUploadRock",
+    await expect(
+      new LuarocksAdapter().handle(
+        {
+          entry: {
+            method: "POST",
+            pattern: "/api/1/:apikey/upload_rock/:versionId",
+            handlerId: "apiUploadRock",
+          },
+          params: { apikey: "secret", versionId: "999999" },
+          path: "/api/1/secret/upload_rock/999999",
         },
-        params: { apikey: "secret", versionId: "999999" },
-        path: "/api/1/secret/upload_rock/999999",
-      },
-      new Request("https://registry.test/api/1/secret/upload_rock/999999", {
-        method: "POST",
-        body: form,
-      }),
-      ctx,
-    );
-    expect(res.status).toBe(404);
+        new Request("https://registry.test/api/1/secret/upload_rock/999999", {
+          method: "POST",
+          body: form,
+        }),
+        ctx,
+      ),
+    ).rejects.toMatchObject({ status: 404 });
   });
 
   test("POST /api upload rejects a non-multipart body with 400", async () => {

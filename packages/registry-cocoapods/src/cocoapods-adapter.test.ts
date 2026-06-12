@@ -227,32 +227,34 @@ describe("CocoaPods adapter", () => {
     const ctx = cocoapodsContext();
     ctx.data.packages.findByName = async () => pkgRow("demo");
     ctx.data.versions.findLive = async () => versionRow(storedMeta);
-    const res = await new CocoapodsAdapter().handle(
-      {
-        entry: { method: "GET", pattern: "/Specs/:tail+", handlerId: "podspec" },
-        // demo shards to f/e/0, not a/b/c.
-        params: { tail: "a/b/c/demo/1.2.3/demo.podspec.json" },
-        path: "/Specs/a/b/c/demo/1.2.3/demo.podspec.json",
-      },
-      new Request("https://registry.test/Specs/a/b/c/demo/1.2.3/demo.podspec.json"),
-      ctx,
-    );
-    expect(res.status).toBe(404);
+    await expect(
+      new CocoapodsAdapter().handle(
+        {
+          entry: { method: "GET", pattern: "/Specs/:tail+", handlerId: "podspec" },
+          // demo shards to f/e/0, not a/b/c.
+          params: { tail: "a/b/c/demo/1.2.3/demo.podspec.json" },
+          path: "/Specs/a/b/c/demo/1.2.3/demo.podspec.json",
+        },
+        new Request("https://registry.test/Specs/a/b/c/demo/1.2.3/demo.podspec.json"),
+        ctx,
+      ),
+    ).rejects.toMatchObject({ status: 404 });
   });
 
   test("GET podspec 404s when the package is unknown", async () => {
     const ctx = cocoapodsContext();
     ctx.data.packages.findByName = async () => null;
-    const res = await new CocoapodsAdapter().handle(
-      {
-        entry: { method: "GET", pattern: "/Specs/:tail+", handlerId: "podspec" },
-        params: { tail: "f/e/0/demo/1.2.3/demo.podspec.json" },
-        path: `/${DEMO_SPEC_PATH}`,
-      },
-      new Request(`https://registry.test/${DEMO_SPEC_PATH}`),
-      ctx,
-    );
-    expect(res.status).toBe(404);
+    await expect(
+      new CocoapodsAdapter().handle(
+        {
+          entry: { method: "GET", pattern: "/Specs/:tail+", handlerId: "podspec" },
+          params: { tail: "f/e/0/demo/1.2.3/demo.podspec.json" },
+          path: `/${DEMO_SPEC_PATH}`,
+        },
+        new Request(`https://registry.test/${DEMO_SPEC_PATH}`),
+        ctx,
+      ),
+    ).rejects.toMatchObject({ status: 404 });
   });
 
   test("download resolves the stored blob digest for the matching filename", async () => {
@@ -291,40 +293,42 @@ describe("CocoaPods adapter", () => {
     const ctx = cocoapodsContext();
     ctx.data.packages.findByName = async () => pkgRow("demo");
     ctx.data.versions.findLive = async () => versionRow(storedMeta);
-    const res = await new CocoapodsAdapter().handle(
-      {
-        entry: {
-          method: "GET",
-          pattern: "/pods/:pod/:version/:filename",
-          handlerId: "download",
+    await expect(
+      new CocoapodsAdapter().handle(
+        {
+          entry: {
+            method: "GET",
+            pattern: "/pods/:pod/:version/:filename",
+            handlerId: "download",
+          },
+          params: { pod: "demo", version: "1.2.3", filename: "other.tar.gz" },
+          path: "/pods/demo/1.2.3/other.tar.gz",
         },
-        params: { pod: "demo", version: "1.2.3", filename: "other.tar.gz" },
-        path: "/pods/demo/1.2.3/other.tar.gz",
-      },
-      new Request("https://registry.test/pods/demo/1.2.3/other.tar.gz"),
-      ctx,
-    );
-    expect(res.status).toBe(404);
+        new Request("https://registry.test/pods/demo/1.2.3/other.tar.gz"),
+        ctx,
+      ),
+    ).rejects.toMatchObject({ status: 404 });
   });
 
   test("download 404s when the version is missing or not live", async () => {
     const ctx = cocoapodsContext();
     ctx.data.packages.findByName = async () => pkgRow("demo");
     ctx.data.versions.findLive = async () => null;
-    const res = await new CocoapodsAdapter().handle(
-      {
-        entry: {
-          method: "GET",
-          pattern: "/pods/:pod/:version/:filename",
-          handlerId: "download",
+    await expect(
+      new CocoapodsAdapter().handle(
+        {
+          entry: {
+            method: "GET",
+            pattern: "/pods/:pod/:version/:filename",
+            handlerId: "download",
+          },
+          params: { pod: "demo", version: "9.9.9", filename: "demo-9.9.9.tar.gz" },
+          path: "/pods/demo/9.9.9/demo-9.9.9.tar.gz",
         },
-        params: { pod: "demo", version: "9.9.9", filename: "demo-9.9.9.tar.gz" },
-        path: "/pods/demo/9.9.9/demo-9.9.9.tar.gz",
-      },
-      new Request("https://registry.test/pods/demo/9.9.9/demo-9.9.9.tar.gz"),
-      ctx,
-    );
-    expect(res.status).toBe(404);
+        new Request("https://registry.test/pods/demo/9.9.9/demo-9.9.9.tar.gz"),
+        ctx,
+      ),
+    ).rejects.toMatchObject({ status: 404 });
   });
 
   test("download with an invalid pod name throws NAME_INVALID", async () => {
@@ -810,10 +814,11 @@ describe("CocoaPods CDN bootstrap surface", () => {
   });
 
   test("GET shard index 404s for a non-shard single-segment path", async () => {
-    const res = await get(new CocoapodsAdapter(), "/:shardFile", "shardIndex", "/not-a-shard", {
-      shardFile: "not-a-shard",
-    });
-    expect(res.status).toBe(404);
+    await expect(
+      get(new CocoapodsAdapter(), "/:shardFile", "shardIndex", "/not-a-shard", {
+        shardFile: "not-a-shard",
+      }),
+    ).rejects.toMatchObject({ status: 404 });
   });
 
   test("publish -> shard index -> podspec -> download is internally consistent", async () => {

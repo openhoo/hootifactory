@@ -306,6 +306,16 @@ export function validateContentRange(
   }
 }
 
+export function requestBodyLength(req: Request): number | null {
+  const contentLength = req.headers.get("content-length");
+  if (contentLength !== null) {
+    const parsed = Number(contentLength);
+    if (Number.isSafeInteger(parsed) && parsed >= 0) return parsed;
+  }
+  const range = parseContentRange(req.headers.get("content-range"));
+  return range ? range.end - range.start + 1 : null;
+}
+
 export function parseBlobRange(
   value: string | null,
   size: number,

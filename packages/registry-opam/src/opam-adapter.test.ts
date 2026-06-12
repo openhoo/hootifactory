@@ -243,16 +243,17 @@ describe("opam adapter", () => {
   test("opamFile 404s when the package is unknown", async () => {
     const ctx = opamContext();
     ctx.data.packages.findByName = async () => null;
-    const res = await new OpamAdapter().handle(
-      {
-        entry: { method: "GET", pattern: "/packages/:pkg/:nv/opam", handlerId: "opamFile" },
-        params: { pkg: "missing", nv: "missing.1.0.0" },
-        path: "/packages/missing/missing.1.0.0/opam",
-      },
-      new Request("https://registry.test/packages/missing/missing.1.0.0/opam"),
-      ctx,
-    );
-    expect(res.status).toBe(404);
+    await expect(
+      new OpamAdapter().handle(
+        {
+          entry: { method: "GET", pattern: "/packages/:pkg/:nv/opam", handlerId: "opamFile" },
+          params: { pkg: "missing", nv: "missing.1.0.0" },
+          path: "/packages/missing/missing.1.0.0/opam",
+        },
+        new Request("https://registry.test/packages/missing/missing.1.0.0/opam"),
+        ctx,
+      ),
+    ).rejects.toMatchObject({ status: 404 });
   });
 
   test("archive resolves the stored blob digest for the matching filename", async () => {
@@ -323,40 +324,42 @@ describe("opam adapter", () => {
     const ctx = opamContext();
     ctx.data.packages.findByName = async () => pkgRow("lwt");
     ctx.data.versions.findLive = async () => versionRow(storedMeta());
-    const res = await new OpamAdapter().handle(
-      {
-        entry: {
-          method: "GET",
-          pattern: "/archives/:name/:version/:filename",
-          handlerId: "archive",
+    await expect(
+      new OpamAdapter().handle(
+        {
+          entry: {
+            method: "GET",
+            pattern: "/archives/:name/:version/:filename",
+            handlerId: "archive",
+          },
+          params: { name: "lwt", version: "5.6.1", filename: "other.tar.gz" },
+          path: "/archives/lwt/5.6.1/other.tar.gz",
         },
-        params: { name: "lwt", version: "5.6.1", filename: "other.tar.gz" },
-        path: "/archives/lwt/5.6.1/other.tar.gz",
-      },
-      new Request("https://registry.test/archives/lwt/5.6.1/other.tar.gz"),
-      ctx,
-    );
-    expect(res.status).toBe(404);
+        new Request("https://registry.test/archives/lwt/5.6.1/other.tar.gz"),
+        ctx,
+      ),
+    ).rejects.toMatchObject({ status: 404 });
   });
 
   test("archive 404s when the version is missing or not live", async () => {
     const ctx = opamContext();
     ctx.data.packages.findByName = async () => pkgRow("lwt");
     ctx.data.versions.findLive = async () => null;
-    const res = await new OpamAdapter().handle(
-      {
-        entry: {
-          method: "GET",
-          pattern: "/archives/:name/:version/:filename",
-          handlerId: "archive",
+    await expect(
+      new OpamAdapter().handle(
+        {
+          entry: {
+            method: "GET",
+            pattern: "/archives/:name/:version/:filename",
+            handlerId: "archive",
+          },
+          params: { name: "lwt", version: "9.9.9", filename: "lwt-9.9.9.tar.gz" },
+          path: "/archives/lwt/9.9.9/lwt-9.9.9.tar.gz",
         },
-        params: { name: "lwt", version: "9.9.9", filename: "lwt-9.9.9.tar.gz" },
-        path: "/archives/lwt/9.9.9/lwt-9.9.9.tar.gz",
-      },
-      new Request("https://registry.test/archives/lwt/9.9.9/lwt-9.9.9.tar.gz"),
-      ctx,
-    );
-    expect(res.status).toBe(404);
+        new Request("https://registry.test/archives/lwt/9.9.9/lwt-9.9.9.tar.gz"),
+        ctx,
+      ),
+    ).rejects.toMatchObject({ status: 404 });
   });
 
   test("archive with an invalid name throws NAME_INVALID", async () => {

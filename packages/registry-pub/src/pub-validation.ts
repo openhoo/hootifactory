@@ -1,4 +1,4 @@
-import { z } from "@hootifactory/registry";
+import { Sha256DigestSchema, Sha256HexSchema, z } from "@hootifactory/registry";
 
 /** A pub package name: lowercase identifier characters only. */
 const PACKAGE_NAME_RE = /^[a-z0-9_]+$/;
@@ -36,9 +36,6 @@ export const PubArchiveFileSchema = z
   .min(1)
   .max(512)
   .regex(/^[A-Za-z0-9_][A-Za-z0-9._+-]*\.tar\.gz$/, "invalid archive filename");
-
-const Sha256HexSchema = z.string().regex(/^[a-f0-9]{64}$/);
-const Sha256DigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 
 /**
  * The pubspec we keep is the parsed YAML object. We require name+version and

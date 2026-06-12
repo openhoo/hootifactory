@@ -1,4 +1,4 @@
-import { z } from "@hootifactory/registry";
+import { Sha256DigestSchema, Sha256HexSchema, z } from "@hootifactory/registry";
 
 /**
  * Pacman/Arch package names: lowercase-friendly but Arch permits letters, digits,
@@ -47,9 +47,6 @@ export const ArchPkgFileSchema = z
 export function isArchPkgFile(file: string): boolean {
   return PKG_FILE_RE.test(file) && !file.includes("/") && !file.includes("\\");
 }
-
-const Sha256DigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
-const Sha256HexSchema = z.string().regex(/^[a-f0-9]{64}$/);
 
 /**
  * What we persist per published package version. `pkgname`/`pkgver`/`arch` and

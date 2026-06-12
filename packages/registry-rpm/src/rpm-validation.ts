@@ -1,4 +1,4 @@
-import { z } from "@hootifactory/registry";
+import { Sha256DigestSchema, Sha256HexSchema, z } from "@hootifactory/registry";
 
 /**
  * Per-version metadata stored for an RPM package. The epoch/ver/rel/arch are
@@ -36,9 +36,6 @@ export function isValidRpmName(name: string): boolean {
 export const RpmNameSchema = z.string().min(1).max(256).regex(RPM_NAME_RE, "invalid RPM name");
 
 export const RpmFileSchema = z.string().min(5).max(512).regex(RPM_FILE_RE, "invalid RPM filename");
-
-const Sha256HexSchema = z.string().regex(/^[a-f0-9]{64}$/);
-const Sha256DigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 
 export const RpmVersionMetaSchema = z.strictObject({
   rpmDigest: Sha256DigestSchema,

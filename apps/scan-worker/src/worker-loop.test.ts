@@ -13,6 +13,7 @@ import type { ScanLoopDeps, ScanWorkerConfig } from "./worker-loop";
 
 interface DbCapture {
   executeResult: unknown;
+  executeRejects: boolean;
   updates: { set: Record<string, unknown>; sawReturning: boolean }[];
   reclaimRows: { id: string }[];
   updateRejects: boolean;
@@ -47,7 +48,10 @@ function makeDb(capture: DbCapture): typeof import("@hootifactory/db").db {
     return proxy;
   }
   return {
-    execute: async () => capture.executeResult,
+    execute: async () => {
+      if (capture.executeRejects) throw new Error("db execute failed");
+      return capture.executeResult;
+    },
     update: () => updateChain(),
   } as unknown as typeof import("@hootifactory/db").db;
 }
@@ -84,6 +88,7 @@ interface Collaborators {
 
 async function loadModule(opts: {
   executeResult?: unknown;
+  executeRejects?: boolean;
   reclaimRows?: { id: string }[];
   updateRejects?: boolean;
   processScan?: (artifactId: string) => Promise<void>;
@@ -92,6 +97,7 @@ async function loadModule(opts: {
 }): Promise<{ mod: typeof import("./worker-loop"); collab: Collaborators }> {
   const capture: DbCapture = {
     executeResult: opts.executeResult ?? { rows: [] },
+    executeRejects: opts.executeRejects ?? false,
     updates: [],
     reclaimRows: opts.reclaimRows ?? [],
     updateRejects: opts.updateRejects ?? false,
@@ -304,6 +310,39 @@ describe("processClaimedIntent", () => {
     expect(collab.failures.map((f) => f.artifactId)).toEqual(["art-a"]);
     expect(collab.capture.updates[0]?.set.status).toBe("failed");
   });
+
+  test("resolves even when the markSucceeded terminal write fails", async () => {
+    const { mod, collab } = await loadModule({ updateRejects: true });
+    await mod.processClaimedIntent(
+      { id: "a", artifactId: "art-a", attempts: 1 },
+      runtime,
+      5,
+      collab.deps,
+    );
+    // The scan pipeline still ran (processed), but the terminal write failed
+    // internally and was caught — the intent stays in 'processing' until
+    // reclaimStuckScans picks it up.
+    expect(collab.processed).toEqual(["art-a"]);
+    expect(collab.failures).toEqual([]);
+  });
+
+  test("resolves even when the markFailed terminal write fails", async () => {
+    const { mod, collab } = await loadModule({
+      updateRejects: true,
+      processScan: async () => {
+        throw new Error("scan exploded");
+      },
+    });
+    await mod.processClaimedIntent(
+      { id: "a", artifactId: "art-a", attempts: 5 },
+      runtime,
+      5,
+      collab.deps,
+    );
+    // The failure was recorded, but the terminal write failed internally and
+    // was caught.
+    expect(collab.failures.map((f) => f.artifactId)).toEqual(["art-a"]);
+  });
 });
 
 describe("runScanCycle", () => {
@@ -328,5 +367,11 @@ describe("runScanCycle", () => {
     expect(collab.processed.sort()).toEqual(["art-a", "art-b"]);
     // both intents were finalized (two terminal writes)
     expect(collab.capture.updates.filter((u) => u.set.status === "succeeded")).toHaveLength(2);
+  });
+
+  test("tolerates a failing claim and returns 0 without crashing the loop", async () => {
+    const { mod } = await loadModule({ executeRejects: true });
+    const processed = await mod.runScanCycle(baseConfig, runtime);
+    expect(processed).toBe(0);
   });
 });

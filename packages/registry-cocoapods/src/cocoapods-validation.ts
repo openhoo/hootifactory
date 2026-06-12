@@ -1,4 +1,4 @@
-import { z } from "@hootifactory/registry";
+import { Sha256DigestSchema, Sha256HexSchema, z } from "@hootifactory/registry";
 
 /**
  * Pod names: CocoaPods allows letters, digits, and `+`/`-`/`_`/`.`. Real pod names
@@ -87,9 +87,6 @@ export function podSpecPath(podName: string, version: string): string {
 export function podArtifactFilename(podName: string, version: string): string {
   return `${podName}-${version}.tar.gz`;
 }
-
-const Sha256DigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
-const Sha256HexSchema = z.string().regex(/^[a-f0-9]{64}$/);
 
 /**
  * The publish-side `podspec` part. CocoaPods podspecs carry arbitrary descriptive

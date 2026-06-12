@@ -18,7 +18,7 @@ describe("defineRegistryPlugin", () => {
       capabilities: {
         contentAddressable: false,
         resumableUploads: false,
-        proxyable: true,
+        proxyable: false,
         virtualizable: true,
       },
       routes: [
@@ -142,6 +142,7 @@ describe("defineRegistryPlugin", () => {
       displayName: "npm",
       mountSegment: "npm",
       capabilities: registryCapabilities("proxyable", "virtualizable"),
+      proxyIngest: async () => true,
       compressibleHandlers: ["packument"],
       compressibleContentTypes: ["application/json"],
       appRoutes: registryAppRoutes((route) => [
@@ -227,5 +228,52 @@ describe("defineRegistryPlugin", () => {
     expect(registryAppRoutes([{ method: "GET", pattern: "/v2", handler }])).toEqual([
       { method: "GET", pattern: "/v2", handler },
     ]);
+  });
+
+  test("rejects a proxyable capability without a proxyIngest hook", () => {
+    expect(() =>
+      defineRegistryPlugin({
+        id: "generic",
+        capabilities: registryCapabilities("proxyable"),
+        routes: [
+          registryRoute({
+            method: "GET",
+            pattern: "/:pkg",
+            handlerId: "get",
+            handler: () => new Response("ok"),
+          }),
+        ],
+      }),
+    ).toThrow(/declares the "proxyable" capability but does not implement proxyIngest/);
+  });
+
+  test("accepts a proxyable capability when proxyIngest is implemented", () => {
+    const plugin = defineRegistryPlugin({
+      id: "generic",
+      capabilities: registryCapabilities("proxyable"),
+      proxyIngest: async () => true,
+      routes: [
+        registryRoute({
+          method: "GET",
+          pattern: "/:pkg",
+          handlerId: "get",
+          handler: () => new Response("ok"),
+        }),
+      ],
+    });
+    expect(plugin.capabilities.proxyable).toBe(true);
+  });
+
+  test("rejects duplicate declarative routes (same method, pattern, handlerId)", () => {
+    expect(() =>
+      defineRegistryPlugin({
+        id: "cargo",
+        capabilities: registryCapabilities("virtualizable"),
+        routes: (route) => [
+          route.get("/config.json", "config", () => Response.json({ ok: true })),
+          route.get("/config.json", "config", () => Response.json({ ok: false })),
+        ],
+      }),
+    ).toThrow(/declares a duplicate route: GET \/config.json config/);
   });
 });

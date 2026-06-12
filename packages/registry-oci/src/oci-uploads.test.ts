@@ -380,7 +380,7 @@ describe("OCI patchUpload offset validation", () => {
         UPLOAD_UUID,
         new Request(
           `https://registry.test/v2/acme/containers/team/api/blobs/uploads/${UPLOAD_UUID}`,
-          { method: "PATCH", body: "layer" },
+          { method: "PATCH", body: "layer", headers: { "content-length": "5" } },
         ),
         ctx,
       ),
@@ -391,7 +391,7 @@ describe("OCI patchUpload offset validation", () => {
     const ctx = ctxFor();
     const deleted: string[] = [];
     let pass = 0;
-    ctx.data.content.staging.putKey = async () => {};
+    ctx.data.content.staging.putKeyStream = async () => {};
     ctx.data.content.staging.deleteKey = async (key) => {
       deleted.push(key);
     };
@@ -410,7 +410,7 @@ describe("OCI patchUpload offset validation", () => {
         UPLOAD_UUID,
         new Request(
           `https://registry.test/v2/acme/containers/team/api/blobs/uploads/${UPLOAD_UUID}`,
-          { method: "PATCH", body: "layer" },
+          { method: "PATCH", body: "layer", headers: { "content-length": "5" } },
         ),
         ctx,
       ),

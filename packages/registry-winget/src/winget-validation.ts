@@ -1,4 +1,4 @@
-import { z } from "@hootifactory/registry";
+import { Sha256DigestSchema, z } from "@hootifactory/registry";
 
 /**
  * winget `PackageIdentifier`: `Publisher.Package` (`Publisher.Sub.Package`…).
@@ -96,7 +96,6 @@ export const WingetPublishManifestSchema = z.strictObject({
 
 export type WingetPublishManifest = z.output<typeof WingetPublishManifestSchema>;
 
-const Sha256DigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 /** winget renders SHA256 as uppercase hex. */
 const Sha256UpperHexSchema = z.string().regex(/^[A-F0-9]{64}$/);
 

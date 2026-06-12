@@ -78,10 +78,10 @@ class OpamAdapterState {
     if (!nvRaw.startsWith(prefix) || nvRaw.length === prefix.length) throw Errors.notFound();
     const version = parseVersion(nvRaw.slice(prefix.length));
     const pkgRow = await ctx.data.packages.findByName(pkg);
-    if (!pkgRow) return new Response("Not Found", { status: 404 });
+    if (!pkgRow) throw Errors.notFound();
     const row = await ctx.data.versions.findLive(pkgRow, version);
     const meta = parseOpamVersionMeta(row?.metadata);
-    if (!meta) return new Response("Not Found", { status: 404 });
+    if (!meta) throw Errors.notFound();
     return textResponseWithEtag(req, buildOpamFile(meta, this.srcUrl(ctx, meta)), {
       "content-type": "text/plain; charset=utf-8",
     });
@@ -96,11 +96,11 @@ class OpamAdapterState {
     ctx: RegistryRequestContext,
   ): Promise<Response> {
     const pkg = await ctx.data.packages.findByName(name);
-    if (!pkg) return new Response("Not Found", { status: 404 });
+    if (!pkg) throw Errors.notFound();
     const row = await ctx.data.versions.findLive(pkg, version);
     const meta = parseOpamVersionMeta(row?.metadata);
     // The requested filename must match the canonical archive this version stored.
-    if (!meta || meta.filename !== filename) return new Response("Not Found", { status: 404 });
+    if (!meta || meta.filename !== filename) throw Errors.notFound();
     return serveRegistryBlob(ctx, {
       digest: meta.blobDigest,
       kind: OPAM_ARCHIVE_KIND,

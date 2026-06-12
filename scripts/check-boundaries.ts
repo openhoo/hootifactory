@@ -33,22 +33,13 @@ const workspaceImportPattern =
 // new package + a manifest line — never a boundary-checker edit.
 const NON_PLUGIN_REGISTRY = new Set(["registry", "registry-platform", "registry-runtime"]);
 const NON_PLUGIN_SCANNER = new Set(["scanner", "scanner-runtime"]);
+// All but one of the legacy hand-rolled 404 sites now throw Errors.notFound()
+// (formatted per the module's errorResponseKind). The lone holdout returns a
+// context-specific "version not found: <version>" body on the npm dist-tag path
+// that the generic Errors.notFound() formatter can't preserve, so it stays
+// grandfathered here; every other plugin is now enforced.
 const LEGACY_HAND_ROLLED_404_ALLOWLIST = new Set([
-  "packages/registry-alpine/src/alpine-adapter.ts",
-  "packages/registry-cargo/src/cargo-adapter.ts",
-  "packages/registry-chef/src/chef-adapter.ts",
-  "packages/registry-cocoapods/src/cocoapods-adapter.ts",
-  "packages/registry-conan/src/conan-adapter.ts",
-  "packages/registry-hackage/src/hackage-adapter.ts",
-  "packages/registry-luarocks/src/luarocks-adapter.ts",
-  "packages/registry-nix/src/nix-adapter.ts",
   "packages/registry-npm/src/npm-publish-lifecycle.ts",
-  "packages/registry-opam/src/opam-adapter.ts",
-  "packages/registry-scoop/src/scoop-adapter.ts",
-  "packages/registry-terraform/src/terraform-modules.ts",
-  "packages/registry-terraform/src/terraform-providers.ts",
-  "packages/registry-vagrant/src/vagrant-adapter.ts",
-  "packages/registry-winget/src/winget-adapter.ts",
 ]);
 const HAND_ROLLED_404_PATTERNS = [
   /\bnew Response\([^)]*\bstatus\s*:\s*404/,
@@ -219,6 +210,21 @@ function buildRules(): BoundaryRule[] {
       name: "registry plugins stay DB-free",
       roots: registryPluginRoots,
       forbidden: [/@hootifactory\/db\b/, /\bctx\.db\b/],
+    },
+    {
+      // Lock in the SDK digest-schema convergence: a plugin must validate sha256
+      // digests with the shared Sha256DigestSchema / Sha256HexSchema exported by
+      // @hootifactory/registry, never a re-declared `z.string().regex(/^sha256:…
+      // {64}$/)` (or bare 64-hex) validator that can silently drift from the
+      // canonical DIGEST_RE. Extraction regexes (`.match(/[0-9a-f]{64}/)`) and
+      // non-64-hex patterns (sha1's {40}) are untouched.
+      name: "registry plugins use shared SDK digest schemas, not hand-rolled sha256 validators",
+      roots: registryPluginSrcRoots,
+      ignoreTests: true,
+      forbidden: [
+        /regex\(\s*\/\^sha256:\[(?:0-9a-f|a-f0-9)\]\{64\}\$\//,
+        /regex\(\s*\/\^\[(?:0-9a-f|a-f0-9)\]\{64\}\$\//,
+      ],
     },
     {
       name: "repository configuration route slice stays DB-free",

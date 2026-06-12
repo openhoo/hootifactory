@@ -13,6 +13,7 @@ const npm = registryAdapter("npm")
     mountSegment: "npm",
     capabilities: ["proxyable", "virtualizable"],
   })
+  .proxyIngest(() => Promise.resolve(true))
   .routes((route) => [route.get("/:pkg+", "packument", () => Response.json({ ok: true }))])
   .build();
 

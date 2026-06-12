@@ -21,11 +21,11 @@ import {
 import {
   OciCommitUploadQuerySchema,
   OciStartUploadQuerySchema,
+  requestBodyLength,
   UploadUuidSchema,
   validateContentRange,
 } from "./oci-validation";
 import {
-  bodyBytes,
   deleteUploadChunks,
   type UploadChunk,
   uploadChunkStream,
@@ -126,7 +126,13 @@ export async function patchUpload(
 ): Promise<Response> {
   const parsedUuid = parseUploadUuid(uuid);
   return withUploadExpirationCleanup(ctx, async () => {
-    const chunk = await bodyBytes(req);
+    const chunkLength = requestBodyLength(req);
+    if (chunkLength === null) {
+      throw Errors.blobUploadInvalid({
+        reason: "content-length or content-range is required for streamed upload chunks",
+      });
+    }
+    const body = req.body ?? emptyStream();
     const pending = await contentStore(ctx).withLockedUploadSession({
       scope: image,
       uuid: parsedUuid,
@@ -138,8 +144,8 @@ export async function patchUpload(
           session,
           mutations,
         });
-        validateContentRange(req, openSession.offsetBytes, chunk.length);
-        const next = planUploadChunk(openSession, chunk);
+        validateContentRange(req, openSession.offsetBytes, chunkLength);
+        const next = planUploadChunk(openSession, chunkLength);
         await mutations.assertStagingBudget({
           nextOffsetBytes: next.offset,
           maxStagedUploadBytes: ctx.limits.maxStagedUploadBytes,
@@ -150,7 +156,7 @@ export async function patchUpload(
 
     let stagedKey = pending.key;
     try {
-      if (stagedKey) await ctx.data.content.staging.putKey(stagedKey, chunk);
+      if (stagedKey) await ctx.data.content.staging.putKeyStream(stagedKey, body);
 
       const offset = await contentStore(ctx).withLockedUploadSession({
         scope: image,
@@ -163,8 +169,8 @@ export async function patchUpload(
             session,
             mutations,
           });
-          validateContentRange(req, openSession.offsetBytes, chunk.length);
-          const next = planUploadChunk(openSession, chunk, stagedKey);
+          validateContentRange(req, openSession.offsetBytes, chunkLength);
+          const next = planUploadChunk(openSession, chunkLength, stagedKey);
           if (next.startOffset !== pending.startOffset || next.offset !== pending.offset) {
             throw Errors.blobUploadInvalid({
               reason: "upload offset changed while staging chunk",
@@ -204,7 +210,8 @@ export async function putUpload(
 
   const parsedUuid = parseUploadUuid(uuid);
   return withUploadExpirationCleanup(ctx, async () => {
-    const chunk = await bodyBytes(req);
+    const headerChunkLength = requestBodyLength(req);
+    const body = req.body ?? emptyStream();
     const pending = await contentStore(ctx).withLockedUploadSession({
       scope: image,
       uuid: parsedUuid,
@@ -216,11 +223,13 @@ export async function putUpload(
           session,
           mutations,
         });
-        validateContentRange(req, openSession.offsetBytes, chunk.length);
+        if (headerChunkLength !== null) {
+          validateContentRange(req, openSession.offsetBytes, headerChunkLength);
+        }
         const state = uploadMultipartState(openSession.multipart);
         const existing = state.chunks.reduce((sum, part) => sum + part.size, 0);
         assertUploadOffset(existing, openSession.offsetBytes);
-        return { storageKey: openSession.storageKey, chunks: state.chunks };
+        return { chunks: state.chunks };
       },
     });
 
@@ -228,7 +237,7 @@ export async function putUpload(
     try {
       uploaded = await ctx.data.content
         .uploadBlobStream({
-          data: uploadChunkStream(ctx, pending.chunks, chunk),
+          data: uploadChunkStream(ctx, pending.chunks, body),
           expectedDigest: digest,
         })
         .catch((err) => {
@@ -249,10 +258,23 @@ export async function putUpload(
             session,
             mutations,
           });
-          validateContentRange(req, openSession.offsetBytes, chunk.length);
           const state = uploadMultipartState(openSession.multipart);
           const existing = state.chunks.reduce((sum, part) => sum + part.size, 0);
           assertUploadOffset(existing, openSession.offsetBytes);
+          const chunkLength = uploaded!.size - existing;
+          if (chunkLength < 0) {
+            throw Errors.blobUploadInvalid({
+              reason: "uploaded blob is smaller than staged upload chunks",
+            });
+          }
+          validateContentRange(req, openSession.offsetBytes, chunkLength);
+          if (headerChunkLength !== null && headerChunkLength !== chunkLength) {
+            throw Errors.blobUploadInvalid({
+              reason: "uploaded chunk size does not match request headers",
+              expected: headerChunkLength,
+              actual: chunkLength,
+            });
+          }
           const stored = await mutations.commitBlobWithRef({
             blob: uploaded!,
             kind: "oci_layer",
@@ -449,17 +471,17 @@ async function withUploadExpirationCleanup<T>(
 
 function planUploadChunk(
   session: { storageKey: string; offsetBytes: number; multipart: string | null },
-  chunk: Uint8Array,
+  chunkLength: number,
   stagedKey?: string,
 ): { startOffset: number; offset: number; key?: string; multipart: string } {
   const state = uploadMultipartState(session.multipart);
   const existing = state.chunks.reduce((sum, part) => sum + part.size, 0);
   assertUploadOffset(existing, session.offsetBytes);
-  const nextOffset = existing + chunk.length;
+  const nextOffset = existing + chunkLength;
   let key: string | undefined;
-  if (chunk.length > 0) {
+  if (chunkLength > 0) {
     key = stagedKey ?? `${session.storageKey}/chunks/${state.chunks.length}-${crypto.randomUUID()}`;
-    state.chunks.push({ key, size: chunk.length });
+    state.chunks.push({ key, size: chunkLength });
   }
   return {
     startOffset: existing,

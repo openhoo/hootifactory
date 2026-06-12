@@ -1,4 +1,4 @@
-import { asJsonRecord, z } from "@hootifactory/registry";
+import { asJsonRecord, Sha256DigestSchema, Sha256HexSchema, z } from "@hootifactory/registry";
 import { MAX_MANIFEST_BYTES } from "./swift-manifest";
 
 /**
@@ -63,9 +63,6 @@ export const SwiftVersionSchema = z
   .min(1)
   .max(256)
   .refine(isValidSwiftVersion, "invalid SemVer version");
-
-const Sha256HexSchema = z.string().regex(/^[a-f0-9]{64}$/);
-const Sha256DigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 
 /**
  * Per-version metadata stored at publish time. `archiveDigest` is the CAS

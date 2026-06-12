@@ -1,4 +1,4 @@
-import { z } from "@hootifactory/registry";
+import { Sha256DigestSchema, Sha256HexSchema, z } from "@hootifactory/registry";
 
 /**
  * CRAN package names: start with a letter, then letters/digits/dots, at least
@@ -58,8 +58,6 @@ export function cranTarballFilename(name: string, version: string): string {
   return `${name}_${version}.tar.gz`;
 }
 
-const Sha256DigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
-const Sha256HexSchema = z.string().regex(/^[a-f0-9]{64}$/);
 const Md5HexSchema = z.string().regex(/^[a-f0-9]{32}$/);
 
 /**

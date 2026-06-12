@@ -108,12 +108,12 @@ class WingetAdapterState {
   ): Promise<Response> {
     const requestedVersion = this.requestedVersion(req);
     const pkg = await ctx.data.packages.findByName(packageIdentifier.toLowerCase());
-    if (!pkg) return this.notFoundEnvelope();
+    if (!pkg) throw Errors.notFound("package not found");
     let versions = await this.storedVersions(ctx, pkg);
     if (requestedVersion) {
       versions = versions.filter((entry) => entry.version === requestedVersion);
     }
-    if (versions.length === 0) return this.notFoundEnvelope();
+    if (versions.length === 0) throw Errors.notFound("package not found");
     const { baseUrl, mountPath } = this.base(ctx);
     // Reconstruct the published identifier casing from version metadata so reads
     // echo `Publisher.Package` as published rather than the URL-segment casing.
@@ -134,15 +134,6 @@ class WingetAdapterState {
     const raw = new URL(req.url).searchParams.get("Version");
     if (raw === null || raw === "") return null;
     return parseVersion(raw);
-  }
-
-  /**
-   * winget renders error bodies as a top-level array of `{ ErrorCode,
-   * ErrorMessage }` (WinGet-1.1.0.yaml). A missing package/version is a 404 with
-   * that shape — the same shape every other error path in this source emits.
-   */
-  notFoundEnvelope(): Response {
-    return wingetErrorResponse(404, "package not found");
   }
 
   async manifestSearch(req: Request, ctx: RegistryRequestContext): Promise<Response> {
@@ -232,11 +223,11 @@ class WingetAdapterState {
     ctx: RegistryRequestContext,
   ): Promise<Response> {
     const pkg = await ctx.data.packages.findByName(packageIdentifier.toLowerCase());
-    if (!pkg) return this.notFoundEnvelope();
+    if (!pkg) throw Errors.notFound("package not found");
     const row = await ctx.data.versions.findLive(pkg, version);
     const metadata = parseWingetVersionMeta(row?.metadata);
-    if (!metadata) return this.notFoundEnvelope();
-    if (metadata.filename !== filename) return this.notFoundEnvelope();
+    if (!metadata) throw Errors.notFound("package not found");
+    if (metadata.filename !== filename) throw Errors.notFound("package not found");
     return serveRegistryBlob(ctx, {
       digest: metadata.installerDigest,
       kind: "generic_file",
@@ -319,7 +310,15 @@ export class WingetAdapter extends wingetDefinition.adapterClass() {
       return await super.handle(match, req, ctx);
     } catch (err) {
       if (err instanceof RegistryError) {
-        return wingetErrorResponse(err.status, err.message);
+        // winget renders error bodies as a top-level array of `{ ErrorCode,
+        // ErrorMessage }` (WinGet-1.1.0.yaml) — a shape the platform's
+        // `singleError` formatter cannot produce — so this source formats every
+        // thrown RegistryError itself. A string `detail` is the protocol-facing
+        // message (e.g. `Errors.notFound("package not found")`); validation
+        // errors carry a structured (object) detail, so they fall back to the
+        // generic `message`.
+        const message = typeof err.detail === "string" ? err.detail : err.message;
+        return wingetErrorResponse(err.status, message);
       }
       throw err;
     }

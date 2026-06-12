@@ -1,4 +1,4 @@
-import { SHA256_PREFIX, z } from "@hootifactory/registry";
+import { SHA256_PREFIX, Sha256HexSchema, z } from "@hootifactory/registry";
 
 /**
  * Git LFS addresses every object by its sha256 OID — a bare 64-char lowercase hex
@@ -6,10 +6,7 @@ import { SHA256_PREFIX, z } from "@hootifactory/registry";
  * the canonical `sha256:<oid>` digest, so `oidToDigest`/`digestToOid` translate
  * between the LFS wire form and the platform's digest form.
  */
-export const LfsOidSchema = z
-  .string()
-  .length(64)
-  .regex(/^[a-f0-9]{64}$/, "invalid LFS object id");
+export const LfsOidSchema = Sha256HexSchema;
 
 /** LFS object sizes are non-negative integers; cap to a sane 53-bit safe maximum. */
 export const LfsSizeSchema = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);

@@ -23,6 +23,7 @@ export async function handleP2Publish(
   kind: P2ArtifactKind,
   req: Request,
   ctx: RegistryRequestContext,
+  urlFilename?: string,
 ): Promise<P2PublishResult> {
   if (!req.body) {
     return { status: 400, body: { error: "empty request body" } };
@@ -38,6 +39,14 @@ export async function handleP2Publish(
 
   const { symbolicName, version } = manifest;
   const filename = jarFilename(symbolicName, version);
+
+  if (urlFilename !== undefined && urlFilename !== filename) {
+    return {
+      status: 400,
+      body: { error: `upload filename '${urlFilename}' does not match jar manifest '${filename}'` },
+    };
+  }
+
   const scope = p2JarScope(kind, filename);
 
   return publishImmutableVersionBlobMapped<P2PublishResult>(ctx, {

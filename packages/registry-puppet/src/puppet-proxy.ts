@@ -1,4 +1,4 @@
-import { z } from "@hootifactory/registry";
+import { Sha256HexSchema, z } from "@hootifactory/registry";
 import { PuppetMetadataSchema, parsePuppetSlug } from "./puppet-validation";
 
 /** The host of a configured upstream Forge base, or null if it is not a URL. */
@@ -41,10 +41,7 @@ const PuppetUpstreamReleaseSchema = z.looseObject({
   version: z.string().min(1).max(256),
   metadata: PuppetMetadataSchema.optional(),
   file_uri: z.string().min(1).max(2048).optional(),
-  file_sha256: z
-    .string()
-    .regex(/^[a-f0-9]{64}$/)
-    .optional(),
+  file_sha256: Sha256HexSchema.optional(),
 });
 
 export type PuppetUpstreamRelease = z.output<typeof PuppetUpstreamReleaseSchema>;

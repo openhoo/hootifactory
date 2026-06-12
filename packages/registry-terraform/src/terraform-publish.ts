@@ -1,4 +1,4 @@
-import { parseRegistryInput, z } from "@hootifactory/registry";
+import { parseRegistryInput, Sha256HexSchema, z } from "@hootifactory/registry";
 import {
   TerraformPlatformTokenSchema,
   TerraformProtocolSchema,
@@ -102,7 +102,7 @@ const ProviderPlatformManifestSchema = z.strictObject({
   os: TerraformPlatformTokenSchema,
   arch: TerraformPlatformTokenSchema,
   filename: TerraformFilenameSchema,
-  shasum: z.string().regex(/^[a-f0-9]{64}$/),
+  shasum: Sha256HexSchema,
 });
 
 const ProviderManifestSchema = z.looseObject({

@@ -421,11 +421,26 @@ describe("Docker adapter contract", () => {
         calls.push("lock:end");
       }
     };
-    ctx.data.content.staging.putKey = async (key, data) => {
+    ctx.data.content.staging.putKeyStream = async (key, data) => {
       calls.push("putKey");
       expect(lockDepth).toBe(0);
       expect(key).toStartWith("oci/uploads/upload_1/chunks/0-");
-      expect(new TextDecoder().decode(data)).toBe("layer");
+      const reader = data.getReader();
+      const parts: Uint8Array[] = [];
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        parts.push(value);
+      }
+      let size = 0;
+      for (const p of parts) size += p.length;
+      const combined = new Uint8Array(size);
+      let off = 0;
+      for (const p of parts) {
+        combined.set(p, off);
+        off += p.length;
+      }
+      expect(new TextDecoder().decode(combined)).toBe("layer");
     };
 
     const response = await new DockerAdapter().handle(
@@ -443,6 +458,7 @@ describe("Docker adapter contract", () => {
         {
           method: "PATCH",
           body: "layer",
+          headers: { "content-length": "5" },
         },
       ),
       ctx,

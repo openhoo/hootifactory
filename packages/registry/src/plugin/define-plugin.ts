@@ -55,6 +55,37 @@ function routeKey(entry: RouteEntry): string {
   return `${entry.method} ${entry.pattern} ${entry.handlerId}`;
 }
 
+/**
+ * Fail fast at plugin construction on contract violations that would otherwise
+ * only surface as confusing runtime behaviour:
+ *  - a `proxyable` capability without a `proxyIngest` hook (proxy repos mirror
+ *    upstream bytes *through* the hook; without it, proxying silently breaks),
+ *  - duplicate declarative routes (same method+pattern+handlerId), where the
+ *    later spec would silently shadow the earlier one.
+ * The reverse (a `proxyIngest` hook without `proxyable`) is intentionally
+ * allowed: several modules ship the hook before the capability is enabled.
+ */
+function assertPluginContract(
+  id: RegistryPlugin["id"],
+  capabilities: RegistryPlugin["capabilities"],
+  proxyIngest: RegistryPlugin["proxyIngest"],
+  entries: RouteEntry[],
+): void {
+  if (capabilities.proxyable && !proxyIngest) {
+    throw new Error(
+      `registry module ${id} declares the "proxyable" capability but does not implement proxyIngest`,
+    );
+  }
+  const seen = new Set<string>();
+  for (const entry of entries) {
+    const key = routeKey(entry);
+    if (seen.has(key)) {
+      throw new Error(`registry module ${id} declares a duplicate route: ${key}`);
+    }
+    seen.add(key);
+  }
+}
+
 function resolveRoutePermission(
   resolver: RegistryPermissionResolver | undefined,
   input: RegistryPermissionInput,
@@ -131,6 +162,7 @@ class DefinedRegistryPlugin implements RegistryPlugin {
       this.specsByEntry.set(entry, spec);
       this.specsByKey.set(routeKey(entry), spec);
     });
+    assertPluginContract(this.id, this.capabilities, this.proxyIngest, this.entries);
   }
 
   routes(): RouteEntry[] {

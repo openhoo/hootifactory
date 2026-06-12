@@ -1,4 +1,4 @@
-import { z } from "@hootifactory/registry";
+import { Sha256DigestSchema, z } from "@hootifactory/registry";
 
 /**
  * Rock/module names: LuaRocks normalizes names to lowercase, allowing letters,
@@ -52,8 +52,6 @@ export const RockArchSchema = z
 
 /** A single parsed dependency constraint string, e.g. `lua >= 5.1`. */
 const DependencySchema = z.string().min(1).max(512);
-
-const Sha256DigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 
 /**
  * What we persist per published version. Both the `.rockspec` and any `.rock`

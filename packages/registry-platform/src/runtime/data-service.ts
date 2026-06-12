@@ -305,6 +305,7 @@ export function createRegistryDataService(
       },
       staging: {
         putKey: (key, data) => blobStore.putAtKey(key, data),
+        putKeyStream: (key, data) => blobStore.putStreamAtKey(key, data),
         readKey: (key) => blobStore.readKey(key),
         bytesAtKey: (key) => blobStore.bytesAtKey(key),
         statKey: (key) => blobStore.statKey(key),

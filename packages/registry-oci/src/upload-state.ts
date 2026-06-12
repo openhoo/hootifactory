@@ -33,20 +33,22 @@ export function uploadMultipartState(raw: string | null): UploadMultipartState {
 }
 
 /**
- * Assemble staged chunks (+ an optional trailing buffer) into one stream. Uses an
- * incremental `pull()` that enqueues at most one source chunk per pull so the
- * runtime's backpressure bounds in-memory buffering to ~highWaterMark instead of
- * accumulating the whole assembled blob, and a `cancel()` that releases the
- * currently-open staging reader if the consumer aborts (digest mismatch, S3 error).
+ * Assemble staged chunks (+ an optional trailing buffer or stream) into one
+ * stream. Uses an incremental `pull()` that enqueues at most one source chunk
+ * per pull so the runtime's backpressure bounds in-memory buffering to
+ * ~highWaterMark instead of accumulating the whole assembled blob, and a
+ * `cancel()` that releases the currently-open staging reader if the consumer
+ * aborts (digest mismatch, S3 error).
  */
 export function uploadChunkStream(
   ctx: RegistryRequestContext,
   chunks: UploadChunk[],
-  extra?: Uint8Array,
+  extra?: Uint8Array | ReadableStream<Uint8Array>,
 ): ReadableStream<Uint8Array> {
   let index = 0;
   let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
   let extraEmitted = false;
+  let extraReader: ReadableStreamDefaultReader<Uint8Array> | null = null;
 
   /** Open the next staged chunk's reader, validating its size first. */
   async function openNextReader(): Promise<boolean> {
@@ -73,14 +75,31 @@ export function uploadChunkStream(
       try {
         while (true) {
           if (!reader && !(await openNextReader())) {
-            // No more chunks: emit the trailing buffer once, then close.
             if (!extraEmitted) {
               extraEmitted = true;
-              if (extra?.byteLength) {
-                controller.enqueue(extra);
-                return;
+              if (extra instanceof Uint8Array) {
+                if (extra.byteLength > 0) controller.enqueue(extra);
+              } else if (extra) {
+                extraReader = extra.getReader();
+                // Fall through to drain the extra stream below.
               }
             }
+
+            if (extraReader) {
+              const { done, value } = await extraReader.read();
+              if (done) {
+                extraReader.releaseLock();
+                extraReader = null;
+                controller.close();
+                return;
+              }
+              if (value.byteLength > 0) {
+                controller.enqueue(value);
+                return;
+              }
+              continue;
+            }
+
             controller.close();
             return;
           }
@@ -101,6 +120,10 @@ export function uploadChunkStream(
           reader.releaseLock();
           reader = null;
         }
+        if (extraReader) {
+          extraReader.releaseLock();
+          extraReader = null;
+        }
         controller.error(err);
       }
     },
@@ -108,6 +131,10 @@ export function uploadChunkStream(
       if (reader) {
         await reader.cancel().catch(() => {});
         reader = null;
+      }
+      if (extraReader) {
+        await extraReader.cancel().catch(() => {});
+        extraReader = null;
       }
     },
   });

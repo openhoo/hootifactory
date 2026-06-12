@@ -288,10 +288,10 @@ describe("P2 adapter", () => {
     const res = await new P2Adapter().handle(
       match(
         { method: "PUT", pattern: "/plugins/:filename", handlerId: "publishBundle" },
-        { filename: "anything.jar" },
-        "/plugins/anything.jar",
+        { filename: "org.example.bundle_1.2.3.jar" },
+        "/plugins/org.example.bundle_1.2.3.jar",
       ),
-      new Request("https://registry.test/plugins/anything.jar", {
+      new Request("https://registry.test/plugins/org.example.bundle_1.2.3.jar", {
         method: "PUT",
         headers: { "content-type": "application/java-archive" },
         body: bundleJar("org.example.bundle", "1.2.3"),
@@ -338,6 +338,28 @@ describe("P2 adapter", () => {
     expect(res.status).toBe(422);
   });
 
+  test("PUT returns 400 when the URL :filename does not match the jar manifest", async () => {
+    const ctx = p2Context();
+    const res = await new P2Adapter().handle(
+      match(
+        { method: "PUT", pattern: "/plugins/:filename", handlerId: "publishBundle" },
+        { filename: "something-else.jar" },
+        "/plugins/something-else.jar",
+      ),
+      new Request("https://registry.test/plugins/something-else.jar", {
+        method: "PUT",
+        headers: { "content-type": "application/java-archive" },
+        body: bundleJar("org.example.bundle", "1.2.3"),
+      }),
+      ctx,
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error:
+        "upload filename 'something-else.jar' does not match jar manifest 'org.example.bundle_1.2.3.jar'",
+    });
+  });
+
   test("PUT returns 409 when the version already exists", async () => {
     const ctx = p2Context();
     ctx.data.packages.findOrCreate = async ({ name }) => pkgRow(name);
@@ -345,10 +367,10 @@ describe("P2 adapter", () => {
     const res = await new P2Adapter().handle(
       match(
         { method: "PUT", pattern: "/plugins/:filename", handlerId: "publishBundle" },
-        { filename: "anything.jar" },
-        "/plugins/anything.jar",
+        { filename: "org.example.bundle_1.2.3.jar" },
+        "/plugins/org.example.bundle_1.2.3.jar",
       ),
-      new Request("https://registry.test/plugins/anything.jar", {
+      new Request("https://registry.test/plugins/org.example.bundle_1.2.3.jar", {
         method: "PUT",
         headers: { "content-type": "application/java-archive" },
         body: bundleJar("org.example.bundle", "1.2.3"),
@@ -513,28 +535,27 @@ describe("P2 adapter", () => {
       new Response(`bytes:${digest}`, { headers: { "content-type": contentType } });
 
     const adapter = new P2Adapter();
-    const publish = (kind: "bundle" | "feature", symbolicName: string, version: string) =>
-      adapter.handle(
+    const publish = (kind: "bundle" | "feature", symbolicName: string, version: string) => {
+      const filename = `${symbolicName}_${version}.jar`;
+      const dir = kind === "feature" ? "features" : "plugins";
+      return adapter.handle(
         match(
           {
             method: "PUT",
-            pattern: `/${kind === "feature" ? "features" : "plugins"}/:filename`,
+            pattern: `/${dir}/:filename`,
             handlerId: kind === "feature" ? "publishFeature" : "publishBundle",
           },
-          { filename: "anything.jar" },
-          `/${kind === "feature" ? "features" : "plugins"}/anything.jar`,
+          { filename },
+          `/${dir}/${filename}`,
         ),
-        new Request(
-          `https://registry.test/${kind === "feature" ? "features" : "plugins"}/anything.jar`,
-          {
-            method: "PUT",
-            headers: { "content-type": "application/java-archive" },
-            body: bundleJar(symbolicName, version),
-          },
-        ),
+        new Request(`https://registry.test/${dir}/${filename}`, {
+          method: "PUT",
+          headers: { "content-type": "application/java-archive" },
+          body: bundleJar(symbolicName, version),
+        }),
         ctx,
       );
-
+    };
     const bundleRes = await publish("bundle", "org.example.bundle", "1.2.3");
     expect(bundleRes.status).toBe(201);
     const featureRes = await publish("feature", "org.example.feature", "2.0.0");

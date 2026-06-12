@@ -18,26 +18,12 @@ import {
 import { useOrg } from "@/features/orgs/context";
 import { Loading } from "@/layout/app-shell";
 import { api, apiErrorMessage, type TokenGrant, type User } from "@/lib/api";
+import { grantLabel, grantNeedsRepository } from "@/lib/grants";
 
 type DraftGrant = TokenGrant & { draftId: string };
 
-function grantNeedsRepository(permission: PermissionKey) {
-  return (
-    permission.startsWith("repository.") ||
-    permission.startsWith("package.") ||
-    permission.startsWith("artifact.") ||
-    permission.startsWith("policy.")
-  );
-}
-
 function displayUser(user: User) {
   return user.displayName || user.username;
-}
-
-function grantLabel(grant: TokenGrant) {
-  const scope =
-    grant.repository ?? grant.package ?? grant.artifact ?? grant.policy ?? grant.tokenTarget;
-  return scope ? `${grant.permission} (${scope})` : grant.permission;
 }
 
 export function AccessPage() {
@@ -638,7 +624,11 @@ export function AccessPage() {
                       <select
                         className="h-9 w-full rounded-md border bg-background px-2 text-sm"
                         value={newGrant.permission}
-                        disabled={!canManageGroupPermissions || assignablePermissions.length === 0}
+                        disabled={
+                          !canManageGroupPermissions ||
+                          assignablePermissions.length === 0 ||
+                          !groupPermissionsQ.isSuccess
+                        }
                         onChange={(event) => {
                           const permission = event.target.value as TokenGrant["permission"];
                           setNewGrant({
@@ -661,7 +651,9 @@ export function AccessPage() {
                     <Field label="Scope">
                       <Input
                         disabled={
-                          !canManageGroupPermissions || !grantNeedsRepository(newGrant.permission)
+                          !canManageGroupPermissions ||
+                          !grantNeedsRepository(newGrant.permission) ||
+                          !groupPermissionsQ.isSuccess
                         }
                         value={newGrant.repository ?? ""}
                         onChange={(event) =>
@@ -672,7 +664,11 @@ export function AccessPage() {
                     <Button
                       type="button"
                       className="h-9"
-                      disabled={!canManageGroupPermissions || assignablePermissions.length === 0}
+                      disabled={
+                        !canManageGroupPermissions ||
+                        assignablePermissions.length === 0 ||
+                        !groupPermissionsQ.isSuccess
+                      }
                       onClick={addDraftGrant}
                     >
                       <Plus />
@@ -727,7 +723,11 @@ export function AccessPage() {
                       <Button
                         type="button"
                         onClick={() => savePermissions.mutate()}
-                        disabled={!canManageGroupPermissions || savePermissions.isPending}
+                        disabled={
+                          !canManageGroupPermissions ||
+                          savePermissions.isPending ||
+                          !groupPermissionsQ.isSuccess
+                        }
                       >
                         <Save />
                         Save permissions
