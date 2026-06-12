@@ -8,6 +8,7 @@ export interface NugetVersionMeta {
   listed?: boolean;
   semVer2?: boolean;
   dependencyGroups?: NuspecDependencyGroup[];
+  nuspecXml?: string;
 }
 
 const PACKAGE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
@@ -57,6 +58,10 @@ export const NugetVersionMetaSchema = z.strictObject({
   listed: z.boolean().optional(),
   semVer2: z.boolean().optional(),
   dependencyGroups: z.array(NugetDependencyGroupSchema).max(512).optional(),
+  nuspecXml: z
+    .string()
+    .max(1024 * 1024)
+    .optional(),
 });
 
 export function parseNugetVersionMeta(value: unknown): NugetVersionMeta | null {
