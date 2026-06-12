@@ -114,6 +114,73 @@ describe("osvScanDependencies", () => {
     }
   });
 
+  test("derives severity and cvssScore from CVSS v3 vectors", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (...args: Parameters<typeof fetch>) => {
+      if (String(args[0]).includes("/v1/vulns/")) {
+        return Response.json({
+          database_specific: { severity: "low" },
+          severity: [
+            {
+              type: "CVSS_V3",
+              score: "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+            },
+          ],
+        });
+      }
+      return Response.json({ results: [{ vulns: [{ id: "GHSA-cvss-v3" }] }] });
+    }) as unknown as typeof fetch;
+    try {
+      const { findings } = await osvScanDependencies("npm", { pkg: "^1.0.0" }, "https://osv.test");
+      expect(findings).toEqual([
+        {
+          type: "vuln",
+          vulnId: "GHSA-cvss-v3",
+          severity: "critical",
+          cvssScore: 9.8,
+          packageName: "pkg",
+          packageVersion: "1.0.0",
+          purl: "pkg:npm/pkg@1.0.0",
+        },
+      ]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("derives severity and cvssScore from CVSS v2 vectors", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (...args: Parameters<typeof fetch>) => {
+      if (String(args[0]).includes("/v1/vulns/")) {
+        return Response.json({
+          severity: [
+            {
+              type: "CVSS_V2",
+              score: "CVSS:2.0/AV:N/AC:L/Au:N/C:P/I:P/A:P",
+            },
+          ],
+        });
+      }
+      return Response.json({ results: [{ vulns: [{ id: "GHSA-cvss-v2" }] }] });
+    }) as unknown as typeof fetch;
+    try {
+      const { findings } = await osvScanDependencies("npm", { pkg: "~2.0.0" }, "https://osv.test");
+      expect(findings).toEqual([
+        {
+          type: "vuln",
+          vulnId: "GHSA-cvss-v2",
+          severity: "high",
+          cvssScore: 7.5,
+          packageName: "pkg",
+          packageVersion: "2.0.0",
+          purl: "pkg:npm/pkg@2.0.0",
+        },
+      ]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   test("defaults to high severity when the vuln detail lookup itself fails", async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (...args: Parameters<typeof fetch>) => {
