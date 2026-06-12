@@ -2,6 +2,7 @@ import { V1RegistryModulesResponseSchema } from "@hootifactory/contracts";
 import { registryPlugins } from "@hootifactory/registry";
 import type { Hono } from "hono";
 import type { AppEnv } from "../types";
+import { requireUserPrincipal } from "./api-v1-access";
 import { dataResponse, doc } from "./api-v1-helpers";
 
 export function registerApiV1RegistryModuleRoutes(apiV1Router: Hono<AppEnv>) {
@@ -17,14 +18,17 @@ export function registerApiV1RegistryModuleRoutes(apiV1Router: Hono<AppEnv>) {
         schema: V1RegistryModulesResponseSchema,
       },
     }),
-    (c) =>
-      dataResponse(c, {
+    (c) => {
+      const user = requireUserPrincipal(c);
+      if (!user.ok) return user.response;
+      return dataResponse(c, {
         modules: registryPlugins.all().map((module) => ({
           id: module.id,
           displayName: module.displayName,
           mountSegment: module.mountSegment,
           capabilities: module.capabilities,
         })),
-      }),
+      });
+    },
   );
 }

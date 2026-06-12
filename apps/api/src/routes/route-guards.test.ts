@@ -135,12 +135,8 @@ describe("api v1 organization-creation and registry-module guards", () => {
     expect((await fetchJson(`/api/v1/orgs/${UUID}/repositories`, postJson({}))).status).toBe(400);
   });
 
-  test("GET /api/v1/registry-modules lists registered modules", async () => {
-    const { status, body } = await fetchJson("/api/v1/registry-modules");
-    expect(status).toBe(200);
-    const modules = (body as { data: { modules: Array<{ id: string }> } }).data.modules;
-    expect(modules.length).toBeGreaterThan(0);
-    expect(modules.some((m) => m.id === "npm")).toBe(true);
+  test("GET /api/v1/registry-modules denies anonymous access", async () => {
+    expect((await fetchJson("/api/v1/registry-modules")).status).toBe(401);
   });
 });
 
