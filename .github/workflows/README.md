@@ -10,8 +10,9 @@ must pass before a PR can merge. It enforces these checks:
 | `typecheck`    | `tsc --noEmit` across every package        | `bun run typecheck`       |
 | `architecture` | Plugin/package import boundaries hold      | `bun run check:boundaries` |
 | `coverage`     | Unit tests pass **and** every package's line coverage ≥ 80% (per-package floor) | `bun run test:coverage`   |
+| `integration`  | Integration tests pass (Postgres + MinIO)      | `bun run test:integration` |
 
-A final job, **`gate`**, simply waits on the five above and fails if any did not
+A final job, **`gate`**, simply waits on the six above and fails if any did not
 pass. Point branch protection at `gate` (see below) so you have a single, stable
 required check.
 
@@ -116,6 +117,21 @@ gate. If you add a test that opens a DB/S3 connection, name it
 The gate prints a per-package table (worst-first) with each package's coverage and
 PASS/FAIL, lists the lowest-covered files for every failing package, and writes
 the same summary to the GitHub job summary.
+
+## 6. Integration
+
+`bun run test:integration` spins up MinIO in CI, runs the full migration against
+the CI service database, then executes every `*.integration.test.ts` file across
+all packages. These tests exercise blob GC/refcount invariants, storage retention,
+and cross-package behavior that cannot be tested with unit tests alone.
+
+Run locally with `compose up`:
+
+```bash
+docker compose up -d
+bun run db:migrate
+bun run test:integration
+```
 
 ## Branch protection
 
