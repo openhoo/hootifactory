@@ -46,10 +46,10 @@ describe("uncoveredGatingFindingTypes", () => {
     expect(uncoveredGatingFindingTypes([clamav, grype], [])).toEqual([]);
   });
 
-  test("only a vuln scanner failed → gating malware coverage intact", () => {
-    // Grype failing while ClamAV succeeds drops only `vuln`, which is not a gating
-    // type, so the malware gate remains covered and the scan may proceed.
-    expect(uncoveredGatingFindingTypes([clamav, grype], [failure("grype")])).toEqual([]);
+  test("only a vuln scanner failed → vuln is now a gating type, reported uncovered", () => {
+    // Grype failing while ClamAV succeeds drops `vuln` coverage. Since `vuln` is a
+    // gating type, the scan must fail closed and retry.
+    expect(uncoveredGatingFindingTypes([clamav, grype], [failure("grype")])).toEqual(["vuln"]);
   });
 
   test("a redundant malware scanner failing is covered by a surviving one", () => {

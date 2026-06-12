@@ -15,7 +15,10 @@ import type { FindingType, ResolvedScanner, ScannerFailure } from "@hootifactory
  * a clean-looking partial result — the gate (e.g. enforce-mode malware blocking in
  * {@link evaluateScanPolicy}) would silently flip to fail-open.
  */
-export const GATING_FINDING_TYPES: ReadonlySet<FindingType> = new Set<FindingType>(["malware"]);
+export const GATING_FINDING_TYPES: ReadonlySet<FindingType> = new Set<FindingType>([
+  "malware",
+  "vuln",
+]);
 
 /**
  * A gating finding type is "uncovered" when a FAILED content scanner declares it
