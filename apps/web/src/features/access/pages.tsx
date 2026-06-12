@@ -18,26 +18,12 @@ import {
 import { useOrg } from "@/features/orgs/context";
 import { Loading } from "@/layout/app-shell";
 import { api, apiErrorMessage, type TokenGrant, type User } from "@/lib/api";
+import { grantLabel, grantNeedsRepository } from "@/lib/grants";
 
 type DraftGrant = TokenGrant & { draftId: string };
 
-function grantNeedsRepository(permission: PermissionKey) {
-  return (
-    permission.startsWith("repository.") ||
-    permission.startsWith("package.") ||
-    permission.startsWith("artifact.") ||
-    permission.startsWith("policy.")
-  );
-}
-
 function displayUser(user: User) {
   return user.displayName || user.username;
-}
-
-function grantLabel(grant: TokenGrant) {
-  const scope =
-    grant.repository ?? grant.package ?? grant.artifact ?? grant.policy ?? grant.tokenTarget;
-  return scope ? `${grant.permission} (${scope})` : grant.permission;
 }
 
 export function AccessPage() {

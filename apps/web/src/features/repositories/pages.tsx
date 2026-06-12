@@ -21,7 +21,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { useRepos } from "@/features/orgs/context";
+import { useOrg } from "@/features/orgs/context";
+import { usePaginatedQuery } from "@/hooks/use-paginated-query";
 import { Loading } from "@/layout/app-shell";
 import { api } from "@/lib/api";
 import { snippetsFor } from "@/lib/module";
@@ -31,15 +32,23 @@ const PACKAGE_PAGE_SIZE = 50;
 const REPO_PAGE_SIZE = 50;
 
 export function ReposPage() {
+  const { selected } = useOrg();
   const [showCreate, setShowCreate] = useState(false);
   const [query, setQuery] = useState("");
-  const [repoLimit, setRepoLimit] = useState(REPO_PAGE_SIZE);
 
-  const repos = useRepos({ limit: repoLimit, offset: 0 });
+  const repos = usePaginatedQuery({
+    queryKey: ["repos", selected?.id],
+    queryFn: ({ limit, offset }) => api.repos(selected!.id, { limit, offset }),
+    selectItems: (data) => data.repositories,
+    selectTotal: (data) => data.pagination.total,
+    pageSize: REPO_PAGE_SIZE,
+    resetKey: selected?.id,
+    enabled: !!selected,
+  });
 
-  const all = repos.data?.repositories ?? [];
-  const repoTotal = repos.data?.pagination.total ?? 0;
-  const canLoadMoreRepos = all.length < repoTotal;
+  const all = repos.items;
+  const repoTotal = repos.total;
+  const canLoadMoreRepos = repos.canLoadMore;
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return q ? all.filter((r) => r.name.toLowerCase().includes(q)) : all;
@@ -73,15 +82,15 @@ export function ReposPage() {
 
       <CreateRepositoryWizard open={showCreate} onOpenChange={setShowCreate} />
 
-      {repos.isLoading ? (
+      {repos.query.isLoading ? (
         <Loading />
-      ) : repos.isError ? (
+      ) : repos.query.isError ? (
         <EmptyState
           icon={<Boxes className="size-5" />}
           title="Couldn't load repositories"
           description="Check your connection or permissions and try again."
           action={
-            <Button variant="outline" size="sm" onClick={() => repos.refetch()}>
+            <Button variant="outline" size="sm" onClick={() => repos.query.refetch()}>
               Retry
             </Button>
           }
@@ -145,8 +154,8 @@ export function ReposPage() {
                   type="button"
                   variant="outline"
                   size="sm"
-                  onClick={() => setRepoLimit((limit) => limit + REPO_PAGE_SIZE)}
-                  disabled={repos.isFetching}
+                  onClick={() => repos.loadMore()}
+                  disabled={repos.query.isFetching}
                 >
                   <ChevronDown />
                   Show more
@@ -161,13 +170,17 @@ export function ReposPage() {
 }
 
 export function RepoDetailPage({ repoId }: { repoId: string }) {
-  const [packageLimit, setPackageLimit] = useState(PACKAGE_PAGE_SIZE);
   const repoQ = useQuery({ queryKey: ["repo", repoId], queryFn: () => api.repo(repoId) });
-  const pkgsQ = useQuery({
-    queryKey: ["packages", repoId, packageLimit],
-    queryFn: () => api.packages(repoId, { limit: packageLimit, offset: 0 }),
-    placeholderData: (previousData, previousQuery) =>
-      previousQuery?.queryKey[1] === repoId ? previousData : undefined,
+  const pkgsP = usePaginatedQuery({
+    queryKey: ["packages", repoId],
+    queryFn: ({ limit, offset }) => api.packages(repoId, { limit, offset }),
+    selectItems: (data) => data.packages,
+    selectTotal: (data) => data.pagination.total,
+    pageSize: PACKAGE_PAGE_SIZE,
+    maxLimit: 500,
+    resetKey: repoId,
+    placeholderData: true,
+    fallbackTotal: repoQ.data?.packageCount,
   });
 
   if (repoQ.isLoading) return <Loading />;
@@ -186,9 +199,9 @@ export function RepoDetailPage({ repoId }: { repoId: string }) {
     );
   const repo = repoQ.data.repository;
   const snippets = snippetsFor(repo, window.location.origin);
-  const packages = pkgsQ.data?.packages ?? [];
-  const packageTotal = pkgsQ.data?.pagination.total ?? repoQ.data.packageCount;
-  const canLoadMorePackages = packages.length < packageTotal && packageLimit < 500;
+  const packages = pkgsP.items;
+  const packageTotal = pkgsP.total;
+  const canLoadMorePackages = pkgsP.canLoadMore;
 
   return (
     <div>
@@ -217,9 +230,9 @@ export function RepoDetailPage({ repoId }: { repoId: string }) {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            {pkgsQ.isLoading ? (
+            {pkgsP.query.isLoading ? (
               <Loading />
-            ) : pkgsQ.isError ? (
+            ) : pkgsP.query.isError ? (
               <EmptyState
                 icon={<Package className="size-5" />}
                 title="Couldn't load packages"
@@ -228,8 +241,8 @@ export function RepoDetailPage({ repoId }: { repoId: string }) {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => pkgsQ.refetch()}
-                    disabled={pkgsQ.isFetching}
+                    onClick={() => pkgsP.query.refetch()}
+                    disabled={pkgsP.query.isFetching}
                   >
                     Retry
                   </Button>
@@ -258,10 +271,8 @@ export function RepoDetailPage({ repoId }: { repoId: string }) {
                       type="button"
                       variant="outline"
                       size="sm"
-                      onClick={() =>
-                        setPackageLimit((limit) => Math.min(limit + PACKAGE_PAGE_SIZE, 500))
-                      }
-                      disabled={pkgsQ.isFetching}
+                      onClick={() => pkgsP.loadMore()}
+                      disabled={pkgsP.query.isFetching}
                     >
                       <ChevronDown />
                       Show more
