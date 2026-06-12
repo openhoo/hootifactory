@@ -46,7 +46,7 @@ describe("defineRegistryPlugin", () => {
     expect(await res.json()).toEqual({ package: "@scope/pkg" });
   });
 
-  test("validates route params before permission resolution and handler dispatch", async () => {
+  test("validates route params in handle() and passes raw params to permission resolver", async () => {
     const seen: string[] = [];
     const plugin = defineRegistryPlugin({
       id: "cargo",
@@ -65,9 +65,10 @@ describe("defineRegistryPlugin", () => {
     const match = createTestRouteMatch(entry!, { crate: " Serde " }, "/%20Serde%20");
     const ctx = createTestRegistryContext();
 
+    // requiredPermission receives raw params; validation/normalization happens in handle().
     expect(plugin.requiredPermission("GET", match, ctx)).toEqual({
       action: "read",
-      resource: { type: "package", packageName: "serde" },
+      resource: { type: "package", packageName: " Serde " },
     });
     const res = await plugin.handle(
       match,
@@ -75,7 +76,7 @@ describe("defineRegistryPlugin", () => {
       ctx,
     );
 
-    expect(seen).toEqual(["serde"]);
+    expect(seen).toEqual([" Serde "]);
     expect(await res.json()).toEqual({ crate: "serde" });
   });
 

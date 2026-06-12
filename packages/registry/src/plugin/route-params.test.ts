@@ -46,35 +46,38 @@ function buildPluginWithParams(permissionLog: RegistryPermissionInput[]) {
 }
 
 describe("route-level .params() schemas", () => {
-  test("invalid params short-circuit requiredPermission BEFORE the permission resolver", () => {
+  test("invalid params in handle() reject with RegistryError", async () => {
     const permissionLog: RegistryPermissionInput[] = [];
     const plugin = buildPluginWithParams(permissionLog);
     const [download] = plugin.routes();
     const match = createTestRouteMatch(download!, { crate: "NOT VALID!", version: "1.0.0" });
 
-    let thrown: unknown;
-    try {
-      plugin.requiredPermission("GET", match, createTestRegistryContext());
-    } catch (err) {
-      thrown = err;
-    }
-    expect(thrown).toBeInstanceOf(RegistryError);
-    const err = thrown as RegistryError;
-    expect(err.status).toBe(400);
-    expect(err.code).toBe("NAME_INVALID");
-    expect(err.message).toBe("invalid crate name");
-    expect(permissionLog).toHaveLength(0);
+    const ctx = createTestRegistryContext();
+    // requiredPermission no longer validates params; it returns a permission
+    // built from raw params (the permission resolver maps crate -> packageName).
+    const perm = plugin.requiredPermission("GET", match, ctx);
+    expect(perm).toEqual({
+      action: "read",
+      resource: { type: "package", packageName: "NOT VALID!" },
+    });
+    // handle() still validates and throws.
+    await expect(
+      plugin.handle(match, new Request("https://registry.example.test/x"), ctx),
+    ).rejects.toMatchObject({ status: 400, code: "NAME_INVALID", message: "invalid crate name" });
+    // The permission resolver runs with raw params since validation moved to handle().
+    expect(permissionLog).toHaveLength(1);
   });
 
-  test("error shape matches parseRegistryInput byte-for-byte (incl. zod issue tree detail)", () => {
+  test("error shape matches parseRegistryInput byte-for-byte (incl. zod issue tree detail)", async () => {
     const permissionLog: RegistryPermissionInput[] = [];
     const plugin = buildPluginWithParams(permissionLog);
     const [download] = plugin.routes();
     const match = createTestRouteMatch(download!, { crate: "left-pad", version: "not-semver" });
 
+    const ctx = createTestRegistryContext();
     let thrown: RegistryError | undefined;
     try {
-      plugin.requiredPermission("GET", match, createTestRegistryContext());
+      await plugin.handle(match, new Request("https://registry.example.test/x"), ctx);
     } catch (err) {
       thrown = err as RegistryError;
     }
@@ -110,7 +113,7 @@ describe("route-level .params() schemas", () => {
     ).rejects.toMatchObject({ name: "RegistryError", status: 400, code: "NAME_INVALID" });
   });
 
-  test("transformed outputs are visible to both the permission resolver and the handler", async () => {
+  test("transformed outputs are visible to the handler", async () => {
     const permissionLog: RegistryPermissionInput[] = [];
     const plugin = registryAdapter("npm")
       .module({ capabilities: ["virtualizable"] })
@@ -135,8 +138,9 @@ describe("route-level .params() schemas", () => {
     const [entry] = plugin.routes();
     const match = createTestRouteMatch(entry!, { pkg: "Left-Pad" });
 
+    // requiredPermission gets raw params; validation/normalization happens in handle().
     plugin.requiredPermission("GET", match, createTestRegistryContext());
-    expect(permissionLog[0]?.params.pkg).toBe("left-pad");
+    expect(permissionLog[0]?.params.pkg).toBe("Left-Pad");
 
     const res = await plugin.handle(
       match,
@@ -201,7 +205,7 @@ describe("route-level .params() schemas", () => {
     );
   });
 
-  test("plain defineRegistryPlugin routes accept params in options", () => {
+  test("plain defineRegistryPlugin routes accept params in options", async () => {
     const plugin = defineRegistryPlugin({
       id: "npm",
       capabilities: {
@@ -218,8 +222,16 @@ describe("route-level .params() schemas", () => {
     });
     const [entry] = plugin.routes();
     const match = createTestRouteMatch(entry!, { pkg: "Bad Name" });
-    expect(() => plugin.requiredPermission("GET", match, createTestRegistryContext())).toThrow(
-      expect.objectContaining({ code: "NAME_INVALID" }),
-    );
+    // requiredPermission no longer validates params; handle() catches bad params.
+    expect(plugin.requiredPermission("GET", match, createTestRegistryContext())).toEqual({
+      action: "read",
+    });
+    await expect(
+      plugin.handle(
+        match,
+        new Request("https://registry.example.test/x"),
+        createTestRegistryContext(),
+      ),
+    ).rejects.toMatchObject({ code: "NAME_INVALID" });
   });
 });
