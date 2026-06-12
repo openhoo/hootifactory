@@ -55,6 +55,25 @@ describe("apt index", () => {
     expect(snapshot.packages.get("main/binary-amd64")?.text).not.toContain("Package: arm-only");
   });
 
+  test("strips injected stanzas from controlText with embedded blank lines", () => {
+    const malicious: AptDebEntry = {
+      controlText: `Package: legit\nVersion: 1.0\nArchitecture: amd64\nMaintainer: test\n\nPackage: evil\nProvides: openssl`,
+      filename: "pool/main/l/legit/legit.deb",
+      size: 100,
+      md5: "abc",
+      sha256: "def",
+      package: "legit",
+      version: "1.0",
+      architecture: "amd64",
+      component: "main",
+    };
+    const text = buildPackagesText([malicious]);
+    expect(text).not.toContain("Package: evil");
+    expect(text).not.toContain("Provides: openssl");
+    expect(text).toContain("Package: legit");
+    expect(text).toContain("Filename: pool/main/l/legit/legit.deb");
+  });
+
   test("arch=all-only suites still generate a Packages index", () => {
     const snapshot = buildAptSnapshot("stable", "date", [
       entry("common", "all", "pool/main/c/common/common_1.0_all.deb"),

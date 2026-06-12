@@ -34,6 +34,15 @@ function compare(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
+function sanitizeControlStanza(controlText: string): string {
+  const lines: string[] = [];
+  for (const line of controlText.split("\n")) {
+    if (line.trim() === "") break;
+    lines.push(line);
+  }
+  return lines.join("\n");
+}
+
 /** Concatenated, deterministically-ordered Packages stanzas for one component+arch. */
 export function buildPackagesText(entries: AptDebEntry[]): string {
   const sorted = [...entries].sort(
@@ -45,7 +54,7 @@ export function buildPackagesText(entries: AptDebEntry[]): string {
   return sorted
     .map(
       (entry) =>
-        `${entry.controlText}\nFilename: ${entry.filename}\nSize: ${entry.size}\n` +
+        `${sanitizeControlStanza(entry.controlText)}\nFilename: ${entry.filename}\nSize: ${entry.size}\n` +
         `MD5sum: ${entry.md5}\nSHA256: ${entry.sha256}\n`,
     )
     .join("\n");
