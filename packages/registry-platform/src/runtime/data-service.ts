@@ -321,6 +321,7 @@ export function createRegistryDataService(
           manifest: input.manifest,
           packageId: input.package.id,
           tags: input.tags,
+          blobDigests: input.blobDigests,
         });
       },
       replaceManifestBlobRefs: (input) => {

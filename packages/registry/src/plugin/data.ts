@@ -472,6 +472,11 @@ export interface RegistryContentStore {
       sizeBytes: number;
       configDigest: string | null;
     };
+    /** If provided, blob ref existence is re-asserted inside the commit
+     *  transaction (under per-digest advisory locks) so a concurrent
+     *  manifest-delete cannot release these blobs before the new manifest
+     *  becomes visible. */
+    blobDigests?: { scope: string; digests: string[] };
   }): Promise<RegistryManifestHandle>;
   replaceManifestBlobRefs(input: {
     package: RegistryPackageHandle;

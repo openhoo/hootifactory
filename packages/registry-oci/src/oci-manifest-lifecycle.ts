@@ -49,10 +49,13 @@ export async function putOciManifest(
   await assertReferencedOciManifestsExist(ctx, pkg, manifestPut.referencedManifests);
 
   // Commit the manifest and its tags atomically so a concurrent manifest delete
-  // cannot cascade-remove a tag this push just created.
+  // cannot cascade-remove a tag this push just created.  Also re-assert blob ref
+  // existence inside the commit transaction under per-digest advisory locks,
+  // serializing against releaseBlobRef in the DELETE path.
   const manifest = await contentStore(ctx).commitManifest({
     package: pkg,
     tags: manifestPut.acceptedTags,
+    blobDigests: { scope: image, digests: manifestPut.referencedBlobs },
     manifest: {
       digest: manifestPut.digest,
       mediaType: manifestPut.mediaType,
@@ -227,8 +230,21 @@ async function releaseOciManifestBlobs(
   for (const row of remaining) {
     for (const digest of manifestBlobDigests(row.raw)) stillUsed.add(digest);
   }
-  for (const digest of digests) {
-    if (stillUsed.has(digest)) continue;
+  const candidates = digests.filter((d) => !stillUsed.has(d));
+  if (candidates.length === 0) return;
+
+  // Re-fetch live manifests to catch any manifest committed since the initial
+  // snapshot. Without this a concurrent putOciManifest that committed tags
+  // between our listLiveManifestsForPackage call and releaseRegistryBlobRef
+  // below would see its shared layers released (the put's per-blob advisory
+  // locks are released on commit, so releaseBlobRef is not blocked).
+  const refetch = await liveOciManifestRowsForImage(ctx, image);
+  const refetchUsed = new Set<string>();
+  for (const row of refetch) {
+    for (const digest of manifestBlobDigests(row.raw)) refetchUsed.add(digest);
+  }
+  for (const digest of candidates) {
+    if (refetchUsed.has(digest)) continue;
     await releaseRegistryBlobRef(ctx, { digest, kind: "oci_layer", scope: image });
   }
 }
