@@ -85,15 +85,27 @@ const originList = z
     return [...new Set(origins)];
   });
 
-function isIpOrCidr(value: string): boolean {
+function isIpOrCidr(value: string): string | false {
   const slash = value.indexOf("/");
   const address = slash >= 0 ? value.slice(0, slash) : value;
   const family = isIP(address);
   if (family === 0) return false;
-  if (slash < 0) return true;
+  if (slash < 0) return value;
+
   const prefix = value.slice(slash + 1);
   if (!/^\d{1,3}$/.test(prefix)) return false;
-  return Number(prefix) <= (family === 4 ? 32 : 128);
+  const prefixNum = Number(prefix);
+  if (prefixNum > (family === 4 ? 32 : 128)) return false;
+
+  if (family === 6 && /^::ffff:\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(address)) {
+    const v4 = address.slice(7);
+    if (prefixNum < 96) return false;
+    const v4Prefix = prefixNum - 96;
+    if (v4Prefix > 32) return false;
+    return `${v4}/${v4Prefix}`;
+  }
+
+  return value;
 }
 
 /** A comma-separated, deduplicated list of IP addresses and/or CIDR ranges. */
@@ -105,14 +117,15 @@ const ipOrCidrList = z
     for (const raw of value.split(",")) {
       const item = raw.trim();
       if (!item) continue;
-      if (!isIpOrCidr(item)) {
+      const normalized = isIpOrCidr(item);
+      if (!normalized) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message: `invalid IP or CIDR "${item}"`,
         });
         return z.NEVER;
       }
-      entries.push(item);
+      entries.push(normalized);
     }
     return [...new Set(entries)];
   });

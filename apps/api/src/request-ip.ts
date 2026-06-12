@@ -153,14 +153,20 @@ function parseProxyRange(entry: string): TrustedProxyRange | null {
       ? { family: ip.family, bytes: ip.bytes, prefixBits: ip.family === 4 ? 32 : 128 }
       : null;
   }
-  // CIDR bases are taken verbatim (no v4-mapped normalization) because the
-  // prefix length is relative to the family as written.
   const base = parseIp(text.slice(0, slash));
   if (!base) return null;
   const prefixText = text.slice(slash + 1);
   if (!/^\d{1,3}$/.test(prefixText)) return null;
   const prefixBits = Number(prefixText);
   if (prefixBits > (base.family === 4 ? 32 : 128)) return null;
+
+  const normalized = normalizeMapped(base);
+  if (normalized && normalized.family === 4 && prefixBits >= 96) {
+    const v4Prefix = prefixBits - 96;
+    if (v4Prefix > 32) return null;
+    return { family: 4, bytes: normalized.bytes, prefixBits: v4Prefix };
+  }
+
   return { family: base.family, bytes: base.bytes, prefixBits };
 }
 
