@@ -296,7 +296,7 @@ describe("OCI uploadStatus", () => {
 });
 
 describe("OCI cancelUpload", () => {
-  test("clears staged chunks, deletes the session, and returns 204", async () => {
+  test("clears staged chunks, marks session aborted, and returns 204", async () => {
     const ctx = ctxFor();
     const events: string[] = [];
     ctx.data.content.staging.deleteKey = async (key) => {
@@ -304,8 +304,8 @@ describe("OCI cancelUpload", () => {
     };
     ctx.data.contentStore.withLockedUploadSession = async ({ run }) => {
       const mutations = noopMutations({
-        deleteSession: async () => {
-          events.push("deleteSession");
+        markAborted: async () => {
+          events.push("markAborted");
         },
       });
       return run(
@@ -322,7 +322,7 @@ describe("OCI cancelUpload", () => {
     expect(response.status).toBe(204);
     expect(events).toContain("delete:oci/uploads/upload_1");
     expect(events).toContain("delete:chunk-0");
-    expect(events).toContain("deleteSession");
+    expect(events).toContain("markAborted");
   });
 });
 

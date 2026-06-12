@@ -274,22 +274,23 @@ export async function cancelUpload(
   ctx: RegistryRequestContext,
 ): Promise<Response> {
   const parsedUuid = parseUploadUuid(uuid);
-  await contentStore(ctx).withLockedUploadSession({
+  const info = await contentStore(ctx).withLockedUploadSession({
     scope: image,
     uuid: parsedUuid,
     run: async (session, mutations) => {
-      const openSession = await assertLoadedOpenSession({
-        image,
-        uuid: parsedUuid,
-        ctx,
-        session,
-        mutations,
-      });
-      await ctx.data.content.staging.deleteKey(openSession.storageKey).catch(() => {});
-      await deleteUploadChunks(ctx, uploadMultipartState(openSession.multipart).chunks);
-      await mutations.deleteSession();
+      if (!session) throw Errors.blobUploadUnknown({ uuid: parsedUuid });
+      if (session.state !== "open") {
+        throw Errors.blobUploadUnknown({ uuid: parsedUuid, state: session.state });
+      }
+      await mutations.markAborted();
+      return {
+        storageKey: session.storageKey,
+        chunks: uploadMultipartState(session.multipart).chunks,
+      };
     },
   });
+  await ctx.data.content.staging.deleteKey(info.storageKey).catch(() => {});
+  await deleteUploadChunks(ctx, info.chunks);
   return new Response(null, { status: 204 });
 }
 
@@ -387,8 +388,6 @@ async function assertOpenSession(input: {
   }
   if (input.session.expiresAt.getTime() > Date.now()) return;
 
-  await input.ctx.data.content.staging.deleteKey(input.session.storageKey).catch(() => {});
-  await deleteUploadChunks(input.ctx, uploadMultipartState(input.session.multipart).chunks);
   await input.markAborted();
   throw Errors.blobUploadUnknown({ uuid: input.uuid, reason: "expired" });
 }
