@@ -304,7 +304,7 @@ describe("OCI uploadStatus", () => {
 });
 
 describe("OCI cancelUpload", () => {
-  test("clears staged chunks, marks session aborted, and returns 204", async () => {
+  test("marks session aborted and returns 204, deferring storage cleanup to the reaper", async () => {
     const ctx = ctxFor();
     const events: string[] = [];
     ctx.data.content.staging.deleteKey = async (key) => {
@@ -328,12 +328,12 @@ describe("OCI cancelUpload", () => {
     const response = await cancelUpload(IMAGE, UPLOAD_UUID, ctx);
 
     expect(response.status).toBe(204);
-    expect(events).toContain("delete:oci/uploads/upload_1");
-    expect(events).toContain("delete:chunk-0");
     expect(events).toContain("markAborted");
+    expect(events).not.toContain("delete:oci/uploads/upload_1");
+    expect(events).not.toContain("delete:chunk-0");
   });
 
-  test("aborts, cleans up, and rejects an expired session", async () => {
+  test("marks expired session aborted and rejects, deferring storage cleanup to the reaper", async () => {
     const ctx = ctxFor();
     const events: string[] = [];
     ctx.data.content.staging.deleteKey = async (key) => {
@@ -358,7 +358,7 @@ describe("OCI cancelUpload", () => {
     await expect(cancelUpload(IMAGE, UPLOAD_UUID, ctx)).rejects.toMatchObject({
       code: "BLOB_UPLOAD_UNKNOWN",
     });
-    expect(events).toEqual(["markAborted", "delete:oci/uploads/upload_1", "delete:chunk-0"]);
+    expect(events).toEqual(["markAborted"]);
   });
 });
 
