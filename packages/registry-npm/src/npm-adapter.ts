@@ -285,10 +285,14 @@ class NpmAdapterState {
     const pkg = await this.findPackage(ctx, name);
     if (!pkg) throw Errors.notFound();
     tag = parseNpmDistTag(tag);
-    await ctx.data.tags.delete(pkg, tag);
     if (tag === "latest") {
-      await ctx.data.tags.updateLatestVersion(pkg, null);
+      throw Errors.denied("cannot delete the 'latest' dist-tag");
     }
+    const tags = await ctx.data.tags.listLive(pkg);
+    if (!(tag in tags)) {
+      throw Errors.notFound();
+    }
+    await ctx.data.tags.delete(pkg, tag);
     return Response.json({ ok: true });
   }
 
