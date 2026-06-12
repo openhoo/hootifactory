@@ -295,29 +295,22 @@ export async function cancelUpload(
   ctx: RegistryRequestContext,
 ): Promise<Response> {
   const parsedUuid = parseUploadUuid(uuid);
-  return withUploadExpirationCleanup(ctx, async () => {
-    const info = await contentStore(ctx).withLockedUploadSession({
-      scope: image,
-      uuid: parsedUuid,
-      run: async (session, mutations) => {
-        if (!session) throw Errors.blobUploadUnknown({ uuid: parsedUuid });
-        if (session.state !== "open") {
-          throw Errors.blobUploadUnknown({ uuid: parsedUuid, state: session.state });
-        }
-        if (session.expiresAt.getTime() <= Date.now()) {
-          await mutations.markAborted();
-          throw new ExpiredUploadSessionError(
-            Errors.blobUploadUnknown({ uuid: parsedUuid, reason: "expired" }),
-            uploadCleanupInfo(session),
-          );
-        }
+  await contentStore(ctx).withLockedUploadSession({
+    scope: image,
+    uuid: parsedUuid,
+    run: async (session, mutations) => {
+      if (!session) throw Errors.blobUploadUnknown({ uuid: parsedUuid });
+      if (session.state !== "open") {
+        throw Errors.blobUploadUnknown({ uuid: parsedUuid, state: session.state });
+      }
+      if (session.expiresAt.getTime() <= Date.now()) {
         await mutations.markAborted();
-        return uploadCleanupInfo(session);
-      },
-    });
-    await cleanupUploadStaging(ctx, info);
-    return new Response(null, { status: 204 });
+        throw Errors.blobUploadUnknown({ uuid: parsedUuid, reason: "expired" });
+      }
+      await mutations.markAborted();
+    },
   });
+  return new Response(null, { status: 204 });
 }
 
 async function tryCrossRepositoryMount(input: {
