@@ -152,7 +152,9 @@ services:
     build: .
     restart: unless-stopped
     command: ["bun", "run", "apps/mail-worker/src/worker.ts"]
-    environment: *app-env
+    environment:
+      <<: *app-env
+      WORKER_PORT: "3001"
     depends_on:
       postgres:
         condition: service_healthy
@@ -160,13 +162,20 @@ services:
         condition: service_started
       migrate:
         condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "bun", "-e", "fetch('http://127.0.0.1:'+(process.env.WORKER_PORT||3001)+'/worker/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
 
   scan-worker:
     profiles: ["app"]
     build: .
     restart: unless-stopped
     command: ["bun", "run", "apps/scan-worker/src/worker.ts"]
-    environment: *app-env
+    environment:
+      <<: *app-env
+      WORKER_PORT: "3002"
     depends_on:
       postgres:
         condition: service_healthy
@@ -175,6 +184,11 @@ services:
         condition: service_completed_successfully
       migrate:
         condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "bun", "-e", "fetch('http://127.0.0.1:'+(process.env.WORKER_PORT||3002)+'/worker/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
 
 volumes:
   pgdata:
