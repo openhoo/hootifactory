@@ -242,6 +242,16 @@ export class S3BlobStore implements BlobStore {
     await this.file(key).write(await toBytes(data));
   }
 
+  async putStreamAtKey(key: string, data: ReadableStream<Uint8Array>): Promise<void> {
+    const temp = await streamToTempFile(data);
+    const dir = temp.path.slice(0, temp.path.lastIndexOf("/"));
+    try {
+      await this.file(key).write(Bun.file(temp.path));
+    } finally {
+      await rm(dir, { recursive: true, force: true }).catch(() => {});
+    }
+  }
+
   readKey(key: string): ReadableStream<Uint8Array> {
     return this.file(key).stream();
   }
