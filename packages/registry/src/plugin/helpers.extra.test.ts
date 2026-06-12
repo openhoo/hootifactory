@@ -5,14 +5,21 @@ import {
   commitPackageVersionBlob,
   findOrCreateRegistryPackage,
   findRegistryPackage,
+  gunzipTar,
   ifNoneMatch,
+  probeTarMember,
   publishImmutableVersionBlob,
+  readGzipTarEntryText,
+  readTarEntry,
+  readTarEntryByBasename,
+  readTarEntryText,
   releaseRegistryBlobRef,
   requireRegistryPackage,
   sha1hexText,
   storeAndCommitPackageVersionBlob,
   storeRegistryBlobStreamWithRef,
   storeRegistryBlobWithRef,
+  tarMembers,
   textEtag,
 } from "./helpers";
 
@@ -57,6 +64,44 @@ function contextWithData(
   });
 }
 
+function tarEntry(name: string, body: string): Uint8Array<ArrayBuffer> {
+  const data = new TextEncoder().encode(body);
+  const header = new Uint8Array(512);
+  const enc = new TextEncoder();
+  header.set(enc.encode(name), 0);
+  header.set(enc.encode("0000644\0"), 100);
+  header.set(enc.encode("0000000\0"), 108);
+  header.set(enc.encode("0000000\0"), 116);
+  header.set(enc.encode(`${data.length.toString(8).padStart(11, "0")}\0`), 124);
+  header.set(enc.encode("00000000000\0"), 136);
+  header[156] = 0x30;
+  header.set(enc.encode("ustar\0"), 257);
+  header.set(enc.encode("00"), 263);
+  for (let i = 148; i < 156; i += 1) header[i] = 0x20;
+  let sum = 0;
+  for (const byte of header) sum += byte;
+  header.set(enc.encode(`${sum.toString(8).padStart(6, "0")}\0 `), 148);
+
+  const padded = new Uint8Array(Math.ceil(data.length / 512) * 512);
+  padded.set(data);
+  return concatBytes(header, padded);
+}
+
+function concatBytes(...parts: Uint8Array[]): Uint8Array<ArrayBuffer> {
+  const total = parts.reduce((n, part) => n + part.length, 0);
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const part of parts) {
+    out.set(part, offset);
+    offset += part.length;
+  }
+  return out;
+}
+
+function tarArchive(...entries: Uint8Array[]): Uint8Array<ArrayBuffer> {
+  return concatBytes(...entries, new Uint8Array(1024));
+}
+
 describe("helpers — small pure utilities", () => {
   test("sha1hexText is a stable 40-char lowercase hex digest", () => {
     const digest = sha1hexText("hello");
@@ -90,6 +135,52 @@ describe("helpers — small pure utilities", () => {
         etag,
       ),
     ).toBe(false);
+  });
+});
+
+describe("helpers — tar archive utilities", () => {
+  test("iterates tar members and normalizes dot-slash paths", () => {
+    const tar = tarArchive(tarEntry("./pkg/metadata.json", "{}"), tarEntry("pkg/README.md", "hi"));
+
+    expect([...tarMembers(tar)].map((member) => member.path)).toEqual([
+      "pkg/metadata.json",
+      "pkg/README.md",
+    ]);
+    expect(readTarEntryText(tar, "pkg/metadata.json")).toBe("{}");
+    expect(new TextDecoder().decode(readTarEntry(tar, "pkg/README.md") as Uint8Array)).toBe("hi");
+  });
+
+  test("finds entries by basename and honors entry scan caps", () => {
+    const tar = tarArchive(
+      tarEntry("pad/one.txt", "1"),
+      tarEntry("pad/two.txt", "2"),
+      tarEntry("pkg/metadata.json", "{}"),
+    );
+
+    expect(readTarEntryByBasename(tar, "metadata.json", { maxEntries: 2 })).toBeNull();
+    expect(
+      new TextDecoder().decode(
+        readTarEntryByBasename(tar, "metadata.json", { maxEntries: 3 }) as Uint8Array,
+      ),
+    ).toBe("{}");
+  });
+
+  test("distinguishes incomplete tar prefixes from absent members", () => {
+    const incomplete = tarEntry("pkg/DESCRIPTION", "Package: demo\n").subarray(0, 512);
+    expect(probeTarMember(incomplete, "pkg/DESCRIPTION")).toEqual({ kind: "need-more" });
+
+    const absent = tarArchive(tarEntry("pkg/README.md", "hi"));
+    expect(probeTarMember(absent, "pkg/DESCRIPTION")).toEqual({ kind: "absent" });
+  });
+
+  test("gunzips bounded tar archives before reading entries", () => {
+    const tar = tarArchive(tarEntry("pubspec.yaml", "name: demo\n"));
+    const archive = Bun.gzipSync(tar);
+
+    expect(readGzipTarEntryText(archive, "pubspec.yaml", { maxTarBytes: tar.length })).toBe(
+      "name: demo\n",
+    );
+    expect(gunzipTar(archive, { maxTarBytes: 32 })).toBeNull();
   });
 });
 
