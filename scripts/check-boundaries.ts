@@ -141,6 +141,8 @@ function buildRules(): BoundaryRule[] {
       roots: [
         "apps/api/src",
         "apps/api/package.json",
+        "apps/mail-worker/src",
+        "apps/mail-worker/package.json",
         "apps/scan-worker/src",
         "apps/scan-worker/package.json",
       ],
@@ -151,6 +153,8 @@ function buildRules(): BoundaryRule[] {
       roots: [
         "apps/api/src",
         "apps/api/package.json",
+        "apps/mail-worker/src",
+        "apps/mail-worker/package.json",
         "apps/scan-worker/src",
         "apps/scan-worker/package.json",
       ],
@@ -166,6 +170,7 @@ function buildRules(): BoundaryRule[] {
         /@hootifactory\/queue\b/,
         /@hootifactory\/registry\b/,
         registryPluginPackagePattern,
+        scannerPluginPackagePattern,
         /@hootifactory\/storage\b/,
       ],
     },
