@@ -191,8 +191,10 @@ async function confirmOidcLink(c: Context<AppEnv>, tokenSecret: string): Promise
   }
 
   try {
-    const user = await syncOidcUser(claims, { allowExistingEmailLink: true });
-    if (user.id !== token.userId) return c.redirect(loginRedirect("sso_link_invalid"));
+    const user = await syncOidcUser(claims, {
+      allowExistingEmailLink: true,
+      targetUserId: token.userId,
+    });
     await createRequestSession(c, user.id);
     setActiveSpanAttributes({ "enduser.id": user.id, "auth.event": "oidc_link_confirm" });
     logger.info("OIDC link confirmation succeeded", { userId: user.id, issuer: claims.issuer });
