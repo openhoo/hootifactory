@@ -493,7 +493,7 @@ export async function requireLiveRegistryVersion(
 
 function upstreamAllowedHost(pinHost: string): string {
   try {
-    return new URL(pinHost).host;
+    return new URL(`https://${pinHost}`).host;
   } catch {
     return pinHost;
   }
