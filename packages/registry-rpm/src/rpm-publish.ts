@@ -59,28 +59,21 @@ async function readPackageBytes(
  * Parse a publish request into a plan. Identity comes from the `.rpm` header
  * tags (NAME/VERSION/RELEASE/EPOCH/ARCH/SUMMARY); any tag the header omits falls
  * back to parsing the canonical `<name>-<ver>-<rel>.<arch>.rpm` filename. The
- * route's `:file` param supplies that fallback filename.
+ * route's `:file` param supplies that fallback filename (already validated by
+ * the publish routes' `.params()` schema before this runs).
  */
 export async function parseRpmPublishRequest(
   routeFile: string | undefined,
   req: Request,
 ): Promise<RpmPublishPlanResult> {
-  const fileHint =
-    routeFile === undefined
-      ? undefined
-      : parseRegistryInput(RpmFileSchema, routeFile, {
-          code: "NAME_INVALID",
-          message: "invalid RPM filename",
-        });
-
-  const read = await readPackageBytes(req, fileHint);
+  const read = await readPackageBytes(req, routeFile);
   if (!read.ok) return read;
   const bytes = read.bytes;
   if (bytes.length === 0) return { ok: false, error: { error: "empty package", status: 400 } };
 
   const header = readRpmHeaderInfo(bytes);
   const multipartFileHint =
-    fileHint ??
+    routeFile ??
     (read.filename
       ? parseRegistryInput(RpmFileSchema, read.filename, {
           code: "NAME_INVALID",

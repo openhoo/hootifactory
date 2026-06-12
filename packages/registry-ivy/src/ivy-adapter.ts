@@ -1,8 +1,8 @@
 import {
   Errors,
-  parseRegistryInput,
   type RegistryPlugin,
   type RegistryRequestContext,
+  type RegistryRouteParamSpec,
   registryAdapter,
   registryErrorResponseForModule,
   serveRegistryBlob,
@@ -23,6 +23,12 @@ import {
 
 const IVY_ERROR_MODULE = { errorResponseKind: "singleError" as const };
 
+const pathParam: RegistryRouteParamSpec = {
+  schema: IvyPathSchema,
+  code: "NAME_INVALID",
+  message: "invalid ivy path",
+};
+
 /**
  * Ivy repository (the layout SBT publishes/resolves against). A path-addressed
  * file store keyed by `[organisation]/[module]/[revision]/<file>`: the
@@ -32,21 +38,13 @@ const IVY_ERROR_MODULE = { errorResponseKind: "singleError" as const };
  */
 class IvyAdapterState {
   upload(path: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
-    const safePath = parseRegistryInput(IvyPathSchema, path, {
-      code: "NAME_INVALID",
-      message: "invalid ivy path",
-    });
-    return handleIvyUpload(safePath, req, ctx, IVY_ERROR_MODULE);
+    return handleIvyUpload(path, req, ctx, IVY_ERROR_MODULE);
   }
 
   async download(path: string, req: Request, ctx: RegistryRequestContext): Promise<Response> {
-    const safePath = parseRegistryInput(IvyPathSchema, path, {
-      code: "NAME_INVALID",
-      message: "invalid ivy path",
-    });
-    const checksum = parseChecksumPath(safePath);
+    const checksum = parseChecksumPath(path);
     if (checksum) return this.downloadChecksum(checksum.base, checksum.algorithm, req, ctx);
-    return this.downloadFile(safePath, req, ctx);
+    return this.downloadFile(path, req, ctx);
   }
 
   /** Serve a stored Ivy file (descriptor or artifact) via its path-scoped asset. */
@@ -115,9 +113,11 @@ const ivyDefinition = registryAdapter("ivy")
   .routes((route) => [
     route
       .put("/:path+", "upload")
+      .params({ path: pathParam })
       .calls((state, { params, req, ctx }) => state.upload(params.path, req, ctx)),
     route
       .get("/:path+", "download")
+      .params({ path: pathParam })
       .calls((state, { params, req, ctx }) => state.download(params.path, req, ctx)),
   ]);
 

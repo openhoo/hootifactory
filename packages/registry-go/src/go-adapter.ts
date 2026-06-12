@@ -77,10 +77,6 @@ class GoAdapterState {
     req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
-    file = parseRegistryInput(GoVersionFileSchema, file, {
-      code: "NAME_INVALID",
-      message: "invalid Go version file",
-    });
     const pkg = await ctx.data.packages.findByName(moduleName);
     if (!pkg) throw Errors.notFound();
     const dot = file.lastIndexOf(".");
@@ -203,6 +199,13 @@ const goDefinition = registryAdapter("go")
       ),
     route
       .get("/:module+/@v/:file", "file")
+      .params({
+        file: {
+          schema: GoVersionFileSchema,
+          code: "NAME_INVALID",
+          message: "invalid Go version file",
+        },
+      })
       .calls((state, { params, req, ctx }) =>
         state.file(state.parseModule(params.module), params.file, req, ctx),
       ),

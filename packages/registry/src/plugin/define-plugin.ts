@@ -1,4 +1,3 @@
-import { parseRegistryInput } from "@hootifactory/core";
 import {
   type HttpMethod,
   type Permission,
@@ -17,6 +16,7 @@ import {
   type SearchQuery,
   type SearchResult,
 } from "./adapter";
+import { validateRegistryRouteParams } from "./route-params";
 import type {
   AnyRegistryRouteSpec,
   RegistryBeforeHandleHook,
@@ -67,16 +67,7 @@ function validateRouteParams(
   spec: AnyRegistryRouteSpec,
   match: RouteMatch,
 ): Record<string, string> {
-  const schemas = spec.paramSchemas;
-  if (!schemas) return match.params;
-  const params = { ...match.params };
-  for (const [name, schema] of Object.entries(schemas)) {
-    if (!schema) continue;
-    params[name] = parseRegistryInput(schema, params[name], {
-      message: `invalid route parameter: ${name}`,
-    }) as string;
-  }
-  return params;
+  return validateRegistryRouteParams(spec.params ?? spec.paramSchemas, match.params);
 }
 
 class DefinedRegistryPlugin implements RegistryPlugin {
@@ -127,9 +118,10 @@ class DefinedRegistryPlugin implements RegistryPlugin {
       // Carry every RouteEntry field (method/pattern/handlerId + declarative
       // flags) into the compiled entry by stripping only the spec-only members,
       // so a newly-added RouteEntry flag is never silently dropped here.
-      const { permission, handler, paramSchemas, ...entry } = spec;
+      const { permission, handler, params, paramSchemas, ...entry } = spec;
       void permission;
       void handler;
+      void params;
       void paramSchemas;
       return entry;
     });
@@ -155,8 +147,11 @@ class DefinedRegistryPlugin implements RegistryPlugin {
     ctx: RegistryRequestContext,
   ): Permission {
     const spec = this.specFor(match);
+    // Param validation runs BEFORE the permission resolver: a failing param
+    // short-circuits to the parse error (RegistryError) before authorization,
+    // and the resolver only ever observes validated/normalized params.
     const params = validateRouteParams(spec, match);
-    const input = { method, match: { ...match, params }, params, ctx };
+    const input = { method, match, params, ctx };
     return (
       resolveRoutePermission(spec.permission, input) ??
       this.input.defaultPermission?.(input) ??
@@ -166,11 +161,15 @@ class DefinedRegistryPlugin implements RegistryPlugin {
 
   handle(match: RouteMatch, req: Request, ctx: RegistryRequestContext): Promise<Response> {
     const spec = this.specFor(match);
-    const params = validateRouteParams(spec, match);
-    const input = { match: { ...match, params }, params, req, ctx };
+    // Re-validate here as well (hosts may call handle without
+    // requiredPermission): the handler observes validated params and a failing
+    // param rejects with the parseRegistryInput-shaped RegistryError.
     return Promise.resolve()
-      .then(() => this.input.beforeHandle?.(input))
-      .then(() => spec.handler(input));
+      .then(() => ({ match, params: validateRouteParams(spec, match), req, ctx }))
+      .then(async (input) => {
+        await this.input.beforeHandle?.(input);
+        return spec.handler(input);
+      });
   }
 
   private specFor(match: RouteMatch): AnyRegistryRouteSpec {
