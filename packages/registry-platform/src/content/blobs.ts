@@ -1,5 +1,6 @@
+import { env } from "@hootifactory/config";
 import { Errors } from "@hootifactory/core";
-import { and, blobRefs, blobs, db, eq, repositories, sql } from "@hootifactory/db";
+import { and, blobRefs, blobs, db, eq, isNull, lte, or, repositories, sql } from "@hootifactory/db";
 import { logger } from "@hootifactory/observability";
 import {
   computeDigest,
@@ -84,13 +85,19 @@ async function deleteUnrecordedCasBlob(
   }
 }
 
-async function reclaimUnreferencedCasBlob(digest: string): Promise<boolean> {
+async function reclaimUnreferencedCasBlob(digest: string, graceMs: number): Promise<boolean> {
+  const cutoff = new Date(Date.now() - graceMs);
   return db.transaction(async (tx) => {
     await lockDigestTx(tx, digest);
     const deleted = await tx
       .delete(blobs)
       .where(
-        and(eq(blobs.digest, digest), eq(blobs.refCount, 0), eq(blobs.state, "pending_delete")),
+        and(
+          eq(blobs.digest, digest),
+          eq(blobs.refCount, 0),
+          eq(blobs.state, "pending_delete"),
+          or(isNull(blobs.pendingSince), lte(blobs.pendingSince, cutoff)),
+        ),
       )
       .returning({ digest: blobs.digest });
     const deletedDigest = deleted[0]?.digest ?? null;
@@ -105,7 +112,7 @@ export async function deleteUnreferencedCasBlob(
   digest: string,
 ): Promise<void> {
   try {
-    await reclaimUnreferencedCasBlob(digest);
+    await reclaimUnreferencedCasBlob(digest, env.BLOB_GC_GRACE_SECONDS * 1000);
   } catch {
     // Reclaim is best-effort; a later retention/delete pass can retry.
   }
@@ -137,7 +144,7 @@ export async function sweepUnreferencedCasBlobs(opts: {
 
   let reclaimed = 0;
   for (const digest of candidates) {
-    if (await reclaimUnreferencedCasBlob(digest).catch(() => false)) reclaimed += 1;
+    if (await reclaimUnreferencedCasBlob(digest, opts.graceMs).catch(() => false)) reclaimed += 1;
   }
   return { candidates: candidates.length, reclaimed };
 }
