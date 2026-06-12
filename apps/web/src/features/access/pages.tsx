@@ -430,6 +430,17 @@ export function AccessPage() {
             </form>
             {membersQ.isLoading ? (
               <Loading />
+            ) : membersQ.isError ? (
+              <EmptyState
+                icon={<Users className="size-5" />}
+                title="Couldn't load members"
+                description="Check your connection or permissions and try again."
+                action={
+                  <Button variant="outline" size="sm" onClick={() => membersQ.refetch()}>
+                    Retry
+                  </Button>
+                }
+              />
             ) : (
               <Table>
                 <TableHeader>
@@ -502,29 +513,44 @@ export function AccessPage() {
                 Create
               </SubmitButton>
             </form>
-            <div className="space-y-1">
-              {(groupsQ.data?.groups ?? []).map((group) => (
-                <button
-                  key={group.id}
-                  type="button"
-                  className={`flex w-full items-center justify-between rounded-md border px-3 py-2 text-left text-sm ${
-                    group.id === activeGroupId ? "border-primary bg-primary/5" : "border-border"
-                  }`}
-                  onClick={() => setActiveGroupId(group.id)}
-                >
-                  <span>
-                    <span className="font-medium">{group.displayName}</span>
-                    <span className="ml-2 font-mono text-xs text-muted-foreground">
-                      {group.slug}
+            {groupsQ.isLoading ? (
+              <Loading />
+            ) : groupsQ.isError ? (
+              <EmptyState
+                icon={<ShieldCheck className="size-5" />}
+                title="Couldn't load groups"
+                description="Check your connection or permissions and try again."
+                action={
+                  <Button variant="outline" size="sm" onClick={() => groupsQ.refetch()}>
+                    Retry
+                  </Button>
+                }
+              />
+            ) : (
+              <div className="space-y-1">
+                {(groupsQ.data?.groups ?? []).map((group) => (
+                  <button
+                    key={group.id}
+                    type="button"
+                    className={`flex w-full items-center justify-between rounded-md border px-3 py-2 text-left text-sm ${
+                      group.id === activeGroupId ? "border-primary bg-primary/5" : "border-border"
+                    }`}
+                    onClick={() => setActiveGroupId(group.id)}
+                  >
+                    <span>
+                      <span className="font-medium">{group.displayName}</span>
+                      <span className="ml-2 font-mono text-xs text-muted-foreground">
+                        {group.slug}
+                      </span>
                     </span>
-                  </span>
-                  {group.managedBy && <Pill>{group.managedBy}</Pill>}
-                </button>
-              ))}
-              {!groupsQ.isLoading && !(groupsQ.data?.groups ?? []).length && (
-                <EmptyState icon={<ShieldCheck className="size-5" />} title="No groups" />
-              )}
-            </div>
+                    {group.managedBy && <Pill>{group.managedBy}</Pill>}
+                  </button>
+                ))}
+                {!(groupsQ.data?.groups ?? []).length && (
+                  <EmptyState icon={<ShieldCheck className="size-5" />} title="No groups" />
+                )}
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -570,25 +596,40 @@ export function AccessPage() {
                       Add
                     </Button>
                   </div>
-                  <div className="flex flex-wrap gap-2">
-                    {(groupMembersQ.data?.users ?? []).map((user) => (
-                      <span
-                        key={user.id}
-                        className="inline-flex items-center gap-2 rounded-md border px-2.5 py-1 text-sm"
-                      >
-                        {usersById.get(user.id)?.username ?? user.username}
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          disabled={!canManageGroupMembers}
-                          onClick={() => removeGroupMember.mutate(user.id)}
-                          aria-label="Remove member"
-                        >
-                          <Trash2 />
+                  {groupMembersQ.isLoading ? (
+                    <Loading />
+                  ) : groupMembersQ.isError ? (
+                    <EmptyState
+                      icon={<UserPlus className="size-5" />}
+                      title="Couldn't load group members"
+                      description="Check your connection or permissions and try again."
+                      action={
+                        <Button variant="outline" size="sm" onClick={() => groupMembersQ.refetch()}>
+                          Retry
                         </Button>
-                      </span>
-                    ))}
-                  </div>
+                      }
+                    />
+                  ) : (
+                    <div className="flex flex-wrap gap-2">
+                      {(groupMembersQ.data?.users ?? []).map((user) => (
+                        <span
+                          key={user.id}
+                          className="inline-flex items-center gap-2 rounded-md border px-2.5 py-1 text-sm"
+                        >
+                          {usersById.get(user.id)?.username ?? user.username}
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            disabled={!canManageGroupMembers}
+                            onClick={() => removeGroupMember.mutate(user.id)}
+                            aria-label="Remove member"
+                          >
+                            <Trash2 />
+                          </Button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </section>
 
                 <section className="space-y-3">
@@ -638,38 +679,61 @@ export function AccessPage() {
                       Add
                     </Button>
                   </div>
-                  <div className="space-y-2">
-                    {draftGrants.map((grant) => (
-                      <div
-                        key={grant.draftId}
-                        className="flex items-center justify-between gap-2 rounded-md border px-3 py-2 text-sm"
-                      >
-                        <span className="truncate">{grantLabel(grant)}</span>
+                  {groupPermissionsQ.isLoading ? (
+                    <Loading />
+                  ) : groupPermissionsQ.isError ? (
+                    <EmptyState
+                      icon={<KeyRound className="size-5" />}
+                      title="Couldn't load permissions"
+                      description="Check your connection or permissions and try again."
+                      action={
                         <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon-sm"
-                          disabled={!canManageGroupPermissions}
-                          aria-label="Remove permission"
-                          onClick={() =>
-                            setDraftGrants((current) =>
-                              current.filter((candidate) => candidate.draftId !== grant.draftId),
-                            )
-                          }
+                          variant="outline"
+                          size="sm"
+                          onClick={() => groupPermissionsQ.refetch()}
                         >
-                          <Trash2 />
+                          Retry
                         </Button>
+                      }
+                    />
+                  ) : (
+                    <>
+                      <div className="space-y-2">
+                        {draftGrants.map((grant) => (
+                          <div
+                            key={grant.draftId}
+                            className="flex items-center justify-between gap-2 rounded-md border px-3 py-2 text-sm"
+                          >
+                            <span className="truncate">{grantLabel(grant)}</span>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-sm"
+                              disabled={!canManageGroupPermissions}
+                              aria-label="Remove permission"
+                              onClick={() =>
+                                setDraftGrants((current) =>
+                                  current.filter(
+                                    (candidate) => candidate.draftId !== grant.draftId,
+                                  ),
+                                )
+                              }
+                            >
+                              <Trash2 />
+                            </Button>
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                  </div>
-                  <Button
-                    type="button"
-                    onClick={() => savePermissions.mutate()}
-                    disabled={!canManageGroupPermissions || savePermissions.isPending}
-                  >
-                    <Save />
-                    Save permissions
-                  </Button>
+                      <Button
+                        type="button"
+                        onClick={() => savePermissions.mutate()}
+                        disabled={!canManageGroupPermissions || savePermissions.isPending}
+                      >
+                        <Save />
+                        Save permissions
+                      </Button>
+                    </>
+                  )}
                 </section>
               </>
             )}
