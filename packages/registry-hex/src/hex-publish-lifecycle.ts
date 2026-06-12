@@ -20,12 +20,20 @@ export { hexBlobScope };
 export async function handleHexPublish(
   req: Request,
   ctx: RegistryRequestContext,
+  urlName?: string,
 ): Promise<Response> {
   const parsed = await parseHexPublishRequest(req);
   if (!parsed.ok) {
     return Response.json({ error: parsed.error.error }, { status: parsed.error.status });
   }
   const { name, version, metadata, tarball, innerChecksum, scope } = parsed.plan;
+
+  if (urlName && name !== urlName) {
+    return Response.json(
+      { error: `package name mismatch: tarball says "${name}" but URL says "${urlName}"` },
+      { status: 400 },
+    );
+  }
 
   return publishImmutableVersionBlobResponse(ctx, {
     package: { name },

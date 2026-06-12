@@ -168,8 +168,8 @@ class HexAdapterState {
     });
   }
 
-  publish(req: Request, ctx: RegistryRequestContext): Promise<Response> {
-    return handleHexPublish(req, ctx);
+  publish(req: Request, ctx: RegistryRequestContext, urlName?: string): Promise<Response> {
+    return handleHexPublish(req, ctx, urlName);
   }
 }
 
@@ -236,7 +236,7 @@ const hexDefinition = registryAdapter("hex")
     // the GET-only `/api/packages/:name` route (method guard disambiguates).
     route
       .post("/api/packages/:name/releases", "publish")
-      .calls((state, { req, ctx }) => state.publish(req, ctx)),
+      .calls((state, { params, req, ctx }) => state.publish(req, ctx, params.name)),
     // Repository resources (literal segments before `/packages/:name`).
     route.get("/names", "names").calls((state, { req, ctx }) => state.names(req, ctx)),
     route.get("/versions", "versions").calls((state, { req, ctx }) => state.versions(req, ctx)),
