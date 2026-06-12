@@ -39,6 +39,8 @@ export async function handleIvyUpload(
         message: "empty request body",
       });
     }
+    const existing = await ctx.data.assets.findByScope({ role: IVY_FILE_KIND, scope: path });
+    const previousDigest = existing?.digest ?? null;
     const stored = await ctx.data.content.storeBlobStreamWithRef({
       data: req.body,
       kind: IVY_FILE_KIND,
@@ -54,6 +56,13 @@ export async function handleIvyUpload(
       mediaType,
       sizeBytes: stored.size,
     });
+    if (previousDigest && previousDigest !== stored.digest) {
+      await ctx.data.content.releaseBlobRef({
+        digest: previousDigest,
+        kind: IVY_FILE_KIND,
+        scope: path,
+      });
+    }
     // Only the executable artifacts (jar/war/ear/aar) carry scannable bytes;
     // checksum/signature sidecars and the descriptor carry none.
     if (coords && isScannableIvyArtifact(path)) {
@@ -71,6 +80,8 @@ export async function handleIvyUpload(
 
   // The descriptor is buffered so its package/version can be projected eagerly.
   const bytes = new Uint8Array(await req.arrayBuffer());
+  const existing = await ctx.data.assets.findByScope({ role: IVY_FILE_KIND, scope: path });
+  const previousDigest = existing?.digest ?? null;
   const stored = await ctx.data.content.storeBlobWithRef({
     data: bytes,
     kind: IVY_FILE_KIND,
@@ -86,6 +97,13 @@ export async function handleIvyUpload(
     mediaType,
     sizeBytes: bytes.byteLength,
   });
+  if (previousDigest && previousDigest !== stored.digest) {
+    await ctx.data.content.releaseBlobRef({
+      digest: previousDigest,
+      kind: IVY_FILE_KIND,
+      scope: path,
+    });
+  }
 
   const name = ivyPackageName(descriptor.organisation, descriptor.module);
   const pkg = await ctx.data.packages.findOrCreate({ name, namespace: descriptor.organisation });
