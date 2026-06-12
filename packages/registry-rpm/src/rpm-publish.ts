@@ -107,6 +107,19 @@ export async function parseRpmPublishRequest(
     message: "invalid derived RPM filename",
   });
 
+  // When the URL path supplied a `:file` segment, authorization is scoped to
+  // that segment. If the header-derived filename differs, the authorized scope
+  // and the written scope would diverge — a confused-deputy write.
+  if (routeFile !== undefined && file !== routeFile) {
+    return {
+      ok: false,
+      error: {
+        error: `upload filename '${routeFile}' does not match package '${file}'`,
+        status: 400,
+      },
+    };
+  }
+
   const digest = computeDigest(bytes);
   const metadata: RpmVersionMeta = {
     rpmDigest: digest,
