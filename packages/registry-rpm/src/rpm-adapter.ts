@@ -6,6 +6,7 @@ import {
   type RegistryRequestContext,
   type RegistryRouteParamSpec,
   registryAdapter,
+  repoResponseCache,
   serveRegistryBlob,
   textResponseWithEtag,
 } from "@hootifactory/registry";
@@ -19,6 +20,7 @@ import {
 import { parseRpmVersionMeta, RpmFileSchema } from "./rpm-validation";
 
 const REPODATA_XML = "application/xml";
+const REPODATA_TTL_MS = 5_000;
 
 /**
  * YUM/DNF repository. Serves a deterministic `repodata/` (repomd.xml +
@@ -27,6 +29,9 @@ const REPODATA_XML = "application/xml";
  * with a filename fallback). One plugin backs the `rpm`, `yum`, and `dnf` ids.
  */
 class RpmAdapterState {
+  /** Single cache key used by both repomd + primary so checksums always match. */
+  private readonly primaryCache = repoResponseCache<BuiltPrimary>({ ttlMs: REPODATA_TTL_MS });
+
   /** Collect every live RPM version across all packages as primary entries. */
   async collectPackages(ctx: RegistryRequestContext): Promise<RpmPrimaryPackage[]> {
     const pkgs: RegistryPackageHandle[] = await ctx.data.packages.list();
@@ -51,7 +56,11 @@ class RpmAdapterState {
 
   /** Build the deterministic primary metadata for the current repo state. */
   async buildRepoPrimary(ctx: RegistryRequestContext): Promise<BuiltPrimary> {
-    return buildPrimary(await this.collectPackages(ctx));
+    const entry = await this.primaryCache.get(ctx, "primary", async () => {
+      const primary = buildPrimary(await this.collectPackages(ctx));
+      return { body: primary, etag: `"${primary.sha256Gz}"` };
+    });
+    return entry.body;
   }
 
   async repomd(req: Request, ctx: RegistryRequestContext): Promise<Response> {
@@ -84,7 +93,9 @@ class RpmAdapterState {
     req: Request,
     ctx: RegistryRequestContext,
   ): Promise<Response> {
-    return handleRpmPublish(file, req, ctx);
+    const res = await handleRpmPublish(file, req, ctx);
+    if (res.status >= 200 && res.status < 300) this.primaryCache.clear(ctx);
+    return res;
   }
 }
 
