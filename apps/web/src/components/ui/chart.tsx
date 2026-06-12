@@ -57,7 +57,8 @@ function ChartContainer({
   }
 }) {
   const uniqueId = React.useId()
-  const chartId = `chart-${id ?? uniqueId.replace(/:/g, "")}`
+  const safeId = (id ?? uniqueId.replace(/:/g, "")).replace(/["'[\]<>]/g, "")
+  const chartId = `chart-${safeId}`
 
   return (
     <ChartContext.Provider value={{ config }}>
@@ -101,9 +102,16 @@ function isSafeChartColor(color: string) {
   return SAFE_CHART_COLOR.test(color.trim())
 }
 
+const SAFE_CHART_KEY = /^[a-zA-Z0-9_-]+$/
+
+function isSafeChartKey(key: string) {
+  return SAFE_CHART_KEY.test(key)
+}
+
 const ChartStyle = ({ id, config }: { id: string; config: ChartConfig }) => {
   const colorConfig = Object.entries(config).filter(
-    ([, config]) => config.theme ?? config.color
+    ([key, itemConfig]) =>
+      isSafeChartKey(key) && (itemConfig.theme ?? itemConfig.color)
   )
 
   if (!colorConfig.length) {
