@@ -67,6 +67,11 @@ mock.module("@hootifactory/auth", () => ({
     code: allow ? "ok" : "insufficient_scope",
     reason: "denied",
   }),
+  authorizePermission: async () => ({
+    allowed: allow,
+    code: allow ? "ok" : "insufficient_scope",
+    reason: "denied",
+  }),
   createRequestAuthorizer: () => async () => ({ allowed: allow }),
   getOrganizationById: async () => null,
   listAccessibleOrgs: async () => [],
