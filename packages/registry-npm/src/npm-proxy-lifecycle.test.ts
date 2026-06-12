@@ -182,8 +182,11 @@ describe("handleNpmProxyIngest mirroring", () => {
     const ctx = createTestRegistryContext();
     const created = pkgRow("pkg_1", "pkg");
     let findOrCreateCalls = 0;
-    const upsertWithBlobRef: Array<{ version: string; blobDigest: string }> = [];
-    const scanned: Array<{ digest: string; version?: string }> = [];
+    const upsertWithBlobRef: Array<{
+      version: string;
+      blobDigest: string;
+      scan?: { name?: string; version?: string; mediaType?: string };
+    }> = [];
     const replacedTags: Array<Map<string, { version: string }>> = [];
 
     ctx.data.packages.findByName = async () => null;
@@ -199,6 +202,7 @@ describe("handleNpmProxyIngest mirroring", () => {
       upsertWithBlobRef.push({
         version: input.version,
         blobDigest: computeDigest(input.blob.data),
+        scan: input.scan,
       });
       expect(input.blob.kind).toBe("npm_tarball");
       expect(input.blob.scope).toBe("pkg@1.0.0");
@@ -213,9 +217,6 @@ describe("handleNpmProxyIngest mirroring", () => {
         versionId: "ver_1",
       };
     };
-    ctx.enqueueScan = async (input) => {
-      scanned.push(input);
-    };
     ctx.data.tags.replace = async (_pkg, desired) => {
       replacedTags.push(desired as Map<string, { version: string }>);
     };
@@ -224,8 +225,13 @@ describe("handleNpmProxyIngest mirroring", () => {
 
     expect(result).toBe(true);
     expect(findOrCreateCalls).toBe(1);
-    expect(upsertWithBlobRef).toEqual([{ version: "1.0.0", blobDigest: digests.blobDigest }]);
-    expect(scanned[0]).toMatchObject({ digest: digests.blobDigest, version: "1.0.0" });
+    expect(upsertWithBlobRef).toEqual([
+      {
+        version: "1.0.0",
+        blobDigest: digests.blobDigest,
+        scan: { name: "pkg", version: "1.0.0", mediaType: "application/octet-stream" },
+      },
+    ]);
     expect([...(replacedTags[0]?.keys() ?? [])]).toEqual(["latest"]);
   });
 

@@ -78,6 +78,11 @@ export async function handleGenericStore(
     version: GENERIC_VERSION,
     metadata: meta,
     sizeBytes: data.length,
+    scan: {
+      name: path,
+      version: GENERIC_VERSION,
+      mediaType,
+    },
     blob: {
       data,
       kind: GENERIC_BLOB_KIND,
@@ -96,13 +101,6 @@ export async function handleGenericStore(
   if (stored.digest !== blobDigest) {
     throw new Error("stored generic blob digest mismatch");
   }
-
-  await ctx.enqueueScan({
-    digest: stored.digest,
-    name: path,
-    version: GENERIC_VERSION,
-    mediaType,
-  });
 
   return { path, meta, created: existing === null };
 }

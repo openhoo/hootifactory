@@ -62,9 +62,13 @@ function ingestContext() {
     upserts.push({ version: input.version, metadata: input.metadata });
     // Storage hashes the supplied bytes; mirror that so the lifecycle's
     // `stored.digest === digest` guard holds for honest inputs.
+    const digest = computeDigest(input.blob.data);
+    if (input.scan) {
+      scans.push({ digest, ...input.scan });
+    }
     return {
       stored: {
-        digest: computeDigest(input.blob.data),
+        digest,
         size: input.blob.data.length,
         deduped: false,
         refCreated: true,
@@ -72,9 +76,6 @@ function ingestContext() {
       },
       versionId: `ver_${input.version}`,
     };
-  };
-  ctx.enqueueScan = async (input) => {
-    scans.push(input);
   };
   return { ctx, upserts, scans };
 }

@@ -501,10 +501,8 @@ describe("Homebrew publish", () => {
     };
     ctx.data.assets.upsert = async (input) => {
       asset = input;
+      scanned = input.scanInput;
       return {} as never;
-    };
-    ctx.enqueueScan = async (input) => {
-      scanned = input;
     };
 
     const res = await new HomebrewAdapter().handle(

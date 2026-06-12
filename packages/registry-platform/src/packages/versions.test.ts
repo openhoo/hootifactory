@@ -37,12 +37,21 @@ async function withMocks<T>(
     put?: (...a: unknown[]) => Promise<unknown>;
     stat?: (...a: unknown[]) => Promise<unknown>;
     delete?: (...a: unknown[]) => Promise<void>;
+    scannerEnabled?: boolean;
   },
   run: (calls: { op: string; args: unknown[] }[]) => Promise<T>,
 ): Promise<T> {
+  const realConfig = await import("@hootifactory/config");
   const realDb = await import("@hootifactory/db");
   const realStorage = await import("@hootifactory/storage");
   const { builder, calls } = fakeDb(opts.rowsByCall ?? []);
+  await mock.module("@hootifactory/config", () => ({
+    ...realConfig,
+    env: {
+      ...realConfig.env,
+      SCANNER_ENABLED: opts.scannerEnabled ?? realConfig.env.SCANNER_ENABLED,
+    },
+  }));
   await mock.module("@hootifactory/db", () => ({ ...realDb, db: builder }));
   await mock.module("@hootifactory/storage", () => ({
     ...realStorage,
@@ -191,24 +200,35 @@ describe("createPackageVersion", () => {
 describe("commitVersionOrReleaseBlob", () => {
   afterEach(() => mock.restore());
 
-  test("enqueues a scan and returns the version id on success", async () => {
-    let scanned = false;
+  test("records scan outbox intent in the version transaction on success", async () => {
+    let recordedScan: unknown;
+    let recordedTx: unknown;
     const result = await withMocks(
       {
+        scannerEnabled: true,
         rowsByCall: [
           [{ used: 0, max: null, usedArtifacts: 0, maxArtifacts: null }],
           [{ id: "v1" }],
         ],
       },
       async () => {
+        await mock.module("../runtime/scan-outbox", () => ({
+          recordArtifactScanOutbox: async (
+            _repo: unknown,
+            input: unknown,
+            _captureTelemetry: unknown,
+            tx: unknown,
+          ) => {
+            recordedScan = input;
+            recordedTx = tx;
+            return { artifactId: "artifact_1" };
+          },
+        }));
         const { commitVersionOrReleaseBlob } = await import("./versions");
         const ctx = createTestRegistryContext();
-        ctx.enqueueScan = async () => {
-          scanned = true;
-        };
-        return commitVersionOrReleaseBlob(ctx, {
+        const committed = await commitVersionOrReleaseBlob(ctx, {
           stored: {
-            digest: "sha256:d",
+            digest: "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
             size: 5,
             deduped: false,
             refCreated: true,
@@ -222,10 +242,17 @@ describe("commitVersionOrReleaseBlob", () => {
           sizeBytes: 5,
           scan: { name: "demo", version: "1.0.0", mediaType: "application/octet-stream" },
         });
+        return committed;
       },
     );
     expect(result).toEqual({ versionId: "v1" });
-    expect(scanned).toBe(true);
+    expect(recordedScan).toEqual({
+      digest: "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      name: "demo",
+      version: "1.0.0",
+      mediaType: "application/octet-stream",
+    });
+    expect(recordedTx).toBeDefined();
   });
 
   test("releases the created blob ref and reports a conflict when the version exists", async () => {

@@ -456,10 +456,8 @@ describe("Vagrant publish", () => {
     };
     ctx.data.assets.upsert = async (input) => {
       asset = input;
+      scanned = input.scanInput;
       return {} as never;
-    };
-    ctx.enqueueScan = async (input) => {
-      scanned = input;
     };
 
     const res = await new VagrantAdapter().handle(publishMatch, publishRequest(), ctx);

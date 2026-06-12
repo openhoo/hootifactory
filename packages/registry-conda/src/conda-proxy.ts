@@ -165,6 +165,11 @@ async function mirrorPackage(input: {
       size: bytes.length,
     }),
     sizeBytes: bytes.length,
+    scan: {
+      name: index.name,
+      version: index.version,
+      mediaType: CONDA_MEDIA_TYPE,
+    },
     blob: {
       data: bytes,
       kind: CONDA_PACKAGE_KIND,
@@ -184,12 +189,6 @@ async function mirrorPackage(input: {
         },
       },
     },
-  });
-  await ctx.enqueueScan({
-    digest: `sha256:${sha256}`,
-    name: index.name,
-    version: index.version,
-    mediaType: CONDA_MEDIA_TYPE,
   });
   return true;
 }

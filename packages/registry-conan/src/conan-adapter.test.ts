@@ -822,10 +822,8 @@ describe("Conan adapter", () => {
     };
     ctx.data.assets.upsert = async (input) => {
       captured.assetScope = input.scope;
+      captured.scanVersion = input.scanInput?.version;
       return makeAssetRow(input.scope, input.digest);
-    };
-    ctx.enqueueScan = async (input) => {
-      captured.scanVersion = input.version;
     };
 
     const res = await new ConanAdapter().handle(
@@ -878,9 +876,9 @@ describe("Conan adapter", () => {
       blobRefId: "ref_1",
     });
     ctx.data.versions.upsert = async () => "ver_1";
-    ctx.data.assets.upsert = async (input) => makeAssetRow(input.scope, input.digest);
-    ctx.enqueueScan = async () => {
-      scanCalls += 1;
+    ctx.data.assets.upsert = async (input) => {
+      if (input.scanInput) scanCalls += 1;
+      return makeAssetRow(input.scope, input.digest);
     };
     const res = await new ConanAdapter().handle(
       {

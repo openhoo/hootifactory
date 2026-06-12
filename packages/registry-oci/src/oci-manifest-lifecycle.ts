@@ -90,12 +90,12 @@ export async function putOciManifest(
       artifactType: manifestPut.parsed.artifactType,
       subjectDigest: manifestPut.subjectDigest,
     },
-  });
-  await ctx.enqueueScan({
-    digest: manifestPut.digest,
-    name: image,
-    version: manifestPut.acceptedTags[0],
-    mediaType: manifestPut.mediaType,
+    scanInput: {
+      digest: manifestPut.digest,
+      name: image,
+      version: manifestPut.acceptedTags[0],
+      mediaType: manifestPut.mediaType,
+    },
   });
 
   return buildOciManifestCreatedHeaders({

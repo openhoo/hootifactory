@@ -224,11 +224,11 @@ describe("Terraform provider protocol", () => {
   test("PUT publishes a multi-blob provider version and stores all coordinates", async () => {
     const ctx = terraformContext();
     const stored: { scope: string; kind: string }[] = [];
-    const committed: { metadata?: Record<string, unknown>; scan?: unknown } = {};
-    const scans: { digest: string; mediaType?: string }[] = [];
-    ctx.enqueueScan = async (input) => {
-      scans.push({ digest: input.digest, mediaType: input.mediaType });
-    };
+    const committed: {
+      metadata?: Record<string, unknown>;
+      scan?: unknown;
+      extraScans?: Array<{ digest: string; name?: string; version?: string; mediaType?: string }>;
+    } = {};
     ctx.data.packages.findOrCreate = async ({ name }) => pkgRow(name);
     ctx.data.versions.exists = async () => false;
     const digestByScope = new Map<string, string>([
@@ -249,6 +249,7 @@ describe("Terraform provider protocol", () => {
     ctx.data.versions.commitOrReleaseBlob = async (input) => {
       committed.metadata = input.metadata;
       committed.scan = input.scan;
+      committed.extraScans = input.extraScans;
       return { versionId: "ver_1" };
     };
 
@@ -315,7 +316,14 @@ describe("Terraform provider protocol", () => {
       version: "2.0.0",
       mediaType: "text/plain; charset=utf-8",
     });
-    expect(scans).toEqual([{ digest: ZIP_DIGEST, mediaType: "application/zip" }]);
+    expect(committed.extraScans).toEqual([
+      {
+        digest: ZIP_DIGEST,
+        name: "provider/hashicorp/random",
+        version: "2.0.0",
+        mediaType: "application/zip",
+      },
+    ]);
     const meta = parseTerraformProviderVersionMeta(committed.metadata);
     expect(meta).not.toBeNull();
     expect(meta).toMatchObject({

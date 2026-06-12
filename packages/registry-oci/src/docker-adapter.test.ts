@@ -601,7 +601,10 @@ describe("Docker adapter contract", () => {
     });
     testCtx.data.versions.upsert = async () => "version_1";
     testCtx.data.contentStore.replaceManifestBlobRefs = async () => {};
-    testCtx.data.assets.upsert = async () => ({}) as never;
+    testCtx.data.assets.upsert = async (input) => {
+      if (input.scanInput) scanned = true;
+      return {} as never;
+    };
     let scanned = false;
     testCtx.enqueueScan = async () => {
       scanned = true;

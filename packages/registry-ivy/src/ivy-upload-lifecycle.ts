@@ -55,6 +55,16 @@ export async function handleIvyUpload(
       path,
       mediaType,
       sizeBytes: stored.size,
+      ...(coords && isScannableIvyArtifact(path)
+        ? {
+            scanInput: {
+              digest: stored.digest,
+              name: ivyPackageName(coords.organisation, coords.module),
+              version: coords.revision,
+              mediaType,
+            },
+          }
+        : {}),
     });
     if (previousDigest && previousDigest !== stored.digest) {
       await ctx.data.content.releaseBlobRef({
@@ -66,13 +76,6 @@ export async function handleIvyUpload(
     // Only the executable artifacts (jar/war/ear/aar) carry scannable bytes;
     // checksum/signature sidecars and the descriptor carry none.
     if (coords && isScannableIvyArtifact(path)) {
-      const name = ivyPackageName(coords.organisation, coords.module);
-      await ctx.enqueueScan({
-        digest: stored.digest,
-        name,
-        version: coords.revision,
-        mediaType,
-      });
       await referenceArtifactDigest(ctx, coords, stored.digest);
     }
     return new Response(null, { status: 201 });
@@ -88,6 +91,7 @@ export async function handleIvyUpload(
     scope: path,
     mediaType,
   });
+  const name = ivyPackageName(descriptor.organisation, descriptor.module);
   await ctx.data.assets.upsert({
     digest: stored.digest,
     blobRefId: stored.blobRefId,
@@ -96,6 +100,12 @@ export async function handleIvyUpload(
     path,
     mediaType,
     sizeBytes: bytes.byteLength,
+    scanInput: {
+      digest: stored.digest,
+      name,
+      version: descriptor.revision,
+      mediaType: "application/xml",
+    },
   });
   if (previousDigest && previousDigest !== stored.digest) {
     await ctx.data.content.releaseBlobRef({
@@ -105,7 +115,6 @@ export async function handleIvyUpload(
     });
   }
 
-  const name = ivyPackageName(descriptor.organisation, descriptor.module);
   const pkg = await ctx.data.packages.findOrCreate({ name, namespace: descriptor.organisation });
   await ctx.data.versions.upsert({
     package: pkg,
@@ -117,12 +126,6 @@ export async function handleIvyUpload(
       descriptorDigest: stored.digest,
     },
     sizeBytes: bytes.byteLength,
-  });
-  await ctx.enqueueScan({
-    digest: stored.digest,
-    name,
-    version: descriptor.revision,
-    mediaType: "application/xml",
   });
 
   return new Response(null, { status: 201 });

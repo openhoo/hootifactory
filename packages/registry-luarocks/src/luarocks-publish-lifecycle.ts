@@ -104,13 +104,6 @@ export async function publishLuarocksArtifact(
     return { ok: false, status, error };
   }
 
-  await ctx.enqueueScan({
-    digest: stored.digest,
-    name: rock,
-    version,
-    mediaType: "application/octet-stream",
-  });
-
   return { ok: true, rock, version, arch, filename, package: pkg, versionRowId: added.versionId };
 }
 
@@ -247,5 +240,11 @@ function upsertArchAsset(
     mediaType: "application/octet-stream",
     sizeBytes: opts.sizeBytes,
     metadata: { rock: opts.rock, version: opts.version, arch: opts.arch },
+    scanInput: {
+      digest: opts.stored.digest,
+      name: opts.rock,
+      version: opts.version,
+      mediaType: "application/octet-stream",
+    },
   });
 }
