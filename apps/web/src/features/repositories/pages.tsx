@@ -165,7 +165,7 @@ export function RepoDetailPage({ repoId }: { repoId: string }) {
   const snippets = snippetsFor(repo, window.location.origin);
   const packages = pkgsQ.data?.packages ?? [];
   const packageTotal = pkgsQ.data?.pagination.total ?? repoQ.data.packageCount;
-  const canLoadMorePackages = packages.length < packageTotal;
+  const canLoadMorePackages = packages.length < packageTotal && packageLimit < 500;
 
   return (
     <div>
@@ -235,7 +235,9 @@ export function RepoDetailPage({ repoId }: { repoId: string }) {
                       type="button"
                       variant="outline"
                       size="sm"
-                      onClick={() => setPackageLimit((limit) => limit + PACKAGE_PAGE_SIZE)}
+                      onClick={() =>
+                        setPackageLimit((limit) => Math.min(limit + PACKAGE_PAGE_SIZE, 500))
+                      }
                       disabled={pkgsQ.isFetching}
                     >
                       <ChevronDown />
