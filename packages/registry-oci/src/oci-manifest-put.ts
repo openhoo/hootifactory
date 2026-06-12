@@ -1,6 +1,7 @@
 import { computeDigest, Errors, isValidDigest } from "@hootifactory/registry";
 import {
   assertTag,
+  MAX_OCI_MANIFEST_BYTES,
   type ManifestReference,
   manifestMediaType,
   manifestReferences,
@@ -31,7 +32,21 @@ export async function parseOciManifestPutRequest(
   req: Request,
 ): Promise<OciManifestPutRequest> {
   const ref = parseReference(reference);
+  const contentLength = req.headers.get("content-length");
+  if (contentLength !== null) {
+    const length = Number(contentLength);
+    if (Number.isFinite(length) && length > MAX_OCI_MANIFEST_BYTES) {
+      throw Errors.manifestInvalid({
+        reason: `manifest size ${length} exceeds limit of ${MAX_OCI_MANIFEST_BYTES} bytes`,
+      });
+    }
+  }
   const bytes = await bodyBytes(req);
+  if (bytes.length > MAX_OCI_MANIFEST_BYTES) {
+    throw Errors.manifestInvalid({
+      reason: `manifest size ${bytes.length} exceeds limit of ${MAX_OCI_MANIFEST_BYTES} bytes`,
+    });
+  }
   const digest = computeDigest(bytes);
   if (ref.kind === "digest" && ref.value !== digest) {
     throw Errors.digestInvalid({ expected: reference, got: digest });
