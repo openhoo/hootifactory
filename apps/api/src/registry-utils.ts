@@ -4,17 +4,12 @@ export {
   repoSpanAttributes,
 } from "@hootifactory/registry-platform/runtime";
 
-export function headersWithoutContentLength(headers: Headers): Headers {
-  const next = new Headers(headers);
-  next.delete("content-length");
-  return next;
-}
-
 export function stripBodyForFallbackHead(fellBackToGet: boolean, res: Response): Response {
   if (!fellBackToGet) return res;
+  res.body?.cancel();
   return new Response(null, {
     status: res.status,
     statusText: res.statusText,
-    headers: headersWithoutContentLength(res.headers),
+    headers: res.headers,
   });
 }
