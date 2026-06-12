@@ -47,6 +47,7 @@ export interface SyncedOidcUser {
 
 export interface SyncOidcUserOptions {
   allowExistingEmailLink?: boolean;
+  targetUserId?: string;
 }
 
 export interface VerifyIdTokenOptions {

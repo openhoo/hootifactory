@@ -124,6 +124,9 @@ export async function syncOidcUser(
       if (existing && !options.allowExistingEmailLink) {
         throw new OidcEmailLinkRequiredError(existing.id, existing.email);
       }
+      if (existing && options.targetUserId && existing.id !== options.targetUserId) {
+        throw new Error("oidc: email does not match the confirmed user");
+      }
       user = existing ?? null;
     }
 
