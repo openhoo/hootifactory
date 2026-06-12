@@ -58,64 +58,70 @@ export async function persistScanResult(
   };
   // Upsert on the per-artifact key so retries replace that artifact's scan
   // result without coupling findings or lifecycle to another artifact that has
-  // the same digest.
-  const [scan] = await withSpan(
+  // the same digest. Wrapped in a transaction so the scan row upsert and the
+  // findings delete+insert are atomic — a concurrent reclaim re-scan can't
+  // observe the intermediate state where the scan row exists but findings are
+  // missing or stale.
+  await withSpan(
     "scan.persist_result",
     {
       "artifact.id": art.id,
       "artifact.digest": art.digest,
       "scan.findings.count": results.length,
     },
-    () =>
-      dbClient
-        .insert(scans)
-        .values({
-          ...dedupKey,
-          status: SCAN_STATUS.succeeded,
-          startedAt: new Date(),
-          finishedAt: new Date(),
-          sbomNativeJson: {
-            scanners: [...scannersRun],
-          },
-        })
-        .onConflictDoUpdate({
-          target: SCAN_CONFLICT_TARGET,
-          set: { status: SCAN_STATUS.succeeded, error: null, finishedAt: new Date() },
-        })
-        .returning({ id: scans.id }),
-  );
+    async () => {
+      await dbClient.transaction(async (tx) => {
+        const [scan] = await tx
+          .insert(scans)
+          .values({
+            ...dedupKey,
+            status: SCAN_STATUS.succeeded,
+            startedAt: new Date(),
+            finishedAt: new Date(),
+            sbomNativeJson: {
+              scanners: [...scannersRun],
+            },
+          })
+          .onConflictDoUpdate({
+            target: SCAN_CONFLICT_TARGET,
+            set: { status: SCAN_STATUS.succeeded, error: null, finishedAt: new Date() },
+          })
+          .returning({ id: scans.id });
 
-  const scanId = scan?.id;
-  if (scanId) {
-    // Idempotent: replace this artifact's findings on (re)scan.
-    await withSpan(
-      "scan.persist_findings",
-      { "scan.id": scanId, "scan.findings.count": results.length },
-      async () => {
-        await dbClient.delete(findingsTable).where(eq(findingsTable.artifactId, art.id));
-        if (results.length) {
-          await dbClient.insert(findingsTable).values(
-            results.map((f) => ({
-              scanId,
-              artifactId: art.id,
-              type: f.type,
-              vulnId: f.vulnId,
-              aliases: f.aliases,
-              purl: f.purl,
-              packageName: f.packageName,
-              packageVersion: f.packageVersion,
-              severity: f.severity,
-              cvssScore: f.cvssScore,
-              fixedVersion: f.fixedVersion,
-              title: f.title,
-              description: f.description,
-              data: f.data ?? null,
-            })),
+        const scanId = scan?.id;
+        if (scanId) {
+          // Idempotent: replace this artifact's findings on (re)scan.
+          await withSpan(
+            "scan.persist_findings",
+            { "scan.id": scanId, "scan.findings.count": results.length },
+            async () => {
+              await tx.delete(findingsTable).where(eq(findingsTable.artifactId, art.id));
+              if (results.length) {
+                await tx.insert(findingsTable).values(
+                  results.map((f) => ({
+                    scanId,
+                    artifactId: art.id,
+                    type: f.type,
+                    vulnId: f.vulnId,
+                    aliases: f.aliases,
+                    purl: f.purl,
+                    packageName: f.packageName,
+                    packageVersion: f.packageVersion,
+                    severity: f.severity,
+                    cvssScore: f.cvssScore,
+                    fixedVersion: f.fixedVersion,
+                    title: f.title,
+                    description: f.description,
+                    data: f.data ?? null,
+                  })),
+                );
+              }
+            },
           );
         }
-      },
-    );
-  }
+      });
+    },
+  );
 }
 
 /** Load the repository policy, evaluate it against `results`, and persist the decision. */
