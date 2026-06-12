@@ -19,8 +19,18 @@ export type CreateOrganizationInput = {
   ownerUserId: string;
 };
 
+const SYSTEM_SCOPED_PERMISSIONS: PermissionKey[] = [
+  "system.admin",
+  "user.read",
+  "user.create",
+  "user.update",
+  "user.deactivate",
+  "user.reset_password",
+  "permission.read",
+];
+
 export const ORG_OWNER_PERMISSIONS = PERMISSIONS.filter(
-  (permission) => permission !== "system.admin",
+  (permission) => !SYSTEM_SCOPED_PERMISSIONS.includes(permission as PermissionKey),
 ) as PermissionKey[];
 
 function sortedUniquePermissions(permissions: Iterable<PermissionKey>): PermissionKey[] {
